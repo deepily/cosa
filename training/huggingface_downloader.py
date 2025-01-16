@@ -3,10 +3,27 @@ import os
 
 from huggingface_hub import snapshot_download, login
 
+# make this a class called HuggingFaceDownloader
+# with a method called download_model
+# that takes a repo_id as an argument
+class HuggingFaceDownloader:
+
+    def __init__( self, token=None ):
+        self.token = token
+
+    def download_model( self, repo_id ):
+        
+        try:
+            login( token=self.token )
+            snapshot_download( repo_id=repo_id )
+        except Exception as e:
+            print( f"Error downloading model: {e}" )
+            sys.exit( 1 )
+
 if __name__ == "__main__":
 
-    # get the first argument passed in
-    if len( sys.argv ) < 2:
+    # sanity check for command line arguments
+    if len( sys.argv ) != 2:
         print( "Usage: python huggingface_downloader.py <repo_id>" )
         sys.exit( 1 )
     # sanity check for huggingface home
@@ -21,12 +38,7 @@ if __name__ == "__main__":
         sys.exit( 1 )
     
     repo_id = sys.argv[ 1 ]
+    downloader = HuggingFaceDownloader( token=hf_token )
+    downloader.download_model( repo_id )
     
-    # Download the model
-    try:
-        # Log in using the token
-        login( token=hf_token )
-        snapshot_download( repo_id=repo_id )
-    except Exception as e:
-        print( f"Error downloading model: {e}" )
-        sys.exit( 1 )
+    
