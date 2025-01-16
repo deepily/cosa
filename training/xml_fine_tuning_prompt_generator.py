@@ -16,7 +16,7 @@ from huggingface_hub          import InferenceClient
 # from lib.agents.function_mapping_search import FunctionMappingSearch
 from cosa.app.configuration_manager import ConfigurationManager
 from cosa.utils.util_stopwatch import Stopwatch
-from cosa.agents import Llm
+from cosa.agents.llm import Llm
 
 class XmlFineTuningPromptGenerator:
     
@@ -1012,10 +1012,10 @@ class XmlFineTuningPromptGenerator:
         
         return command_response != "broken" and command_answer != "broken" and command_response == command_answer
     
-    def _query_llm_in_memory( self, tokenizer, model, prompt, max_new_tokens=1024, model_name="ACME LLMs, Inc.", device="cuda:0", silent=False ):
+    def _query_llm_in_memory( self, tokenizer, model, prompt, max_new_tokens=1024, model_name="ACME LLMs, Inc.", device="cuda:0", silent=False, debug=False, verbose=False ):
         
         # We need this exact method in other places too, so do the simplest extraction and reuse here
-        response = du_llm_client.query_llm_in_memory( model, tokenizer, prompt, device=device, model_name=model_name, max_new_tokens=max_new_tokens, silent=silent )
+        response = du_llm_client.query_llm_in_memory( model, tokenizer, prompt, device=device, model_name=model_name, max_new_tokens=max_new_tokens, silent=silent, debug=debug, verbose=verbose )
         
         if self.debug:
             print( f"Response: [{response}]", end="\n\n" )
@@ -1088,7 +1088,7 @@ class XmlFineTuningPromptGenerator:
         
         self._call_counter = 0
     
-    def _get_response_to_prompt( self, prompt, rows, switch="tgi", model_name=Llm.PHIND_34B_v2, timer=None, tokenizer=None, model=None, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.9, device="cuda:0", silent=False ):
+    def _get_response_to_prompt( self, prompt, rows, switch="tgi", model_name=Llm.PHIND_34B_v2, timer=None, tokenizer=None, model=None, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.9, device="cuda:0", silent=False, debug=False, verbose=False ):
         
         self._call_counter += 1
         
@@ -1116,11 +1116,11 @@ class XmlFineTuningPromptGenerator:
         elif switch == "openai":
             return self._query_llm_openai( prompt[ "messages" ], model_name=model_name )
         elif switch == "huggingface":
-            return self._query_llm_in_memory( tokenizer, model, prompt, model_name=model_name, max_new_tokens=max_new_tokens, device=device, silent=silent )
+            return self._query_llm_in_memory( tokenizer, model, prompt, model_name=model_name, max_new_tokens=max_new_tokens, device=device, silent=silent, debug=debug, verbose=verbose )
         else:
             raise Exception( f"Unknown switch [{switch}]" )
 
-    def generate_responses( self, df, tokenizer=None, model=None, switch="tgi", model_name=Llm.PHIND_34B_v2, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.9, device="cuda:0", silent=False ):
+    def generate_responses( self, df, tokenizer=None, model=None, switch="tgi", model_name=Llm.PHIND_34B_v2, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.9, device="cuda:0", debug=False, verbose=False, silent=False ):
         
         self.reset_call_counter()
         rows = df.shape[ 0 ]
@@ -1135,7 +1135,7 @@ class XmlFineTuningPromptGenerator:
             df[ "response" ]  = df[ "gpt_message" ].apply( lambda cell: self._get_response_to_prompt( cell, rows, timer=timer, switch=switch, model_name=model_name, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, silent=silent ) )
         elif switch == "huggingface":
             print( f"Using HuggingFace model_name [{model_name}] in memory...", end="\n\n" )
-            df[ "response" ]  = df[ "prompt" ].apply( lambda cell: self._get_response_to_prompt( cell, rows, timer=timer, switch=switch, model_name=model_name, tokenizer=tokenizer, model=model, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, device=device, silent=silent ) )
+            df[ "response" ]  = df[ "prompt" ].apply( lambda cell: self._get_response_to_prompt( cell, rows, timer=timer, switch=switch, model_name=model_name, tokenizer=tokenizer, model=model, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, device=device, silent=silent, debug=debug, verbose=verbose ) )
         else:
             raise Exception( f"Unknown switch [{switch}]" )
         
