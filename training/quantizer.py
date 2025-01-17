@@ -37,23 +37,24 @@ class Quantizer:
         du.print_banner( f"Quantizing model [{self.model_name}] with {self.quantize_method} method using {self.bits}-bits", prepend_newline=True )
         self.autoround.quantize()
         
-    def save_quantized( self, output_dir, format='auto_gptq', inplace=True ):
+    def save( self, output_dir, format='auto_gptq', inplace=True ):
         
         extension  = "gptq" if format == "auto_gptq" else format
         sym_flag   = "sym"  if self.symmetrical else "asym"
-        output_dir = f"{output_dir}/{self.model_name.split( '/' )[ 1 ]}-{self.quantize_method}-{self.bits}-bits-{sym_flag}.{extension}/{du.get_current_date()}"
+        date       = du.get_current_date()
+        time       = du.get_current_time( format='%H-%M' )
+        full_path  = f"{output_dir}/{self.model_name.split( '/' )[ 1 ]}-{self.quantize_method}-{self.bits}-bits-{sym_flag}.{extension}/{date}-at-{time}"
         
         # check to see if the path exists, if not create
-        if not os.path.exists( output_dir ):
-            print( f"Creating output directory [{output_dir}]..." )
-            os.makedirs( output_dir )
-            print( f"Creating output directory [{output_dir}]... Done!" )
-            # make sure that this directory is world-readable?
-            # os.chmod( output_dir, 0o755 )
+        if not os.path.exists( full_path ):
+            
+            print( f"Creating output directory [{full_path}]..." )
+            os.makedirs( full_path )
+            print( f"Creating output directory [{full_path}]... Done!" )
         
-        print( f"Saving quantized model to [{output_dir}]..." )
-        self.autoround.save_quantized( output_dir, format=format, inplace=inplace )
-        print( f"Saving quantized model to [{output_dir}]... Done!" )
+        print( f"Saving quantized model to [{full_path}]..." )
+        self.autoround.save_quantized( full_path, format=format, inplace=inplace )
+        print( f"Saving quantized model to [{full_path}]... Done!" )
 
 if __name__ == "__main__":
     
@@ -67,5 +68,5 @@ if __name__ == "__main__":
     
     quantizer = Quantizer( model_name )
     quantizer.quantize_model()
-    quantizer.save_quantized( save_to_path )
+    quantizer.save( save_to_path )
     
