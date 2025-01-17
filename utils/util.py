@@ -62,7 +62,7 @@ def get_current_date( tz_name="US/Eastern", return_prose=False, offset=0 ):
 
 def get_current_time( tz_name="US/Eastern", include_timezone=True, format="%H:%M:%S" ):
     """
-    A function that returns the current time in a specified time zone with optional timezone information.
+    Returns the current time in a specified time zone with optional timezone information.
 
     Parameters:
     - tz_name (str): The name of the timezone to get the current time in. Default is "US/Eastern".
