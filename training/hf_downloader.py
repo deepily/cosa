@@ -24,8 +24,9 @@ if __name__ == "__main__":
 
     # sanity check for command line arguments
     if len( sys.argv ) != 2:
-        print( "Usage: python downloader_hf.py <repo_id>" )
+        print( "Usage: python hf_downloader.py <repo_id>" )
         sys.exit( 1 )
+        
     # sanity check for huggingface home
     if not os.getenv( "HF_HOME" ):
         print( "Please set the HF_HOME environment variable to the directory where you want to download models" )
