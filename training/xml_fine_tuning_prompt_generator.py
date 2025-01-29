@@ -367,8 +367,6 @@ class XmlFineTuningPromptGenerator:
         Requirement: You MUST use your linguistic knowledge and intuition to answer this question.
         Requirement: The first word of your response MUST be `<response>`
         Hint: Anything that isn't a part of the command itself should be treated as arguments related to the command."""
-        
-        return
     
     def _init_agent_router_templates( self ):
         
@@ -990,9 +988,9 @@ class XmlFineTuningPromptGenerator:
         # Remove white space outside XML tags
         answer = dux.strip_all_white_space( answer )
         
-        if self.debug and self.verbose:
-            print( f"response: [{response}]" )
-            print( f"  answer: [{answer}]" )
+        # if self.debug and self.verbose:
+        #     print( f"response: [{response}]" )
+        #     print( f"  answer: [{answer}]" )
             
         return response == answer
     
@@ -1144,6 +1142,7 @@ class XmlFineTuningPromptGenerator:
         print( f"[{round( ms_per_item, 1 ):,}] ms per item" )
         
         return df
+    
     def validate_responses( self, df ):
         
         # Validate the structure and content of the xml response
