@@ -6,7 +6,7 @@ import torch
 
 from auto_round import AutoRound
 
-import utils.util as du
+import cosa.utils.util as du
 
 # make this a class called Quantizer
 # with a method called quantize_model
@@ -34,7 +34,7 @@ class Quantizer:
         else:
             raise Exception( f"Unsupported quantization method: {quantize_method}" )
         
-        du.print_banner( f"Quantizing model [{self.model_name}] with {self.quantize_method} method using {self.bits}-bits", prepend_newline=True )
+        du.print_banner( f"Quantizing model [{self.model_name}] with {self.quantize_method} method using {self.bits}-bits", prepend_nl=True )
         self.autoround.quantize()
         
     def save( self, output_dir, format='auto_gptq', inplace=True ):
@@ -42,7 +42,7 @@ class Quantizer:
         extension  = "gptq" if format == "auto_gptq" else format
         sym_flag   = "sym"  if self.symmetrical else "asym"
         date       = du.get_current_date()
-        time       = du.get_current_time( format='%H-%M' )
+        time       = du.get_current_time( format='%H-%M', include_timezone=False )
         full_path  = f"{output_dir}/{self.model_name.split( '/' )[ 1 ]}-{self.quantize_method}-{self.bits}-bits-{sym_flag}.{extension}/{date}-at-{time}"
         
         # check to see if the path exists, if not create
