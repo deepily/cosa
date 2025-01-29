@@ -1,4 +1,7 @@
 import os
+import stat
+import pwd
+import grp
 import regex as re
 import random
 import sys
@@ -221,6 +224,45 @@ def write_string_to_file( path, string ):
     
     with open( path, "w" ) as outfile:
         outfile.write( string )
+
+import subprocess
+
+def print_simple_file_list( path ) :
+    """
+    Prints a detailed file listing for the specified directory.
+    
+    Preconditions:
+        - path must be a string representing a file system path
+        - path must exist in the file system
+        - Current user must have read permissions for the specified path
+    
+    Postconditions:
+        - Detailed file listing is printed to stdout
+        - Each line of output is printed separately
+        - Original path remains unchanged
+    
+    Parameters:
+        path (str): The directory path to list files from
+    
+    Raises:
+        FileNotFoundError: When path does not exist
+        subprocess.CalledProcessError: When shell command execution fails
+    """
+    # Verify that the path exists
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"The path '{path}' does not exist.")
+
+    # Construct the command
+    command = ['ls', '-alh', path]
+
+    try:
+        # Execute the command and capture the output
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        print_list( result.stdout.split( "\n" ) )
+    except subprocess.CalledProcessError as e:
+        # Handle errors in the execution of the command
+        raise subprocess.CalledProcessError(e.returncode, e.cmd, output=e.output, stderr=e.stderr)
+    
 
 def print_banner( msg, expletive=False, chunk="¡@#!-$?%^_¿", end="\n\n", prepend_nl=False, flex=False ):
 
