@@ -1060,6 +1060,16 @@ class XmlFineTuningPromptGenerator:
         
         return response
     
+    def _query_llm_deepily( self, prompt, model=Llm.DEEPILY_MINISTRAL_8B_2410, model_name="", debug=False, verbose=False ):
+        
+        # du.print_banner( "DEEPILY Request", prepend_nl=True )
+        # print( prompt )
+        llm = Llm( model=model, default_url="http://192.168.1.21:3000/v1", debug=debug, verbose=verbose )
+        results = llm.query_llm( prompt=prompt, temperature=0.0, top_k=50, top_p=1.0 )
+        # du.print_banner( "DEEPILY Response", prepend_nl=True )
+        # print( results )
+        return results
+    
     def _query_llm_openai( self, messages, model_name="OpenAI/gpt-3.5-turbo-1106" ):
         
         openai.api_key = du.get_api_key( "openai", project_root=du.get_project_root() )
@@ -1086,7 +1096,10 @@ class XmlFineTuningPromptGenerator:
         
         self._call_counter = 0
     
-    def _get_response_to_prompt( self, prompt, rows, switch="tgi", model_name=Llm.PHIND_34B_v2, timer=None, tokenizer=None, model=None, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.9, device="cuda:0", silent=False, debug=False, verbose=False ):
+    def _get_response_to_prompt(
+        self, prompt, rows, model=None, switch="tgi", model_name=Llm.PHIND_34B_v2, timer=None, tokenizer=None,
+        max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.9, device="cuda:0", silent=False, debug=False, verbose=False
+    ):
         
         self._call_counter += 1
         
@@ -1111,6 +1124,8 @@ class XmlFineTuningPromptGenerator:
             
         if switch == "tgi":
             return self.query_llm_tgi( prompt, model_name=model_name, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, silent=silent )
+        elif switch == "deepily":
+            return self._query_llm_deepily( prompt, model=model, model_name=model_name, debug=debug, verbose=verbose )
         elif switch == "openai":
             return self._query_llm_openai( prompt[ "messages" ], model_name=model_name )
         elif switch == "huggingface":
@@ -1126,16 +1141,19 @@ class XmlFineTuningPromptGenerator:
         timer = Stopwatch( msg=f"Generating responses for {rows:,} rows...", silent=silent )
         
         if switch == "tgi":
-            print( f"Using TGI w/ model_name [{model_name}]..." )
+            if debug: print( f"Using TGI w/ model_name [{model_name}]..." )
             df[ "response" ]  = df[ "prompt" ].apply( lambda cell: self._get_response_to_prompt( cell, rows, timer=timer, switch=switch, model_name=model_name, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, silent=silent ) )
+        elif switch == "deepily":
+            if debug: print( f"Using DEEPILY w/ model_name [{model_name}]..." )
+            df[ "response" ]  = df[ "prompt" ].apply( lambda cell: self._get_response_to_prompt( cell, rows, model=model, timer=timer, switch=switch, model_name=model_name, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, silent=silent ) )
         elif switch == "openai":
-            print( f"Using OPENAI w/ model_name [{model_name}]..." )
+            if debug: print( f"Using OPENAI w/ model_name [{model_name}]..." )
             df[ "response" ]  = df[ "gpt_message" ].apply( lambda cell: self._get_response_to_prompt( cell, rows, timer=timer, switch=switch, model_name=model_name, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, silent=silent ) )
         elif switch == "huggingface":
-            print( f"Using HuggingFace model_name [{model_name}] in memory...", end="\n\n" )
+            if debug: print( f"Using HuggingFace model_name [{model_name}] in memory...", end="\n\n" )
             df[ "response" ]  = df[ "prompt" ].apply( lambda cell: self._get_response_to_prompt( cell, rows, timer=timer, switch=switch, model_name=model_name, tokenizer=tokenizer, model=model, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, device=device, silent=silent, debug=debug, verbose=verbose ) )
         else:
-            raise Exception( f"Unknown switch [{switch}]" )
+            raise Exception( f"Unknown runtime llm datasource switch [{switch}]" )
         
         timer.print( msg="Done!", use_millis=False, prepend_nl=True, end="\n" )
         ms_per_item = timer.get_delta_ms() / ( rows * 1.0 )

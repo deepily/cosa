@@ -1,16 +1,16 @@
+import requests
+import json
+
 import openai
-# from google.generativeai.types       import HarmBlockThreshold
-# from google.ai.generativelanguage_v1 import HarmCategory
 
 from huggingface_hub            import InferenceClient
-
 from groq                       import Groq
-
 import google.generativeai      as genai
 from openai import OpenAI
 
-from cosa.utils.util_stopwatch import Stopwatch
-import cosa.utils.util as du
+from cosa.utils.util import print_banner
+from cosa.utils.util_stopwatch  import Stopwatch
+import cosa.utils.util          as du
 
 
 class Llm:
@@ -20,7 +20,6 @@ class Llm:
     PHIND_34B_v2      = "TGI/Phind-CodeLlama-34B-v2"
     QWEN_2_5_32B      = "kaitchup/Qwen2.5-Coder-32B-Instruct-AutoRound-GPTQ-4bit"
     PHI_4_14B         = "kaitchup/Phi-4-AutoRound-GPTQ-4bit"
-    MINISTRAL_8B_2410 = "ModelPath/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410/merged-00-2025-01-09"
     GROQ_MIXTRAL_8X78 = "Groq/mixtral-8x7b-32768"
     GROQ_LLAMA2_70B   = "Groq/llama2-70b-4096"
     GROQ_LLAMA3_70B   = "Groq/llama3-70b-8192"
@@ -28,15 +27,31 @@ class Llm:
     GROQ_LLAMA3_1_8B  = "Groq/llama-3.1-8b-instant"
     GOOGLE_GEMINI_PRO = "Google/gemini-1.5-pro-latest"
     
+    # DEEPILY_MINISTRAL_8B_2410 = "Deepily//mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410-autoround-4-bits-sym.gptq/2025-01-24-at-20-48"
+    # DEEPILY_MINISTRAL_8B_2410 = "Deepily//mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-08-at-16-16"
+    # DEEPILY_MINISTRAL_8B_2410 = "Deepily//mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-08-at-16-16/autoround-4-bits-sym.gptq/2025-02-08-at-18-34"
+    DEEPILY_MINISTRAL_8B_2410 = "Deepily//mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-08-at-16-16/autoround-4-bits-sym.gptq/2025-02-11-at-21-12"
+    # DEEPILY_MINISTRAL_8B_2410 = "Deepily//data/merged-on-2025-02-08-at-16-16"
+    
+    DEEPILY_PREFIX      = "Deepily"
+    
     @staticmethod
     def extract_model_name( compound_name ):
         
         # Model names are stored in the format "Groq/{model_name} in the config_mgr file
         if "/" in compound_name:
-            return compound_name.split( "/" )[ 1 ]
+            return compound_name[ compound_name.index( "/" ) + 1: ]
+            # return compound_name.split( "/" )[ 1 ]
         else:
             du.print_banner( f"WARNING: Model name [{compound_name}] doesn't isn't in 'Make/model' format! Returning entire string as is" )
             return compound_name
+    
+    @staticmethod
+    def get_model( mnt_point, prefix=DEEPILY_PREFIX ):
+        model = f"{prefix}/{mnt_point}"
+        if "//" not in model:
+            raise ValueError( f"ERROR: Model [{model}] not in 'prefix//mnt/point' format!" )
+        return model
 
     def __init__( self, model=PHI_4_14B, config_mgr=None, default_url=None, debug=False, verbose=False ):
         
@@ -48,6 +63,7 @@ class Llm:
         self.tgi_server_url = du.get_tgi_server_url_for_this_context( default_url=default_url )
         self.config_mgr     = config_mgr
 
+        
     def _start_timer( self, msg="Asking LLM [{model}]..." ):
         
         msg        = msg.format( model=self.model )
@@ -79,10 +95,13 @@ class Llm:
         
         if debug   is None: debug   = self.debug
         if verbose is None: verbose = self.verbose
+        # print( f"Model: [{model}]")
+        # print( f"self.model: [{self.model}]")
         
         try:
-            if prompt_yaml is None and preamble is None and question is None and prompt is None:
-                raise ValueError( "ERROR: Neither prompt_yaml, nor prompt, nor preamble, nor question has a value set!" )
+            print( "Skipping sanity check for prompt and preamble!")
+            # if prompt_yaml is None and preamble is None and question is None and prompt is None:
+            #     raise ValueError( "ERROR: Neither prompt_yaml, nor prompt, nor preamble, nor question has a value set!" )
             
             # Allow us to override the prompt, preamble, and question set when instantiated
             if model is not None: self.model = model
@@ -103,6 +122,8 @@ class Llm:
                     prompt, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, stop_sequences=stop_sequences, debug=debug, verbose=verbose
                 )
             
+            elif self.model.startswith( "Deepily/" ):
+                return self._query_vllm_openai( prompt, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, stop_sequences=stop_sequences, debug=debug, verbose=verbose )
             else:
                 # Test for divisibility if receiving an "all in one" non chatbot type prompt
                 if prompt is not None:
@@ -136,16 +157,24 @@ class Llm:
                     question = question.replace( "### Assistant", "" )
                     question = question.replace( "### Response:", "" )
                     
+                    # Strip out leading and trailing white space
+                    preamble = preamble.strip()
+                    question = question.strip()
+                    
                     if debug and verbose:
-                        print( f"Preamble: [{preamble}]" )
-                        print( f"Question: [{question}]" )
+                        du.print_banner( "Preamble:")
+                        print( preamble )
+                        du.print_banner( "Question:")
+                        print( question )
                     
                 elif preamble is None or question is None:
                     raise ValueError( "ERROR: Preamble or question is `None`!" )
                 
                 # if self.model == Llm.QWEN_2_5_32B:
-                if self.model.startswith( "kaitchup/" ) or self.model.startswith( "ModelPath/" ):
+                if self.model.startswith( "kaitchup/" ):
                     return self._query_my_local_vllm( preamble, question, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, stop_sequences=stop_sequences, debug=debug, verbose=verbose )
+                # elif self.model.startswith( "Deepily/" ):
+                #     return self._query_vllm_openai( preamble, question, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, stop_sequences=stop_sequences, debug=debug, verbose=verbose )
                 elif self.model.startswith( "OpenAI/" ):
                     return self._query_llm_openai( preamble, question, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, stop_sequences=stop_sequences, debug=debug, verbose=verbose )
                 elif self.model.startswith( "Groq/" ):
@@ -177,13 +206,6 @@ class Llm:
             "max_output_tokens": max_new_tokens,
                "stop_sequences": stop_sequences
         }
-        # safety_settings = {
-        #     HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-        #     HarmCategory.HARM_CATEGORY_HARASSMENT : HarmBlockThreshold.BLOCK_NONE,
-        #     HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-        #     HarmCategory.HARM_CATEGORY_VIOLENCE: HarmBlockThreshold.BLOCK_NONE,
-        #     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-        # }
         model    = genai.GenerativeModel( "models/" + Llm.extract_model_name( self.model ) )
         response = model.generate_content(
             prompt,
@@ -235,16 +257,93 @@ class Llm:
         
         return "".join( chunks ).strip()
     
+    def _query_vllm_openai( 
+        # self, preamble, query, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.25, stop_sequences=[ "</response>" ],
+        self, prompt, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.25, stop_sequences=[ "</response>" ],
+        debug=False, verbose=False
+    ):
+        
+        # du.print_banner( "Prompt:" )
+        # print( prompt )
+        
+        # client = OpenAI(
+        #     base_url=self.tgi_server_url,
+        #     # Open AI complains if it doesn't get a key, even when one isn't needed
+        #     api_key="F000000!",
+        # )
+        # self._start_timer()
+        #
+        # stream = client.chat.completions.create(
+        #     model=self.extract_model_name( self.model ),
+        #     messages=[
+        #         { "role": "system", "content": preamble },
+        #         { "role": "user", "content": query }
+        #     ],
+        #     max_tokens=max_new_tokens,
+        #     # It's recommended to use top P or temperature but not both... TODO: decide which one to use
+        #     # https://platform.openai.com/docs/api-reference/chat/create
+        #     temperature=temperature,
+        #     top_p=top_p,
+        #     # Not used by open AI?
+        #     # top_k=top_k,
+        #     # Zero is the default value for frequency and presence penalties
+        #     frequency_penalty=0.0,
+        #     presence_penalty=0.0,
+        #     stop=stop_sequences,
+        #     stream=True
+        # )
+        # chunks = [ ]
+        # ellipsis_count = 0
+        # for chunk in stream:
+        #     if chunk.choices[ 0 ].delta.content is not None:
+        #         chunks.append( chunk.choices[ 0 ].delta.content )
+        #         ellipsis_count = self._do_conditional_print( chunk.choices[ 0 ].delta.content, ellipsis_count, debug=debug )
+        #
+        # self._stop_timer( chunks=chunks )
+        # response = "".join( chunks ).strip()
+        
+        # Define the server URL
+        url = "http://192.168.1.21:3000/v1/completions"
+        # url = "http://127.0.0.1:3000/v1/completions"
+        
+        # Set the headers
+        headers = {
+            "Content-Type" : "application/json",
+            # "Authorization": f"Bearer {'your-api-key' if required else 'EMPTY'}"
+        }
+        
+        # Define the payload
+        payload = {
+            "model"      : self.extract_model_name( self.model ),
+            "prompt"     : prompt,
+            "max_tokens" : max_new_tokens,
+            "temperature": temperature,
+            "top_p"      : top_p,
+            "top_k"      : top_k,
+            # "stop"       : stop_sequences
+        }
+        # Send the request
+        response = requests.post( url, headers=headers, data=json.dumps( payload ) )
+        
+        # check for 200 return code
+        if response.status_code != 200:
+            
+            du.print_banner( f"ERROR: HTTP status code [{response.status_code}] for payload:" )
+            print( json.dumps( payload, indent=4 ) )
+            du.print_banner( "Response:" )
+            print( json.dumps( response.json(), indent=4 ) )
+            
+            raise ValueError( f"ERROR: HTTP status code [{response.status_code}]" )
+        
+        # Parse the response
+        completion = response.json()
+        # du.print_banner( "Completion:" )
+        # print( completion )
+        
+        return completion[ 'choices' ][ 0 ][ 'text' ].strip()
+    
     def _query_llm_openai( self, preamble, query, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.25, stop_sequences=[ "</response>" ], debug=False, verbose=False ):
         
-        # if url is not None:
-        #     openai.api_base = url
-        # if sub_type == "openai":
-        #     openai.api_key = du.get_api_key( sub_type )
-        # elif sub_type.lower() == "vllm":
-        #     print( "Setting F00 key for local VLLM API?" )
-        #     # Open AI complains if it doesn't get a key, even when one is not needed!
-        #     # openai.api_key = "F000000!"
         openai.api_key = du.get_api_key( "openai" )
         
         self._start_timer()
@@ -285,6 +384,10 @@ class Llm:
         self, preamble, question, max_new_tokens=1024, temperature=0.5, top_k=10, top_p=0.25,
         stop_sequences=[ "</response>", "></s>" ], debug=False, verbose=False
     ):
+        if debug:
+            print( f"preamble: [{preamble}]" )
+            print( f"question: [{question}]" )
+        
         # Set OpenAI's API key and API base to use vLLM's API server.
         openai_api_key = "EMPTY"
         openai_api_base = self.tgi_server_url
@@ -411,12 +514,13 @@ if __name__ == "__main__":
     # utterance = "No, I don't think that's going to work."
     # utterance = "Sure, why not?"
     # prompt = prompt_template.format( utterance=utterance )
-    voice_command = "I want you to open a new tab and do a Google scholar search on agent behaviors"
-    prompt = prompt_template.format( voice_command=voice_command)
-    llm = Llm( model=Llm.MINISTRAL_8B_2410, default_url="http://127.0.0.1:3000/v1", debug=True, verbose=True )
-    
+    voice_command = "I want you to open a new tab and do a Google scholar search on agentic behaviors"
+    prompt = prompt_template.format( voice_command=voice_command )
+    print( prompt )
+    llm = Llm( model=Llm.DEEPILY_MINISTRAL_8B_2410, default_url="http://127.0.0.1:3000/v1", debug=True, verbose=False )
+    #
     results = llm.query_llm( prompt=prompt )
-    print( results )
+    # print( results )
     # gist = dux.get_value_by_xml_tag_name( results, "summary" ).strip()
     # print( gist )
     
