@@ -787,9 +787,9 @@ def parse_arguments():
     parser.add_argument( "lora_dir", type=str, help="Directory for LORA files" )
     
     # Optional arguments can be added here
-    # add debug and verbose flags, default to False
     parser.add_argument( "--debug",   action="store_true", help="Enable debug mode" )
     parser.add_argument( "--verbose", action="store_true", help="Enable verbose mode" )
+    
     return parser.parse_args()
     
 # def suss_out_dataset():
@@ -812,7 +812,7 @@ if __name__ == "__main__":
     args     = parse_arguments()
     
     timer    = Stopwatch( msg=None )
-    trainer  = PeftTrainer( args.model, args.model_name, args.test_train_path, lora_dir=args.lora_dir, debug=True, verbose=False )
+    trainer  = PeftTrainer( args.model, args.model_name, args.test_train_path, lora_dir=args.lora_dir, debug=args.debug, verbose=args.verbose )
     
     trainer.login_to_hf()
 
