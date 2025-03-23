@@ -736,16 +736,42 @@ class PeftTrainer:
         os.environ[ "WANDB_DISABLE_SERVICE"   ] = wandb_disable_service
     
 
-class MyKludgySFTTrainer(SFTTrainer):
+class MyKludgySFTTrainer( SFTTrainer ):
 
     # overwriting the evaluation loop suggested here: https://chatgpt.com/share/67983b91-a950-8006-97c4-dfeb2d02b3ea
-    def evaluation_loop(self, *args, **kwargs):
+    def evaluation_loop( self, *args, **kwargs ):
         # Set padding_side to 'left' for evaluation
         self.tokenizer.padding_side = 'left'
-        result = super().evaluation_loop(*args, **kwargs)
+        result = super().evaluation_loop( *args, **kwargs )
         # Revert padding_side to 'right' after evaluation
         self.tokenizer.padding_side = 'right'
         return result
+    
+def check_env():
+    """
+    Verify that required environment variables are set.
+    Returns the GENIE_IN_THE_BOX_ROOT value if all checks pass.
+    """
+    
+    required_vars = [
+        "NCCL_P2P_DISABLE", "1"
+        "NCCL_IB_DISABLE", "1"
+        "GENIE_IN_THE_BOX_ROOT", "/some/foo/path"
+        "GIB_CONFIG_MGR_CLI_ARGS", ""
+    ]
+    
+    missing_vars = False
+    
+    for name, val in required_vars:
+        if not os.getenv( name ):
+            print( f"Please set env variable {name}={val}" )
+            missing_vars = True
+    
+    if missing_vars:
+        print( "Exiting due to missing environment variables" )
+        sys.exit( 1 )
+        
+    return os.getenv( "GENIE_IN_THE_BOX_ROOT" )
     
 # def suss_out_dataset():
 #
@@ -767,25 +793,12 @@ if __name__ == "__main__":
     if len( sys.argv ) != 5:
         print( "Usage: python peft_trainer.py <model> <model_name> <test_train_path> <lora_dir>" )
         sys.exit( 1 )
-    # sanity check for environment variables
-    if not os.getenv( "NCCL_P2P_DISABLE" ):
-        print( "Please set env variable NCCL_P2P_DISABLE=1" )
-        sys.exit( 1 )
-    if not os.getenv( "NCCL_IB_DISABLE" ):
-        print( "Please set env variable NCCL_IB_DISABLE=1" )
-        sys.exit( 1 )
-    if not os.getenv( "GENIE_IN_THE_BOX_ROOT" ):
-        print( "Please set env variable GENIE_IN_THE_BOX_ROOT=___________________" )
-        sys.exit( 1 )
-    if not os.getenv( "GIB_CONFIG_MGR_CLI_ARGS" ):
-        print( "Please set env variable GIB_CONFIG_MGR_CLI_ARGS=___________________" )
-        sys.exit( 1 )
-        
+    
+    gib_root        = check_env()
     model           = sys.argv[ 1 ]
     model_name      = sys.argv[ 2 ]
     test_train_path = sys.argv[ 3 ]
     lora_dir        = sys.argv[ 4 ]
-    gib_root        = os.getenv( "GENIE_IN_THE_BOX_ROOT" )
     
     timer   = Stopwatch( msg=None )
     trainer = PeftTrainer( model, model_name, test_train_path, lora_dir=lora_dir, debug=True, verbose=False )
