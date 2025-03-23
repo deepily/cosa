@@ -1,8 +1,11 @@
+import cosa.utils.util as du
+
 import gc
 import torch
 
 def print_device_allocation( model ):
 
+    du.print_banner( "Model device allocation" )
     for name, param in model.named_parameters():
        print( f"{name}: {param.device}" )
 
