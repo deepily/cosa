@@ -160,7 +160,7 @@ class PeftTrainer:
             processing_class=self.tokenizer,
             args=training_arguments,
             # packing=False,
-            formatting_func=self._format_prompts,
+            formatting_func=self._format_prompt,
         )
         
         self._print_trainable_parameters()
@@ -520,7 +520,8 @@ class PeftTrainer:
             num_train_epochs=1,
             warmup_ratio=0.1,
             lr_scheduler_type="linear",
-            dataset_text_field="text",
+            # what is this doing here?
+            # dataset_text_field="text",
             max_seq_length=self._get_max_seq_length()
         )
     
@@ -564,44 +565,82 @@ class PeftTrainer:
         
         return Dataset.from_list( rows )
         
-    def _format_prompts( self, rows ):
+    def _format_prompt( self, row ):
         
-        prompts = []
+        # du.print_banner( f"row type: [{type( rows )}]" )
+        # print( f"Rows length: {len( rows )}" )
+        # pretty print with JSON formatting
+        # print( json.dumps( rows, indent=4 ) )
+        # print( "Rows:", ro )
         
-        for i in range( len( rows[ "instruction" ] ) ):
-            
-            if self.model_name == "Mistral-7B-Instruct-v0.2":
-                prompt = f"""### Instruction:
-                Use the Task below and the Input given to write a Response that can solve the following Task:
-                
-                ### Task:
-                {rows[ "instruction" ][ i ]}
-                
-                ### Input:
-                {rows[ "input" ][ i ]}
-                
-                ### Response:
-                {rows[ "output" ][ i ]}
-                """
-            elif self.model_name in [ "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct" ]:
-                
-                du.print_banner( "formatting prompts..." )
-                print( rows[ "instruction" ][ i ] )
-                print( rows[ "input" ][ i ] )
-                # print( rows[ "output" ][ i ] )
-                
-                prompt = f"""<s>[INST]{rows[ "instruction" ][ i ]}
+        # prompts = []
+        
+        if self.model_name == "Mistral-7B-Instruct-v0.2":
+            prompt = f"""### Instruction:
+            Use the Task below and the Input given to write a Response that can solve the following Task:
 
-                {rows[ "input" ][ i ]}
-                [/INST]
-                {rows[ "output" ][ i ]}
-                </s>"""
-            else:
-                raise ValueError( f"Unsupported completion_type: '{self.model_name}', MUST be {self.supported_model_names} for now" )
+            ### Task:
+            {row[ "instruction" ]}
+
+            ### Input:
+            {row[ "input" ]}
+
+            ### Response:
+            {row[ "output" ]}
+            """
+        elif self.model_name in [ "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct" ]:
+
+            # du.print_banner( "Formatting prompt..." )
+            # print( "Instruction:", rows[ "instruction" ])
+            # print( "      Input:", rows[ "input" ] )
+            # print( "     Output:", rows[ "output" ] )
+
+            prompt = f"""<s>[INST]{row[ "instruction" ]}
+
+            {row[ "input" ]}
+            [/INST]
+            {row[ "output" ]}
+            </s>"""
+        else:
+            raise ValueError( f"Unsupported completion_type: '{self.model_name}', MUST be {self.supported_model_names} for now" )
+
+        # prompts.append( prompt )
+        
+        # for i in range( len( rows[ "instruction" ] ) ):
+        #
+        #     if self.model_name == "Mistral-7B-Instruct-v0.2":
+        #         prompt = f"""### Instruction:
+        #         Use the Task below and the Input given to write a Response that can solve the following Task:
+        #
+        #         ### Task:
+        #         {rows[ "instruction" ][ i ]}
+        #
+        #         ### Input:
+        #         {rows[ "input" ][ i ]}
+        #
+        #         ### Response:
+        #         {rows[ "output" ][ i ]}
+        #         """
+        #     elif self.model_name in [ "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct" ]:
+        #
+        #         du.print_banner( f"[{i}] Formatting prompt..." )
+        #         print( rows[ "instruction" ][ i ] )
+        #         print( rows[ "input" ][ i ] )
+        #         # print( rows[ "output" ][ i ] )
+        #
+        #         prompt = f"""<s>[INST]{rows[ "instruction" ][ i ]}
+        #
+        #         {rows[ "input" ][ i ]}
+        #         [/INST]
+        #         {rows[ "output" ][ i ]}
+        #         </s>"""
+        #     else:
+        #         raise ValueError( f"Unsupported completion_type: '{self.model_name}', MUST be {self.supported_model_names} for now" )
+        #
+        #     prompts.append( prompt )
             
-            prompts.append( prompt )
-            
-        return prompts
+        # return prompts
+        return prompt
     
     def get_prompt( self, instruction, input, output="" ):
         
@@ -749,7 +788,7 @@ if __name__ == "__main__":
     gib_root        = os.getenv( "GENIE_IN_THE_BOX_ROOT" )
     
     timer   = Stopwatch( msg=None )
-    trainer = PeftTrainer( model, model_name, test_train_path, lora_dir=lora_dir, debug=True, verbose=True )
+    trainer = PeftTrainer( model, model_name, test_train_path, lora_dir=lora_dir, debug=True, verbose=False )
     
     trainer.login_to_hf()
 
