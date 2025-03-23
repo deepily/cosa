@@ -773,6 +773,25 @@ def check_env():
         
     return os.getenv( "GENIE_IN_THE_BOX_ROOT" )
     
+def parse_arguments():
+    """
+    Parse command line arguments using argparse.
+    Returns an argparse Namespace object with the parsed arguments.
+    """
+    import argparse
+    
+    parser = argparse.ArgumentParser( description="PEFT trainer for language models" )
+    parser.add_argument( "model", type=str, help="Model HuggingFace ID" )
+    parser.add_argument( "model_name", type=str, help="Model name" )
+    parser.add_argument( "test_train_path", type=str, help="Path to test/train data" )
+    parser.add_argument( "lora_dir", type=str, help="Directory for LORA files" )
+    
+    # Optional arguments can be added here
+    # add debug and verbose flags, default to False
+    parser.add_argument( "--debug",   action="store_true", help="Enable debug mode" )
+    parser.add_argument( "--verbose", action="store_true", help="Enable verbose mode" )
+    return parser.parse_args()
+    
 # def suss_out_dataset():
 #
 #     path = "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/ephemera/prompts/data/voice-commands-xml-train.jsonl"
@@ -789,32 +808,24 @@ def check_env():
 if __name__ == "__main__":
     
     # suss_out_dataset()
-    # sanity check for command line arguments
-    if len( sys.argv ) != 5:
-        print( "Usage: python peft_trainer.py <model> <model_name> <test_train_path> <lora_dir>" )
-        sys.exit( 1 )
+    gib_root = check_env()
+    args     = parse_arguments()
     
-    gib_root        = check_env()
-    model           = sys.argv[ 1 ]
-    model_name      = sys.argv[ 2 ]
-    test_train_path = sys.argv[ 3 ]
-    lora_dir        = sys.argv[ 4 ]
-    
-    timer   = Stopwatch( msg=None )
-    trainer = PeftTrainer( model, model_name, test_train_path, lora_dir=lora_dir, debug=True, verbose=False )
+    timer    = Stopwatch( msg=None )
+    trainer  = PeftTrainer( args.model, args.model_name, args.test_train_path, lora_dir=args.lora_dir, debug=True, verbose=False )
     
     trainer.login_to_hf()
 
     # for Ministral-8B-Instruct-2410
-    # checkpoint_dir = trainer.fine_tune( sample_size=1.0, batch_size=3, gradient_accumulation_steps=8, logging_steps=0.10, eval_steps=0.10, device_map="auto", output_dir=lora_dir )
+    # checkpoint_dir = trainer.fine_tune( sample_size=1.0, batch_size=3, gradient_accumulation_steps=8, logging_steps=0.10, eval_steps=0.10, device_map="auto", output_dir=args.lora_dir )
     # for Llama-3.2-3B-instruct
-    # checkpoint_dir = trainer.fine_tune( sample_size=1.0, batch_size=6, gradient_accumulation_steps=4, logging_steps=0.10, eval_steps=0.10, device_map="auto", output_dir=lora_dir )
+    # checkpoint_dir = trainer.fine_tune( sample_size=1.0, batch_size=6, gradient_accumulation_steps=4, logging_steps=0.10, eval_steps=0.10, device_map="auto", output_dir=args.lora_dir )
     # for Phi-3.5/4-mini-instruct
-    checkpoint_dir = trainer.fine_tune( sample_size=0.01, batch_size=8, gradient_accumulation_steps=4, logging_steps=0.50, eval_steps=0.50, device_map="auto", output_dir=lora_dir )
+    checkpoint_dir = trainer.fine_tune( sample_size=0.01, batch_size=8, gradient_accumulation_steps=4, logging_steps=0.50, eval_steps=0.50, device_map="auto", output_dir=args.lora_dir )
     release_gpus( [ trainer.model, trainer.tokenizer ] )
     # TODO: this is still showing 60-some megabytes of GPU RAM as allocated...
     trainer.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
-    merged_adapter_dir = trainer.save_merged_adapter( lora_dir=lora_dir )
+    merged_adapter_dir = trainer.save_merged_adapter( lora_dir=args.lora_dir )
     release_gpus( [ trainer.model, trainer.tokenizer ] )
 
     quantized_model_dir = trainer.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
@@ -822,8 +833,8 @@ if __name__ == "__main__":
     # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-4-bits-sym.gptq/2025-02-12-at-02-27"
     # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-8-bits-sym.gptq/2025-02-24-at-21-39"
     # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Llama-3.2-3B-Instruct.lora/merged-on-2025-02-23-at-21-59/autoround-4-bits-sym.gptq/2025-02-23-at-22-09"
-    timer.print( f"Finished fine-tuning, merging and quantizing {model_name}" )
-    du.print_banner( f"Finished quantizing {model_name}" )
+    timer.print( f"Finished fine-tuning, merging and quantizing {args.model_name}" )
+    du.print_banner( f"Finished quantizing {args.model_name}" )
     print( f"Quantized model: {quantized_model_dir}" )
     du.print_simple_file_list( quantized_model_dir )
 
@@ -834,6 +845,6 @@ if __name__ == "__main__":
 
     model = Llm.get_model( quantized_model_dir )
     stats_df = trainer.run_validation_with_server(
-        model=model, path_prefix=os.getenv( "GENIE_IN_THE_BOX_ROOT" ), switch="deepily", device_map="cuda:0", sample_size=1000, debug=False, verbose=False
+        model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=1000, debug=False, verbose=False
     )
     print( stats_df )
