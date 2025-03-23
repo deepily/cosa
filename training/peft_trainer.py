@@ -30,12 +30,35 @@ from cosa.training.xml_fine_tuning_prompt_generator import XmlFineTuningPromptGe
 
 set_seed( 42 )
 
+@staticmethod
 def release_gpus( models ):
+    """
+    Releases GPU memory by moving models to CPU and clearing CUDA cache.
     
+    Preconditions:
+    - models must be an iterable collection of model objects.
+    - Each model in models may or may not have a 'cpu' method.
+    
+    Postconditions:
+    - All models in the collection are moved to CPU if they have a 'cpu' method.
+    - All models are deleted from Python's memory.
+    - Python's garbage collector is run to reclaim memory.
+    - GPU memory cache is cleared using torch.cuda.empty_cache().
+    
+    Parameters:
+    - models (Iterable): A collection of model objects to be released from GPU memory.
+    
+    Notes:
+    - This function handles models that might not have a 'cpu' method safely by checking
+      for the attribute's existence and callability before invoking it.
+    - This function is particularly useful after fine-tuning or inference to ensure 
+      GPU memory is properly released for subsequent operations.
+    """
     for model in models:
         
-        # move it to the CPU before deleting it, but test to make sure the attribute actually exists before you do though
+        # move it to the CPU before deleting it, but test to make sure the attribute actually exists before you do
         if hasattr( model, 'cpu' ) and callable( getattr( model, 'cpu' ) ):
+            print( f"Moving model {model} to CPU before deleting it..." )
             model.cpu()
         del model
         
