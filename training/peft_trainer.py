@@ -47,7 +47,32 @@ class PeftTrainer:
     def __init__(
         self, model_hf_id, model_name, test_train_path, lora_dir=None, debug=False, verbose=False
     ):
+        """
+        Initializes a new PEFT Trainer instance with the provided parameters.
         
+        Preconditions:
+        - `model_hf_id` is a valid model identifier in Hugging Face Hub format.
+        - `model_name` is a string representing one of the supported model names.
+        - `test_train_path` is a valid path where test/train data is located.
+        - `lora_dir` is either None or a valid directory path for storing LoRA adapter files.
+        - `debug` and `verbose` are boolean values to control logging verbosity.
+        
+        Postconditions:
+        - A new PeftTrainer instance is created with all necessary attributes initialized.
+        - The model name is validated against the list of supported models.
+        - Initial debug information is printed if debug mode is enabled.
+        
+        Raises:
+        - ValueError: if `model_name` is not in the list of supported models.
+        
+        Parameters:
+        - model_hf_id (str): The Hugging Face model ID to use for fine-tuning.
+        - model_name (str): The name of the model (must be one of the supported models).
+        - test_train_path (str): Path to the directory containing test/train data.
+        - lora_dir (str, optional): Directory for saving LoRA adapter files. Defaults to None.
+        - debug (bool, optional): Enable debug mode with additional logging. Defaults to False.
+        - verbose (bool, optional): Enable verbose mode with more detailed output. Defaults to False.
+        """
         du.print_banner( f"Initializing PEFT Trainer for {model_name}" )
         print( f"Model ID: {model_hf_id}" )
         print( f"Path to test/train data: {test_train_path}" )
@@ -95,14 +120,52 @@ class PeftTrainer:
             raise ValueError( f"Unsupported model_name: '{self.model_name}'. Must be one of: {', '.join( self.supported_model_names )}" )
     
     def login_to_hf( self ):
+        """
+        Authenticates with the Hugging Face API using API token from environment.
         
+        Preconditions:
+        - The GENIE_IN_THE_BOX_ROOT environment variable is set to a valid project root path.
+        - A valid Hugging Face API token is accessible via the utility method du.get_api_key.
+        
+        Postconditions:
+        - The application is authenticated with the Hugging Face API.
+        - A login confirmation message is printed to the console.
+        
+        Raises:
+        - If du.get_api_key fails to retrieve a valid token, it may raise KeyError or FileNotFoundError.
+        - If login fails, Hugging Face's login function may raise various exceptions.
+        """
         hf_token = du.get_api_key( "huggingface", project_root=os.getenv( "GENIE_IN_THE_BOX_ROOT" ) )
         print( f"Logging in to Hugging Face with token [{hf_token}]... ", end="" )
         login( token=hf_token )
         print( "Done!" )
         
     def get_training_prompt_stats( self, backend="cuda", device_map="auto", device="cuda:1", debug=False, verbose=False ):
+        """
+        Analyzes the token and word statistics of training prompts in the dataset.
         
+        Preconditions:
+        - The model and tokenizer must be available or loadable.
+        - A valid training dataset must exist at the path "/{self.test_train_dir}/voice-commands-xml-train.jsonl".
+        - The dataset must contain 'instruction', 'input', and 'output' columns.
+        
+        Postconditions:
+        - Token and word statistics (min, max, mean) are calculated for the training dataset.
+        - Debug information is printed if debug mode is enabled.
+        - The calculated statistics are returned as a tuple of two dictionaries.
+        
+        Parameters:
+        - backend (str, optional): Backend to use for model loading. Defaults to "cuda".
+        - device_map (str, optional): Device mapping strategy for model. Defaults to "auto".
+        - device (str, optional): Specific device to use for tokenizer calculations. Defaults to "cuda:1".
+        - debug (bool, optional): Enable debug mode. Defaults to False.
+        - verbose (bool, optional): Enable verbose mode. Defaults to False.
+        
+        Returns:
+        - tuple: A tuple containing two dictionaries:
+          - token_stats: Dictionary with 'min', 'max', and 'mean' token counts
+          - word_stats: Dictionary with 'min', 'max', and 'mean' word counts
+        """
         self._load_model_and_tokenizer( backend=backend, device_map=device_map, mode="training" )
         
         df = pd.read_json(f"/{self.test_train_dir}/voice-commands-xml-train.jsonl", lines=True )#.sample( 1000, random_state=42 )
@@ -150,7 +213,36 @@ class PeftTrainer:
         return token_stats, word_stats
     
     def fine_tune( self, batch_size=8, gradient_accumulation_steps=1, logging_steps=0.05, eval_steps=0.20, backend="cuda", sample_size=1.0, device_map="auto", output_dir="./results" ):
+        """
+        Fine-tunes the model using PEFT (Parameter-Efficient Fine-Tuning) techniques.
         
+        Preconditions:
+        - The model and tokenizer must be available or loadable.
+        - Valid test and train datasets must be accessible at the configured paths.
+        - Sufficient GPU memory must be available for the specified batch size and model.
+        
+        Postconditions:
+        - The model is fine-tuned with the specified parameters.
+        - Training checkpoints are saved to the specified output directory.
+        - Training statistics and metrics are captured and displayed.
+        - The path to the last checkpoint directory is returned.
+        - The following instance attributes are updated:
+          - self.output_dir: Set to the output directory used for this fine-tuning run.
+          - self.checkpoint_dir: Set to the directory of the last saved checkpoint.
+        
+        Parameters:
+        - batch_size (int, optional): Batch size for training and evaluation. Defaults to 8.
+        - gradient_accumulation_steps (int, optional): Number of steps to accumulate gradients. Defaults to 1.
+        - logging_steps (float, optional): Fraction of total steps at which to log progress. Defaults to 0.05.
+        - eval_steps (float, optional): Fraction of total steps at which to evaluate the model. Defaults to 0.20.
+        - backend (str, optional): Backend to use for model computations. Defaults to "cuda".
+        - sample_size (float, optional): Fraction of the total data to use (1.0 = all data). Defaults to 1.0.
+        - device_map (str, optional): Device mapping strategy for the model. Defaults to "auto".
+        - output_dir (str, optional): Directory to save the fine-tuned model checkpoints. Defaults to "./results".
+        
+        Returns:
+        - str: Path to the directory containing the last saved checkpoint.
+        """
         du.print_banner( f"Fine-tuning model {self.model_name} with PEFT", prepend_nl=True )
         run_start = f"Run started @ {du.get_current_time( format='%H:%M' )}"
         print( run_start )
@@ -204,11 +296,38 @@ class PeftTrainer:
         return self.checkpoint_dir
 
     def get_last_checkpoint_dir( self ):
+        """
+        Returns the path to the last checkpoint directory from the most recent fine-tuning run.
         
+        Preconditions:
+        - A fine-tuning run has been completed, and self.checkpoint_dir has been set.
+        
+        Postconditions:
+        - The path to the last checkpoint directory is returned, or None if no fine-tuning has been performed.
+        
+        Returns:
+        - str or None: Path to the directory containing the last saved checkpoint, or None if no checkpoint is available.
+        """
         return self.checkpoint_dir
 
     def _get_last_checkpoint_dir( self, output_dir ):
+        """
+        Determines the path to the most recent checkpoint directory within the given output directory.
         
+        Preconditions:
+        - `output_dir` is a valid directory path that contains checkpoint subdirectories.
+        - Checkpoint directories follow the naming convention 'checkpoint-N' where N is the step number.
+        
+        Postconditions:
+        - The path to the last checkpoint directory (with the highest step number) is returned.
+        - If no checkpoint directories are found, None is returned.
+        
+        Parameters:
+        - output_dir (str): Path to the directory containing the checkpoint subdirectories.
+        
+        Returns:
+        - str or None: Path to the last checkpoint directory, or None if no checkpoints are found.
+        """
         # List all subdirectories in the output directory
         subdirs = [ d for d in os.listdir( output_dir ) if os.path.isdir( os.path.join( output_dir, d ) ) ]
         
@@ -224,7 +343,24 @@ class PeftTrainer:
         return last_checkpoint_dir
         
     def save_model( self ):
+        """
+        Saves the current model and tokenizer to disk with timestamped directory name.
         
+        Preconditions:
+        - self.output_dir is set to a valid directory path.
+        - self.model and self.tokenizer are properly initialized.
+        
+        Postconditions:
+        - The model and tokenizer are saved to a timestamped subdirectory within self.output_dir.
+        - The original working directory is preserved (method changes directory temporarily but restores it).
+        
+        Notes:
+        - The model is saved with safe_serialization=False to avoid issues with distributed models.
+        - The target directory is named with pattern: {self.output_dir}/final-{date}-at-{time}
+        
+        Returns:
+        - None
+        """
         date = du.get_current_date()
         time = du.get_current_time( format='%H-%M', include_timezone=False )
         path = f"{self.output_dir}/final-{date}-at-{time}"
@@ -250,7 +386,23 @@ class PeftTrainer:
         os.chdir( cwd )
     
     def _load_adapter( self, adapter_path ):
+        """
+        Loads a PEFT adapter from the specified path and applies it to the current model.
         
+        Preconditions:
+        - self.model must be initialized with a base model.
+        - adapter_path must be a valid path to a saved PEFT adapter.
+        
+        Postconditions:
+        - The adapter is loaded and applied to the model.
+        - self.model is updated to be a PeftModel instance with the adapter applied.
+        
+        Parameters:
+        - adapter_path (str): Path to the directory containing the saved adapter.
+        
+        Returns:
+        - None
+        """
         print( f"Loading adapter from {adapter_path}" )
         self.model = PeftModel.from_pretrained( self.model, adapter_path )
         print( f"Loading adapter from {adapter_path}... Done!" )
@@ -259,6 +411,34 @@ class PeftTrainer:
         switch="", adapter_path=None,  path_prefix="/var/model/genie-in-the-box", device_map={"": 0},
         sample_size=1000, debug=None, verbose=None
     ):
+        """
+        Runs validation on the model with the specified adapter using in-memory inference.
+        
+        Preconditions:
+        - A validation dataset must be available at f"{self.test_train_dir}/voice-commands-xml-validate.jsonl".
+        - The model and tokenizer must be available or loadable.
+        - If adapter_path is provided, it must be a valid path to a saved PEFT adapter.
+        
+        Postconditions:
+        - The model is loaded with the specified adapter (if provided).
+        - Validation is performed on a sample of the validation dataset.
+        - Validation results are computed and displayed.
+        - The processed DataFrame with validation results is returned.
+        
+        Parameters:
+        - switch (str, optional): Switch parameter for the prompt generator. Defaults to "".
+        - adapter_path (str, optional): Path to the adapter to load. If None, uses the adapter 
+          from the most recent fine-tuning run if available. Defaults to None.
+        - path_prefix (str, optional): Path prefix for the XML generator. Defaults to "/var/model/genie-in-the-box".
+        - device_map (dict, optional): Device mapping for the model. Defaults to {"": 0}.
+        - sample_size (int, optional): Number of samples to use for validation. Defaults to 1000.
+        - debug (bool, optional): Enable debug mode. If None, uses the class default. Defaults to None.
+        - verbose (bool, optional): Enable verbose mode. If None, uses the class default. Defaults to None.
+        
+        Returns:
+        - pandas.DataFrame: DataFrame containing the validation results, including original prompts,
+                          generated responses, and validation metrics.
+        """
         du.print_banner( f"Validating {self.model_name} w/ {sample_size} samples..." )
        
         # set debug and verbose to the class defaults if not provided
@@ -309,7 +489,35 @@ class PeftTrainer:
             self, model=None, switch="", path_prefix="/var/model/genie-in-the-box",
             device_map={ "": 0 }, sample_size=1000, debug=None, verbose=None
     ):
+        """
+        Runs validation against a model server rather than loading the model in memory.
         
+        Preconditions:
+        - A validation dataset must be available at f"{self.test_train_dir}/voice-commands-xml-validate.jsonl".
+        - A model instance must be provided via the model parameter.
+        - The tokenizer must be available or can be loaded.
+        
+        Postconditions:
+        - Validation is performed on a sample of the validation dataset.
+        - Validation results are computed and displayed.
+        - The processed DataFrame with validation results is returned.
+        
+        Parameters:
+        - model (object, required): Model server instance to use for inference. Must support the generation interface.
+        - switch (str, optional): Switch parameter for the prompt generator. Defaults to "".
+        - path_prefix (str, optional): Path prefix for the XML generator. Defaults to "/var/model/genie-in-the-box".
+        - device_map (dict, optional): Device mapping for the model. Defaults to {"": 0}.
+        - sample_size (int, optional): Number of samples to use for validation. Defaults to 1000.
+        - debug (bool, optional): Enable debug mode. If None, uses the class default. Defaults to None.
+        - verbose (bool, optional): Enable verbose mode. If None, uses the class default. Defaults to None.
+        
+        Returns:
+        - pandas.DataFrame: DataFrame containing the validation results, including original prompts,
+                          generated responses, and validation metrics.
+                          
+        Raises:
+        - ValueError: If model is None.
+        """
         # set debug and verbose to the class defaults if not provided
         if debug   is None: debug = self.debug
         if verbose is None: verbose = self.verbose
@@ -351,7 +559,27 @@ class PeftTrainer:
         return df
     
     def load_and_merge_adapter( self, checkpoint_dir=None, device_map={ "": 0 } ):
+        """
+        Loads a PEFT adapter and merges it with the base model.
         
+        Preconditions:
+        - The model must be available or loadable.
+        - If checkpoint_dir is provided, it must be a valid path to a saved PEFT adapter.
+        - If checkpoint_dir is not provided, self.checkpoint_dir must be set to a valid adapter path.
+        
+        Postconditions:
+        - The model is loaded if not already loaded.
+        - The adapter is loaded and merged with the base model.
+        - self.model is updated to contain the merged model.
+        
+        Parameters:
+        - checkpoint_dir (str, optional): Path to the adapter checkpoint directory. If None, 
+          uses self.checkpoint_dir. Defaults to None.
+        - device_map (dict, optional): Device mapping for the model. Defaults to {"": 0}.
+        
+        Raises:
+        - ValueError: If no adapter path is provided and self.checkpoint_dir is not set.
+        """
         du.print_banner( f"Load and merge adapter {checkpoint_dir}" )
         self._load_model_and_tokenizer( backend="cuda", device_map=device_map, mode="inference" )
         
@@ -369,7 +597,29 @@ class PeftTrainer:
         print( "Done!" )
     
     def save_merged_adapter( self, lora_dir=None ):
+        """
+        Saves the merged model and tokenizer to a timestamped directory.
         
+        Preconditions:
+        - The model must have been loaded and merged with an adapter via load_and_merge_adapter.
+        - If lora_dir is provided, it must be a valid directory path.
+        - If lora_dir is not provided, self.lora_dir must be set to a valid directory path.
+        
+        Postconditions:
+        - The merged model and tokenizer are saved to a timestamped subdirectory.
+        - self.merged_adapter_dir is updated to the path of the saved merged adapter.
+        - The path to the saved merged adapter is returned.
+        
+        Parameters:
+        - lora_dir (str, optional): Base directory where the merged adapter will be saved. 
+          If None, uses self.lora_dir. Defaults to None.
+        
+        Returns:
+        - str: Path to the directory where the merged adapter was saved.
+        
+        Raises:
+        - ValueError: If lora_dir is not provided and self.lora_dir is not set.
+        """
         if lora_dir is not None:
             self.lora_dir = lora_dir
         elif self.lora_dir is None:
@@ -396,7 +646,30 @@ class PeftTrainer:
         return self.merged_adapter_dir
         
     def quantize_merged_adapter( self, merged_adapter_dir=None ):
+        """
+        Quantizes the merged model to reduce its size and memory footprint.
         
+        Preconditions:
+        - If merged_adapter_dir is provided, it must be a valid path to a saved merged model.
+        - If merged_adapter_dir is not provided, self.merged_adapter_dir must be set to a valid path.
+        - The Quantizer class must be properly implemented to handle the model quantization.
+        
+        Postconditions:
+        - The merged model is quantized using the Quantizer.
+        - The quantized model is saved to disk.
+        - self.quantized_model_dir is updated with the path to the quantized model.
+        - The path to the quantized model is returned.
+        
+        Parameters:
+        - merged_adapter_dir (str, optional): Path to the merged adapter directory. 
+          If None, uses self.merged_adapter_dir. Defaults to None.
+        
+        Returns:
+        - str: Path to the directory containing the quantized model.
+        
+        Raises:
+        - ValueError: If merged_adapter_dir is not provided and self.merged_adapter_dir is not set.
+        """
         # sanity check
         if merged_adapter_dir is not None:
             self.merged_adapter_dir = merged_adapter_dir
@@ -411,7 +684,30 @@ class PeftTrainer:
         return self.quantized_model_dir
     
     def _load_model_and_tokenizer( self, backend="cuda", device_map="auto", mode=None ):
+        """
+        Loads the model and tokenizer for either training or inference.
         
+        Preconditions:
+        - The HF_HOME environment variable must be set.
+        - The model_hf_id must be valid and the model must be available locally 
+          (in the cache directory specified by HF_HOME).
+        - The mode parameter must be either "training" or "inference".
+        
+        Postconditions:
+        - The model is loaded with appropriate settings for the specified mode.
+        - The tokenizer is loaded and configured properly for the model type and mode.
+        - If the model and tokenizer were already loaded, this method does nothing.
+        - The working directory remains unchanged, even though it temporarily changes during execution.
+        
+        Parameters:
+        - backend (str, optional): Backend to use for model loading. Defaults to "cuda".
+        - device_map (str or dict, optional): Device mapping strategy for the model. Defaults to "auto".
+        - mode (str, required): Mode of operation, must be either "training" or "inference".
+        
+        Raises:
+        - ValueError: If HF_HOME is not set in the environment variables.
+        - ValueError: If mode is not specified or not one of "training" or "inference".
+        """
         # Quick sanity checks
         if "HF_HOME" not in os.environ:
             raise ValueError( "Environment variable HF_HOME must be set, try calling trainer.set_hf_env_vars() first?" )
@@ -495,7 +791,25 @@ class PeftTrainer:
             # print( f"New working directory: {os.getcwd()}" )
         
     def _get_peft_config( self ):
+        """
+        Creates a PEFT configuration tailored to the specific model being fine-tuned.
         
+        Preconditions:
+        - self.model_name must be one of the supported model names.
+        
+        Postconditions:
+        - A LoraConfig object is returned with parameters appropriate for the model.
+        
+        Returns:
+        - LoraConfig: Configuration object for PEFT (Parameter-Efficient Fine-Tuning).
+        
+        Notes:
+        - The rank parameter 'r' is adjusted based on the model:
+          - Mistral-7B-Instruct-v0.2: r=4
+          - Ministral-8B-Instruct-2410: r=32 (a higher value to address low trainable parameter %)
+          - Llama-3.2-3B-Instruct and Phi-4-mini-instruct: r=64
+        - Target modules include key architectural components for all supported models.
+        """
         if self.model_name == "Mistral-7B-Instruct-v0.2":
             r = 4
         elif self.model_name == "Ministral-8B-Instruct-2410":
@@ -516,6 +830,32 @@ class PeftTrainer:
         )
     
     def _get_training_args( self, output_dir="./results", batch_size=8, gradient_accumulation_steps=1, logging_steps=0.05, eval_steps=0.5 ):
+        """
+        Creates a configuration object with training arguments for the SFT trainer.
+        
+        Preconditions:
+        - output_dir must be a valid directory path.
+        - batch_size, gradient_accumulation_steps, logging_steps, and eval_steps must be valid values.
+        
+        Postconditions:
+        - An SFTConfig object is returned with appropriate training parameters.
+        - The output directory is created with a timestamped name.
+        
+        Parameters:
+        - output_dir (str, optional): Base directory for training outputs. Defaults to "./results".
+        - batch_size (int, optional): Batch size for training and evaluation. Defaults to 8.
+        - gradient_accumulation_steps (int, optional): Number of steps to accumulate gradients. Defaults to 1.
+        - logging_steps (float, optional): Fraction of total steps at which to log progress. Defaults to 0.05.
+        - eval_steps (float, optional): Fraction of total steps at which to evaluate the model. Defaults to 0.5.
+        
+        Returns:
+        - SFTConfig: Configuration object for Supervised Fine-Tuning.
+        
+        Notes:
+        - Precision is automatically set to bf16 if supported, otherwise fp16.
+        - Gradient checkpointing is disabled for speed (reduces memory by 40% but is 2x slower).
+        - The max sequence length is model-specific, determined by _get_max_seq_length().
+        """
         return SFTConfig(
             # set logging dir
             # output_dir=f"{output_dir}/peft-output-{du.get_current_date()}-at-{du.get_current_time( format='%H-%M', include_timezone=False )}",
@@ -545,7 +885,23 @@ class PeftTrainer:
         )
     
     def _get_max_seq_length( self ):
+        """
+        Determines the maximum sequence length for training based on the model.
         
+        Preconditions:
+        - self.model_name must be one of the supported model names.
+        
+        Postconditions:
+        - Returns an appropriate maximum sequence length for the specific model type.
+        
+        Returns:
+        - int: The maximum sequence length to use for training:
+          - 779 for Mistral-7B-Instruct-v0.2
+          - 683 for Ministral-8B-Instruct-2410, Llama-3.2-3B-Instruct, and Phi-4-mini-instruct
+        
+        Raises:
+        - ValueError: If self.model_name is not one of the supported models (via _validate_model_name).
+        """
         if self.model_name == "Mistral-7B-Instruct-v0.2":
             return 779
         elif self.model_name in [ "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct" ]:
@@ -554,7 +910,28 @@ class PeftTrainer:
             self._validate_model_name()
         
     def _get_test_train_data( self, sample_size=1.0 ):
+        """
+        Loads and prepares the training and testing datasets.
         
+        Preconditions:
+        - self.model_name must be one of the supported model names.
+        - self.test_train_dir must be a valid directory containing the required dataset files.
+        - The dataset files must be in JSONL format.
+        
+        Postconditions:
+        - Training and testing datasets are loaded and prepared for fine-tuning.
+        - If sample_size < 1.0, only a fraction of the data is used.
+        - Data is formatted according to the model requirements.
+        
+        Parameters:
+        - sample_size (float, optional): Fraction of the data to use (1.0 = all data). Defaults to 1.0.
+        
+        Returns:
+        - dict: Dictionary containing 'train' and 'test' datasets, each as a Dataset object.
+        
+        Raises:
+        - ValueError: If self.model_name is not one of the supported models (via _validate_model_name).
+        """
         if self.model_name in [ "Mistral-7B-Instruct-v0.2", "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct" ]:
             extract_gpt_message = False
         else:
@@ -569,7 +946,29 @@ class PeftTrainer:
         return { 'train': train_dataset, 'test': test_dataset }
     
     def _get_dataset( self, path, sample_size=1.0, extract_gpt_message=False ):
+        """
+        Loads and processes a dataset from a JSONL file.
         
+        Preconditions:
+        - path must be a valid file path to a JSONL file.
+        - sample_size must be a float between 0.0 and 1.0.
+        - If extract_gpt_message is True, each JSON object must have a "gpt_message" field.
+        
+        Postconditions:
+        - The data is loaded from the file and parsed from JSON.
+        - If sample_size < 1.0, only the specified fraction of data is used.
+        - If extract_gpt_message is True, only the "gpt_message" field is extracted from each JSON object.
+        - A Dataset object is returned containing the processed data.
+        
+        Parameters:
+        - path (str): Path to the JSONL dataset file.
+        - sample_size (float, optional): Fraction of the data to use (1.0 = all data). Defaults to 1.0.
+        - extract_gpt_message (bool, optional): If True, extract only the "gpt_message" field from each JSON object. 
+                                               Defaults to False.
+        
+        Returns:
+        - Dataset: Hugging Face Dataset object containing the processed data.
+        """
         rows = du.get_file_as_list( path )
         # retain a sample of the data set expressed as a percentage
         row_count = len( rows )
@@ -585,15 +984,32 @@ class PeftTrainer:
         return Dataset.from_list( rows )
         
     def _format_prompt( self, row ):
+        """
+        Formats a training example into a prompt suitable for the specific model.
         
-        # du.print_banner( f"row type: [{type( rows )}]" )
-        # print( f"Rows length: {len( rows )}" )
-        # pretty print with JSON formatting
-        # print( json.dumps( rows, indent=4 ) )
-        # print( "Rows:", ro )
+        Preconditions:
+        - row must be a dictionary-like object containing "instruction", "input", and "output" keys.
+        - self.model_name must be one of the supported model names.
         
-        # prompts = []
+        Postconditions:
+        - A formatted prompt string is returned in the appropriate format for the model type.
         
+        Parameters:
+        - row (dict): A dictionary containing "instruction", "input", and "output" fields.
+        
+        Returns:
+        - str: A formatted prompt string suitable for the specified model type.
+        
+        Raises:
+        - ValueError: If self.model_name is not one of the supported models (via _validate_model_name).
+        - KeyError: If row is missing any of the required fields.
+        
+        Notes:
+        - Different models require different prompt formats:
+          - Mistral-7B-Instruct-v0.2 uses a structured format with sections.
+          - Ministral-8B-Instruct-2410, Llama-3.2-3B-Instruct, and Phi-4-mini-instruct 
+            use the [INST]...[/INST] format.
+        """
         if self.model_name == "Mistral-7B-Instruct-v0.2":
             prompt = f"""### Instruction:
             Use the Task below and the Input given to write a Response that can solve the following Task:
@@ -608,12 +1024,6 @@ class PeftTrainer:
             {row[ "output" ]}
             """
         elif self.model_name in [ "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct" ]:
-
-            # du.print_banner( "Formatting prompt..." )
-            # print( "Instruction:", rows[ "instruction" ])
-            # print( "      Input:", rows[ "input" ] )
-            # print( "     Output:", rows[ "output" ] )
-
             prompt = f"""<s>[INST]{row[ "instruction" ]}
 
             {row[ "input" ]}
@@ -622,47 +1032,37 @@ class PeftTrainer:
             </s>"""
         else:
             self._validate_model_name()
-
-        # prompts.append( prompt )
-        
-        # for i in range( len( rows[ "instruction" ] ) ):
-        #
-        #     if self.model_name == "Mistral-7B-Instruct-v0.2":
-        #         prompt = f"""### Instruction:
-        #         Use the Task below and the Input given to write a Response that can solve the following Task:
-        #
-        #         ### Task:
-        #         {rows[ "instruction" ][ i ]}
-        #
-        #         ### Input:
-        #         {rows[ "input" ][ i ]}
-        #
-        #         ### Response:
-        #         {rows[ "output" ][ i ]}
-        #         """
-        #     elif self.model_name in [ "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct" ]:
-        #
-        #         du.print_banner( f"[{i}] Formatting prompt..." )
-        #         print( rows[ "instruction" ][ i ] )
-        #         print( rows[ "input" ][ i ] )
-        #         # print( rows[ "output" ][ i ] )
-        #
-        #         prompt = f"""<s>[INST]{rows[ "instruction" ][ i ]}
-        #
-        #         {rows[ "input" ][ i ]}
-        #         [/INST]
-        #         {rows[ "output" ][ i ]}
-        #         </s>"""
-        #     else:
-        #         raise ValueError( f"Unsupported completion_type: '{self.model_name}', MUST be {self.supported_model_names} for now" )
-        #
-        #     prompts.append( prompt )
             
-        # return prompts
         return prompt
     
     def get_prompt( self, instruction, input, output="" ):
+        """
+        Formats a prompt for a given model based on instruction, input, and optional output.
         
+        Preconditions:
+        - instruction and input must be valid strings.
+        - self.model_name must be one of the supported model names.
+        
+        Postconditions:
+        - A formatted prompt string is returned in the appropriate format for the model type.
+        - If output is empty, the prompt is formatted for inference (generation).
+        - If output is provided, the prompt is formatted for training.
+        
+        Parameters:
+        - instruction (str): The instruction or task description.
+        - input (str): The input data for the task.
+        - output (str, optional): The expected output or response. Defaults to "".
+        
+        Returns:
+        - str: A formatted prompt string suitable for the specified model type.
+        
+        Raises:
+        - ValueError: If self.model_name is not one of the supported models (via _validate_model_name).
+        
+        Notes:
+        - For Ministral-8B-Instruct-2410, Llama-3.2-3B-Instruct, and Phi-4-mini-instruct models, 
+          the closing </s> tag is only included if output is provided.
+        """
         if self.model_name == "Mistral-7B-Instruct-v0.2":
             return f"""### Instruction:
             Use the Task below and the Input given to write a Response that can solve the following Task:
@@ -695,6 +1095,18 @@ class PeftTrainer:
     def _print_trainable_parameters( self ):
         """
         Prints the number of trainable parameters in the model.
+        
+        Preconditions:
+        - self.model must be initialized and loaded.
+        - The model must have named parameters that can be iterated over.
+        
+        Postconditions:
+        - The count of trainable parameters, total parameters, and their ratio is printed to the console.
+        
+        Notes:
+        - This is useful for verifying that parameter-efficient fine-tuning is correctly set up, 
+          as only a small percentage of parameters should be trainable in PEFT methods.
+        - No return value, the results are printed directly to the console.
         """
         trainable_params = 0
         all_param = 0
@@ -707,7 +1119,22 @@ class PeftTrainer:
         )
 
     def _print_stats_pre( self ):
+        """
+        Captures and prints GPU memory statistics before training.
         
+        Preconditions:
+        - CUDA must be available.
+        - The GPU must be accessible through torch.cuda.
+        
+        Postconditions:
+        - GPU device information and memory usage is captured and printed.
+        - self.start_gpu_memory is set to the current reserved memory (used as baseline).
+        - self.max_memory is set to the total available GPU memory.
+        
+        Notes:
+        - This method is called before training to establish baseline memory usage.
+        - Memory values are converted to GB and rounded to 3 decimal places.
+        """
         gpu_stats = torch.cuda.get_device_properties( 0 )
         self.start_gpu_memory = round( torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3 )
         self.max_memory = round( gpu_stats.total_memory / 1024 / 1024 / 1024, 3 )
@@ -715,27 +1142,58 @@ class PeftTrainer:
         print( f"{self.start_gpu_memory} GB of memory reserved." )
         
     def _print_stats_post( self ):
+        """
+        Captures and prints GPU memory statistics after training.
         
+        Preconditions:
+        - CUDA must be available.
+        - The GPU must be accessible through torch.cuda.
+        - _print_stats_pre must have been called before this method.
+        - self.start_gpu_memory and self.max_memory must be initialized.
+        
+        Postconditions:
+        - GPU memory usage statistics are calculated and printed.
+        - Peak memory usage and memory usage specifically for training are displayed.
+        - Memory usage is shown both in absolute values (GB) and as percentages of total memory.
+        
+        Notes:
+        - This method is called after training to measure peak memory usage.
+        - Training-specific memory usage is calculated as the difference from the baseline.
+        - Memory values are converted to GB and rounded to 3 decimal places.
+        """
         used_memory = round( torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3 )
         used_memory_for_trainer = round( used_memory - self.start_gpu_memory, 3 )
         used_percentage = round( used_memory / self.max_memory * 100, 3 )
         trainer_percentage = round( used_memory_for_trainer / self.max_memory * 100, 3 )
-        # print( f"{self.trainer.metrics[ 'train_runtime' ]} seconds used for training." )
-        # print( f"{round( self.trainer.metrics[ 'train_runtime' ] / 60, 2 )} minutes used for training." )
         print( f"Peak reserved memory = {used_memory} GB." )
         print( f"Peak reserved memory for training = {used_memory_for_trainer} GB." )
         print( f"Peak reserved memory % of max memory = {used_percentage} %." )
         print( f"Peak reserved memory for training % of max memory = {trainer_percentage} %." )
        
-        # error thrown when referencing metrics field:
-        # File "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa/training/peft_trainer.py", line 171, in _print_stats_post
-        # print( f"{self.trainer.metrics[ 'train_runtime' ]} seconds used for training." )
-        #           ^^^^^^^^^^^^^^^^^^^^
+        # Note: Attempted to access self.trainer.metrics but SFTTrainer has no metrics attribute
         # AttributeError: 'SFTTrainer' object has no attribute 'metrics'
     
     def set_hf_env_vars( self, hf_home="/var/model/models", hf_hub_etag_timeout="60", hf_hub_download_timeout="60" ):
         """
-        Set environment variables for the Hugging Face model hub.
+        Sets environment variables for the Hugging Face model hub.
+        
+        Preconditions:
+        - None specific, this method can be called at any time.
+        
+        Postconditions:
+        - The HF_HOME, HF_HUB_ETAG_TIMEOUT, and HF_HUB_DOWNLOAD_TIMEOUT environment variables 
+          are set to the specified values.
+        - The environment variable values are printed to the console.
+        
+        Parameters:
+        - hf_home (str, optional): Path to the Hugging Face cache directory. Defaults to "/var/model/models".
+        - hf_hub_etag_timeout (str, optional): Timeout in seconds for etag requests. Defaults to "60".
+        - hf_hub_download_timeout (str, optional): Timeout in seconds for downloads. Defaults to "60".
+        
+        Notes:
+        - Setting HF_HOME is critical for proper functioning of model loading and caching.
+        - The timeouts help prevent hanging if there are network issues during model downloads.
+        - These environment variables are used by the Hugging Face Transformers library.
         """
         os.environ[ "HF_HOME"                 ] = hf_home
         os.environ[ "HF_HUB_ETAG_TIMEOUT"     ] = hf_hub_etag_timeout
@@ -748,7 +1206,24 @@ class PeftTrainer:
     
     def set_gib_env_vars( self, wandb_disable_service="True", gib_root="/var/model/genie-in-the-box" ):
         """
-        Set environment variables for the Genie in the Box model.
+        Sets environment variables for the Genie in the Box application.
+        
+        Preconditions:
+        - None specific, this method can be called at any time.
+        
+        Postconditions:
+        - The GENIE_IN_THE_BOX_ROOT, GIB_CONFIG_MGR_CLI_ARGS, and WANDB_DISABLE_SERVICE 
+          environment variables are set to the specified values.
+        
+        Parameters:
+        - wandb_disable_service (str, optional): Whether to disable Weights & Biases logging service. 
+                                                Defaults to "True".
+        - gib_root (str, optional): Root directory of the Genie in the Box application. 
+                                   Defaults to "/var/model/genie-in-the-box".
+        
+        Notes:
+        - GIB_CONFIG_MGR_CLI_ARGS contains configuration paths for the application.
+        - Setting WANDB_DISABLE_SERVICE to "True" prevents Weights & Biases from attempting to log training data.
         """
         os.environ[ "GENIE_IN_THE_BOX_ROOT"   ] = gib_root
         os.environ[ "GIB_CONFIG_MGR_CLI_ARGS" ] = "config_path=/src/conf/gib-app.ini splainer_path=/src/conf/gib-app-splainer.ini config_block_id=Genie+in+the+Box:+Development"
@@ -756,9 +1231,36 @@ class PeftTrainer:
     
 
 class MyKludgySFTTrainer( SFTTrainer ):
+    """
+    A custom extension of the SFTTrainer class that handles tokenizer padding side switching.
+    
+    This class overrides the evaluation_loop method to ensure proper padding side configuration
+    during evaluation and training phases. It temporarily switches padding_side to 'left' for
+    evaluation and then back to 'right' for training.
+    
+    Attributes:
+        Inherits all attributes from SFTTrainer.
+    """
 
-    # overwriting the evaluation loop suggested here: https://chatgpt.com/share/67983b91-a950-8006-97c4-dfeb2d02b3ea
     def evaluation_loop( self, *args, **kwargs ):
+        """
+        Overrides the evaluation_loop method to handle tokenizer padding_side switching.
+        
+        Preconditions:
+        - self.tokenizer must be initialized and have a padding_side attribute.
+        
+        Postconditions:
+        - Tokenizer padding_side is set to 'left' during evaluation.
+        - Tokenizer padding_side is restored to 'right' after evaluation completes.
+        - The result from the parent class evaluation_loop is returned.
+        
+        Parameters:
+        - *args: Positional arguments to pass to the parent class's evaluation_loop method.
+        - **kwargs: Keyword arguments to pass to the parent class's evaluation_loop method.
+        
+        Returns:
+        - The result returned by the parent class's evaluation_loop method.
+        """
         # Set padding_side to 'left' for evaluation
         self.tokenizer.padding_side = 'left'
         result = super().evaluation_loop( *args, **kwargs )
@@ -768,10 +1270,27 @@ class MyKludgySFTTrainer( SFTTrainer ):
     
 def check_env():
     """
-    Verify that required environment variables are set.
-    Returns the GENIE_IN_THE_BOX_ROOT value if all checks pass.
-    """
+    Verifies that required environment variables are set for proper application functioning.
     
+    Preconditions:
+    - None, this function checks the environment variables itself.
+    
+    Postconditions:
+    - If all required environment variables are set, the GENIE_IN_THE_BOX_ROOT path is returned.
+    - If any required variables are missing, the function prints an error message and exits the program.
+    
+    Required Environment Variables:
+    - NCCL_P2P_DISABLE: Should be set to "1" to disable peer-to-peer CUDA operations.
+    - NCCL_IB_DISABLE: Should be set to "1" to disable InfiniBand communications.
+    - GENIE_IN_THE_BOX_ROOT: Should point to the root directory of the application.
+    - GIB_CONFIG_MGR_CLI_ARGS: Should contain configuration arguments for the application.
+    
+    Returns:
+    - str: The value of GENIE_IN_THE_BOX_ROOT if all checks pass.
+    
+    Raises:
+    - SystemExit: If any required environment variables are missing.
+    """
     required_vars = [
         "NCCL_P2P_DISABLE", "1"
         "NCCL_IB_DISABLE", "1"
@@ -794,8 +1313,26 @@ def check_env():
     
 def parse_arguments():
     """
-    Parse command line arguments using argparse.
-    Returns an argparse Namespace object with the parsed arguments.
+    Parses command line arguments for the PEFT trainer application.
+    
+    Preconditions:
+    - The script must be run with proper command line arguments.
+    
+    Postconditions:
+    - Returns a Namespace object containing the parsed arguments.
+    
+    Required Arguments:
+    - model: The Hugging Face model ID.
+    - model_name: The name of the model (must be a supported model).
+    - test_train_path: Path to the directory containing test/train data.
+    - lora_dir: Directory for storing LoRA adapter files.
+    
+    Optional Arguments:
+    - --debug: Flag to enable debug mode.
+    - --verbose: Flag to enable verbose mode.
+    
+    Returns:
+    - argparse.Namespace: Object containing the parsed command line arguments.
     """
     import argparse
     
@@ -814,7 +1351,25 @@ def parse_arguments():
 def validate_model_name_arg(model_name):
     """
     Validates that a given model name is in the list of supported models.
-    Raises an exception if the model name is not supported.
+    
+    Preconditions:
+    - model_name must be a string.
+    
+    Postconditions:
+    - If model_name is valid, the function completes without error.
+    - If model_name is not valid, a ValueError is raised.
+    
+    Parameters:
+    - model_name (str): The model name to validate.
+    
+    Raises:
+    - ValueError: If model_name is not one of the supported models.
+    
+    Supported Models:
+    - "Mistral-7B-Instruct-v0.2"
+    - "Ministral-8B-Instruct-2410"
+    - "Llama-3.2-3B-Instruct"
+    - "Phi-4-mini-instruct"
     """
     supported_model_names = ["Mistral-7B-Instruct-v0.2", "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct"]
     if model_name not in supported_model_names:
