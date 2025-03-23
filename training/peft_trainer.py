@@ -72,6 +72,27 @@ class PeftTrainer:
         
         # models supported by this trainer
         self.supported_model_names   = [ "Mistral-7B-Instruct-v0.2", "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct" ]
+        
+        # Validate the model name
+        self._validate_model_name()
+    
+    def _validate_model_name( self ):
+        """
+        Validates the model name against a list of supported model names.
+    
+        Precondition:
+        - `self.model_name` is a string representing the name of the model to be validated.
+        - `self.supported_model_names` is a list of strings containing the names of supported models.
+    
+        Postcondition:
+        - If `self.model_name` is in `self.supported_model_names`, the method completes without error.
+        - If `self.model_name` is not in `self.supported_model_names`, a ValueError is raised with a message indicating the unsupported model name and listing the supported model names.
+    
+        Raises:
+        - ValueError: If `self.model_name` is not in `self.supported_model_names`.
+        """
+        if self.model_name not in self.supported_model_names:
+            raise ValueError( f"Unsupported model_name: '{self.model_name}'. Must be one of: {', '.join( self.supported_model_names )}" )
     
     def login_to_hf( self ):
         
@@ -454,9 +475,7 @@ class PeftTrainer:
                 self.tokenizer.padding_side = 'left'
             
             else:
-                raise ValueError(
-                    f"Unsupported model_name: '{self.model_name}', MUST be {self.supported_model_names} for now"
-                )
+                self._validate_model_name()
             
             if mode == "training":
                 print( "Setting padding side to 'right' for training" )
@@ -485,7 +504,7 @@ class PeftTrainer:
         elif self.model_name in [ "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct" ]:
             r = 64
         else:
-            raise ValueError( f"Unsupported completion type: '{self.model_name}', MUST be {self.supported_model_names} for now" )
+            self._validate_model_name()
         
         return LoraConfig(
             lora_alpha=16,
@@ -532,14 +551,14 @@ class PeftTrainer:
         elif self.model_name in [ "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct" ]:
             return 683
         else:
-            raise ValueError( f"Unsupported completion type: '{self.model_name}', MUST be {self.supported_model_names} for now" )
+            self._validate_model_name()
         
     def _get_test_train_data( self, sample_size=1.0 ):
         
         if self.model_name in [ "Mistral-7B-Instruct-v0.2", "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct" ]:
             extract_gpt_message = False
         else:
-            raise ValueError( f"Unsupported completion type: '{self.model_name}', MUST be {self.supported_model_names} for now" )
+            self._validate_model_name()
         
         path = f"/{self.test_train_dir}/voice-commands-xml-train.jsonl"
         train_dataset = self._get_dataset( path, sample_size=sample_size, extract_gpt_message=extract_gpt_message )
@@ -602,7 +621,7 @@ class PeftTrainer:
             {row[ "output" ]}
             </s>"""
         else:
-            raise ValueError( f"Unsupported completion_type: '{self.model_name}', MUST be {self.supported_model_names} for now" )
+            self._validate_model_name()
 
         # prompts.append( prompt )
         
@@ -671,7 +690,7 @@ class PeftTrainer:
             {output}
             {last_tag}"""
         else:
-            raise ValueError( f"Unsupported completion_type: '{self.model_name}', MUST be {self.supported_model_names} for now" )
+            self._validate_model_name()
     
     def _print_trainable_parameters( self ):
         """
@@ -791,6 +810,15 @@ def parse_arguments():
     parser.add_argument( "--verbose", action="store_true", help="Enable verbose mode" )
     
     return parser.parse_args()
+
+def validate_model_name_arg(model_name):
+    """
+    Validates that a given model name is in the list of supported models.
+    Raises an exception if the model name is not supported.
+    """
+    supported_model_names = ["Mistral-7B-Instruct-v0.2", "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct"]
+    if model_name not in supported_model_names:
+        raise ValueError(f"Unsupported model_name: '{model_name}'. Must be one of: {', '.join(supported_model_names)}")
     
 # def suss_out_dataset():
 #
