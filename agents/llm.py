@@ -30,8 +30,9 @@ class Llm:
     # DEEPILY_MINISTRAL_8B_2410 = "Deepily//mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410-autoround-4-bits-sym.gptq/2025-01-24-at-20-48"
     # DEEPILY_MINISTRAL_8B_2410 = "Deepily//mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-08-at-16-16"
     # DEEPILY_MINISTRAL_8B_2410 = "Deepily//mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-08-at-16-16/autoround-4-bits-sym.gptq/2025-02-08-at-18-34"
-    DEEPILY_MINISTRAL_8B_2410 = "Deepily//mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-08-at-16-16/autoround-4-bits-sym.gptq/2025-02-11-at-21-12"
+    # DEEPILY_MINISTRAL_8B_2410 = "Deepily//mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-08-at-16-16/autoround-4-bits-sym.gptq/2025-02-11-at-21-12"
     # DEEPILY_MINISTRAL_8B_2410 = "Deepily//data/merged-on-2025-02-08-at-16-16"
+    DEEPILY_MINISTRAL_8B_2410 = "Deepily//mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-4-bits-sym.gptq/2025-02-12-at-02-27"
     
     DEEPILY_PREFIX      = "Deepily"
     
