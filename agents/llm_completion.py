@@ -19,7 +19,7 @@ def get_completion(
     data = {
         "model": model,
         "prompt": prompt,
-        "max_tokens": 32,
+        "max_tokens": 64,
         "temperature": 0.25,
     }
     timer = Stopwatch( msg="Requesting completion..." )
@@ -39,7 +39,8 @@ if __name__ == "__main__":
     # url = "http://192.168.1.21:3000/v1/completions"
     
     prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/vox-command-template-completion-mistral-8b.txt" )
-    voice_command = "I want you to open a new tab and do a Google scholar search on agentic behaviors"
+    # voice_command = "I want you to open a new tab and do a Google scholar search on agentic behaviors"
+    voice_command = "ask perplexity for best homemade corn tortilla recipes"
     prompt = prompt_template.format( voice_command=voice_command )
     print( prompt )
     
