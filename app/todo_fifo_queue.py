@@ -40,9 +40,9 @@ class TodoFifoQueue( FifoQueue ):
         self.auto_debug   = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
         self.inject_bugs  = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
         
-        # Set by set_llm() below
-        self.cmd_llm_in_memory = None
-        self.cmd_llm_tokenizer = None
+        # # Set by set_llm() below
+        # self.cmd_llm_in_memory = None
+        # self.cmd_llm_tokenizer = None
         
         # Salutations to be stripped by a brute force method until the router parses them off for us
         self.salutations = [ "computer", "little", "buddy", "pal", "ai", "jarvis", "alexa", "siri", "hal", "einstein",
@@ -58,10 +58,10 @@ class TodoFifoQueue( FifoQueue ):
             "let me think about that...", "let me think about it...", "let me check...", "checking..."
         ]
         
-    def set_llm( self, cmd_llm_in_memory, cmd_llm_tokenizer ):
-        
-        self.cmd_llm_in_memory = cmd_llm_in_memory
-        self.cmd_llm_tokenizer = cmd_llm_tokenizer
+    # def set_llm( self, cmd_llm_in_memory, cmd_llm_tokenizer ):
+    #
+    #     self.cmd_llm_in_memory = cmd_llm_in_memory
+    #     self.cmd_llm_tokenizer = cmd_llm_tokenizer
     
     def parse_salutations( self, transcription ):
         """
@@ -324,14 +324,20 @@ class TodoFifoQueue( FifoQueue ):
     def _get_routing_command( self, question ):
         
         router_prompt_template = du.get_file_as_string( du.get_project_root() + self.config_mgr.get( "agent_router_prompt_path_wo_root" ) )
+        # response = llm_client.query_llm_in_memory(
+        #     self.cmd_llm_in_memory,
+        #     self.cmd_llm_tokenizer,
+        #     router_prompt_template.format( voice_command=question ),
+        #     model_name=self.config_mgr.get( "vox_command_llm_name" ),
+        #     device=self.config_mgr.get( "vox_command_llm_device_map", default="cuda:0" )
+        # )
+        prompt        = router_prompt_template.format( voice_command=question ),
+        model         = self.config_mgr.get( "router_and_vox_command_model" )
+        url           = self.config_mgr.get( "router_and_vox_command_url" )
+        is_completion = self.config_mgr.get( "router_and_vox_command_is_completion", return_type="boolean", default=False )
         
-        response = llm_client.query_llm_in_memory(
-            self.cmd_llm_in_memory,
-            self.cmd_llm_tokenizer,
-            router_prompt_template.format( voice_command=question ),
-            model_name=self.config_mgr.get( "vox_command_llm_name" ),
-            device=self.config_mgr.get( "vox_command_llm_device_map", default="cuda:0" )
-        )
+        llm      = Llm( model=model, default_url=url, is_completion=is_completion, debug=self.debug, verbose=self.verbose )
+        response = llm.query_llm( prompt=prompt )
         print( f"LLM response: [{response}]" )
         # Parse results
         command = dux.get_value_by_xml_tag_name( response, "command" )
