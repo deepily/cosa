@@ -490,7 +490,7 @@ if __name__ == "__main__":
     # prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/vox-command-template.txt" )
     template_path = du.get_project_root() + config_mgr.get( "router_and_vox_command_prompt_path_wo_root" )
     
-    prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/vox-command-template-completion-mistral-8b.txt" )
+    # prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/vox-command-template-completion-mistral-8b.txt" )
     prompt_template = du.get_file_as_string( template_path )
     
     # utterance = "Yes, I think I can do that."
