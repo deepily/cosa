@@ -58,7 +58,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.do_not_serialize      = { "df", "config_mgr", "two_word_id", "execution_state" }
         
         # ¡OJO! This one server a key may need to become more diversified in the future
-        self.default_url           = self.config_mgr.get( "tgi_server_codegen_url", default=None )
+        # self.default_url           = self.config_mgr.get( "deepily_inference_chat_url", default=None )
         
         self.prompt_template_paths = self._get_prompt_template_paths()
         self.models                = self._get_models()
@@ -171,7 +171,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         
         if model_name is not None: self.model_name = model_name
         
-        llm = Llm( config_mgr=self.config_mgr, model=self.model_name, default_url=self.default_url, debug=self.debug, verbose=self.verbose )
+        llm = Llm( config_mgr=self.config_mgr, model=self.model_name, debug=self.debug, verbose=self.verbose )
         response = llm.query_llm( prompt=self.prompt, temperature=temperature, top_p=top_p, top_k=top_k, max_new_tokens=max_new_tokens, stop_sequences=stop_sequences, debug=self.debug, verbose=self.verbose )
         
         # Parse XML-esque response

@@ -97,7 +97,7 @@ if __name__ == "__main__":
             prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agents/plain-vanilla-question.txt" )
             prompt = prompt_template.format( question=question )
             model = Llm.GOOGLE_GEMINI_PRO
-            llm = Llm( model=model, debug=debug, verbose=verbose, default_url="WTF?!?" )
+            llm = Llm( model=model, debug=debug, verbose=verbose )
             results = llm.query_llm( prompt=prompt )
             answer = dux.get_value_by_xml_tag_name( results, "answer" ).strip()
 

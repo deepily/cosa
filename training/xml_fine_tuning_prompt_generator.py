@@ -1064,7 +1064,7 @@ class XmlFineTuningPromptGenerator:
         
         # du.print_banner( "DEEPILY Request", prepend_nl=True )
         # print( prompt )
-        llm = Llm( model=model, default_url="http://192.168.1.21:3000/v1", debug=debug, verbose=verbose )
+        llm = Llm( model=model, debug=debug, verbose=verbose )
         results = llm.query_llm( prompt=prompt, temperature=0.0, top_k=50, top_p=1.0 )
         # du.print_banner( "DEEPILY Response", prepend_nl=True )
         # print( results )

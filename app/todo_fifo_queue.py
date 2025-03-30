@@ -95,7 +95,7 @@ class TodoFifoQueue( FifoQueue ):
         prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agents/gist.txt" )
         prompt = prompt_template.format( question=question )
         # ¡OJO! LLM should be runtime configurable
-        llm = Llm( model=Llm.GROQ_LLAMA3_70B, debug=self.debug, verbose=self.verbose, default_url="¡OJO! We shouldn't have to set this value here" )
+        llm = Llm( model=Llm.GROQ_LLAMA3_70B, debug=self.debug, verbose=self.verbose )
         results = llm.query_llm( prompt=prompt )
         gist = dux.get_value_by_xml_tag_name( results, "gist", default_value="" ).strip()
         
@@ -114,8 +114,8 @@ class TodoFifoQueue( FifoQueue ):
             # emit_audio( msg )
             du.print_banner( msg )
             # TODO: make LLM runtime configurable
-            default_url = "¡OJO! We shouldn't have to set this value here!"
-            run_previous_best_snapshot = ConfirmationDialogue( model=Llm.GROQ_LLAMA3_1_70B, debug=self.debug, verbose=self.verbose, default_url=default_url ).confirmed( question )
+            # default_url = "¡OJO! We shouldn't have to set this value here!"
+            run_previous_best_snapshot = ConfirmationDialogue( model=Llm.GROQ_LLAMA3_1_70B, debug=self.debug, verbose=self.verbose ).confirmed( question )
             
         if run_previous_best_snapshot:
                 
@@ -324,19 +324,12 @@ class TodoFifoQueue( FifoQueue ):
     def _get_routing_command( self, question ):
         
         router_prompt_template = du.get_file_as_string( du.get_project_root() + self.config_mgr.get( "agent_router_prompt_path_wo_root" ) )
-        # response = llm_client.query_llm_in_memory(
-        #     self.cmd_llm_in_memory,
-        #     self.cmd_llm_tokenizer,
-        #     router_prompt_template.format( voice_command=question ),
-        #     model_name=self.config_mgr.get( "vox_command_llm_name" ),
-        #     device=self.config_mgr.get( "vox_command_llm_device_map", default="cuda:0" )
-        # )
+        
         prompt        = router_prompt_template.format( voice_command=question ),
         model         = self.config_mgr.get( "router_and_vox_command_model" )
-        url           = self.config_mgr.get( "router_and_vox_command_url" )
         is_completion = self.config_mgr.get( "router_and_vox_command_is_completion", return_type="boolean", default=False )
         
-        llm      = Llm( model=model, default_url=url, is_completion=is_completion, debug=self.debug, verbose=self.verbose )
+        llm      = Llm( model=model, is_completion=is_completion, debug=self.debug, verbose=self.verbose )
         response = llm.query_llm( prompt=prompt )
         print( f"LLM response: [{response}]" )
         # Parse results

@@ -5,9 +5,9 @@ import cosa.utils.util_xml as dux
 
 class ConfirmationDialogue( Llm ):
     
-    def __init__( self, model=Llm.GROQ_LLAMA3_70B, config_mgr=None, default_url=None, debug=False, verbose=False ):
+    def __init__( self, model=Llm.GROQ_LLAMA3_70B, config_mgr=None, debug=False, verbose=False ):
         
-        super().__init__( model=model, config_mgr=config_mgr, default_url=default_url, debug=debug, verbose=verbose )
+        super().__init__( model=model, config_mgr=config_mgr, debug=debug, verbose=verbose )
         
         self.model  = model
         self.prompt = None

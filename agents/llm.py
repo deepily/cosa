@@ -6,6 +6,7 @@ import openai
 from huggingface_hub            import InferenceClient
 from groq                       import Groq
 import google.generativeai      as genai
+from langchain.chains.qa_with_sources.stuff_prompt import template
 from openai import OpenAI
 
 from cosa.app.configuration_manager import ConfigurationManager
@@ -20,9 +21,9 @@ class Llm:
     
     GPT_4             = "OpenAI/gpt-4-turbo-2024-04-09"
     GPT_3_5           = "OpenAI/gpt-3.5-turbo-0125"
-    PHIND_34B_v2      = "TGI/Phind-CodeLlama-34B-v2"
-    QWEN_2_5_32B      = "kaitchup/Qwen2.5-Coder-32B-Instruct-AutoRound-GPTQ-4bit"
-    PHI_4_14B         = "kaitchup/Phi-4-AutoRound-GPTQ-4bit"
+    # PHIND_34B_v2      = "TGI/Phind-CodeLlama-34B-v2"
+    QWEN_2_5_32B      = "Deepily/kaitchup/Qwen2.5-Coder-32B-Instruct-AutoRound-GPTQ-4bit"
+    PHI_4_14B         = "Deepily/kaitchup/Phi-4-AutoRound-GPTQ-4bit"
     GROQ_MIXTRAL_8X78 = "Groq/mixtral-8x7b-32768"
     GROQ_LLAMA2_70B   = "Groq/llama2-70b-4096"
     GROQ_LLAMA3_70B   = "Groq/llama3-70b-8192"
@@ -30,9 +31,17 @@ class Llm:
     GROQ_LLAMA3_1_8B  = "Groq/llama-3.1-8b-instant"
     GOOGLE_GEMINI_PRO = "Google/gemini-1.5-pro-latest"
     
+    DEEPILY_PREFIX    = "Deepily"
     DEEPILY_MINISTRAL_8B_2410 = "Deepily//mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-4-bits-sym.gptq/2025-02-12-at-02-27"
     
-    DEEPILY_PREFIX      = "Deepily"
+    # TODO: these static dictionaries would be populated dynamically at runtime using the configuration manager
+    local_completions_dict = {
+        DEEPILY_MINISTRAL_8B_2410: "http://192.168.1.21:3000/v1/completions",
+                        PHI_4_14B: "http://192.168.1.21:3001/v1/completions"
+    }
+    local_chat_dict = {
+        # PHI_4_14B: "http://192.168.1.21:3001/v1/chat/completions"
+    }
     
     @staticmethod
     def extract_model_name( compound_name ):
@@ -47,6 +56,7 @@ class Llm:
     
     @staticmethod
     def get_model( mnt_point, prefix=DEEPILY_PREFIX ):
+        
         model = f"{prefix}/{mnt_point}"
         if "//" not in model:
             raise ValueError( f"ERROR: Model [{model}] not in 'prefix//mnt/point' format!" )
@@ -54,15 +64,32 @@ class Llm:
 
     def __init__( self, model=PHI_4_14B, config_mgr=None, default_url=None, is_completion=False, debug=False, verbose=False ):
         
+        # deprecation check for default URL
+        if default_url is not None:
+            msg = "DEPRECATED: 'default_url' will be removed in future versions!"
+            du.print_banner( msg=msg, expletive=True )
+            raise ValueError( msg )
+            
         self.timer          = None
         self.debug          = debug
         self.verbose        = verbose
         self.model          = model
-        # Get the TGI server URL for this context
-        self.tgi_server_url = du.get_tgi_server_url_for_this_context( default_url=default_url )
         self.config_mgr     = config_mgr
         self.is_completion  = is_completion
-
+        
+        self.local_inference_url = self._get_local_inference_url()
+        # self.local_inference_url = du.get_local_inference_url_for_this_context( default_url=default_url )
+    
+    def _get_local_inference_url( self ):
+        
+        # if self.debug: print( f"Using model {self.model} to select local inference URL" )
+        
+        if self.model in Llm.local_completions_dict:
+            return Llm.local_completions_dict[ self.model ]
+        elif self.model in Llm.local_chat_dict:
+            return Llm.local_chat_dict[ self.model ]
+        else:
+            return None
         
     def _start_timer( self, msg="Asking LLM [{model}]..." ):
         
@@ -100,20 +127,18 @@ class Llm:
         
         try:
             if self.debug: print( "Skipping sanity check for prompt and preamble..." )
-            # if prompt_yaml is None and preamble is None and question is None and prompt is None:
-            #     raise ValueError( "ERROR: Neither prompt_yaml, nor prompt, nor preamble, nor question has a value set!" )
             
             # Allow us to override the prompt, preamble, and question set when instantiated
             if model is not None: self.model = model
             
-            if self.model == Llm.PHIND_34B_v2:
-                
-                # Quick sanity check
-                if prompt is None: raise ValueError( "ERROR: Prompt is `None`!" )
-                return self._query_tgi_llm(
-                    prompt, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, debug=debug, verbose=verbose, stop_sequences=stop_sequences
-                )
-            
+            # if self.model == Llm.PHIND_34B_v2:
+            #
+            #     # Quick sanity check
+            #     if prompt is None: raise ValueError( "ERROR: Prompt is `None`!" )
+            #     return self._query_tgi_llm(
+            #         prompt, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, debug=debug, verbose=verbose, stop_sequences=stop_sequences
+            #     )
+            #
             elif self.model == Llm.GOOGLE_GEMINI_PRO:
                 
                 # Quick sanity check
@@ -125,9 +150,9 @@ class Llm:
             elif self.model.startswith( Llm.DEEPILY_PREFIX ):
                 
                 if not self.is_completion:
-                    return self._query_vllm_openai( prompt, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, stop_sequences=stop_sequences, debug=debug, verbose=verbose )
+                    return self._query_vllm_openai_chat( prompt, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, stop_sequences=stop_sequences, debug=debug, verbose=verbose )
                 else:
-                    return self._query_vllm_completion( prompt, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, stop_sequences=stop_sequences, debug=debug, verbose=verbose )
+                    return self._query_vllm_KLUDGE_completion( prompt, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, stop_sequences=stop_sequences, debug=debug, verbose=verbose )
             else:
                 # Test for divisibility if receiving an "all in one" non chatbot type prompt
                 if prompt is not None:
@@ -178,7 +203,7 @@ class Llm:
                 if self.model.startswith( "kaitchup/" ):
                     return self._query_my_local_vllm( preamble, question, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, stop_sequences=stop_sequences, debug=debug, verbose=verbose )
                 # elif self.model.startswith( "Deepily/" ):
-                #     return self._query_vllm_openai( preamble, question, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, stop_sequences=stop_sequences, debug=debug, verbose=verbose )
+                #     return self._query_vllm_openai_chat( preamble, question, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, stop_sequences=stop_sequences, debug=debug, verbose=verbose )
                 elif self.model.startswith( "OpenAI/" ):
                     return self._query_llm_openai( preamble, question, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, stop_sequences=stop_sequences, debug=debug, verbose=verbose )
                 elif self.model.startswith( "Groq/" ):
@@ -261,60 +286,22 @@ class Llm:
         
         return "".join( chunks ).strip()
     
-    def _query_vllm_completion(
+    def _query_vllm_KLUDGE_completion(
             # self, preamble, query, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.25, stop_sequences=[ "</response>" ],
             self, prompt, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.25, stop_sequences=[ "</response>" ],
             debug=False, verbose=False
     ):
-        return get_completion( prompt, url=self.tgi_server_url, model=self.extract_model_name( self.model ) )
+        print( f"COMPLETION self._query_vllm_KLUDGE_completion(...) called" )
+        return get_completion( prompt, url=self.local_inference_url, model=self.extract_model_name( self.model ) )
         
-    def _query_vllm_openai( 
+    def _query_vllm_openai_chat(
         # self, preamble, query, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.25, stop_sequences=[ "</response>" ],
         self, prompt, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.25, stop_sequences=[ "</response>" ],
         debug=False, verbose=False
     ):
-        
-        # du.print_banner( "Prompt:" )
-        # print( prompt )
-        
-        # client = OpenAI(
-        #     base_url=self.tgi_server_url,
-        #     # Open AI complains if it doesn't get a key, even when one isn't needed
-        #     api_key="F000000!",
-        # )
-        # self._start_timer()
-        #
-        # stream = client.chat.completions.create(
-        #     model=self.extract_model_name( self.model ),
-        #     messages=[
-        #         { "role": "system", "content": preamble },
-        #         { "role": "user", "content": query }
-        #     ],
-        #     max_tokens=max_new_tokens,
-        #     # It's recommended to use top P or temperature but not both... TODO: decide which one to use
-        #     # https://platform.openai.com/docs/api-reference/chat/create
-        #     temperature=temperature,
-        #     top_p=top_p,
-        #     # Not used by open AI?
-        #     # top_k=top_k,
-        #     # Zero is the default value for frequency and presence penalties
-        #     frequency_penalty=0.0,
-        #     presence_penalty=0.0,
-        #     stop=stop_sequences,
-        #     stream=True
-        # )
-        # chunks = [ ]
-        # ellipsis_count = 0
-        # for chunk in stream:
-        #     if chunk.choices[ 0 ].delta.content is not None:
-        #         chunks.append( chunk.choices[ 0 ].delta.content )
-        #         ellipsis_count = self._do_conditional_print( chunk.choices[ 0 ].delta.content, ellipsis_count, debug=debug )
-        #
-        # self._stop_timer( chunks=chunks )
-        # response = "".join( chunks ).strip()
-        
+        print( f"CHAT self._query_vllm_openai_chat(...) called" )
         # Define the server URL
-        url = "http://192.168.1.21:3000/v1/completions"
+        # url = "http://192.168.1.21:3000/v1/completions"
         # url = "http://127.0.0.1:3000/v1/completions"
         
         # Set the headers
@@ -334,7 +321,9 @@ class Llm:
             # "stop"       : stop_sequences
         }
         # Send the request
-        response = requests.post( url, headers=headers, data=json.dumps( payload ) )
+        self._start_timer()
+        response = requests.post( self.local_inference_url, headers=headers, data=json.dumps( payload ) )
+        self._stop_timer()
         
         # check for 200 return code
         if response.status_code != 200:
@@ -348,8 +337,6 @@ class Llm:
         
         # Parse the response
         completion = response.json()
-        # du.print_banner( "Completion:" )
-        # print( completion )
         
         return completion[ 'choices' ][ 0 ][ 'text' ].strip()
     
@@ -401,7 +388,7 @@ class Llm:
         
         # Set OpenAI's API key and API base to use vLLM's API server.
         openai_api_key = "EMPTY"
-        openai_api_base = self.tgi_server_url
+        openai_api_base = self.local_inference_url
         if debug and verbose: print( f"Calling: [{openai_api_base}]" )
         
         client = OpenAI(
@@ -443,52 +430,50 @@ class Llm:
         
         return "".join( chunks ).strip()
     
-    def _query_tgi_llm(
-            self, prompt, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.25, stop_sequences=[ "</response>", "></s>" ], debug=False, verbose=False
-    ):
-        self._start_timer()
-        
-        if debug: print( f"Calling: [{self.tgi_server_url}]" )
-        client = InferenceClient( self.tgi_server_url )
-        token_list     = [ ]
-        ellipsis_count = 0
-        
-        if self.debug and self.verbose:
-            for line in prompt.split( "\n" ):
-                print( line )
-        
-        for token in client.text_generation(
-                prompt, max_new_tokens=max_new_tokens, stream=True, temperature=temperature, top_k=top_k, top_p=top_p,
-                stop_sequences=stop_sequences
-        ):
-            ellipsis_count = self._do_conditional_print( token, ellipsis_count, debug=debug )
-            token_list.append( token )
-        
-        response = "".join( token_list ).strip()
-        
-        self._stop_timer( chunks=token_list )
-        
-        if self.debug:
-            print( f"Token list length [{len( token_list )}]" )
-            if self.verbose:
-                for line in response.split( "\n" ):
-                    print( line )
-        
-        return response
+    # def _query_tgi_llm(
+    #         self, prompt, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.25, stop_sequences=[ "</response>", "></s>" ], debug=False, verbose=False
+    # ):
+    #     self._start_timer()
+    #
+    #     if debug: print( f"Calling: [{self.local_inference_url}]" )
+    #     client = InferenceClient( self.local_inference_url )
+    #     token_list     = [ ]
+    #     ellipsis_count = 0
+    #
+    #     if self.debug and self.verbose:
+    #         for line in prompt.split( "\n" ):
+    #             print( line )
+    #
+    #     for token in client.text_generation(
+    #             prompt, max_new_tokens=max_new_tokens, stream=True, temperature=temperature, top_k=top_k, top_p=top_p,
+    #             stop_sequences=stop_sequences
+    #     ):
+    #         ellipsis_count = self._do_conditional_print( token, ellipsis_count, debug=debug )
+    #         token_list.append( token )
+    #
+    #     response = "".join( token_list ).strip()
+    #
+    #     self._stop_timer( chunks=token_list )
+    #
+    #     if self.debug:
+    #         print( f"Token list length [{len( token_list )}]" )
+    #         if self.verbose:
+    #             for line in response.split( "\n" ):
+    #                 print( line )
+    #
+    #     return response
     
 if __name__ == "__main__":
     
     config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
-    
-    # os.environ[ "GENIE_IN_THE_BOX_TGI_SERVER" ] = "http://192.168.1.21:3000/v1"
-    # print( os.environ[ "GENIE_IN_THE_BOX_TGI_SERVER" ] )
     
     # prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agents/gist.txt" )
     # prompt = prompt_template.format( question='How many "R"s are in the word "strawberry"?' )
     
     # prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agents/confirmation-yes-no.txt" )
     # prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/vox-command-template.txt" )
-    template_path = du.get_project_root() + config_mgr.get( "router_and_vox_command_prompt_path_wo_root" )
+    # template_path = du.get_project_root() + config_mgr.get( "vox_command_prompt_path_wo_root" )
+    template_path = du.get_project_root() + "/src/conf/prompts/agent-router-template-completion.txt"
     
     # prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/vox-command-template-completion-mistral-8b.txt" )
     prompt_template = du.get_file_as_string( template_path )
@@ -498,16 +483,17 @@ if __name__ == "__main__":
     # utterance = "No, I don't think that's going to work."
     # utterance = "Sure, why not?"
     # prompt = prompt_template.format( utterance=utterance )
-    voice_command = "I want you to open a new tab and do a Google scholar search on agentic behaviors"
+    # voice_command = "I want you to open a new tab and do a Google scholar search on agentic behaviors"
+    voice_command = "can I please talk to a human?"
     prompt = prompt_template.format( voice_command=voice_command )
     # print( prompt )
     model         = config_mgr.get( "router_and_vox_command_model" )
-    url           = config_mgr.get( "router_and_vox_command_url" )
+    # url           = config_mgr.get( "router_and_vox_command_url" )
     is_completion = config_mgr.get( "router_and_vox_command_is_completion", return_type="boolean", default=False )
-    debug         = config_mgr.get( "app_debug", return_type="boolean", default=False )
+    debug         = config_mgr.get( "app_debug",   return_type="boolean", default=False )
     verbose       = config_mgr.get( "app_verbose", return_type="boolean", default=False )
     
-    llm = Llm( model=model, default_url=url, is_completion=is_completion, debug=debug, verbose=verbose )
+    llm = Llm( model=model, is_completion=is_completion, debug=debug, verbose=verbose )
     #
     results = llm.query_llm( prompt=prompt )
     print( results )

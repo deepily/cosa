@@ -336,31 +336,33 @@ def get_project_root():
     else:
         return "/var/genie-in-the-box"
 
+# DEPRECATED
 # do the same as do the same as get_project_root() but for the GENIE_IN_THE_BOX_TGI_SERVER
-def get_tgi_server_url_for_this_context( default_url=None ):
-    
-    """
-    Get the TGI server URL for one of two execution contexts: docker or local
-
-    Args:
-        default_url (str, optional): The default URL to return if the TGI server URL is not found in the environment variables. Defaults to None.
-
-    Returns:
-        str: The TGI server URL.
-
-    Raises:
-        ValueError: If the TGI server URL is not found in the environment variables and no default URL is provided.
-    """
-    
-    if debug: print( "GENIE_IN_THE_BOX_TGI_SERVER [{}]".format( os.getenv( "GENIE_IN_THE_BOX_TGI_SERVER" ) ) )
-    
-    if "GENIE_IN_THE_BOX_TGI_SERVER" in os.environ:
-        return os.environ[ "GENIE_IN_THE_BOX_TGI_SERVER" ]
-    else:
-        if default_url is None:
-            raise ValueError( "GENIE_IN_THE_BOX_TGI_SERVER not found in environment variables and default_url NOT provided" )
-        
-        return default_url
+# def get_local_inference_url_for_this_context( default_url=None ):
+#
+#     """
+#     Get the TGI server URL for one of two execution contexts: docker or local
+#
+#     Args:
+#         default_url (str, optional): The default URL to return if the TGI server URL is not found in the environment variables. Defaults to None.
+#
+#     Returns:
+#         str: The TGI server URL.
+#
+#     Raises:
+#         ValueError: If the TGI server URL is not found in the environment variables and no default URL is provided.
+#     """
+#     print_banner( "WARNING: 'get_local_inference_url_for_this_context' MAY be deprecated in the near future!", expletive=True )
+#
+#     if debug: print( "GENIE_IN_THE_BOX_TGI_SERVER [{}]".format( os.getenv( "GENIE_IN_THE_BOX_TGI_SERVER" ) ) )
+#
+#     if "GENIE_IN_THE_BOX_TGI_SERVER" in os.environ:
+#         return os.environ[ "GENIE_IN_THE_BOX_TGI_SERVER" ]
+#     else:
+#         if default_url is None:
+#             raise ValueError( "GENIE_IN_THE_BOX_TGI_SERVER not found in environment variables and default_url NOT provided" )
+#
+#         return default_url
 
 # get api key
 def get_api_key( key_name, project_root=get_project_root() ):
@@ -551,7 +553,7 @@ if __name__ == "__main__":
     init_dict = get_name_value_pairs( sys.argv )
     
     # print( get_current_datetime() )
-    # print( get_tgi_server_url_for_this_context())
+    # print( get_local_inference_url_for_this_context())
     # print( get_api_key( "eleven11" ) )
     print( get_api_key( "openai" ) )
     # print( get_api_key( "openai", project_root="/Users/rruiz/Projects/projects-sshfs/genie-in-the-box" ) )

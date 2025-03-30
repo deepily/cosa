@@ -28,7 +28,7 @@ class BugInjector( AgentBase ):
         
         if model_name is not None: self.model_name = model_name
         
-        llm = Llm( model=self.model_name, default_url=self.default_url, debug=self.debug, verbose=self.verbose )
+        llm = Llm( model=self.model_name, debug=self.debug, verbose=self.verbose )
         response = llm.query_llm( prompt=self.prompt, temperature=temperature, top_p=top_p, top_k=top_k, max_new_tokens=max_new_tokens, debug=self.debug, verbose=self.verbose )
         
         line_number = int( dux.get_value_by_xml_tag_name( response, "line-number", default_value="-1" ) )

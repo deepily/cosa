@@ -521,7 +521,7 @@ class MultiModalMunger:
     #     # proofread_code = self._extract_string_from_backticked_llm_output( proofread_code, tag_name="python" )
     #     # print( "POST:", proofread_code )
     #
-    #     tgi_url = self.config_mgr.get( "tgi_server_codegen_url" )
+    #     tgi_url = self.config_mgr.get( "deepily_inference_chat_url" )
     #     du.print_banner( "tgi_url: [{}]".format( tgi_url ) )
     #
     #     python_prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/python-proofreading-template.txt" )
@@ -665,20 +665,20 @@ class MultiModalMunger:
         # Add runtime switch or configuration to allow for TGI service to be used also.
         command_dict    = self._get_command_dict( match_type="ai_matching", confidence=-1.0 )
         
-        template_path   = du.get_project_root() + self.config_mgr.get( "router_and_vox_command_prompt_path_wo_root" )
+        template_path   = du.get_project_root() + self.config_mgr.get( "vox_command_prompt_path_wo_root" )
         prompt_template = du.get_file_as_string( template_path )
         prompt          = prompt_template.format( voice_command=transcription )
         
         model         = self.config_mgr.get( "router_and_vox_command_model" )
-        url           = self.config_mgr.get( "router_and_vox_command_url" )
+        # url           = self.config_mgr.get( "router_and_/vox_command_url" )
         is_completion = self.config_mgr.get( "router_and_vox_command_is_completion", return_type="boolean", default=False )
         
-        llm      = Llm( model=model, default_url=url, is_completion=is_completion, debug=self.debug, verbose=self.verbose )
+        llm      = Llm( model=model, is_completion=is_completion, debug=self.debug, verbose=self.verbose )
         response = llm.query_llm( prompt=prompt )
         
         print( f"LLM response: [{response}]" )
         # Parse results
-        command_dict[ "command" ] = du_xml.get_value_by_xml_tag_name( response, "command" )
+        command_dict[ "command" ] =   du_xml.get_value_by_xml_tag_name( response, "command" )
         command_dict[ "args"    ] = [ du_xml.get_value_by_xml_tag_name( response, "args" ) ]
         
         return command_dict
