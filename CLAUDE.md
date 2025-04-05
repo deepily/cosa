@@ -20,6 +20,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Documentation**: Add docstrings to new functions and classes
 - **Error handling**: Catch specific exceptions with context in messages
 - **XML Formatting**: Use XML tags for structured agent responses
+- **Variable Alignment**: Maintain vertical alignment of equals signs within code blocks
+  ```python
+  # CORRECT - keep vertical alignment
+  self.debug           = debug
+  self.verbose         = verbose
+  self.path_prefix     = path_prefix
+  self.model_name      = model_name
+  ```
+- **Spacing**: Use spaces inside parentheses and brackets
+  ```python
+  # CORRECT - with spaces inside parentheses/brackets
+  if requested_length is not None and requested_length > len( placeholders ):
+  for command in commands.keys():
+  words = text.split()
+  
+  # INCORRECT - no spaces inside parentheses/brackets
+  if requested_length is not None and requested_length > len(placeholders):
+  for command in commands.keys():
+  words = text.split()
+  ```
 
 ## Key Components
 - **AgentBase**: Abstract base class for all agents

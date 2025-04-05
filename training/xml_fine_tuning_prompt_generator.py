@@ -13,7 +13,6 @@ import cosa.app.util_llm_client as du_llm_client
 
 from huggingface_hub          import InferenceClient
 
-# from lib.agents.function_mapping_search import FunctionMappingSearch
 from cosa.app.configuration_manager import ConfigurationManager
 from cosa.utils.util_stopwatch import Stopwatch
 from cosa.agents.llm import Llm
