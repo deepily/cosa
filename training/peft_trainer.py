@@ -26,7 +26,7 @@ from cosa.agents.llm           import Llm
 from cosa.training.quantizer   import Quantizer
 from cosa.utils.util_stopwatch import Stopwatch
 
-from cosa.training.xml_fine_tuning_prompt_generator import XmlFineTuningPromptGenerator
+from cosa.training.xml_coordinator import XmlCoordinator
 
 set_seed( 42 )
 
@@ -480,7 +480,7 @@ class PeftTrainer:
         print( "Value counts for the 'command' column:" )
         print( df.command.value_counts(), end="\n\n" )
         
-        xml_ftp_generator = XmlFineTuningPromptGenerator( path_prefix=path_prefix, debug=debug, verbose=verbose )
+        xml_coordinator = XmlCoordinator( path_prefix=path_prefix, debug=debug, verbose=verbose )
         
         du.print_banner( "Querying LLM in memory" )
         # load model and tokenizer...
@@ -496,15 +496,15 @@ class PeftTrainer:
         else:
             print( "No adapter path provided or found, proceeding with validation, using model by itself" )
             
-        # generate responses...
-        df = xml_ftp_generator.generate_responses(
+        # generate responses
+        df = xml_coordinator.generate_responses(
             df, tokenizer=self.tokenizer, model=self.model, switch=switch, model_name=self.model_name, device=device_map,
             max_new_tokens=128, debug=debug, verbose=verbose
         )
-        # validate responses...
-        df = xml_ftp_generator.validate_responses( df )
-        # print validation stats...
-        xml_ftp_generator.print_validation_stats( df, title=f"Validation stats for model {self.model_name}" )
+        # validate responses
+        df = xml_coordinator.validate_responses( df )
+        # print validation stats
+        xml_coordinator.print_validation_stats( df, title=f"Validation stats for model {self.model_name}" )
         
         return df
     
@@ -567,17 +567,17 @@ class PeftTrainer:
         # Print value counts for the command column to see how many unique commands we have
         print( df.command.value_counts(), end="\n\n" )
         
-        xml_ftp_generator = XmlFineTuningPromptGenerator( path_prefix=path_prefix, debug=debug, verbose=verbose )
+        xml_coordinator = XmlCoordinator( path_prefix=path_prefix, debug=debug, verbose=verbose )
         
-        # generate responses...
-        df = xml_ftp_generator.generate_responses(
+        # generate responses
+        df = xml_coordinator.generate_responses(
             df, tokenizer=self.tokenizer, model=self.model, switch=switch, model_name=self.model_name,
             device=device_map, max_new_tokens=128, debug=debug, verbose=verbose
         )
-        # validate responses...
-        df = xml_ftp_generator.validate_responses( df )
-        # print validation stats...
-        xml_ftp_generator.print_validation_stats( df, title=f"Validation stats for model {self.model_name}" )
+        # validate responses
+        df = xml_coordinator.validate_responses( df )
+        # print validation stats using the coordinator
+        xml_coordinator.print_validation_stats( df, title=f"Validation stats for model {self.model_name}" )
         
         return df
     
