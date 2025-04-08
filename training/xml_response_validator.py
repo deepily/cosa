@@ -69,7 +69,7 @@ class XmlResponseValidator:
             bool: True if tag exists, False otherwise
         """
         try:
-            return f"<{ tag_name }>" in xml_str and f"</{ tag_name }>" in xml_str
+            return f"<{tag_name}>" in xml_str and f"</{tag_name}>" in xml_str
         except Exception:
             return False
     
@@ -89,8 +89,8 @@ class XmlResponseValidator:
         answer   = dux.strip_all_white_space( answer )
         
         if self.debug and self.verbose:
-            print( f"response: [{ response }]" )
-            print( f"  answer: [{ answer }]" )
+            print( f"response: [{response}]" )
+            print( f"  answer: [{answer}]" )
             
         return response == answer
     
@@ -162,14 +162,14 @@ class XmlResponseValidator:
             pandas.DataFrame: Stats dataframe with accuracy per command
         """
         du.print_banner( title, prepend_nl=True )
-        print( f"               Is valid xml { df.response_xml_is_valid.mean() * 100:.1f }%" )
-        print( f"        Contains <response> { df.contains_response.mean() * 100:.1f }%" )
-        print( f"         Contains <command> { df.contains_command.mean() * 100:.1f }%" )
-        print( f"            Contains <args> { df.contains_args.mean() * 100:.1f }%" )
-        print( f"          Response is exact { df.response_is_exact.mean() * 100:.1f }%" )
-        print( f"Response has correct values { df.response_has_correct_values.mean() * 100:.1f }%" )
-        print( f"         Command is correct { df.command_is_correct.mean() * 100:.1f }%" )
-        print( f"            Args is correct { df.args_is_correct.mean() * 100:.1f }%" )
+        print( f"               Is valid xml {df.response_xml_is_valid.mean() * 100:.1f}%" )
+        print( f"        Contains <response> {df.contains_response.mean() * 100:.1f}%" )
+        print( f"         Contains <command> {df.contains_command.mean() * 100:.1f}%" )
+        print( f"            Contains <args> {df.contains_args.mean() * 100:.1f}%" )
+        print( f"          Response is exact {df.response_is_exact.mean() * 100:.1f}%" )
+        print( f"Response has correct values {df.response_has_correct_values.mean() * 100:.1f}%" )
+        print( f"         Command is correct {df.command_is_correct.mean() * 100:.1f}%" )
+        print( f"            Args is correct {df.args_is_correct.mean() * 100:.1f}%" )
         
         # Calculate accuracy per command
         cols                = ["command", "response_is_exact"]
@@ -177,13 +177,13 @@ class XmlResponseValidator:
         stats_df           = stats_df.groupby( "command" )["response_is_exact"].agg( ["mean", "sum", "count"] ).reset_index()
         
         # Format the percentages
-        stats_df["mean"]   = stats_df["mean"].apply( lambda cell: f"{ cell * 100:.2f }%" )
+        stats_df["mean"]   = stats_df["mean"].apply( lambda cell: f"{cell * 100:.2f}%" )
         # Sorts by mean ascending: Remember it's now a string we're sorting
         stats_df           = stats_df.sort_values( "mean", ascending=False )
         # Since I can't delete the index and not affect the other values, I'll just set the index to an empty string
         stats_df.index     = [""] * stats_df.shape[0]
 
-        du.print_banner( f"{ title }: Accuracy per command", prepend_nl=True )
+        du.print_banner( f"{title}: Accuracy per command", prepend_nl=True )
         print( stats_df )
         
         return stats_df
@@ -211,7 +211,7 @@ class XmlResponseValidator:
         
         # Add per-command statistics
         command_stats = df.groupby( "command" )["response_is_exact"].mean().to_dict()
-        stats["per_command"] = { cmd: val * 100 for cmd, val in command_stats.items() }
+        stats["per_command"] = {cmd: val * 100 for cmd, val in command_stats.items()}
         
         return stats
     
@@ -245,9 +245,9 @@ class XmlResponseValidator:
         
         comparison_df = pd.DataFrame({
             "Metric": metric_names,
-            "Before (%)": [f"{ val:.1f }%" for val in before_vals],
-            "After (%)": [f"{ val:.1f }%" for val in after_vals],
-            "Difference": [f"{ '+' if val > 0 else '' }{ val:.1f }%" for val in diff_vals]
+            "Before (%)": [f"{val:.1f}%" for val in before_vals],
+            "After (%)": [f"{val:.1f}%" for val in after_vals],
+            "Difference": [f"{'+' if val > 0 else ''}{val:.1f}%" for val in diff_vals]
         })
         
         du.print_banner( title, prepend_nl=True )

@@ -217,7 +217,7 @@ class XmlCoordinator:
         # For each browser command, load the corresponding file and generate prompts
         for compound_command in self.prompt_generator.vox_cmd_compound_commands.keys():
             
-            du.print_banner( f"Building prompts for compound VOX command [{ compound_command }]", prepend_nl=True, end="\n" )
+            du.print_banner( f"Building prompts for compound VOX command [{compound_command}]", prepend_nl=True, end="\n" )
             counter = 1
             # The first 100 lines are properly spelled
             raw_lines = du.get_file_as_list( self.path_prefix + self.prompt_generator.vox_cmd_compound_commands[ compound_command ], clean=True )[ 0:100 ]
@@ -230,7 +230,7 @@ class XmlCoordinator:
                 arguments   = self.prompt_generator.get_domain_names( len( raw_lines ) )
                 placeholder = "DOMAIN_NAME"
             else:
-                raise Exception( f"Unknown voice command [{ compound_command }]" )
+                raise Exception( f"Unknown voice command [{compound_command}]" )
             
             for raw_line in raw_lines:
                 
@@ -257,7 +257,7 @@ class XmlCoordinator:
             
             print()
         
-        compound_qna_df = pd.DataFrame( { "command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts, "gpt_message": gpt_messages } )
+        compound_qna_df = pd.DataFrame( {"command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts, "gpt_message": gpt_messages} )
         compound_qna_df = self._prune_duplicates_and_sample( compound_qna_df, sample_size=( sample_size_per_command * len( self.prompt_generator.vox_cmd_compound_commands ) ), sample_size_per_command=sample_size_per_command )
         
         return compound_qna_df
@@ -278,7 +278,7 @@ class XmlCoordinator:
         
         for simple_command in self.prompt_generator.vox_cmd_simple_commands.keys():
             
-            du.print_banner( f"Building prompts for simple VOX command [{ simple_command }]", prepend_nl=True, end="\n" )
+            du.print_banner( f"Building prompts for simple VOX command [{simple_command}]", prepend_nl=True, end="\n" )
             counter = 1
             
             raw_lines = du.get_file_as_list( self.path_prefix + self.prompt_generator.vox_cmd_simple_commands[ simple_command ], clean=True )
@@ -302,7 +302,7 @@ class XmlCoordinator:
                 self._do_conditional_print( counter, raw_line )
                 counter += 1
             
-        simple_command_qna_df = pd.DataFrame( { "command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts, "gpt_message": gpt_messages } )
+        simple_command_qna_df = pd.DataFrame( {"command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts, "gpt_message": gpt_messages} )
         simple_command_qna_df = self._prune_duplicates_and_sample( simple_command_qna_df, sample_size=( sample_size_per_command * len( self.prompt_generator.vox_cmd_simple_commands ) ), sample_size_per_command=sample_size_per_command )
         
         return simple_command_qna_df
@@ -324,7 +324,7 @@ class XmlCoordinator:
         # For each browser command, load the corresponding file and generate prompts
         for compound_command in self.prompt_generator.agent_router_compound_commands.keys():
             
-            du.print_banner( f"Building prompts for compound AGENT ROUTER command [{ compound_command }]", prepend_nl=True, end="\n" )
+            du.print_banner( f"Building prompts for compound AGENT ROUTER command [{compound_command}]", prepend_nl=True, end="\n" )
             counter = 1
             
             raw_lines = du.get_file_as_list( self.path_prefix + self.prompt_generator.agent_router_compound_commands[ compound_command ], clean=True, randomize=True )[ 0:100 ]
@@ -339,7 +339,7 @@ class XmlCoordinator:
                 arguments   = self._get_events_values( len( raw_lines ) )
                 placeholder = ""
             else:
-                raise Exception( f"Unknown voice command [{ compound_command }]" )
+                raise Exception( f"Unknown voice command [{compound_command}]" )
             
             for raw_line in raw_lines:
                     
@@ -376,7 +376,7 @@ class XmlCoordinator:
             
             print()
         
-        compound_agent_router_qna_df = pd.DataFrame( { "command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts, "gpt_message": gpt_messages } )
+        compound_agent_router_qna_df = pd.DataFrame( {"command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts, "gpt_message": gpt_messages} )
         compound_agent_router_qna_df = self._prune_duplicates_and_sample( compound_agent_router_qna_df, sample_size=( sample_size_per_command * len( self.prompt_generator.vox_cmd_compound_commands ) ), sample_size_per_command=sample_size_per_command )
         
         return compound_agent_router_qna_df
@@ -400,18 +400,18 @@ class XmlCoordinator:
         # For each function mapping entry, load the corresponding file and generate prompts
         for routing_key in self.prompt_generator.agent_function_mapping_compound_commands.keys():
             
-            du.print_banner( f"Building prompts for compound FUNCTION MAPPING [{ routing_key }]", prepend_nl=True, end="\n" )
+            du.print_banner( f"Building prompts for compound FUNCTION MAPPING [{routing_key}]", prepend_nl=True, end="\n" )
             
             path     = self.path_prefix + self.prompt_generator.agent_function_mapping_compound_commands[ routing_key ]
             boundary = "<!-- QnR Boundary -->"
             if path.endswith( ".txt" ):
                 
-                print( f"Loading RAW question data from [{ path }]..." )
+                print( f"Loading RAW question data from [{path}]..." )
                 raw_lines = du.get_file_as_list( path, clean=True, randomize=True )
                 if analyze_bigrams: self._analyze_bigrams( raw_lines, "DEFAULT_LOCATION" )
                 
                 locations = self.prompt_generator.get_cities_and_countries( requested_length=None )
-                placeholders_and_values = { "DEFAULT_LOCATION": locations }
+                placeholders_and_values = {"DEFAULT_LOCATION": locations}
                 
                 questions = self._build_function_mapping_questions( raw_lines, placeholders_and_values )
                 responses = self._generate_function_mapping_response_objects( questions, max_questions=max_questions )
@@ -425,7 +425,7 @@ class XmlCoordinator:
                     f.write( "<qnrs>\n" )
                     for response in responses:
                         if self.debug and self.verbose:
-                            print( f"Writing '{ response[ 'last_question_asked' ] }'..." )
+                            print( f"Writing '{response[ 'last_question_asked' ]}'..." )
                         elif self.debug:
                             print( ".", end="" )
                         f.write( "<qnr>\n" )
@@ -434,25 +434,25 @@ class XmlCoordinator:
                         f.write( "</qnr>\n" )
                         counter += 1
                         # Don't write a boundary after the last question
-                        if counter < count: f.write( f"{ boundary }\n" )
+                        if counter < count: f.write( f"{boundary}\n" )
                     f.write( "</qnrs>\n" )
                 
                 if self.debug and not self.verbose: print()
-                print( f"Saved { counter } QnRs to [{ output_path }]" )
+                print( f"Saved {counter} QnRs to [{output_path}]" )
                 
             elif path.endswith( ".xml" ):
                 
-                msg = f"Loading XML QnR data from [{ path }]..."
+                msg = f"Loading XML QnR data from [{path}]..."
                 print( msg )
                 xml_data = du.get_file_as_string( path )
                 qnrs     = xml_data.split( boundary )
-                msg      = f"{ msg } Done! Loaded { len( qnrs ) } QnR pairs."
+                msg      = f"{msg} Done! Loaded {len( qnrs )} QnR pairs."
                 print( msg )
                 
             else:
                 
                 extension = path.split( "." )[ -1 ]
-                raise Exception( f"Unknown function mapping file type [*.{ extension }] for routing_key [{ routing_key }]" )
+                raise Exception( f"Unknown function mapping file type [*.{extension}] for routing_key [{routing_key}]" )
 
         return None
     
@@ -464,7 +464,7 @@ class XmlCoordinator:
             raw_lines (list): List of raw lines
             placeholder (str): Placeholder to analyze
         """
-        du.print_banner( f"Analyzing bigrams for placeholder [{ placeholder }]...", prepend_nl=True )
+        du.print_banner( f"Analyzing bigrams for placeholder [{placeholder}]...", prepend_nl=True )
         
         # Do a quick and dirty search and summary for DEFAULT_LOCATION
         bigrams = []
@@ -481,14 +481,14 @@ class XmlCoordinator:
                     break
                     
             if not found:
-                bigrams.append( f"No placeholder '{ placeholder }' provided" )
+                bigrams.append( f"No placeholder '{placeholder}' provided" )
                 
         # Count the bigrams
         from collections import Counter
         bigram_counter = Counter( bigrams )
         # Print out the most common bigrams sorted descending
         for bigram, count in bigram_counter.most_common():
-            print( f"{ bigram }: { count }" )
+            print( f"{bigram}: {count}" )
     
     def _build_function_mapping_questions( self, raw_lines, placeholders_and_values ):
         """
@@ -535,13 +535,13 @@ class XmlCoordinator:
         responses = []
         counter   = 0
         
-        timer = Stopwatch( msg=f"Generating function mapping for { len( questions ) } questions..." )
+        timer = Stopwatch( msg=f"Generating function mapping for {len( questions )} questions..." )
         for question in questions:
             
             counter += 1
             from cosa.agents.function_mapping_search import FunctionMappingSearch
             mapper = FunctionMappingSearch( question=question, last_question_asked=question, debug=self.debug, verbose=self.verbose )
-            du.print_banner( f"Question { counter } of { len( questions ) }: { question }", end="\n", prepend_nl=True )
+            du.print_banner( f"Question {counter} of {len( questions )}: {question}", end="\n", prepend_nl=True )
             prompt_response_dict = mapper.run_prompt( include_raw_response=True )
             
             responses.append( prompt_response_dict )
@@ -554,10 +554,10 @@ class XmlCoordinator:
             questions_remaining = len( questions ) - counter
             seconds_remaining   = int( ms_per_question * questions_remaining / 1000 )
             
-            print( f"Time elapsed { time_elapsed:,} seconds. Average time per question: { time_per_question:,} seconds. { questions_remaining } questions remaining, ETA: { seconds_remaining:,} seconds...", end="\n\n" )
+            print( f"Time elapsed {time_elapsed:,} seconds. Average time per question: {time_per_question:,} seconds. {questions_remaining} questions remaining, ETA: {seconds_remaining:,} seconds...", end="\n\n" )
         
         timer.print( msg="Done!", use_millis=False )
-        print( f"Average time per question: { round( timer.get_delta_ms() / len( questions ), 0 ):,} ms" )
+        print( f"Average time per question: {round( timer.get_delta_ms() / len( questions ), 0 ):,} ms" )
         
         return responses
     
@@ -577,7 +577,7 @@ class XmlCoordinator:
         
         for simple_command in self.prompt_generator.agent_router_simple_commands.keys():
             
-            du.print_banner( f"Building prompts for simple AGENT ROUTER command [{ simple_command }]", prepend_nl=True, end="\n" )
+            du.print_banner( f"Building prompts for simple AGENT ROUTER command [{simple_command}]", prepend_nl=True, end="\n" )
             counter = 1
             
             raw_lines = du.get_file_as_list( self.path_prefix + self.prompt_generator.agent_router_simple_commands[ simple_command ], clean=True )
@@ -604,7 +604,7 @@ class XmlCoordinator:
                 self._do_conditional_print( counter, raw_line )
                 counter += 1
             
-        simple_agent_router_qna_df = pd.DataFrame( { "command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts, "gpt_message": gpt_messages } )
+        simple_agent_router_qna_df = pd.DataFrame( {"command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts, "gpt_message": gpt_messages} )
         simple_agent_router_qna_df = self._prune_duplicates_and_sample( simple_agent_router_qna_df, sample_size=( sample_size_per_command * len( self.prompt_generator.vox_cmd_simple_commands ) ), sample_size_per_command=sample_size_per_command )
         
         return simple_agent_router_qna_df
@@ -633,7 +633,7 @@ class XmlCoordinator:
         command_counts = all_qna_df.groupby( "command" ).count().reset_index()[ [ "command", "input" ] ]
         # sort by command ascending
         command_counts = command_counts.sort_values( "command", ascending=True )
-        du.print_banner( f"Command counts for all { all_qna_df.shape[ 0 ]:,} training prompts", prepend_nl=True)
+        du.print_banner( f"Command counts for all {all_qna_df.shape[ 0 ]:,} training prompts", prepend_nl=True)
         print( command_counts )
         
         # Calculate Max, min, and mean prompt lengths
@@ -645,10 +645,10 @@ class XmlCoordinator:
         # Delete the prompt_length column
         all_qna_df.drop( columns=[ "prompt_length" ], inplace=True )
         
-        du.print_banner( f"Max, min, and mean prompt CHARACTER counts for all { all_qna_df.shape[ 0 ]:,} training prompts", prepend_nl=True)
-        print( f"Max  prompt length [{ max_prompt_length:,}] characters" )
-        print( f"Min  prompt length [{ min_prompt_length:,}] characters" )
-        print( f"Mean prompt length [{ round( mean_prompt_length, 1 ):,}] characters" )
+        du.print_banner( f"Max, min, and mean prompt CHARACTER counts for all {all_qna_df.shape[ 0 ]:,} training prompts", prepend_nl=True)
+        print( f"Max  prompt length [{max_prompt_length:,}] characters" )
+        print( f"Min  prompt length [{min_prompt_length:,}] characters" )
+        print( f"Mean prompt length [{round( mean_prompt_length, 1 ):,}] characters" )
         
         # Now calculate max min and mean word counts in the prompt column
         all_qna_df[ "prompt_word_count" ] = all_qna_df[ "prompt" ].apply( lambda cell: len( cell.split( " " ) ) )
@@ -659,10 +659,10 @@ class XmlCoordinator:
         # Delete the prompt_word_count column
         all_qna_df.drop( columns=[ "prompt_word_count" ], inplace=True )
         
-        du.print_banner( f"Max, min, and mean prompt WORD counts for all { all_qna_df.shape[ 0 ]:,} training prompts", prepend_nl=True )
-        print( f"Max  prompt length [{ max_prompt_word_count:,}] words" )
-        print( f"Min  prompt length [{ min_prompt_word_count:,}] words" )
-        print( f"Mean prompt length [{ round( mean_prompt_word_count, 1 ):,}] words" )
+        du.print_banner( f"Max, min, and mean prompt WORD counts for all {all_qna_df.shape[ 0 ]:,} training prompts", prepend_nl=True )
+        print( f"Max  prompt length [{max_prompt_word_count:,}] words" )
+        print( f"Min  prompt length [{min_prompt_word_count:,}] words" )
+        print( f"Mean prompt length [{round( mean_prompt_word_count, 1 ):,}] words" )
         
         return all_qna_df
     
@@ -685,7 +685,7 @@ class XmlCoordinator:
         from huggingface_hub import InferenceClient
         from cosa.utils.util_stopwatch import Stopwatch
     
-        timer = Stopwatch( msg=f"Asking LLM [{ model_name }]...".format( model_name ), silent=silent )
+        timer = Stopwatch( msg=f"Asking LLM [{model_name}]...".format( model_name ), silent=silent )
         
         client         = InferenceClient( self.tgi_url )
         token_list     = []
@@ -713,10 +713,10 @@ class XmlCoordinator:
         
         timer.print( msg="Done!", use_millis=True, prepend_nl=True, end="\n" )
         tokens_per_second = len( token_list ) / ( timer.get_delta_ms() / 1000.0 )
-        print( f"Tokens per second [{ round( tokens_per_second, 1 ) }]" )
+        print( f"Tokens per second [{round( tokens_per_second, 1 )}]" )
         
         if self.debug:
-            print( f"Token list length [{ len( token_list ) }]" )
+            print( f"Token list length [{len( token_list )}]" )
             if self.verbose:
                 for line in response.split( "\n" ):
                     print( line )
@@ -754,7 +754,7 @@ class XmlCoordinator:
         self.reset_call_counter()
         rows = df.shape[0]
         
-        timer = Stopwatch( msg=f"Generating responses for { rows:,} rows...", silent=silent )
+        timer = Stopwatch( msg=f"Generating responses for {rows:,} rows...", silent=silent )
         
         # Save the original debug/verbose settings
         original_debug = self.debug
@@ -768,19 +768,19 @@ class XmlCoordinator:
         
         try:
             if switch == "tgi":
-                if self.debug: print( f"Using TGI w/ model_name [{ model_name }]..." )
+                if self.debug: print( f"Using TGI w/ model_name [{model_name}]..." )
                 df[ "response" ]  = df[ "prompt" ].apply( lambda cell: self._get_response_to_prompt( cell, rows, timer=timer, switch=switch, model_name=model_name, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, silent=silent ) )
             elif switch == "deepily":
-                if self.debug: print( f"Using DEEPILY w/ model_name [{ model_name }]..." )
+                if self.debug: print( f"Using DEEPILY w/ model_name [{model_name}]..." )
                 df[ "response" ]  = df[ "prompt" ].apply( lambda cell: self._get_response_to_prompt( cell, rows, model=model, timer=timer, switch=switch, model_name=model_name, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, silent=silent ) )
             elif switch == "openai":
-                if self.debug: print( f"Using OPENAI w/ model_name [{ model_name }]..." )
+                if self.debug: print( f"Using OPENAI w/ model_name [{model_name}]..." )
                 df[ "response" ]  = df[ "gpt_message" ].apply( lambda cell: self._get_response_to_prompt( cell, rows, timer=timer, switch=switch, model_name=model_name, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, silent=silent ) )
-            elif switch == "huggingface":
-                if self.debug: print( f"Using HuggingFace model_name [{ model_name }] in memory...", end="\n\n" )
+            elif switch == "huggingface" or switch == "in_memory":
+                if self.debug: print( f"Using HuggingFace model_name [{model_name}] in memory...", end="\n\n" )
                 df[ "response" ]  = df[ "prompt" ].apply( lambda cell: self._get_response_to_prompt( cell, rows, timer=timer, switch=switch, model_name=model_name, tokenizer=tokenizer, model=model, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, device=device, silent=silent, debug=self.debug, verbose=self.verbose ) )
             else:
-                raise Exception( f"Unknown runtime llm datasource switch [{ switch }]" )
+                raise Exception( f"Unknown runtime llm datasource switch [{switch}]" )
         finally:
             # Restore original debug/verbose settings
             self.debug = original_debug
@@ -788,7 +788,7 @@ class XmlCoordinator:
         
         timer.print( msg="Done!", use_millis=False, prepend_nl=True, end="\n" )
         ms_per_item = timer.get_delta_ms() / ( rows * 1.0 )
-        print( f"[{ round( ms_per_item, 1 ):,}] ms per item" )
+        print( f"[{round( ms_per_item, 1 ):,}] ms per item" )
         
         return df
     
@@ -855,9 +855,9 @@ class XmlCoordinator:
         import os
         
         du.print_banner( "Writing train, test, validate splits to jsonl...", prepend_nl=True)
-        print( f"   train_df.shape: { train_df.shape[ 0 ]:,} x { train_df.shape[ 1 ]}" )
-        print( f"    test_df.shape: { test_df.shape[ 0 ]:,} x { test_df.shape[ 1 ]}" )
-        print( f"validate_df.shape: { validate_df.shape[ 0 ]:,} x { validate_df.shape[ 1 ]}" )
+        print( f"   train_df.shape: {train_df.shape[ 0 ]:,} x {train_df.shape[ 1 ]}" )
+        print( f"    test_df.shape: {test_df.shape[ 0 ]:,} x {test_df.shape[ 1 ]}" )
+        print( f"validate_df.shape: {validate_df.shape[ 0 ]:,} x {validate_df.shape[ 1 ]}" )
         
         path = self.path_prefix + "/src/ephemera/prompts/data/voice-commands-xml-train.jsonl"
         train_df.to_json( path, orient="records", lines=True )
@@ -923,9 +923,9 @@ class XmlCoordinator:
         """
         return {
             "messages": [
-                { "role": "system", "content": gpt_instruction },
-                { "role": "user", "content": voice_command },
-                { "role": "assistant", "content": self.prompt_generator.common_output_template.format( command=compound_command, args=args ) }
+                {"role": "system", "content": gpt_instruction},
+                {"role": "user", "content": voice_command},
+                {"role": "assistant", "content": self.prompt_generator.common_output_template.format( command=compound_command, args=args )}
             ]
         }
     
@@ -961,19 +961,19 @@ class XmlCoordinator:
         du.print_banner( "Pruning potential duplicates by 'input' values...", prepend_nl=True )
         
         rows_pre = df.shape[ 0 ]
-        print( f" PRE { rows_pre:,} training inputs..." )
+        print( f" PRE {rows_pre:,} training inputs..." )
         df.drop_duplicates( subset=[ "input" ], inplace=True )
         rows_post  = df.shape[ 0 ]
         dupes_rows = rows_pre - rows_post
         dupes_pct  = dupes_rows / rows_pre * 100.0
-        print( f"POST { rows_post:,} training inputs. Deleted { dupes_rows:,} rows = { dupes_pct:.1f }% duplicate questions" )
+        print( f"POST {rows_post:,} training inputs. Deleted {dupes_rows:,} rows = {dupes_pct:.1f}% duplicate questions" )
         
         if rows_post < sample_size:
-            print( f"WARNING: Sample size [{ sample_size:,}] > rows_post [{ rows_post:,}]. Returning all [{ rows_post:,}] rows.")
+            print( f"WARNING: Sample size [{sample_size:,}] > rows_post [{rows_post:,}]. Returning all [{rows_post:,}] rows.")
             return df
         else:
             # Sample the dataframe Using proportional distributions represented by the weights value
-            du.print_banner( f"Sampling { sample_size:,} rows/command from the pruned dataframe using the following weights:", prepend_nl=True )
+            du.print_banner( f"Sampling {sample_size:,} rows/command from the pruned dataframe using the following weights:", prepend_nl=True )
             weights = df[ "command" ].value_counts( normalize=True )
             print( weights )
             weights = df[ "command" ].value_counts( normalize=False )
@@ -1043,7 +1043,7 @@ class XmlCoordinator:
         
         self._call_counter += 1
         
-        print( f"Processing call [{ self._call_counter:03d }] out of [{ rows }] = [{ round( self._call_counter / rows * 100.0, 1 ) }%]... ", end="" )
+        print( f"Processing call [{self._call_counter:03d}] out of [{rows}] = [{round( self._call_counter / rows * 100.0, 1 )}%]... ", end="" )
         
         # calculate remaining time
         if timer is not None:
@@ -1056,11 +1056,11 @@ class XmlCoordinator:
                 if remaining_seconds > 60:
                     remaining_minutes = int( remaining_seconds / 60 )
                     remaining_seconds = remaining_seconds % 60
-                    print( f"ETA mm:ss { remaining_minutes:}:{ remaining_seconds:02d }" )
+                    print( f"ETA mm:ss {remaining_minutes:}:{remaining_seconds:02d}" )
                 else:
-                    print( f"ETA: { remaining_seconds } seconds" )
+                    print( f"ETA: {remaining_seconds} seconds" )
             except Exception as e:
-                print( f"ETA: Error '{ e }'" )
+                print( f"ETA: Error '{e}'" )
         
         # Handle different LLM backends
         if switch == "tgi":
@@ -1107,8 +1107,8 @@ class XmlCoordinator:
             )
             return response.choices[ 0 ].message.content.strip()
             
-        elif switch == "huggingface":
+        elif switch == "huggingface" or switch == "in_memory":
             return du_llm_client.query_llm_in_memory( model, tokenizer, prompt, device=device, model_name=model_name, max_new_tokens=max_new_tokens, silent=silent, debug=debug, verbose=verbose )
             
         else:
-            raise Exception( f"Unknown switch [{ switch }]" )
+            raise Exception( f"Unknown switch [{switch}]" )

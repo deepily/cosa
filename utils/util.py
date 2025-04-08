@@ -334,7 +334,9 @@ def get_project_root():
     if "GENIE_IN_THE_BOX_ROOT" in os.environ:
         return os.environ[ "GENIE_IN_THE_BOX_ROOT" ]
     else:
-        return "/var/genie-in-the-box"
+        path = "/var/genie-in-the-box"
+        print( f"WARNING: GENIE_IN_THE_BOX_ROOT not found in environment variables. Returning default path '{path}'" )
+        return path
 
 # DEPRECATED
 # do the same as do the same as get_project_root() but for the GENIE_IN_THE_BOX_TGI_SERVER

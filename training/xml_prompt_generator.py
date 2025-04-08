@@ -31,20 +31,20 @@ class XmlPromptGenerator:
         self._init_common_templates()
         
         # Command templates
-        self.vox_cmd_instruction_template       = None
-        self.vox_cmd_instruction_template_gpt   = None
-        self.agent_router_instruction_template  = None
+        self.vox_cmd_instruction_template          = None
+        self.vox_cmd_instruction_template_gpt      = None
+        self.agent_router_instruction_template     = None
         self.agent_router_instruction_template_gpt = None
         
         # Command categories
-        self.vox_cmd_commands                   = None
-        self.agent_router_commands              = None
+        self.vox_cmd_commands      = None
+        self.agent_router_commands = None
         
         # Command dictionaries
-        self.vox_cmd_compound_commands          = self._get_compound_vox_commands()
-        self.vox_cmd_simple_commands            = self._get_simple_vox_commands()
-        self.agent_router_compound_commands     = self._get_compound_agent_router_commands()
-        self.agent_router_simple_commands       = self._get_simple_agent_router_commands()
+        self.vox_cmd_compound_commands                = self._get_compound_vox_commands()
+        self.vox_cmd_simple_commands                  = self._get_simple_vox_commands()
+        self.agent_router_compound_commands           = self._get_compound_agent_router_commands()
+        self.agent_router_simple_commands             = self._get_simple_agent_router_commands()
         self.agent_function_mapping_compound_commands = self._get_compound_agent_function_mapping_commands()
         
         # Compile commands after loading dictionaries
@@ -71,10 +71,10 @@ class XmlPromptGenerator:
         """
         for command in commands.keys():
             path_exists = os.path.exists( self.path_prefix + commands[ command ] )
-            if not self.silent: 
-                print( f"Commands file for command [{ command }] exists: { path_exists }" )
+            if self.debug and not self.silent:
+                print( f"Commands file for command [{command}] exists: {path_exists}" )
             if not path_exists:
-                raise Exception( f"Commands file for command [{ command }] [{ self.path_prefix + commands[ command ] }] doesn't exist!" )
+                raise Exception( f"Commands file for command [{command}] [{self.path_prefix + commands[ command ]}] doesn't exist!" )
         
         if not self.silent:
             print()
@@ -183,7 +183,7 @@ class XmlPromptGenerator:
             return agent_function_mapping_compound_commands
         except Exception as e:
             if self.debug:
-                print( f"Warning: Could not load function mapping commands: { e }" )
+                print( f"Warning: Could not load function mapping commands: {e}" )
             return {}
     
     def _compile_vox_cmd_commands( self ):
@@ -320,7 +320,7 @@ class XmlPromptGenerator:
         elif name == "agent router":
             instruction = self.agent_router_instruction_template.format( command_choices=self.agent_router_commands )
         else:
-            raise ValueError( f"Unknown prompt template name [{ name }] Please use one of ['vox command', 'agent router']" )
+            raise ValueError( f"Unknown prompt template name [{name}] Please use one of ['vox command', 'agent router']" )
         
         human_says  = self.common_human_says_template.format( voice_command="{voice_command}" )
         input_text  = self.common_input_template.format( human_says=human_says, response_format=self.common_response_format )
@@ -364,10 +364,10 @@ class XmlPromptGenerator:
     
     ### Task:
     
-    { instruction }
+    {instruction}
     
     ### Input:
-    { input_text }
+    {input_text}
     
     ### Response:
     """
@@ -405,9 +405,9 @@ class XmlPromptGenerator:
         """
         return {
             "messages": [
-                { "role": "system", "content": instruction },
-                { "role": "user", "content": voice_command },
-                { "role": "assistant", "content": self.common_output_template.format( command=command, args=args ) }
+                {"role": "system", "content": instruction},
+                {"role": "user", "content": voice_command},
+                {"role": "assistant", "content": self.common_output_template.format( command=command, args=args )}
             ]
         }
     
@@ -520,7 +520,7 @@ class XmlPromptGenerator:
         while requested_length is not None and requested_length > len( placeholders ):
             # advise that we're inserting duplicate placeholders
             if self.debug and not self.silent: 
-                print( f"Inserting DUPLICATE placeholders into the list. Requested length [{ requested_length }] > list length [{ len( placeholders ) }]" )
+                print( f"Inserting DUPLICATE placeholders into the list. Requested length [{requested_length}] > list length [{len( placeholders )}]" )
             placeholders += placeholders
             
         # Truncate the placeholder list to equal the requested length
@@ -574,7 +574,7 @@ class XmlPromptGenerator:
         """
         path = self.path_prefix + prompt_path
         
-        du.print_banner( f"Serializing prompt to [{ path }]", prepend_nl=True )
+        du.print_banner( f"Serializing prompt to [{path}]", prepend_nl=True )
         du.write_string_to_file( path, prompt )
         
     def serialize_prompts( self, prompt_path_prefix ):
