@@ -19,6 +19,9 @@ from trl import SFTTrainer, SFTConfig
 from auto_round import AutoRoundConfig
 from huggingface_hub import login
 
+# Import the model configuration loader
+from cosa.training.conf import load_model_config
+
 import cosa.utils.util         as du
 import cosa.utils.util_pytorch as dupt
 
@@ -130,17 +133,26 @@ class PeftTrainer:
     
         Precondition:
         - `self.model_name` is a string representing the name of the model to be validated.
-        - `self.supported_model_names` is a list of strings containing the names of supported models.
+        - The `conf` module contains model configurations for the supported models.
     
         Postcondition:
-        - If `self.model_name` is in `self.supported_model_names`, the method completes without error.
-        - If `self.model_name` is not in `self.supported_model_names`, a ValueError is raised with a message indicating the unsupported model name and listing the supported model names.
+        - If `self.model_name` is supported, the method completes without error.
+        - If `self.model_name` is not supported, a ValueError is raised with a message 
+          indicating the unsupported model name and listing the supported model names.
     
         Raises:
-        - ValueError: If `self.model_name` is not in `self.supported_model_names`.
+        - ValueError: If `self.model_name` is not supported.
         """
-        if self.model_name not in self.supported_model_names:
-            raise ValueError( f"Unsupported model_name: '{self.model_name}'. Must be one of: {', '.join( self.supported_model_names )}" )
+        # Import the model config map which has all supported models
+        from cosa.training.conf import MODEL_CONFIG_MAP
+        
+        if self.model_name not in MODEL_CONFIG_MAP:
+            raise ValueError(f"Unsupported model_name: '{self.model_name}'. Must be one of: {', '.join(MODEL_CONFIG_MAP.keys())}")
+            
+        # For backward compatibility, also check supported_model_names
+        if hasattr(self, 'supported_model_names') and self.model_name not in self.supported_model_names:
+            print(f"Warning: Model '{self.model_name}' not in self.supported_model_names. Updating supported_model_names.")
+            self.supported_model_names = list(MODEL_CONFIG_MAP.keys())
     
     def login_to_hf( self ):
         """
@@ -193,8 +205,8 @@ class PeftTrainer:
         
         df = pd.read_json(f"/{self.test_train_dir}/voice-commands-xml-train.jsonl", lines=True )#.sample( 1000, random_state=42 )
         
-        token_stats = { "min": -1, "max": -1, "mean": -1 }
-        word_stats  = { "min": -1, "max": -1, "mean": -1 }
+        token_stats = { "min": -1, "max": -1, "mean": -1}
+        word_stats  = {"min": -1, "max": -1, "mean": -1}
         
         token_counts = [ ]
         word_counts  = [ ]
@@ -274,14 +286,14 @@ class PeftTrainer:
         self._load_model_and_tokenizer( backend=backend, device_map=device_map, mode="training" )
         
         # I used this when loading a quantized model. Since I'm not quantizing now, it's commented out
-        # self.model         = prepare_model_for_kbit_training( self.model, gradientoow_checkpointing_kwargs={ 'use_reentrant': True } )
+        # self.model         = prepare_model_for_kbit_training( self.model, gradientoow_checkpointing_kwargs={'use_reentrant': True} )
         peft_config        = self._get_peft_config()
         training_arguments = self._get_training_args( output_dir=output_dir, batch_size=batch_size, gradient_accumulation_steps=gradient_accumulation_steps, logging_steps=logging_steps, eval_steps=eval_steps )
         test_train_data    = self._get_test_train_data( sample_size=sample_size )
         
-        du.print_banner( "Training data" )
+        du.print_banner( "Training data", prepend_nl=True )
         print( test_train_data[ "train" ] )
-        du.print_banner( "Validation data" )
+        du.print_banner( "Validation data", prepend_nl=True )
         print( test_train_data[ "test" ] )
         
         self.trainer = SFTTrainer(
@@ -431,8 +443,8 @@ class PeftTrainer:
         print( f"Loading adapter from {adapter_path}... Done!" )
         
     def run_validation_in_memory( self,
-        switch="", adapter_path=None,  path_prefix="/var/model/genie-in-the-box", device_map={"": 0},
-        sample_size=1000, debug=None, verbose=None
+        switch="in_memory", adapter_path=None,  path_prefix=du.get_project_root(), device_map={"": 0},
+        sample_size=100, debug=None, verbose=None
     ):
         """
         Runs validation on the model with the specified adapter using in-memory inference.
@@ -510,7 +522,7 @@ class PeftTrainer:
     
     def run_validation_with_server(
             self, model=None, switch="", path_prefix="/var/model/genie-in-the-box",
-            device_map={ "": 0 }, sample_size=1000, debug=None, verbose=None
+            device_map={"": 0}, sample_size=1000, debug=None, verbose=None
     ):
         """
         Runs validation against a model server rather than loading the model in memory.
@@ -581,7 +593,7 @@ class PeftTrainer:
         
         return df
     
-    def load_and_merge_adapter( self, checkpoint_dir=None, device_map={ "": 0 } ):
+    def load_and_merge_adapter( self, checkpoint_dir=None, device_map={"": 0} ):
         """
         Loads a PEFT adapter and merges it with the base model.
         
@@ -776,35 +788,38 @@ class PeftTrainer:
             
             self.tokenizer = AutoTokenizer.from_pretrained( self.model_hf_id, force_download=True, from_slow=False )
             
-            # ad-hoc padding configurations
-            if self.model_name in [ "Mistral-7B-Instruct-v0.2", "Ministral-8B-Instruct-2410" ]:
-                
+            # Load the model-specific tokenizer configuration
+            model_config = load_model_config(self.model_name)
+            tokenizer_config = model_config["tokenizer"]
+            
+            # Apply tokenizer settings from configuration
+            pad_token = tokenizer_config["pad_token"]
+            
+            # Handle different token attribute references
+            if pad_token == "eos_token":
                 self.tokenizer.pad_token = self.tokenizer.eos_token
-                
-            elif self.model_name == "Llama-3.2-3B-Instruct":
-            
-                self.tokenizer.pad_token = "<|finetune_right_pad_id|>"
-                self.tokenizer.pad_token_id = 128004
-                self.tokenizer.padding_side = 'right'
-                
-            elif self.model_name == "Phi-4-mini-instruct":
-                
+            elif pad_token == "unk_token":
                 self.tokenizer.pad_token = self.tokenizer.unk_token
-                self.tokenizer.pad_token_id = self.tokenizer.convert_tokens_to_ids( self.tokenizer.pad_token )
-                self.tokenizer.padding_side = 'left'
-            
+                # Convert from unk_token if needed
+                if tokenizer_config.get("pad_token_id") == "converted_from_unk_token":
+                    self.tokenizer.pad_token_id = self.tokenizer.convert_tokens_to_ids(self.tokenizer.pad_token)
             else:
-                self._validate_model_name()
+                # Direct string assignment
+                self.tokenizer.pad_token = pad_token
+                # Set ID if provided
+                if "pad_token_id" in tokenizer_config and isinstance(tokenizer_config["pad_token_id"], int):
+                    self.tokenizer.pad_token_id = tokenizer_config["pad_token_id"]
             
+            # Set padding side based on mode
             if mode == "training":
-                print( "Setting padding side to 'right' for training" )
-                self.tokenizer.padding_side = "right"
+                print(f"Setting padding side to '{tokenizer_config['padding_side']['training']}' for training")
+                self.tokenizer.padding_side = tokenizer_config['padding_side']['training']
             elif mode == "inference":
-                print( "Setting padding side to 'left' for inference" )
-                self.tokenizer.padding_side = "left"
+                print(f"Setting padding side to '{tokenizer_config['padding_side']['inference']}' for inference")
+                self.tokenizer.padding_side = tokenizer_config['padding_side']['inference']
             else:
                 # this is checked above, this will never be called
-                raise ValueError( "Mode MUST be specified, either 'training' or 'inference'" )
+                raise ValueError("Mode MUST be specified, either 'training' or 'inference'")
         else:
             print( "Tokenizer already loaded. Skipping" )
             
@@ -827,29 +842,20 @@ class PeftTrainer:
         - LoraConfig: Configuration object for PEFT (Parameter-Efficient Fine-Tuning).
         
         Notes:
-        - The rank parameter 'r' is adjusted based on the model:
-          - Mistral-7B-Instruct-v0.2: r=4
-          - Ministral-8B-Instruct-2410: r=32 (a higher value to address low trainable parameter %)
-          - Llama-3.2-3B-Instruct and Phi-4-mini-instruct: r=64
-        - Target modules include key architectural components for all supported models.
+        - Configuration is loaded dynamically from model-specific configuration files
+        - Each model has its own LoRA parameters defined in training/conf/{model_name}.py
         """
-        if self.model_name == "Mistral-7B-Instruct-v0.2":
-            r = 4
-        elif self.model_name == "Ministral-8B-Instruct-2410":
-            # why so big? r = 16 only yielded: trainable params: 43,646,976 || all params: 8,063,455,232 || trainable%: 0.54
-            r = 32
-        elif self.model_name in [ "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct" ]:
-            r = 64
-        else:
-            self._validate_model_name()
+        # Load the model-specific configuration
+        model_config = load_model_config(self.model_name)
+        lora_params = model_config["lora"]
         
         return LoraConfig(
-            lora_alpha=16,
-            lora_dropout=0.05,
-            r=r,
-            bias="none",
-            task_type="CAUSAL_LM",
-            target_modules=[ 'k_proj', 'q_proj', 'v_proj', 'o_proj', "gate_proj", "down_proj", "up_proj" ]
+            lora_alpha=lora_params["lora_alpha"],
+            lora_dropout=lora_params["lora_dropout"],
+            r=lora_params["r"],
+            bias=lora_params["bias"],
+            task_type=lora_params["task_type"],
+            target_modules=lora_params["target_modules"]
         )
     
     def _get_training_args( self, output_dir="./results", batch_size=8, gradient_accumulation_steps=1, logging_steps=0.05, eval_steps=0.5 ):
@@ -918,19 +924,14 @@ class PeftTrainer:
         - Returns an appropriate maximum sequence length for the specific model type.
         
         Returns:
-        - int: The maximum sequence length to use for training:
-          - 779 for Mistral-7B-Instruct-v0.2
-          - 683 for Ministral-8B-Instruct-2410, Llama-3.2-3B-Instruct, and Phi-4-mini-instruct
+        - int: The maximum sequence length loaded from the model configuration
         
         Raises:
-        - ValueError: If self.model_name is not one of the supported models (via _validate_model_name).
+        - ValueError: If self.model_name is not one of the supported models.
         """
-        if self.model_name == "Mistral-7B-Instruct-v0.2":
-            return 779
-        elif self.model_name in [ "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct" ]:
-            return 683
-        else:
-            self._validate_model_name()
+        # Load the model-specific configuration
+        model_config = load_model_config(self.model_name)
+        return model_config["model"]["max_seq_length"]
         
     def _get_test_train_data( self, sample_size=1.0 ):
         """
@@ -966,7 +967,7 @@ class PeftTrainer:
         path = f"/{self.test_train_dir}/voice-commands-xml-test.jsonl"
         test_dataset = self._get_dataset( path, sample_size=sample_size, extract_gpt_message=extract_gpt_message )
         
-        return { 'train': train_dataset, 'test': test_dataset }
+        return {'train': train_dataset, 'test': test_dataset }
     
     def _get_dataset( self, path, sample_size=1.0, extract_gpt_message=False ):
         """
@@ -1024,39 +1025,33 @@ class PeftTrainer:
         - str: A formatted prompt string suitable for the specified model type.
         
         Raises:
-        - ValueError: If self.model_name is not one of the supported models (via _validate_model_name).
+        - ValueError: If self.model_name is not one of the supported models.
         - KeyError: If row is missing any of the required fields.
         
         Notes:
-        - Different models require different prompt formats:
-          - Mistral-7B-Instruct-v0.2 uses a structured format with sections.
-          - Ministral-8B-Instruct-2410, Llama-3.2-3B-Instruct, and Phi-4-mini-instruct 
-            use the [INST]...[/INST] format.
+        - The prompt format is loaded from the model-specific configuration file
+        - Different models require different prompt formats that are defined in their config files
         """
-        if self.model_name == "Mistral-7B-Instruct-v0.2":
-            prompt = f"""### Instruction:
-            Use the Task below and the Input given to write a Response that can solve the following Task:
-
-            ### Task:
-            {row[ "instruction" ]}
-
-            ### Input:
-            {row[ "input" ]}
-
-            ### Response:
-            {row[ "output" ]}
-            """
-        elif self.model_name in [ "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct" ]:
-            prompt = f"""<s>[INST]{row[ "instruction" ]}
-
-            {row[ "input" ]}
-            [/INST]
-            {row[ "output" ]}
-            </s>"""
+        # Load the model-specific configuration
+        model_config = load_model_config(self.model_name)
+        template = model_config["model"]["prompt_template"]
+        
+        # Format using the template from the configuration
+        # Check if last_tag_func exists in the configuration
+        if "last_tag_func" in model_config["model"]:
+            # Use the lambda function directly from the config
+            last_tag_func = model_config["model"]["last_tag_func"]
+            last_tag = last_tag_func(row["output"])
         else:
-            self._validate_model_name()
+            last_tag = ""
             
-        return prompt
+        # Format the prompt with the template
+        return template.format(
+            instruction=row["instruction"],
+            input=row["input"],
+            output=row["output"],
+            last_tag=last_tag
+        )
     
     def get_prompt( self, instruction, input, output="" ):
         """
@@ -1080,40 +1075,31 @@ class PeftTrainer:
         - str: A formatted prompt string suitable for the specified model type.
         
         Raises:
-        - ValueError: If self.model_name is not one of the supported models (via _validate_model_name).
+        - ValueError: If self.model_name is not one of the supported models.
         
         Notes:
-        - For Ministral-8B-Instruct-2410, Llama-3.2-3B-Instruct, and Phi-4-mini-instruct models, 
-          the closing </s> tag is only included if output is provided.
+        - The prompt format is loaded from the model-specific configuration file
+        - For some models, the closing tag is only included if output is provided
         """
-        if self.model_name == "Mistral-7B-Instruct-v0.2":
-            return f"""### Instruction:
-            Use the Task below and the Input given to write a Response that can solve the following Task:
-    
-            ### Task:
-            {instruction}
-    
-            ### Input:
-            {input}
-    
-            ### Response:
-            {output}
-            """
-        elif self.model_name in [ "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct" ]:
-
-            if output == "":
-                last_tag = ""
-            else:
-                last_tag = "</s>"
-
-            return f"""<s>[INST]{instruction}
-
-            {input}
-            [/INST]
-            {output}
-            {last_tag}"""
+        # Load the model-specific configuration
+        model_config = load_model_config(self.model_name)
+        template = model_config["model"]["prompt_template"]
+        
+        # Check if last_tag_func exists in the configuration
+        if "last_tag_func" in model_config["model"]:
+            # Use the lambda function directly from the config
+            last_tag_func = model_config["model"]["last_tag_func"]
+            last_tag = last_tag_func(output)
         else:
-            self._validate_model_name()
+            last_tag = ""
+            
+        # Format the prompt with the template
+        return template.format(
+            instruction=instruction,
+            input=input,
+            output=output,
+            last_tag=last_tag
+        )
     
     def _print_trainable_parameters( self ):
         """
@@ -1252,73 +1238,108 @@ class PeftTrainer:
         os.environ[ "GIB_CONFIG_MGR_CLI_ARGS" ] = "config_path=/src/conf/gib-app.ini splainer_path=/src/conf/gib-app-splainer.ini config_block_id=Genie+in+the+Box:+Development"
         os.environ[ "WANDB_DISABLE_SERVICE"   ] = wandb_disable_service
     
-
-class MyKludgySFTTrainer( SFTTrainer ):
-    """
-    A custom extension of the SFTTrainer class that handles tokenizer padding side switching.
-    
-    This class overrides the evaluation_loop method to ensure proper padding side configuration
-    during evaluation and training phases. It temporarily switches padding_side to 'left' for
-    evaluation and then back to 'right' for training.
-    
-    Attributes:
-        Inherits all attributes from SFTTrainer.
-    """
-
-    def evaluation_loop( self, *args, **kwargs ):
+    def do_all_the_things( self, pre_training_stats=False, post_training_stats=False ):
         """
-        Overrides the evaluation_loop method to handle tokenizer padding_side switching.
+        Executes the full training pipeline from fine-tuning to quantization.
         
-        Preconditions:
-        - self.tokenizer must be initialized and have a padding_side attribute.
+        This method:
+        1. Loads model-specific configuration
+        2. Runs pre-training validation if requested
+        3. Fine-tunes the model using the proper configuration for the model
+        4. Merges the LoRA adapter with the base model
+        5. Quantizes the merged model
+        6. Optionally runs post-training validation
         
-        Postconditions:
-        - Tokenizer padding_side is set to 'left' during evaluation.
-        - Tokenizer padding_side is restored to 'right' after evaluation completes.
-        - The result from the parent class evaluation_loop is returned.
-        
-        Parameters:
-        - *args: Positional arguments to pass to the parent class's evaluation_loop method.
-        - **kwargs: Keyword arguments to pass to the parent class's evaluation_loop method.
-        
-        Returns:
-        - The result returned by the parent class's evaluation_loop method.
+        Args:
+            pre_training_stats (bool): Whether to run validation before training
+            post_training_stats (bool): Whether to run validation after training
         """
-        # Set padding_side to 'left' for evaluation
-        self.tokenizer.padding_side = 'left'
-        result = super().evaluation_loop( *args, **kwargs )
-        # Revert padding_side to 'right' after evaluation
-        self.tokenizer.padding_side = 'right'
-        return result
+        timer = Stopwatch( msg=None )
+        trainer = PeftTrainer(
+            args.model, args.model_name, args.test_train_path, lora_dir=args.lora_dir, debug=args.debug, verbose=args.verbose
+        )
+        
+        trainer.login_to_hf()
+        
+        # Run a quick pretest in memory
+        if pre_training_stats:
+            du.print_banner( f"Running pre-training validation for {args.model_name}" )
+            trainer.run_validation_in_memory( device_map="cuda:0", sample_size=100 )
+        
+        # Load model-specific fine-tuning configuration
+        model_config = load_model_config( trainer.model_name )
+        fine_tune_params = model_config[ "fine_tune" ]
+        
+        # Fine-tune using the dynamically loaded configuration
+        checkpoint_dir = trainer.fine_tune(
+                            sample_size=fine_tune_params[ "sample_size" ],
+                             batch_size=fine_tune_params[ "batch_size" ],
+            gradient_accumulation_steps=fine_tune_params[ "gradient_accumulation_steps" ],
+                          logging_steps=fine_tune_params[ "logging_steps" ],
+                             eval_steps=fine_tune_params[ "eval_steps" ],
+                             device_map=fine_tune_params[ "device_map" ],
+                             output_dir=args.lora_dir
+        )
+        
+        release_gpus( [ trainer.model, trainer.tokenizer ] )
+        
+        # Load and merge the adapter
+        trainer.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
+        merged_adapter_dir = trainer.save_merged_adapter( lora_dir=args.lora_dir )
+        release_gpus( [ trainer.model, trainer.tokenizer ] )
+        
+        # Quantize the merged adapter
+        quantized_model_dir = trainer.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
+        
+        # Print completion information
+        timer.print( f"Finished fine-tuning, merging and quantizing {args.model_name}" )
+        du.print_banner( f"Finished quantizing {args.model_name}" )
+        print( f"Quantized model: {quantized_model_dir}" )
+        du.print_simple_file_list( quantized_model_dir )
+        
+        if post_training_stats:
+            du.print_banner( f"Running post-training validation for {args.model_name}" )
+            # wait for user input before continuing
+            # TODO: create a function for starting vLLM in a separate thread and waiting for it to start before continuing?
+            choice = input( "Press 'Enter' to validate model, 'n' to exit:" )
+            if choice.lower() == 'n':
+                sys.exit( 0 )
+            
+            # create a custom model name using as an ID the mount point for the recently quantized model directory
+            model = Llm.get_model( quantized_model_dir )
+            trainer.run_validation_with_server(
+                model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=1000, debug=False,
+                verbose=False
+            )
     
 def check_env():
     """
     Verifies that required environment variables are set for proper application functioning.
-    
+
     Preconditions:
     - None, this function checks the environment variables itself.
-    
+
     Postconditions:
     - If all required environment variables are set, the GENIE_IN_THE_BOX_ROOT path is returned.
     - If any required variables are missing, the function prints an error message and exits the program.
-    
+
     Required Environment Variables:
     - NCCL_P2P_DISABLE: Should be set to "1" to disable peer-to-peer CUDA operations.
     - NCCL_IB_DISABLE: Should be set to "1" to disable InfiniBand communications.
     - GENIE_IN_THE_BOX_ROOT: Should point to the root directory of the application.
     - GIB_CONFIG_MGR_CLI_ARGS: Should contain configuration arguments for the application.
-    
+
     Returns:
     - str: The value of GENIE_IN_THE_BOX_ROOT if all checks pass.
-    
+
     Raises:
     - SystemExit: If any required environment variables are missing.
     """
     required_vars = [
-        ( "NCCL_P2P_DISABLE", "1" ),
-        ( "NCCL_IB_DISABLE", "1" ),
-        ( "GENIE_IN_THE_BOX_ROOT", "/some/foo/path" ),
-        ( "GIB_CONFIG_MGR_CLI_ARGS", "" )
+        ("NCCL_P2P_DISABLE", "1"),
+        ("NCCL_IB_DISABLE", "1"),
+        ("GENIE_IN_THE_BOX_ROOT", "/some/foo/path"),
+        ("GIB_CONFIG_MGR_CLI_ARGS", "")
     ]
     
     missing_vars = False
@@ -1331,73 +1352,112 @@ def check_env():
     if missing_vars:
         print( "Exiting due to missing environment variables" )
         sys.exit( 1 )
-        
+    
     return os.getenv( "GENIE_IN_THE_BOX_ROOT" )
     
 def parse_arguments():
     """
     Parses command line arguments for the PEFT trainer application.
-    
+
     Preconditions:
     - The script must be run with proper command line arguments.
-    
+
     Postconditions:
     - Returns a Namespace object containing the parsed arguments.
-    
+
     Required Arguments:
     - model: The Hugging Face model ID.
     - model_name: The name of the model (must be a supported model).
     - test_train_path: Path to the directory containing test/train data.
     - lora_dir: Directory for storing LoRA adapter files.
-    
+
     Optional Arguments:
     - --debug: Flag to enable debug mode.
     - --verbose: Flag to enable verbose mode.
-    
+
     Returns:
     - argparse.Namespace: Object containing the parsed command line arguments.
     """
     import argparse
     
     parser = argparse.ArgumentParser( description="PEFT trainer for language models" )
-    parser.add_argument( "--model",           type=str, help="Model HuggingFace ID" )
-    parser.add_argument( "--model-name",      type=str, help="Model name" )
+    parser.add_argument( "--model", type=str, help="Model HuggingFace ID" )
+    parser.add_argument( "--model-name", type=str, help="Model name" )
     parser.add_argument( "--test-train-path", type=str, help="Path to test/train data" )
-    parser.add_argument( "--lora-dir",        type=str, help="Directory for LORA files" )
+    parser.add_argument( "--lora-dir", type=str, help="Directory for LORA files" )
     
     # Optional arguments can be added here
-    parser.add_argument( "--debug",   action="store_true", help="Enable debug mode" )
+    parser.add_argument( "--debug", action="store_true", help="Enable debug mode" )
     parser.add_argument( "--verbose", action="store_true", help="Enable verbose mode" )
     
     return parser.parse_args()
 
-def validate_model_name_arg(model_name):
-    """
-    Validates that a given model name is in the list of supported models.
-    
-    Preconditions:
-    - model_name must be a string.
-    
-    Postconditions:
-    - If model_name is valid, the function completes without error.
-    - If model_name is not valid, a ValueError is raised.
-    
-    Parameters:
-    - model_name (str): The model name to validate.
-    
-    Raises:
-    - ValueError: If model_name is not one of the supported models.
-    
-    Supported Models:
-    - "Mistral-7B-Instruct-v0.2"
-    - "Ministral-8B-Instruct-2410"
-    - "Llama-3.2-3B-Instruct"
-    - "Phi-4-mini-instruct"
-    """
-    supported_model_names = ["Mistral-7B-Instruct-v0.2", "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct"]
-    if model_name not in supported_model_names:
-        raise ValueError(f"Unsupported model_name: '{model_name}'. Must be one of: {', '.join(supported_model_names)}")
-    
+# and just like that, we no longer need this after transformers gets an update
+# class MyKludgySFTTrainer( SFTTrainer ):
+#     """
+#     A custom extension of the SFTTrainer class that handles tokenizer padding side switching.
+#
+#     This class overrides the evaluation_loop method to ensure proper padding side configuration
+#     during evaluation and training phases. It temporarily switches padding_side to 'left' for
+#     evaluation and then back to 'right' for training.
+#
+#     Attributes:
+#         Inherits all attributes from SFTTrainer.
+#     """
+#
+#     def evaluation_loop( self, *args, **kwargs ):
+#         """
+#         Overrides the evaluation_loop method to handle tokenizer padding_side switching.
+#
+#         Preconditions:
+#         - self.tokenizer must be initialized and have a padding_side attribute.
+#
+#         Postconditions:
+#         - Tokenizer padding_side is set to 'left' during evaluation.
+#         - Tokenizer padding_side is restored to 'right' after evaluation completes.
+#         - The result from the parent class evaluation_loop is returned.
+#
+#         Parameters:
+#         - *args: Positional arguments to pass to the parent class's evaluation_loop method.
+#         - **kwargs: Keyword arguments to pass to the parent class's evaluation_loop method.
+#
+#         Returns:
+#         - The result returned by the parent class's evaluation_loop method.
+#         """
+#         # Set padding_side to 'left' for evaluation
+#         self.tokenizer.padding_side = 'left'
+#         result = super().evaluation_loop( *args, **kwargs )
+#         # Revert padding_side to 'right' after evaluation
+#         self.tokenizer.padding_side = 'right'
+#         return result
+#
+# def validate_model_name_arg( model_name ):
+#     """
+#     Validates that a given model name is in the list of supported models.
+#
+#     Preconditions:
+#     - model_name must be a string.
+#
+#     Postconditions:
+#     - If model_name is valid, the function completes without error.
+#     - If model_name is not valid, a ValueError is raised.
+#
+#     Parameters:
+#     - model_name (str): The model name to validate.
+#
+#     Raises:
+#     - ValueError: If model_name is not one of the supported models.
+#
+#     Supported Models:
+#     - "Mistral-7B-Instruct-v0.2"
+#     - "Ministral-8B-Instruct-2410"
+#     - "Llama-3.2-3B-Instruct"
+#     - "Phi-4-mini-instruct"
+#     """
+#     supported_model_names = ["Mistral-7B-Instruct-v0.2", "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct"]
+#     if model_name not in supported_model_names:
+#         raise ValueError(f"Unsupported model_name: '{model_name}'. Must be one of: {', '.join(supported_model_names)}")
+#
 # def suss_out_dataset():
 #
 #     path = "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/ephemera/prompts/data/voice-commands-xml-train.jsonl"
@@ -1410,7 +1470,7 @@ def validate_model_name_arg(model_name):
 #
 #     train_dataset = Dataset.from_list( train_dataset )
 #     print( train_dataset[ 0 ] )
-    
+
 if __name__ == "__main__":
     
     # suss_out_dataset()
@@ -1421,36 +1481,44 @@ if __name__ == "__main__":
     trainer  = PeftTrainer( args.model, args.model_name, args.test_train_path, lora_dir=args.lora_dir, debug=args.debug, verbose=args.verbose )
     
     trainer.login_to_hf()
+    
+    trainer.do_all_the_things( pre_training_stats=False, post_training_stats=False  )
 
-    # for Ministral-8B-Instruct-2410
-    # checkpoint_dir = trainer.fine_tune( sample_size=1.0, batch_size=3, gradient_accumulation_steps=8, logging_steps=0.10, eval_steps=0.10, device_map="auto", output_dir=args.lora_dir )
-    # for Llama-3.2-3B-instruct
-    # checkpoint_dir = trainer.fine_tune( sample_size=1.0, batch_size=6, gradient_accumulation_steps=4, logging_steps=0.10, eval_steps=0.10, device_map="auto", output_dir=args.lora_dir )
-    # for Phi-3.5/4-mini-instruct
-    checkpoint_dir = trainer.fine_tune( sample_size=0.01, batch_size=8, gradient_accumulation_steps=4, logging_steps=0.50, eval_steps=0.50, device_map="auto", output_dir=args.lora_dir )
-    release_gpus( [ trainer.model, trainer.tokenizer ] )
-    # TODO: this is still showing 60-some megabytes of GPU RAM as allocated...
-    trainer.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
-    merged_adapter_dir = trainer.save_merged_adapter( lora_dir=args.lora_dir )
-    release_gpus( [ trainer.model, trainer.tokenizer ] )
-
-    quantized_model_dir = trainer.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
-
-    # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-4-bits-sym.gptq/2025-02-12-at-02-27"
-    # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-8-bits-sym.gptq/2025-02-24-at-21-39"
-    # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Llama-3.2-3B-Instruct.lora/merged-on-2025-02-23-at-21-59/autoround-4-bits-sym.gptq/2025-02-23-at-22-09"
-    timer.print( f"Finished fine-tuning, merging and quantizing {args.model_name}" )
-    du.print_banner( f"Finished quantizing {args.model_name}" )
-    print( f"Quantized model: {quantized_model_dir}" )
-    du.print_simple_file_list( quantized_model_dir )
-
-    # wait for user input before continuing
-    choice = input( "Press 'Enter' to validate model, 'n' to exit:" )
-    if choice.lower() == 'n':
-        sys.exit( 0 )
-
-    model = Llm.get_model( quantized_model_dir )
-    stats_df = trainer.run_validation_with_server(
-        model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=1000, debug=False, verbose=False
-    )
-    print( stats_df )
+    # # run a quick pretest in memory
+    # pre_stats_df = trainer.run_validation_in_memory( device_map="cuda:0", sample_size=10 )
+    # # print( pre_stats_df )
+    #
+    # # for Ministral-8B-Instruct-2410
+    # # checkpoint_dir = trainer.fine_tune( sample_size=1.0, batch_size=3, gradient_accumulation_steps=8, logging_steps=0.10, eval_steps=0.10, device_map="auto", output_dir=args.lora_dir )
+    # # for Llama-3.2-3B-instruct
+    # # checkpoint_dir = trainer.fine_tune( sample_size=1.0, batch_size=6, gradient_accumulation_steps=4, logging_steps=0.10, eval_steps=0.10, device_map="auto", output_dir=args.lora_dir )
+    # # for Phi-3.5/4-mini-instruct
+    # checkpoint_dir = trainer.fine_tune( sample_size=0.01, batch_size=8, gradient_accumulation_steps=4, logging_steps=0.50, eval_steps=0.50, device_map="auto", output_dir=args.lora_dir )
+    # release_gpus( [ trainer.model, trainer.tokenizer ] )
+    # # TODO: this is still showing 60-some megabytes of GPU RAM as allocated...
+    # trainer.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
+    # merged_adapter_dir = trainer.save_merged_adapter( lora_dir=args.lora_dir )
+    # release_gpus( [ trainer.model, trainer.tokenizer ] )
+    #
+    # quantized_model_dir = trainer.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
+    #
+    # # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-4-bits-sym.gptq/2025-02-12-at-02-27"
+    # # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-8-bits-sym.gptq/2025-02-24-at-21-39"
+    # # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Llama-3.2-3B-Instruct.lora/merged-on-2025-02-23-at-21-59/autoround-4-bits-sym.gptq/2025-02-23-at-22-09"
+    # timer.print( f"Finished fine-tuning, merging and quantizing {args.model_name}" )
+    # du.print_banner( f"Finished quantizing {args.model_name}" )
+    # print( f"Quantized model: {quantized_model_dir}" )
+    # du.print_simple_file_list( quantized_model_dir )
+    #
+    # # wait for user input before continuing
+    # choice = input( "Press 'Enter' to validate model, 'n' to exit:" )
+    # if choice.lower() == 'n':
+    #     sys.exit( 0 )
+    #
+    # # this creates a custom model name with an ID that is the mount point for the recently quantized model directory
+    # model = Llm.get_model( quantized_model_dir )
+    # post_stats_df = trainer.run_validation_with_server(
+    #     model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=1000, debug=False, verbose=False
+    # )
+    # # print( post_stats_df )
+    
