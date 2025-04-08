@@ -1315,10 +1315,10 @@ def check_env():
     - SystemExit: If any required environment variables are missing.
     """
     required_vars = [
-        "NCCL_P2P_DISABLE", "1"
-        "NCCL_IB_DISABLE", "1"
-        "GENIE_IN_THE_BOX_ROOT", "/some/foo/path"
-        "GIB_CONFIG_MGR_CLI_ARGS", ""
+        ( "NCCL_P2P_DISABLE", "1" ),
+        ( "NCCL_IB_DISABLE", "1" ),
+        ( "GENIE_IN_THE_BOX_ROOT", "/some/foo/path" ),
+        ( "GIB_CONFIG_MGR_CLI_ARGS", "" )
     ]
     
     missing_vars = False
@@ -1360,10 +1360,10 @@ def parse_arguments():
     import argparse
     
     parser = argparse.ArgumentParser( description="PEFT trainer for language models" )
-    parser.add_argument( "model", type=str, help="Model HuggingFace ID" )
-    parser.add_argument( "model_name", type=str, help="Model name" )
-    parser.add_argument( "test_train_path", type=str, help="Path to test/train data" )
-    parser.add_argument( "lora_dir", type=str, help="Directory for LORA files" )
+    parser.add_argument( "--model",           type=str, help="Model HuggingFace ID" )
+    parser.add_argument( "--model-name",      type=str, help="Model name" )
+    parser.add_argument( "--test-train-path", type=str, help="Path to test/train data" )
+    parser.add_argument( "--lora-dir",        type=str, help="Directory for LORA files" )
     
     # Optional arguments can be added here
     parser.add_argument( "--debug",   action="store_true", help="Enable debug mode" )
