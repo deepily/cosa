@@ -31,7 +31,7 @@ class Quantizer:
         
         if quantize_method == "autoround":
             self.autoround = AutoRound( self.model, self.tokenizer, nsamples=128, iters=512, low_gpu_mem_usage=True, batch_size=batch_size,
-                graddient_accumulation_steps=8, bits=self.bits, group_size=group_size, sym=sym
+                gradient_accumulation_steps=8, bits=self.bits, group_size=group_size, sym=sym, enable_torch_compile=True  # Enable torch.compile optimizations
             )
         else:
             raise Exception( f"Unsupported quantization method: {quantize_method}" )

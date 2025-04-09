@@ -757,7 +757,7 @@ class XmlCoordinator:
         timer = Stopwatch( msg=f"Generating responses for {rows:,} rows...", silent=silent )
         
         # Save the original debug/verbose settings
-        original_debug = self.debug
+        original_debug   = self.debug
         original_verbose = self.verbose
         
         # Use the passed parameters if provided
@@ -783,7 +783,7 @@ class XmlCoordinator:
                 raise Exception( f"Unknown runtime llm datasource switch [{switch}]" )
         finally:
             # Restore original debug/verbose settings
-            self.debug = original_debug
+            self.debug   = original_debug
             self.verbose = original_verbose
         
         timer.print( msg="Done!", use_millis=False, prepend_nl=True, end="\n" )

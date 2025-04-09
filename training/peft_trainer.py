@@ -2,7 +2,11 @@ import gc
 import sys
 import json
 import pandas as pd
-
+import argparse
+import time
+import subprocess
+import threading
+import requests
 import torch, os, multiprocessing
 from peft import LoraConfig, prepare_model_for_kbit_training, PeftModel
 from torch.ao.quantization import quantize
@@ -247,7 +251,7 @@ class PeftTrainer:
             
         return token_stats, word_stats
     
-    def fine_tune( self, batch_size=8, gradient_accumulation_steps=1, logging_steps=0.05, eval_steps=0.20, backend="cuda", sample_size=1.0, device_map="auto", output_dir="./results" ):
+    def fine_tune( self, batch_size=8, gradient_accumulation_steps=1, logging_steps=0.05, eval_steps=0.20, sample_size=1.0, device_map="auto", output_dir="./results" ):
         """
         Fine-tunes the model using PEFT (Parameter-Efficient Fine-Tuning) techniques.
         
@@ -283,7 +287,7 @@ class PeftTrainer:
         print( run_start )
         timer = Stopwatch( msg=None )
         
-        self._load_model_and_tokenizer( backend=backend, device_map=device_map, mode="training" )
+        self._load_model_and_tokenizer( device_map=device_map, mode="training" )
         
         # I used this when loading a quantized model. Since I'm not quantizing now, it's commented out
         # self.model         = prepare_model_for_kbit_training( self.model, gradientoow_checkpointing_kwargs={'use_reentrant': True} )
@@ -616,7 +620,7 @@ class PeftTrainer:
         - ValueError: If no adapter path is provided and self.checkpoint_dir is not set.
         """
         du.print_banner( f"Load and merge adapter {checkpoint_dir}" )
-        self._load_model_and_tokenizer( backend="cuda", device_map=device_map, mode="inference" )
+        self._load_model_and_tokenizer( device_map=device_map, mode="inference" )
         
         if checkpoint_dir is not None:
             self.checkpoint_dir = checkpoint_dir
@@ -718,7 +722,7 @@ class PeftTrainer:
         
         return self.quantized_model_dir
     
-    def _load_model_and_tokenizer( self, backend="cuda", device_map="auto", mode=None ):
+    def _load_model_and_tokenizer( self, device_map="auto", mode=None ):
         """
         Loads the model and tokenizer for either training or inference.
         
@@ -735,7 +739,6 @@ class PeftTrainer:
         - The working directory remains unchanged, even though it temporarily changes during execution.
         
         Parameters:
-        - backend (str, optional): Backend to use for model loading. Defaults to "cuda".
         - device_map (str or dict, optional): Device mapping strategy for the model. Defaults to "auto".
         - mode (str, required): Mode of operation, must be either "training" or "inference".
         
@@ -771,16 +774,6 @@ class PeftTrainer:
             
             if self.debug and self.verbose:
                 dupt.print_device_allocation( self.model )
-                
-            # previously used this to load auto round config
-            # ¡OJO! Note that in the first use of self.model it represents a path, but in the second use it represents a model object
-            # self.model = AutoModelForCausalLM.from_pretrained(
-            #     self.model,
-            #     # device_map="auto", # distributed training
-            #     device_map=device_map,  # {"": 0} = single GPU
-            #     quantization_config=quantization_config,
-            #     attn_implementation=attn_implementation
-            # )
         else:
             print( "Model already loaded. Skipping" )
             
@@ -1237,6 +1230,122 @@ class PeftTrainer:
         os.environ[ "GENIE_IN_THE_BOX_ROOT"   ] = gib_root
         os.environ[ "GIB_CONFIG_MGR_CLI_ARGS" ] = "config_path=/src/conf/gib-app.ini splainer_path=/src/conf/gib-app-splainer.ini config_block_id=Genie+in+the+Box:+Development"
         os.environ[ "WANDB_DISABLE_SERVICE"   ] = wandb_disable_service
+        
+    def _start_vllm_server( self, quantized_model_dir, port=3000, max_model_len=2048, gpu_memory_utilization=0.75, timeout=180 ):
+        """
+        Starts a vLLM server for the quantized model and waits for it to be available.
+        
+        Preconditions:
+        - quantized_model_dir must be a valid directory containing a quantized model.
+        - DEEPILY_PROJECTS_DIR environment variable must be set to the projects directory.
+        - vLLM must be installed in the virtual environment at $DEEPILY_PROJECTS_DIR/vllm-pip/.venv.
+        
+        Postconditions:
+        - A vLLM server is started in a separate process.
+        - The function waits until the server is available or until the timeout is reached.
+        - Returns the process object for the vLLM server.
+        
+        Parameters:
+        - quantized_model_dir (str): Path to the directory containing the quantized model.
+        - port (int, optional): Port on which to run the vLLM server. Defaults to 3000.
+        - max_model_len (int, optional): Maximum sequence length for the model. Defaults to 2048.
+        - gpu_memory_utilization (float, optional): Fraction of GPU memory to use. Defaults to 0.75.
+        - timeout (int, optional): Maximum time to wait for the server to start (seconds). Defaults to 180.
+        
+        Returns:
+        - subprocess.Popen: Process object for the vLLM server.
+        
+        Raises:
+        - ValueError: If DEEPILY_PROJECTS_DIR is not set.
+        - TimeoutError: If the server does not start within the timeout period.
+        """
+        # Check if DEEPILY_PROJECTS_DIR is set
+        projects_dir = os.environ.get( "DEEPILY_PROJECTS_DIR" )
+        if not projects_dir:
+            raise ValueError( "DEEPILY_PROJECTS_DIR environment variable is not set." )
+        
+        du.print_banner( "Starting vLLM server" )
+        
+        # Command to start the vLLM server
+        cmd = f"cd {projects_dir}/vllm-pip; source .venv/bin/activate; vllm serve {quantized_model_dir} --port {port} --max-model-len {max_model_len} --gpu_memory_utilization {gpu_memory_utilization}"
+        
+        if self.debug:
+            print( f"Command to start vLLM server: {cmd}" )
+        
+        # Start the vLLM server in a separate process
+        process = subprocess.Popen( cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True )
+        
+        # Start a thread to read and print server output
+        def print_server_output( process ):
+            for line in process.stdout:
+                if self.debug or self.verbose:
+                    print( f"[vLLM Server] {line.strip()}" )
+        
+        output_thread = threading.Thread( target=print_server_output, args=( process, ), daemon=True )
+        output_thread.start()
+        
+        # Wait for the server to be available
+        print( f"Waiting for vLLM server to be available on port {port}..." )
+        server_url = f"http://localhost:{port}/health"
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            try:
+                response = requests.get( server_url, timeout=1 )
+                if response.status_code == 200:
+                    print( f"vLLM server is available on port {port}" )
+                    return process
+            except requests.RequestException:
+                # Server not yet available
+                time.sleep( 2 )
+                if self.debug:
+                    elapsed = time.time() - start_time
+                    print( f"  Waiting... ({elapsed:.1f}s / {timeout}s)" )
+        
+        # If we reach here, the server did not start within the timeout
+        self._stop_vllm_server( process )
+        raise TimeoutError( f"vLLM server did not start within {timeout} seconds" )
+    
+    def _stop_vllm_server( self, process ):
+        """
+        Stops the vLLM server process.
+        
+        Preconditions:
+        - process must be a valid subprocess.Popen object representing the vLLM server process.
+        
+        Postconditions:
+        - The vLLM server process is terminated.
+        - Any child processes are also terminated.
+        
+        Parameters:
+        - process (subprocess.Popen): The process object for the vLLM server.
+        """
+        if process:
+            du.print_banner( "Stopping vLLM server" )
+            
+            # On Linux, use process group ID to kill all child processes
+            if hasattr( os, 'killpg' ) and hasattr( process, 'pid' ):
+                try:
+                    # Send SIGTERM to process group
+                    os.killpg( os.getpgid( process.pid ), 15 )
+                    
+                    # Wait for a clean exit, but not too long
+                    process.wait( timeout=10 )
+                except ( ProcessLookupError, subprocess.TimeoutExpired ):
+                    # If it didn't exit cleanly, force kill
+                    try:
+                        os.killpg( os.getpgid( process.pid ), 9 )
+                    except ProcessLookupError:
+                        pass
+            else:
+                # Fallback for platforms without killpg
+                process.terminate()
+                try:
+                    process.wait( timeout=10 )
+                except subprocess.TimeoutExpired:
+                    process.kill()
+            
+            print( "vLLM server has been stopped" )
     
     def do_all_the_things( self, pre_training_stats=False, post_training_stats=False ):
         """
@@ -1263,11 +1372,11 @@ class PeftTrainer:
         
         # Run a quick pretest in memory
         if pre_training_stats:
-            du.print_banner( f"Running pre-training validation for {args.model_name}" )
-            trainer.run_validation_in_memory( device_map="cuda:0", sample_size=100 )
+            # du.print_banner( f"Running pre-training validation for {args.model_name}", prepend_nl=True )
+            trainer.run_validation_in_memory( device_map="auto", sample_size=100 )
         
         # Load model-specific fine-tuning configuration
-        model_config = load_model_config( trainer.model_name )
+        model_config     = load_model_config( trainer.model_name )
         fine_tune_params = model_config[ "fine_tune" ]
         
         # Fine-tune using the dynamically loaded configuration
@@ -1298,12 +1407,11 @@ class PeftTrainer:
         du.print_simple_file_list( quantized_model_dir )
         
         if post_training_stats:
+            
             du.print_banner( f"Running post-training validation for {args.model_name}" )
-            # wait for user input before continuing
-            # TODO: create a function for starting vLLM in a separate thread and waiting for it to start before continuing?
-            choice = input( "Press 'Enter' to validate model, 'n' to exit:" )
-            if choice.lower() == 'n':
-                sys.exit( 0 )
+            
+            # Start vLLM server and wait for it to be available
+            vllm_server_process = self._start_vllm_server( quantized_model_dir )
             
             # create a custom model name using as an ID the mount point for the recently quantized model directory
             model = Llm.get_model( quantized_model_dir )
@@ -1311,6 +1419,9 @@ class PeftTrainer:
                 model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=1000, debug=False,
                 verbose=False
             )
+            
+            # Terminate the vLLM server process
+            self._stop_vllm_server( vllm_server_process )
     
 def check_env():
     """
@@ -1378,17 +1489,20 @@ def parse_arguments():
     Returns:
     - argparse.Namespace: Object containing the parsed command line arguments.
     """
-    import argparse
     
     parser = argparse.ArgumentParser( description="PEFT trainer for language models" )
-    parser.add_argument( "--model", type=str, help="Model HuggingFace ID" )
-    parser.add_argument( "--model-name", type=str, help="Model name" )
-    parser.add_argument( "--test-train-path", type=str, help="Path to test/train data" )
-    parser.add_argument( "--lora-dir", type=str, help="Directory for LORA files" )
     
-    # Optional arguments can be added here
-    parser.add_argument( "--debug", action="store_true", help="Enable debug mode" )
-    parser.add_argument( "--verbose", action="store_true", help="Enable verbose mode" )
+    # Required arguments
+    parser.add_argument( "--model",           type=str, help="Model HuggingFace ID" )
+    parser.add_argument( "--model-name",      type=str, help="Model name" )
+    parser.add_argument( "--test-train-path", type=str, help="Path to test/train data" )
+    parser.add_argument( "--lora-dir",        type=str, help="Directory for LORA files" )
+    
+    # Optional arguments
+    parser.add_argument( "--debug",               action="store_true", help="Enable debug mode",              default=False )
+    parser.add_argument( "--verbose",             action="store_true", help="Enable verbose mode",            default=False )
+    parser.add_argument( "--pre-training-stats",  action="store_true", help="Run validation before training", default=False )
+    parser.add_argument( "--post-training-stats", action="store_true", help="Run validation after training",  default=False )
     
     return parser.parse_args()
 
@@ -1482,43 +1596,6 @@ if __name__ == "__main__":
     
     trainer.login_to_hf()
     
-    trainer.do_all_the_things( pre_training_stats=False, post_training_stats=False  )
-
-    # # run a quick pretest in memory
-    # pre_stats_df = trainer.run_validation_in_memory( device_map="cuda:0", sample_size=10 )
-    # # print( pre_stats_df )
-    #
-    # # for Ministral-8B-Instruct-2410
-    # # checkpoint_dir = trainer.fine_tune( sample_size=1.0, batch_size=3, gradient_accumulation_steps=8, logging_steps=0.10, eval_steps=0.10, device_map="auto", output_dir=args.lora_dir )
-    # # for Llama-3.2-3B-instruct
-    # # checkpoint_dir = trainer.fine_tune( sample_size=1.0, batch_size=6, gradient_accumulation_steps=4, logging_steps=0.10, eval_steps=0.10, device_map="auto", output_dir=args.lora_dir )
-    # # for Phi-3.5/4-mini-instruct
-    # checkpoint_dir = trainer.fine_tune( sample_size=0.01, batch_size=8, gradient_accumulation_steps=4, logging_steps=0.50, eval_steps=0.50, device_map="auto", output_dir=args.lora_dir )
-    # release_gpus( [ trainer.model, trainer.tokenizer ] )
-    # # TODO: this is still showing 60-some megabytes of GPU RAM as allocated...
-    # trainer.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
-    # merged_adapter_dir = trainer.save_merged_adapter( lora_dir=args.lora_dir )
-    # release_gpus( [ trainer.model, trainer.tokenizer ] )
-    #
-    # quantized_model_dir = trainer.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
-    #
-    # # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-4-bits-sym.gptq/2025-02-12-at-02-27"
-    # # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-8-bits-sym.gptq/2025-02-24-at-21-39"
-    # # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Llama-3.2-3B-Instruct.lora/merged-on-2025-02-23-at-21-59/autoround-4-bits-sym.gptq/2025-02-23-at-22-09"
-    # timer.print( f"Finished fine-tuning, merging and quantizing {args.model_name}" )
-    # du.print_banner( f"Finished quantizing {args.model_name}" )
-    # print( f"Quantized model: {quantized_model_dir}" )
-    # du.print_simple_file_list( quantized_model_dir )
-    #
-    # # wait for user input before continuing
-    # choice = input( "Press 'Enter' to validate model, 'n' to exit:" )
-    # if choice.lower() == 'n':
-    #     sys.exit( 0 )
-    #
-    # # this creates a custom model name with an ID that is the mount point for the recently quantized model directory
-    # model = Llm.get_model( quantized_model_dir )
-    # post_stats_df = trainer.run_validation_with_server(
-    #     model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=1000, debug=False, verbose=False
-    # )
-    # # print( post_stats_df )
+    trainer.do_all_the_things( pre_training_stats=args.pre_training_stats, post_training_stats=args.post_training_stats )
+    
     
