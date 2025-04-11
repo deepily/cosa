@@ -13,8 +13,6 @@ from cosa.agents.llm import Llm
 
 from cosa.app.configuration_manager import ConfigurationManager
 
-# from cosa.training.xml_fine_tuning_prompt_generator import XmlFineTuningPromptGenerator
-
 # Currently, all transcription mode descriptors are three words long.
 # This will become important or more important in the future?
 trans_mode_text_raw           = "multimodal text raw"

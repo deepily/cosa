@@ -500,7 +500,7 @@ class PeftTrainer:
         
         du.print_banner( "Querying LLM in memory" )
         # load model and tokenizer...
-        self._load_model_and_tokenizer( backend="cuda", device_map=device_map, mode="inference" )
+        self._load_model_and_tokenizer( device_map=device_map, mode="inference" )
         
         # ...and adapter...
         if adapter_path is not None:
@@ -514,7 +514,7 @@ class PeftTrainer:
             
         # generate responses
         df = xml_coordinator.generate_responses(
-            df, tokenizer=self.tokenizer, model=self.model, switch=switch, model_name=self.model_name, device=device_map,
+            df, tokenizer=self.tokenizer, model=self.model, switch=switch, model_name=self.model_name, device="cuda",
             max_new_tokens=128, debug=debug, verbose=verbose
         )
         # validate responses
@@ -1369,16 +1369,16 @@ class PeftTrainer:
         )
         
         trainer.login_to_hf()
-        
+
         # Run a quick pretest in memory
         if pre_training_stats:
-            # du.print_banner( f"Running pre-training validation for {args.model_name}", prepend_nl=True )
+            # TODO: add runtime configuration for sample size
             trainer.run_validation_in_memory( device_map="auto", sample_size=100 )
-        
+
         # Load model-specific fine-tuning configuration
         model_config     = load_model_config( trainer.model_name )
         fine_tune_params = model_config[ "fine_tune" ]
-        
+
         # Fine-tune using the dynamically loaded configuration
         checkpoint_dir = trainer.fine_tune(
                             sample_size=fine_tune_params[ "sample_size" ],
@@ -1389,24 +1389,28 @@ class PeftTrainer:
                              device_map=fine_tune_params[ "device_map" ],
                              output_dir=args.lora_dir
         )
-        
+
         release_gpus( [ trainer.model, trainer.tokenizer ] )
-        
+
         # Load and merge the adapter
         trainer.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
         merged_adapter_dir = trainer.save_merged_adapter( lora_dir=args.lora_dir )
         release_gpus( [ trainer.model, trainer.tokenizer ] )
-        
+
         # Quantize the merged adapter
         quantized_model_dir = trainer.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
-        
+
         # Print completion information
         timer.print( f"Finished fine-tuning, merging and quantizing {args.model_name}" )
         du.print_banner( f"Finished quantizing {args.model_name}" )
         print( f"Quantized model: {quantized_model_dir}" )
         du.print_simple_file_list( quantized_model_dir )
         
+        # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-08-at-21-26/autoround-4-bits-sym.gptq/2025-04-08-at-21-47"
         if post_training_stats:
+        
+            # release GPU before doing anything else
+            release_gpus( [ trainer.model, trainer.tokenizer ] )
             
             du.print_banner( f"Running post-training validation for {args.model_name}" )
             
@@ -1415,6 +1419,7 @@ class PeftTrainer:
             
             # create a custom model name using as an ID the mount point for the recently quantized model directory
             model = Llm.get_model( quantized_model_dir )
+            # TODO: add runtime configuration for sample size
             trainer.run_validation_with_server(
                 model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=1000, debug=False,
                 verbose=False

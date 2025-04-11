@@ -34,7 +34,7 @@ class BugInjector( AgentBase ):
         line_number = int( dux.get_value_by_xml_tag_name( response, "line-number", default_value="-1" ) )
         bug         =      dux.get_value_by_xml_tag_name( response, "bug",         default_value="" )
         
-        if line_number == -1: # or bug == "": # for now, we're going to allow the bug to be an empty string
+        if line_number == -1:
             du.print_banner( f"Invalid response from [{model_name}]", expletive=True )
             print( response )
         elif line_number > len( self.prompt_response_dict[ "code" ] ):

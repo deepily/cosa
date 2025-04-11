@@ -32,8 +32,10 @@ class Llm:
     GOOGLE_GEMINI_PRO = "Google/gemini-1.5-pro-latest"
     
     DEEPILY_PREFIX    = "Deepily"
+    # DEEPILY_MINISTRAL_8B_2410 = "Deepily//mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-4-bits-sym.gptq/2025-02-12-at-02-27"
     DEEPILY_MINISTRAL_8B_2410 = "Deepily//mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-4-bits-sym.gptq/2025-02-12-at-02-27"
     
+    DEFAULT_LOCAL_COMPLETIONS_URL  = "http://192.168.1.21:3000/v1/completions"
     # TODO: these static dictionaries would be populated dynamically at runtime using the configuration manager
     local_completions_dict = {
         DEEPILY_MINISTRAL_8B_2410: "http://192.168.1.21:3000/v1/completions",
@@ -89,7 +91,8 @@ class Llm:
         elif self.model in Llm.local_chat_dict:
             return Llm.local_chat_dict[ self.model ]
         else:
-            return None
+            print( f"Using default local inference URL [{Llm.DEFAULT_LOCAL_COMPLETIONS_URL}]" )
+            return Llm.DEFAULT_LOCAL_COMPLETIONS_URL
         
     def _start_timer( self, msg="Asking LLM [{model}]..." ):
         
@@ -292,6 +295,7 @@ class Llm:
             debug=False, verbose=False
     ):
         print( f"COMPLETION self._query_vllm_KLUDGE_completion(...) called" )
+        print( f"URL: [{self.local_inference_url}]" )
         return get_completion( prompt, url=self.local_inference_url, model=self.extract_model_name( self.model ) )
         
     def _query_vllm_openai_chat(
@@ -487,12 +491,13 @@ if __name__ == "__main__":
     voice_command = "can I please talk to a human?"
     prompt = prompt_template.format( voice_command=voice_command )
     # print( prompt )
-    model         = config_mgr.get( "router_and_vox_command_model" )
+    # model         = config_mgr.get( "router_and_vox_command_model" )
+    
     # url           = config_mgr.get( "router_and_vox_command_url" )
     is_completion = config_mgr.get( "router_and_vox_command_is_completion", return_type="boolean", default=False )
     debug         = config_mgr.get( "app_debug",   return_type="boolean", default=False )
     verbose       = config_mgr.get( "app_verbose", return_type="boolean", default=False )
-    
+    model         = Llm.get_model( "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-08-at-21-26/autoround-4-bits-sym.gptq/2025-04-08-at-21-47" )
     llm = Llm( model=model, is_completion=is_completion, debug=debug, verbose=verbose )
     #
     results = llm.query_llm( prompt=prompt )
