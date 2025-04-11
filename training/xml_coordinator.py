@@ -749,7 +749,7 @@ class XmlCoordinator:
         import torch
         from huggingface_hub import InferenceClient
         import openai
-        from cosa.agents.llm import Llm
+        from cosa.agents.llm_v0 import Llm_v0
         
         self.reset_call_counter()
         rows = df.shape[0]
@@ -1039,7 +1039,7 @@ class XmlCoordinator:
         import torch
         from huggingface_hub import InferenceClient
         import cosa.app.util_llm_client as du_llm_client
-        from cosa.agents.llm import Llm
+        from cosa.agents.llm_v0 import Llm_v0
         
         self._call_counter += 1
         
@@ -1090,14 +1090,14 @@ class XmlCoordinator:
             return response
             
         elif switch == "deepily":
-            llm = Llm( model=model, debug=debug, verbose=verbose )
+            llm = Llm_v0( model=model, debug=debug, verbose=verbose )
             results = llm.query_llm( prompt=prompt, temperature=temperature, top_p=top_p, top_k=top_k )
             return results
             
         elif switch == "openai":
             openai.api_key = du.get_api_key( "openai", project_root=du.get_project_root() )
             response = openai.chat.completions.create(
-                model=Llm.extract_model_name( model_name ),
+                model=Llm_v0.extract_model_name( model_name ),
                 messages=prompt[ "messages" ],
                 temperature=temperature,
                 max_tokens=max_new_tokens,

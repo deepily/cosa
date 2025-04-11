@@ -3,7 +3,7 @@ from cosa.utils import util_xml as dux
 
 from cosa.app.configuration_manager import ConfigurationManager
 
-from cosa.agents.llm import Llm
+from cosa.agents.llm_v0 import Llm_v0
 
 class RawOutputFormatter:
     
@@ -44,7 +44,7 @@ class RawOutputFormatter:
         self.routing_command       = routing_command
         self.formatting_template   = du.get_file_as_string( du.get_project_root() + self.formatter_prompt_paths[ routing_command ] )
         self.prompt                = self._get_prompt()
-        self.llm                   = Llm( model=self.models[ routing_command ], debug=self.debug, verbose=self.verbose )
+        self.llm                   = Llm_v0( model=self.models[ routing_command ], debug=self.debug, verbose=self.verbose )
     
     def format_output( self ):
         

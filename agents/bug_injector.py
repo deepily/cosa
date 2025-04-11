@@ -2,7 +2,7 @@ import cosa.utils.util as du
 import cosa.utils.util_xml as dux
 
 from cosa.agents.agent_base import AgentBase
-from cosa.agents.llm import Llm
+from cosa.agents.llm_v0 import Llm_v0
 
 class BugInjector( AgentBase ):
     def __init__( self, code, example="", debug=True, verbose=True ):
@@ -28,7 +28,7 @@ class BugInjector( AgentBase ):
         
         if model_name is not None: self.model_name = model_name
         
-        llm = Llm( model=self.model_name, debug=self.debug, verbose=self.verbose )
+        llm = Llm_v0( model=self.model_name, debug=self.debug, verbose=self.verbose )
         response = llm.query_llm( prompt=self.prompt, temperature=temperature, top_p=top_p, top_k=top_k, max_new_tokens=max_new_tokens, debug=self.debug, verbose=self.verbose )
         
         line_number = int( dux.get_value_by_xml_tag_name( response, "line-number", default_value="-1" ) )

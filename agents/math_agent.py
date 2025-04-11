@@ -3,7 +3,7 @@ import time
 import cosa.utils.util as du
 import cosa.utils.util_xml as dux
 
-from cosa.agents.llm import Llm
+from cosa.agents.llm_v0 import Llm_v0
 from cosa.utils.util_stopwatch import Stopwatch
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.agents.agent_base import AgentBase
@@ -96,8 +96,8 @@ if __name__ == "__main__":
         try:
             prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agents/plain-vanilla-question.txt" )
             prompt = prompt_template.format( question=question )
-            model = Llm.GOOGLE_GEMINI_PRO
-            llm = Llm( model=model, debug=debug, verbose=verbose )
+            model = Llm_v0.GOOGLE_GEMINI_PRO
+            llm = Llm_v0( model=model, debug=debug, verbose=verbose )
             results = llm.query_llm( prompt=prompt )
             answer = dux.get_value_by_xml_tag_name( results, "answer" ).strip()
 

@@ -10,7 +10,7 @@ from cosa.agents.weather_agent import WeatherAgent
 from cosa.agents.todo_list_agent import TodoListAgent
 from cosa.agents.calendaring_agent import CalendaringAgent
 from cosa.agents.math_agent import MathAgent
-from cosa.agents.llm import Llm
+from cosa.agents.llm_v0 import Llm_v0
 from cosa.tools.search_gib import GibSearch
 
 # from lib.agents.agent_function_mapping        import FunctionMappingAgent
@@ -95,7 +95,7 @@ class TodoFifoQueue( FifoQueue ):
         prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agents/gist.txt" )
         prompt = prompt_template.format( question=question )
         # ¡OJO! LLM should be runtime configurable
-        llm = Llm( model=Llm.GROQ_LLAMA3_70B, debug=self.debug, verbose=self.verbose )
+        llm = Llm_v0( model=Llm_v0.GROQ_LLAMA3_70B, debug=self.debug, verbose=self.verbose )
         results = llm.query_llm( prompt=prompt )
         gist = dux.get_value_by_xml_tag_name( results, "gist", default_value="" ).strip()
         
@@ -329,7 +329,7 @@ class TodoFifoQueue( FifoQueue ):
         model         = self.config_mgr.get( "router_and_vox_command_model" )
         is_completion = self.config_mgr.get( "router_and_vox_command_is_completion", return_type="boolean", default=False )
         
-        llm      = Llm( model=model, is_completion=is_completion, debug=self.debug, verbose=self.verbose )
+        llm      = Llm_v0( model=model, is_completion=is_completion, debug=self.debug, verbose=self.verbose )
         response = llm.query_llm( prompt=prompt )
         print( f"LLM response: [{response}]" )
         # Parse results

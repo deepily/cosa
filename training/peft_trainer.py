@@ -29,7 +29,7 @@ from cosa.training.conf import load_model_config
 import cosa.utils.util         as du
 import cosa.utils.util_pytorch as dupt
 
-from cosa.agents.llm           import Llm
+from cosa.agents.llm_v0        import Llm_v0
 from cosa.training.quantizer   import Quantizer
 from cosa.utils.util_stopwatch import Stopwatch
 
@@ -1418,7 +1418,7 @@ class PeftTrainer:
             vllm_server_process = self._start_vllm_server( quantized_model_dir )
             
             # create a custom model name using as an ID the mount point for the recently quantized model directory
-            model = Llm.get_model( quantized_model_dir )
+            model = Llm_v0.get_model( quantized_model_dir )
             # TODO: add runtime configuration for sample size
             trainer.run_validation_with_server(
                 model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=1000, debug=False,
