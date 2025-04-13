@@ -19,12 +19,36 @@ from cosa.app.configuration_manager import ConfigurationManager
 
 
 class LlmClient:
+    """
+    A flexible client for interacting with local and remote LLM services.
     
+    This client provides a unified interface for both chat and completion modes,
+    handles token counting, supports streaming, and collects performance metrics.
+    
+    Requires:
+        - Valid base_url for the LLM API endpoint
+        - Valid model_name compatible with the API
+        - API key if required by the service
+        - TokenCounter for tracking token usage
+        
+    Ensures:
+        - Consistent interface for both completion and chat-based models
+        - Token counting for prompt and completion
+        - Performance metrics (tokens/second, duration)
+        - Proper environment variable configuration for API access
+        - Streaming and non-streaming response options
+    
+    Usage:
+        client = LlmClient(base_url="https://api.endpoint.com/v1", 
+                          model_name="model-name",
+                          completion_mode=False)
+        response = client.run("Your prompt here", stream=True)
+    """
+    # Model identifier constants
     DEEPILY_MINISTRAL_8B_2410   = "llm_deepily_ministral_8b_2410"
     PHI_4_14B                   = "llm_deepily_phi_4_14b"
     GROQ_LLAMA_3_1_8B           = "groq:llama-3.1-8b-instant"
-    GROQ_LLAMA_3_1_70B          = "groq:llama-3.1-70b-versatile"
-    OPENAI_GPT_4o_MINI          = "openai:gpt-4o-mini"
+    OPENAI_GPT_01_MINI          = "openai:o1-mini-2024-09-12"
     GOOGLE_GEMINI_1_5_FLASH     = "google-gla:gemini-1.5-flash"
     ANTHROPIC_CLAUDE_SONNET_3_5 = "anthropic:claude-3-5-sonnet-latest"
     
@@ -42,6 +66,23 @@ class LlmClient:
         verbose=False,
         **generation_args
     ):
+        """
+        Initialize an LLM client with the given configuration.
+        
+        Requires:
+            - base_url: A valid API endpoint URL
+            - model_name: A valid model identifier for the service
+            - api_key: If required, a valid API key for the service
+            
+        Ensures:
+            - Sets up environment variables for API access
+            - Initializes appropriate client based on completion_mode
+            - Creates TokenCounter for usage tracking
+            - Stores generation parameters for use with LLM calls
+            
+        Raises:
+            - Various initialization errors depending on client type and parameters
+        """
         os.environ[ "OPENAI_API_KEY" ]  = api_key or "EMPTY"
         os.environ[ "OPENAI_BASE_URL" ] = base_url
         
@@ -62,6 +103,21 @@ class LlmClient:
     async def _stream_async( self, prompt: str ):
         """
         Internal method to handle async streaming.
+        
+        This asynchronous method handles streaming responses from the LLM,
+        capturing chunks as they arrive and returning the combined result.
+        
+        Requires:
+            - prompt: A non-empty string to send to the LLM
+            - self.model: An initialized model with async streaming capability
+            
+        Ensures:
+            - Streams response chunks from the LLM
+            - Displays progress if self.debug is True
+            - Collects all chunks into a single response
+            
+        Returns:
+            - Complete response string from the LLM
         """
         output = [ ]
         
@@ -78,6 +134,37 @@ class LlmClient:
         return "".join( output )
     
     def run( self, prompt: str, stream: bool=False ) -> str:
+        """
+        Send a prompt to the LLM and get the response.
+        
+        This is the main method for interacting with the LLM. It handles both
+        streaming and non-streaming responses, measures performance metrics,
+        and provides debugging information.
+        
+        Requires:
+            - prompt: A non-empty string to send to the LLM
+            - self.model: An initialized model with run capability
+            - self.token_counter: An initialized TokenCounter
+            
+        Ensures:
+            - Sends the prompt to the LLM and receives a response
+            - Counts tokens for both prompt and completion
+            - Measures performance metrics (duration, tokens/sec)
+            - Handles both streaming and non-streaming modes
+            - Displays performance metrics
+            
+        Args:
+            - prompt: The text to send to the LLM
+            - stream: Whether to stream the response (default: False)
+            
+        Returns:
+            - String response from the LLM
+            
+        TODO:
+            - Add support for distinguishing between system and user messages
+            - Improve handling of chat vs completion formats
+            - Develop more sophisticated message history management
+        """
         
         prompt_tokens = self.token_counter.count_tokens( self.model_name, prompt )
         
@@ -121,11 +208,45 @@ class LlmClient:
         return output
     
     def _format_duration( self, seconds: float ) -> str:
+        """
+        Format a duration in seconds to a readable string.
         
+        Requires:
+            - seconds: A float representing seconds
+            
+        Ensures:
+            - Returns a formatted string in milliseconds
+            
+        Returns:
+            - String in the format "XXXms"
+        """
         # return f"{seconds:.3f}" if seconds > 1 else f"{seconds * 1000:.3f} ms"
         return f"{int( seconds * 1000 )}ms"
     
     def _print_metadata( self, prompt_tokens: int, completion_tokens: int, duration: Optional[ float ] ):
+        """
+        Print performance metadata about an LLM request.
+        
+        This method calculates and displays key metrics about the LLM interaction,
+        including token counts, duration, and tokens per second.
+        
+        Requires:
+            - prompt_tokens: Integer count of tokens in the prompt
+            - completion_tokens: Integer count of tokens in the completion
+            - duration: Float representing seconds taken, or None
+            
+        Ensures:
+            - Calculates total tokens and tokens per second
+            - Formats duration appropriately
+            - Displays a formatted summary of metrics
+            
+        TODO:
+            - Add cost estimation based on token usage and model pricing
+            - Implement more detailed performance metrics
+            - Add optional logging to file for performance tracking
+            - Fix potential division by zero issues in TPS calculation
+            - Support different output formats (JSON, CSV, etc.)
+        """
         
         total_tokens = prompt_tokens + completion_tokens
         tps = completion_tokens / duration if (duration and duration > 0) else float( 'inf' )

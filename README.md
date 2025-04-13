@@ -17,7 +17,11 @@ CoSA implements a collection of targeted agents, each specialized for specific t
 
 - `/agents`: Individual agent implementations
   - `agent_base.py`: Abstract base class for all agents
-  - `llm.py`: LLM service integration
+  - `llm.py`, `llm_v0.py`: LLM service integration (legacy)
+  - `/v1`: New modular LLM client architecture
+    - `llm_client.py`: Unified client for all LLM providers
+    - `llm_client_factory.py`: Factory pattern for client creation
+    - `token_counter.py`: Cross-provider token counting
   - Specialized agents for math, calendaring, weather, etc.
 - `/app`: Core application components
   - `configuration_manager.py`: Settings management with inheritance
@@ -75,6 +79,26 @@ python -m cosa.training.peft_trainer \
 ## Development Guidelines
 
 Please refer to [CLAUDE.md](./CLAUDE.md) for detailed code style and development guidelines.
+
+## Recent and Upcoming Work
+
+### Recently Completed
+- **Modular LLM Client Architecture (v1)**: MVP implementation of a vendor-agnostic LLM client system
+  - Support for multiple providers (OpenAI, Groq, Anthropic/Claude, Google/Gemini)
+  - Integration with Deepily's edge servers for local model inference
+  - Factory pattern for client creation with configuration-driven setup
+  - Comprehensive token counting and performance metrics
+  - Design by Contract documentation
+
+### In Progress
+- **Enhanced Message Handling**: Improved support for system vs. user messages
+- **Better Performance Metrics**: Cost estimation, detailed logging, and monitoring
+- **Advanced Token Counting**: More accurate token counting for all providers
+- **Streaming Improvements**: Robust handling of streaming responses
+- **Generation Parameter Support**: Model-specific parameter validation and handling
+
+### Future Plans
+- TBD
 
 ## License
 

@@ -9,6 +9,23 @@ from cosa.agents.v1.token_counter import TokenCounter
 from cosa.utils.util_stopwatch import Stopwatch
 
 class LlmCompletion:
+    """
+    Client for interacting with LLM completion APIs.
+    
+    This class provides a simplified interface for making completion requests
+    to LLM APIs that follow the OpenAI-compatible completions format.
+    
+    Requires:
+        - Valid base_url for a completions API endpoint
+        - Valid model_name compatible with the API
+        - TokenCounter for tracking token usage
+        
+    Ensures:
+        - Makes HTTP requests to the completions API
+        - Formats requests according to the completions API spec
+        - Processes responses into usable text output
+        - Provides performance metrics
+    """
     
     def __init__( self,
         base_url: str = "http://192.168.1.21:3000/v1/completions",
@@ -19,6 +36,27 @@ class LlmCompletion:
         verbose = False,
         **generation_args
     ):
+        """
+        Initialize a completion API client.
+        
+        Requires:
+            - base_url: A valid URL for an OpenAI-compatible completions API
+            - model_name: A valid model name or path
+            
+        Ensures:
+            - Sets up client configuration for API requests
+            - Initializes TokenCounter for token counting
+            - Stores generation parameters
+            
+        Args:
+            base_url: URL of the completions API endpoint
+            model_name: Name or path of the model to use
+            api_key: Optional API key for authentication
+            model_tokenizer_map: Optional mapping from model to tokenizer names
+            debug: Enable debug output
+            verbose: Enable verbose output
+            **generation_args: Additional arguments for generation
+        """
         self.base_url = base_url
         self.model_name = model_name
         self.api_key = api_key
@@ -29,6 +67,34 @@ class LlmCompletion:
         self.generation_args = generation_args
 
     def run( self, prompt: str, stream: bool = False ) -> str:
+        """
+        Send a prompt to the LLM and get a completion response.
+        
+        This method sends a request to the completions API and processes
+        the response. It handles timing, token counting, and error handling.
+        
+        Requires:
+            - prompt: A non-empty string to send to the LLM
+            - self.base_url: A valid API endpoint URL
+            - self.model_name: A valid model name or path
+            
+        Ensures:
+            - Sends a properly formatted request to the completions API
+            - Measures performance metrics
+            - Processes and returns the response text
+            - Provides debug information if enabled
+            
+        Raises:
+            - NotImplementedError if streaming is requested
+            - May raise HTTP exceptions for API errors
+            
+        Args:
+            prompt: The text prompt to send to the LLM
+            stream: Whether to stream the response (not implemented)
+            
+        Returns:
+            String response from the LLM
+        """
         
         if stream:
             raise NotImplementedError( "Streaming not implemented for this client" )
@@ -43,6 +109,9 @@ class LlmCompletion:
             "model": self.model_name,
             "prompt": prompt,
             # TODO: add support for generation arguments
+            # TODO: integrate generation_args properly, with validation
+            # TODO: add support for stop sequences and other parameters
+            # TODO: handle model-specific limitations and defaults
             "max_tokens": 64,
             "temperature": 0.25,
         }
