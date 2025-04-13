@@ -134,14 +134,6 @@ class Llm:
             # Allow us to override the prompt, preamble, and question set when instantiated
             if model is not None: self.model = model
             
-            # if self.model == Llm.PHIND_34B_v2:
-            #
-            #     # Quick sanity check
-            #     if prompt is None: raise ValueError( "ERROR: Prompt is `None`!" )
-            #     return self._query_tgi_llm(
-            #         prompt, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, debug=debug, verbose=verbose, stop_sequences=stop_sequences
-            #     )
-            #
             elif self.model == Llm.GOOGLE_GEMINI_PRO:
                 
                 # Quick sanity check
@@ -299,7 +291,6 @@ class Llm:
         return get_completion( prompt, url=self.local_inference_url, model=self.extract_model_name( self.model ) )
         
     def _query_vllm_openai_chat(
-        # self, preamble, query, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.25, stop_sequences=[ "</response>" ],
         self, prompt, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.25, stop_sequences=[ "</response>" ],
         debug=False, verbose=False
     ):
@@ -433,39 +424,6 @@ class Llm:
         self._stop_timer( chunks=chunks )
         
         return "".join( chunks ).strip()
-    
-    # def _query_tgi_llm(
-    #         self, prompt, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.25, stop_sequences=[ "</response>", "></s>" ], debug=False, verbose=False
-    # ):
-    #     self._start_timer()
-    #
-    #     if debug: print( f"Calling: [{self.local_inference_url}]" )
-    #     client = InferenceClient( self.local_inference_url )
-    #     token_list     = [ ]
-    #     ellipsis_count = 0
-    #
-    #     if self.debug and self.verbose:
-    #         for line in prompt.split( "\n" ):
-    #             print( line )
-    #
-    #     for token in client.text_generation(
-    #             prompt, max_new_tokens=max_new_tokens, stream=True, temperature=temperature, top_k=top_k, top_p=top_p,
-    #             stop_sequences=stop_sequences
-    #     ):
-    #         ellipsis_count = self._do_conditional_print( token, ellipsis_count, debug=debug )
-    #         token_list.append( token )
-    #
-    #     response = "".join( token_list ).strip()
-    #
-    #     self._stop_timer( chunks=token_list )
-    #
-    #     if self.debug:
-    #         print( f"Token list length [{len( token_list )}]" )
-    #         if self.verbose:
-    #             for line in response.split( "\n" ):
-    #                 print( line )
-    #
-    #     return response
     
 if __name__ == "__main__":
     

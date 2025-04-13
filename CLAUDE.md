@@ -59,6 +59,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   for command in commands.keys():
   words = text.split()
   ```
+  
+- **One-line conditionals**: Use one-line format for simple, short conditionals
+  ```python
+  # CORRECT - one-line conditionals for simple checks
+  if debug: print( f"Debug: {value}" )
+  if verbose: du.print_banner( "Processing complete" )
+  
+  # CORRECT - multi-line for more complex operations
+  if condition:
+      perform_complex_operation()
+      update_something_else()
+  ```
 - **Dictionary Alignment**: Align dictionary contents vertically centered on the colon symbol
   ```python
   # CORRECT - vertically aligned colons in dictionaries

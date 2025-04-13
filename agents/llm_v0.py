@@ -434,39 +434,6 @@ class Llm_v0:
         
         return "".join( chunks ).strip()
     
-    # def _query_tgi_llm(
-    #         self, prompt, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.25, stop_sequences=[ "</response>", "></s>" ], debug=False, verbose=False
-    # ):
-    #     self._start_timer()
-    #
-    #     if debug: print( f"Calling: [{self.local_inference_url}]" )
-    #     client = InferenceClient( self.local_inference_url )
-    #     token_list     = [ ]
-    #     ellipsis_count = 0
-    #
-    #     if self.debug and self.verbose:
-    #         for line in prompt.split( "\n" ):
-    #             print( line )
-    #
-    #     for token in client.text_generation(
-    #             prompt, max_new_tokens=max_new_tokens, stream=True, temperature=temperature, top_k=top_k, top_p=top_p,
-    #             stop_sequences=stop_sequences
-    #     ):
-    #         ellipsis_count = self._do_conditional_print( token, ellipsis_count, debug=debug )
-    #         token_list.append( token )
-    #
-    #     response = "".join( token_list ).strip()
-    #
-    #     self._stop_timer( chunks=token_list )
-    #
-    #     if self.debug:
-    #         print( f"Token list length [{len( token_list )}]" )
-    #         if self.verbose:
-    #             for line in response.split( "\n" ):
-    #                 print( line )
-    #
-    #     return response
-    
 if __name__ == "__main__":
     
     config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
