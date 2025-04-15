@@ -1,7 +1,7 @@
 import os
 import time
 import asyncio
-from typing import Optional
+from typing import Optional, Any
 
 from boto3 import client
 from openai import base_url
@@ -97,10 +97,10 @@ class LlmClient:
             self.model = LlmCompletion( base_url=base_url, model_name=model_name, api_key=api_key, **generation_args )
         else:
             # For normal chat mode, use the Agent class
-            if self.debug: print( f"Using Agent with model: {model_name}" )
+            if self.debug: print( f"Using Agent with model: 'openai:{model_name}'" )
             self.model = Agent( f"openai:{model_name}", **generation_args )
     
-    async def _stream_async( self, prompt: str ):
+    async def _stream_async( self, prompt: str, **generation_args: Any ) -> str:
         """
         Internal method to handle async streaming.
         
@@ -122,7 +122,7 @@ class LlmClient:
         output = [ ]
         
         # Use run_stream which returns a context manager for streaming
-        async with self.model.run_stream( prompt ) as result:
+        async with self.model.run_stream( prompt, **generation_args ) as result:
             # Stream text as deltas
             async for chunk in result.stream_text( delta=True ):
                 if self.debug:
@@ -133,7 +133,7 @@ class LlmClient:
         
         return "".join( output )
     
-    def run( self, prompt: str, stream: bool=False ) -> str:
+    def run( self, prompt: str, stream: bool=False, **kwargs: Any ) -> str:
         """
         Send a prompt to the LLM and get the response.
         
@@ -168,16 +168,25 @@ class LlmClient:
         
         prompt_tokens = self.token_counter.count_tokens( self.model_name, prompt )
         
+        # update generation arguments
+        if self.debug: print( "Updating generation arguments..." )
+        updated_gen_args = {
+            "temperature": kwargs.get( "temperature", self.generation_args.get( "temperature", 0.7 ) ),
+            "max_tokens" : kwargs.get( "max_tokens", self.generation_args.get( "max_tokens", 64 ) ),
+            "stop"       : kwargs.get( "stop", self.generation_args.get( "stop", None ) ),
+            "top_p"      : kwargs.get( "top_p", self.generation_args.get( "top_p", 1.0 ) ),
+        }
         if not stream:
+            
             # Add timing for non-streaming mode too
             start_time = time.perf_counter()
             
             if not self.completion_mode:
                 # For Agent, use run_sync for synchronous operation
-                response = self.model.run_sync( prompt ).data
+                response = self.model.run_sync( prompt, **updated_gen_args ).data
             else:
                 # For OpenAIModel, use run
-                response = self.model.run( prompt )
+                response = self.model.run( prompt, **updated_gen_args )
             
             duration = time.perf_counter() - start_time
             completion_tokens = self.token_counter.count_tokens( self.model_name, response )
@@ -199,7 +208,7 @@ class LlmClient:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop( loop )
         
-        output = loop.run_until_complete( self._stream_async( prompt ) )
+        output = loop.run_until_complete( self._stream_async( prompt, **updated_gen_args ) )
         
         duration = time.perf_counter() - start_time
         completion_tokens = self.token_counter.count_tokens( self.model_name, output )
@@ -278,6 +287,7 @@ if __name__ == "__main__":
     # client = LlmClient( model_name=model_name )
     
     response = client.run( prompt, stream=False )
+    # response = client.run( prompt, stream=False, **{ "temperature": 1.0, "max_tokens": 1000, "stop": [ "foo" ] } )
     print( f"Response: {response}" )
     
     # model_name = "kaitchup/Phi-4-AutoRound-GPTQ-4bit"

@@ -66,7 +66,7 @@ class LlmCompletion:
         self.verbose = verbose
         self.generation_args = generation_args
 
-    def run( self, prompt: str, stream: bool = False ) -> str:
+    def run( self, prompt: str, stream: bool=False, **kwargs ) -> str:
         """
         Send a prompt to the LLM and get a completion response.
         
@@ -91,6 +91,7 @@ class LlmCompletion:
         Args:
             prompt: The text prompt to send to the LLM
             stream: Whether to stream the response (not implemented)
+            **generation_args: Additional arguments for generation
             
         Returns:
             String response from the LLM
@@ -106,16 +107,15 @@ class LlmCompletion:
         
         # Request a completion
         data = {
-            "model": self.model_name,
-            "prompt": prompt,
-            # TODO: add support for generation arguments
-            # TODO: integrate generation_args properly, with validation
-            # TODO: add support for stop sequences and other parameters
-            # TODO: handle model-specific limitations and defaults
-            "max_tokens": 64,
-            "temperature": 0.25,
+            "model"      : self.model_name,
+            "prompt"     : prompt,
+            # override the object's generation arguments if they're present in this method's kwargs
+            "max_tokens" : kwargs.get( "max_tokens", self.generation_args.get( "max_tokens", 64 ) ),
+            "temperature": kwargs.get( "temperature", self.generation_args.get( "temperature", 0.25 ) ),
+            "top_p"      : kwargs.get( "top_p", self.generation_args.get( "top_p", 1.0 ) ),
+            "stop"       : kwargs.get( "stop", self.generation_args.get( "stop", None ) ),
         }
-        timer = Stopwatch( msg="Requesting completion..." )
+        timer    = Stopwatch( msg="Requesting completion..." )
         response = requests.post( self.base_url, headers=headers, data=json.dumps( data ) )
         timer.print( msg="Done!", use_millis=True )
         

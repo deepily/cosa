@@ -392,7 +392,7 @@ class XmlPromptGenerator:
     
     def format_gpt_message( self, instruction, voice_command, command, args ):
         """
-        Formats a message for GPT models.
+        Formats a message for chat models.
         
         Args:
             instruction (str): System instruction

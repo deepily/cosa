@@ -1,6 +1,7 @@
 import json
 import os
 import asyncio
+from typing import Any
 
 from pydantic_ai import Agent
 
@@ -56,7 +57,7 @@ class LlmClientFactory:
         self.config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
         self._initialized = True
     
-    def get_client( self, model_descriptor: str, debug: bool = False, verbose: bool = False ):
+    def get_client( self, model_descriptor: str, debug: bool=False, verbose: bool=False ):
         """
         Get an LLM client for the given model descriptor.
         
@@ -85,11 +86,11 @@ class LlmClientFactory:
         if not self.config_mgr.exists( model_descriptor ):
             
             print( f"Configuration key '{model_descriptor}' not found in config_mgr, getting vendor specific client...")
-            return self._get_vendor_specific_client_v2( model_descriptor, debug, verbose )
+            return self._get_vendor_specific_client( model_descriptor, debug, verbose )
         
         else:
             
-            model_spec = self.config_mgr.get( model_descriptor, default=None )
+            model_spec   = self.config_mgr.get( model_descriptor, default=None )
             model_params = self.config_mgr.get( f"{model_descriptor}_params", default="{}", return_type="dict" )
             
             # model_tokenizer_map = self.config_mgr.get( "model_tokenizer_map", default="{}", return_type="json" )
@@ -100,6 +101,7 @@ class LlmClientFactory:
             if model_spec.startswith( "vllm://" ):
                 
                 completion_mode = model_params.get( "completion", False )
+                model_params.pop( "completion", None )
                 
                 # Format: vllm://host:port@model_id
                 body = model_spec[ len( "vllm://" ): ]
@@ -117,7 +119,7 @@ class LlmClientFactory:
                     completion_mode=completion_mode,
                     # TODO: add support for passing in the remaining parameters
                     # model_tokenizer_map=model_tokenizer_map,
-                    # **model_params
+                    **model_params
                 )
             else:
                 # Assume OpenAI, Groq, Google, etc.
@@ -256,132 +258,6 @@ class LlmClientFactory:
                     print( f"Error in AgentWrapper.run: {str( e )}" )
                 raise
     
-    # def _get_vendor_specific_client( self, model_descriptor: str, debug=False, verbose=False ):
-    #     """
-    #     Creates a client for a specific vendor based on the model descriptor.
-    #
-    #     Model descriptor formats:
-    #     - "vendor:model-name" (e.g., "groq:llama-3.1-8b-instant")
-    #     - "vendor/model-name" (e.g., "Groq/llama-3.1-8b-instant")
-    #     """
-    #     # Parse the vendor and model name
-    #     vendor, model_name = self._parse_model_descriptor( model_descriptor )
-    #
-    #     # Get vendor-specific configuration
-    #     base_url = self.VENDOR_URLS.get( vendor.lower() )
-    #     api_key_env = self.VENDOR_API_ENV_VARS.get( vendor.lower() )
-    #
-    #     if not base_url:
-    #         raise ValueError( f"Unsupported vendor: {vendor}" )
-    #
-    #     # Get API key from environment if available
-    #     api_key = None
-    #     if api_key_env and api_key_env in os.environ:
-    #         api_key = os.environ[ api_key_env ]
-    #
-    #     if debug:
-    #         du.print_banner( f"Creating {vendor} client for model {model_name}" )
-    #         print( f"Base URL: {base_url}" )
-    #         print( f"API Key env var: {api_key_env}" )
-    #
-    #     # Different handling based on vendor
-    #     if vendor.lower() == "openai":
-    #         # For OpenAI, use pydantic_ai Agent with openai: prefix
-    #         # First check if OPENAI_API_KEY exists in environment
-    #         if "OPENAI_API_KEY" in os.environ:
-    #             if debug: print( "Using OPENAI_API_KEY from environment" )
-    #             openai_api_key = os.environ[ "OPENAI_API_KEY" ]
-    #         else:
-    #             if debug: print( "OPENAI_API_KEY not found in environment, using du.get_api_key()..." )
-    #             openai_api_key = du.get_api_key( "openai" )
-    #
-    #         # Set environment variable for OpenAI client
-    #         os.environ[ "OPENAI_API_KEY" ] = openai_api_key
-    #
-    #         if debug: print( f"Using Agent with model string: openai:{model_name}" )
-    #
-    #         agent = Agent( f"openai:{model_name}" )
-    #         return self.AgentWrapper( agent, debug=debug )
-    #
-    #     elif vendor.lower() == "groq":
-    #         # Groq uses OpenAI-compatible API but with its own API key
-    #         # First check if GROQ_API_KEY exists
-    #         if "GROQ_API_KEY" in os.environ:
-    #             if debug: print( "Using GROQ_API_KEY from environment" )
-    #             groq_api_key = os.environ[ "GROQ_API_KEY" ]
-    #         else:
-    #             if debug: print( "GROQ_API_KEY not found in environment, using du.get_api_key()..." )
-    #             groq_api_key = du.get_api_key( "groq" )
-    #
-    #         # Set both API keys since OpenAI client will use OPENAI_API_KEY by default
-    #         os.environ[ "OPENAI_API_KEY" ] = groq_api_key
-    #         # For pydantic-ai, we also need GROQ_API_KEY
-    #         os.environ[ "GROQ_API_KEY" ] = groq_api_key
-    #         os.environ[ "OPENAI_BASE_URL" ] = base_url
-    #
-    #         if debug:
-    #             print( f"Set OPENAI_BASE_URL={base_url}" )
-    #             print( f"Set OPENAI_API_KEY and GROQ_API_KEY" )
-    #             print( f"Using Agent with model string: openai:{model_name}" )
-    #
-    #         # Create an agent with appropriate credentials
-    #         agent = Agent( f"openai:{model_name}" )
-    #         return self.AgentWrapper( agent, debug=debug )
-    #
-    #     elif vendor.lower() == "anthropic":
-    #         # Claude models from Anthropic
-    #         # First check if ANTHROPIC_API_KEY exists in environment
-    #         if "ANTHROPIC_API_KEY" in os.environ:
-    #             if debug: print( "Using ANTHROPIC_API_KEY from environment" )
-    #             anthropic_api_key = os.environ[ "ANTHROPIC_API_KEY" ]
-    #         else:
-    #             if debug: print( "ANTHROPIC_API_KEY not found in environment, using du.get_api_key()..." )
-    #             anthropic_api_key = du.get_api_key( "claude" )
-    #
-    #         # Set environment variable for Anthropic client
-    #         os.environ[ "ANTHROPIC_API_KEY" ] = anthropic_api_key
-    #
-    #         if debug: print( f"Using Agent with model string: anthropic:{model_name}" )
-    #
-    #         agent = Agent( f"anthropic:{model_name}" )
-    #         return self.AgentWrapper( agent, debug=debug )
-    #
-    #     elif vendor.lower() == "google-gla":
-    #         # Google Gemini models
-    #         # First check if GEMINI_API_KEY exists in environment
-    #         if "GEMINI_API_KEY" in os.environ:
-    #             if debug: print( "Using GEMINI_API_KEY from environment" )
-    #             gemini_api_key = os.environ[ "GEMINI_API_KEY" ]
-    #         else:
-    #             if debug: print( "GEMINI_API_KEY not found in environment, using du.get_api_key()..." )
-    #             gemini_api_key = du.get_api_key( "gemini" )
-    #
-    #         # Set environment variable for Google client
-    #         os.environ[ "GEMINI_API_KEY" ] = gemini_api_key
-    #
-    #         if debug: print( f"Using Agent with model string: google-gla:{model_name}" )
-    #
-    #         agent = Agent( f"google-gla:{model_name}" )
-    #         return self.AgentWrapper( agent, debug=debug )
-    #
-    #     elif vendor.lower() in [ "vllm", "deepily" ]:
-    #         # # Local models via vLLM
-    #         # return LlmClient(
-    #         #     base_url=base_url,
-    #         #     model_name=model_name,
-    #         #     completion_mode=False,  # Default to chat mode
-    #         #     debug=debug,
-    #         #     verbose=verbose,
-    #         #     **default_params
-    #         # )
-    #         raise NotImplementedError(
-    #             f"Local models via vLLM w/o configuration definitions or keys are not implemented yet."
-    #             )
-    #     else:
-    #         # Fallback - try using Agent with the raw model descriptor
-    #         agent = Agent( model_descriptor )
-    #         return self.AgentWrapper( agent, debug=debug )
-    
     def _parse_model_descriptor( self, model_descriptor: str ) -> tuple:
         """
         Parse a model descriptor to extract vendor and model name.
@@ -423,7 +299,7 @@ class LlmClientFactory:
             # If no vendor specified, assume vLLM for local models
             return "vllm", model_descriptor
             
-    def _get_vendor_specific_client_v2( self, model_descriptor: str, debug=False, verbose=False ):
+    def _get_vendor_specific_client( self, model_descriptor: str, debug=False, verbose=False ):
         """
         A more compact version of the vendor-specific client creation.
         Uses configuration maps to reduce repetitive code.
@@ -453,16 +329,15 @@ class LlmClientFactory:
         
         # Get vendor configuration or default
         config = self.VENDOR_CONFIG.get( vendor_key, {} )
-        if not config:
-            raise ValueError( f"Unsupported vendor: {vendor}" )
+        if not config: raise ValueError( f"Unsupported vendor: {vendor}" )
             
         # Get base URL from vendor URLs map
         base_url = self.VENDOR_URLS.get( vendor_key )
         
         # Handle API keys if needed
         if "env_var" in config:
-            env_var = config["env_var"]
-            key_name = config["key_name"]
+            env_var  = config[ "env_var" ]
+            key_name = config[ "key_name" ]
             
             # Get API key from environment or utility function
             if env_var in os.environ:
