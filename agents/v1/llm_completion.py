@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+from typing import Optional, Dict, List, Union, Any
 
 import requests
 import json
@@ -31,10 +31,10 @@ class LlmCompletion:
         base_url: str = "http://192.168.1.21:3000/v1/completions",
         model_name: str = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-4-bits-sym.gptq/2025-02-12-at-02-27",
         api_key: Optional[ str ] = "EMPTY",
-        model_tokenizer_map: Optional[ dict ] = None,
-        debug = False,
-        verbose = False,
-        **generation_args
+        model_tokenizer_map: Optional[ Dict[str, str] ] = None,
+        debug: bool = False,
+        verbose: bool = False,
+        **generation_args: Any
     ):
         """
         Initialize a completion API client.
@@ -66,7 +66,7 @@ class LlmCompletion:
         self.verbose = verbose
         self.generation_args = generation_args
 
-    def run( self, prompt: str, stream: bool=False, **kwargs ) -> str:
+    def run( self, prompt: str, stream: bool=False, **kwargs: Any ) -> str:
         """
         Send a prompt to the LLM and get a completion response.
         

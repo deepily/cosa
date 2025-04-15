@@ -1,7 +1,7 @@
 import os
 import time
 import asyncio
-from typing import Optional, Any
+from typing import Optional, Any, Dict, List, Union, Tuple
 
 from boto3 import client
 from openai import base_url
@@ -61,10 +61,10 @@ class LlmClient:
         model_name: str = "F00",
         completion_mode: bool = False,
         api_key: Optional[ str ] = "EMPTY",
-        model_tokenizer_map: Optional[ dict ] = None,
-        debug=False,
-        verbose=False,
-        **generation_args
+        model_tokenizer_map: Optional[ Dict[str, str] ] = None,
+        debug: bool = False,
+        verbose: bool = False,
+        **generation_args: Any
     ):
         """
         Initialize an LLM client with the given configuration.

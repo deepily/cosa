@@ -1,7 +1,7 @@
 import json
 import os
 import asyncio
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from pydantic_ai import Agent
 
@@ -39,7 +39,7 @@ class LlmClientFactory:
         - Develop monitoring and telemetry for LLM usage metrics
         - Implement cost tracking and budget management features
     """
-    _instance = None
+    _instance: Optional['LlmClientFactory'] = None
     
     def __new__( cls ):
         if cls._instance is None:
@@ -57,7 +57,7 @@ class LlmClientFactory:
         self.config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
         self._initialized = True
     
-    def get_client( self, model_descriptor: str, debug: bool=False, verbose: bool=False ):
+    def get_client( self, model_descriptor: str, debug: bool=False, verbose: bool=False ) -> Union[LlmClient, 'AgentWrapper']:
         """
         Get an LLM client for the given model descriptor.
         
@@ -126,7 +126,7 @@ class LlmClientFactory:
                 return Agent( model_spec, **model_params )
     
     # Vendor configuration
-    VENDOR_URLS = {
+    VENDOR_URLS: Dict[str, str] = {
         "openai"    : "https://api.openai.com/v1",
         "groq"      : "https://api.groq.com/openai/v1",
         "anthropic" : "https://api.anthropic.com/v1",
@@ -136,7 +136,7 @@ class LlmClientFactory:
     }
     
     # API key environment variables
-    VENDOR_API_ENV_VARS = {
+    VENDOR_API_ENV_VARS: Dict[str, Optional[str]] = {
         "openai"    : "OPENAI_API_KEY",
         "groq"      : "GROQ_API_KEY",
         "anthropic" : "ANTHROPIC_API_KEY",
@@ -146,7 +146,7 @@ class LlmClientFactory:
     }
     
     # Default parameters for LlmClient
-    CLIENT_DEFAULT_PARAMS = {
+    CLIENT_DEFAULT_PARAMS: Dict[str, Any] = {
         "temperature": 0.7,
         "max_tokens" : 1024
     }
@@ -157,7 +157,7 @@ class LlmClientFactory:
     # }
     #
     # Comprehensive vendor configuration for the v2 method
-    VENDOR_CONFIG = {
+    VENDOR_CONFIG: Dict[str, Dict[str, Any]] = {
         "openai"    : {
             "env_var"     : "OPENAI_API_KEY",
             "key_name"    : "openai",
@@ -206,11 +206,11 @@ class LlmClientFactory:
             - Provides debug output when debug=True
         """
         
-        def __init__( self, agent, debug=False ):
+        def __init__( self, agent: Agent, debug: bool=False ):
             self.agent = agent
             self.debug = debug
         
-        def run( self, prompt, **kwargs ):
+        def run( self, prompt: str, **kwargs: Any ) -> str:
             """
             Synchronous version of agent.run that handles the async/await internally.
             
@@ -258,7 +258,7 @@ class LlmClientFactory:
                     print( f"Error in AgentWrapper.run: {str( e )}" )
                 raise
     
-    def _parse_model_descriptor( self, model_descriptor: str ) -> tuple:
+    def _parse_model_descriptor( self, model_descriptor: str ) -> Tuple[str, str]:
         """
         Parse a model descriptor to extract vendor and model name.
         
@@ -299,7 +299,7 @@ class LlmClientFactory:
             # If no vendor specified, assume vLLM for local models
             return "vllm", model_descriptor
             
-    def _get_vendor_specific_client( self, model_descriptor: str, debug=False, verbose=False ):
+    def _get_vendor_specific_client( self, model_descriptor: str, debug: bool=False, verbose: bool=False ) -> 'AgentWrapper':
         """
         A more compact version of the vendor-specific client creation.
         Uses configuration maps to reduce repetitive code.
