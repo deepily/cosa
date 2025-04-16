@@ -68,7 +68,7 @@ class LlmClientFactory:
         
         Requires:
             - model_descriptor: A string identifying the model, which can be either:
-                1. A configuration key (e.g., "llm_deepily_ministral_8b_2410")
+                1. A configuration key (e.g., "deepily/ministral_8b_2410")
                 2. A vendor prefixed model name (e.g., "openai:gpt-4", "groq:llama-3.1-8b-instant")
             - Valid API keys for the requested vendor if using cloud APIs
             
@@ -98,10 +98,15 @@ class LlmClientFactory:
                 du.print_banner( f"Model params for '{model_descriptor}':" )
                 print( json.dumps( model_params, indent=4, sort_keys=True ) )
             
+            default_prompt_format = self.config_mgr.get( "prompt_format_default", default="json_message" )
+            prompt_format         = model_params.get( "prompt_format", default_prompt_format )
+            completion_mode       = prompt_format in [ "instruction_completion", "special_token" ]
+            
+            # Remove parameters that will be passed explicitly, so that **model_params doesn't complain about multiple values
+            model_params.pop( "prompt_format", None )
+            model_params.pop( "model_name", None )
+            
             if model_spec.startswith( "vllm://" ):
-                
-                completion_mode = model_params.get( "completion", False )
-                model_params.pop( "completion", None )
                 
                 # Format: vllm://host:port@model_id
                 body = model_spec[ len( "vllm://" ): ]
@@ -117,6 +122,7 @@ class LlmClientFactory:
                     base_url=base_url,
                     model_name=model_name,
                     completion_mode=completion_mode,
+                    prompt_format=prompt_format,
                     # TODO: add support for passing in the remaining parameters
                     # model_tokenizer_map=model_tokenizer_map,
                     **model_params
@@ -269,7 +275,7 @@ class LlmClientFactory:
             - model_descriptor: A non-empty string in one of the following formats:
                 1. "vendor:model-name" (e.g., "openai:gpt-4", "groq:llama-3.1-8b-instant")
                 2. "vendor/model-name" (e.g., "Groq/llama-3.1-8b-instant")
-                3. Special format for Deepily models (e.g., "llm_deepily_ministral_8b_2410")
+                3. Special format for Deepily models (e.g., "deepily/ministral_8b_2410")
                 4. Any other model name (will be assumed to be a vLLM model)
                 
         Ensures:
@@ -405,7 +411,7 @@ if __name__ == "__main__":
             # Get client using the appropriate method
             # timer = Stopwatch( msg=f"Calling {model}..." )
             
-            client   = factory.get_client( model, debug=False )
+            client   = factory.get_client( model, debug=True, verbose=False )
             response = client.run( prompt )
             
             # Print results
@@ -414,6 +420,13 @@ if __name__ == "__main__":
             # timer.print( use_millis=True )
             
         except Exception as e:
-            print( f"Error with {model}: {str( e )}" )
-        
+            
+            du.print_banner("Error", expletive=True)
+            print(f"Error with {model}: {str(e)}")
+            
+            du.print_banner("Stack Trace", expletive=True)
+            import traceback
+            traceback.print_exc()
+            print()
+            
     print( "All tests completed." )
