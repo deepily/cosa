@@ -1,5 +1,7 @@
-from cosa.agents.agent_base import AgentBase
+from cosa.agents.v1.agent_base import AgentBase
+
 class DateAndTimeAgent( AgentBase ):
+    
     def __init__( self, question="", question_gist="", last_question_asked="", push_counter=-1, routing_command="agent router go to date and time", debug=False, verbose=False, auto_debug=False, inject_bugs=False ):
         
         super().__init__( df_path_key=None, question=question, question_gist=question_gist, last_question_asked=last_question_asked, routing_command=routing_command, push_counter=push_counter, debug=debug, verbose=verbose, auto_debug=auto_debug, inject_bugs=inject_bugs )

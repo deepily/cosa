@@ -45,8 +45,8 @@ class LlmClient:
         response = client.run("Your prompt here", stream=True)
     """
     # Model identifier constants
-    DEEPILY_MINISTRAL_8B_2410   = "llm_deepily_ministral_8b_2410"
-    PHI_4_14B                   = "llm_deepily_phi_4_14b"
+    DEEPILY_MINISTRAL_8B_2410   = "deepily/ministral_8b_2410"
+    PHI_4_14B                   = "deepily/phi_4_14b"
     GROQ_LLAMA_3_1_8B           = "groq:llama-3.1-8b-instant"
     OPENAI_GPT_01_MINI          = "openai:o1-mini-2024-09-12"
     GOOGLE_GEMINI_1_5_FLASH     = "google-gla:gemini-1.5-flash"
@@ -60,6 +60,7 @@ class LlmClient:
         base_url: str = "http://192.168.1.21:3001/v1",
         model_name: str = "F00",
         completion_mode: bool = False,
+        prompt_format: str = "",
         api_key: Optional[ str ] = "EMPTY",
         model_tokenizer_map: Optional[ Dict[str, str] ] = None,
         debug: bool = False,
@@ -88,16 +89,21 @@ class LlmClient:
         
         self.model_name      = model_name
         self.completion_mode = completion_mode
+        self.prompt_format   = prompt_format
         self.token_counter   = TokenCounter( model_tokenizer_map )
         self.generation_args = generation_args
         self.debug           = debug
         self.verbose         = verbose
         
         if completion_mode:
+            du.print_banner( f"TODO: Fetch COMPLETION style prompt formatter HERE", prepend_nl=True, expletive=True, chunk="¿?"  )
+            print( f"¿? '{model_name}'" )
+            print( f"Using LlmCompletion with prompt_format: '{prompt_format}'" )
             self.model = LlmCompletion( base_url=base_url, model_name=model_name, api_key=api_key, **generation_args )
         else:
             # For normal chat mode, use the Agent class
-            if self.debug: print( f"Using Agent with model: 'openai:{model_name}'" )
+            # if self.debug: print( f"Using Agent with model: 'openai:{model_name}'" )
+            du.print_banner( f"TODO: fetch and set system prompt HERE! for model 'openai:{model_name}'", prepend_nl=True, expletive=True )
             self.model = Agent( f"openai:{model_name}", **generation_args )
     
     async def _stream_async( self, prompt: str, **generation_args: Any ) -> str:

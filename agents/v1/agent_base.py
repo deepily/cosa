@@ -11,7 +11,7 @@ import cosa.memory.solution_snapshot as ss
 
 from cosa.agents.llm_v0 import Llm_v0
 from cosa.agents.raw_output_formatter import RawOutputFormatter
-from cosa.agents.runnable_code import RunnableCode
+from cosa.agents.v1.runnable_code import RunnableCode
 from cosa.app.configuration_manager import ConfigurationManager
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.agents.two_word_id_generator import TwoWordIdGenerator
@@ -56,9 +56,6 @@ class AgentBase( RunnableCode, abc.ABC ):
         
         self.df                    = None
         self.do_not_serialize      = { "df", "config_mgr", "two_word_id", "execution_state" }
-        
-        # ¡OJO! This one server a key may need to become more diversified in the future
-        # self.default_url           = self.config_mgr.get( "deepily_inference_chat_url", default=None )
         
         self.prompt_template_paths = self._get_prompt_template_paths()
         self.models                = self._get_models()
@@ -254,7 +251,7 @@ class AgentBase( RunnableCode, abc.ABC ):
     def formatter_ran_to_completion( self ):
         
         return self.answer_conversational is not None
-
+    
     def do_all( self ):
         
         self.run_prompt()

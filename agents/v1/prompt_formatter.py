@@ -326,7 +326,7 @@ class PromptFormatter:
         Raises:
             - ValueError if model_name is empty
         """
-        # Handle different formats: phi-4, llm_deepily_phi_4_14b, etc.
+        # Handle different formats: phi-4, foo-14b, etc.
         model_name_lower = model_name.lower()
         
         # Extract common model identifiers
@@ -365,9 +365,9 @@ class PromptFormatter:
         """
         templates = {
               "instruction-completion-default.txt": "<s>[INST] {instructions}\n\n{input} [/INST]\n{output}</s>",
-              "special-token-default.txt"         : "<|system|>{instructions}<|end|>\n<|user|>{input}<|end|>\n<|assistant|>{output}<|end|>",
-              "special-token-phi-4.txt"           : "<|system|>{instructions}<|end|>\n<|user|>{input}<|end|>\n<|assistant|>{output}<|end|>",
-              "special-token-llama-3.txt"         : "<s> [INST] <<SYS>> {instructions} <</SYS>>\n\n{input} [/INST] {output} </s>"
+              "special-tokens-default.txt"         : "<|system|>{instructions}<|end|>\n<|user|>{input}<|end|>\n<|assistant|>{output}<|end|>",
+              "special-tokens-phi-4.txt"           : "<|system|>{instructions}<|end|>\n<|user|>{input}<|end|>\n<|assistant|>{output}<|end|>",
+              "special-tokens-llama-3.txt"         : "<s> [INST] <<SYS>> {instructions} <</SYS>>\n\n{input} [/INST] {output} </s>"
         }
         
         created_paths = { }
@@ -401,8 +401,8 @@ if __name__ == "__main__":
     
     # Example formatting for different models
     models = [
-        "llm_deepily_ministral_8b_2410",
-        "llm_deepily_phi_4_14b",
+        "deepily/ministral_8b_2410",
+        "deepily/phi_4_14b",
         "groq_llama_3_1_8b",
         "openai:gpt-4"
     ]
