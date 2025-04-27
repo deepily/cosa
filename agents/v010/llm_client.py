@@ -7,9 +7,9 @@ from boto3 import client
 from openai import base_url
 
 import cosa.utils.util as du
-from cosa.agents.v1.llm_completion import LlmCompletion
+from cosa.agents.v010.llm_completion import LlmCompletion
 
-from cosa.agents.v1.token_counter import TokenCounter
+from cosa.agents.v010.token_counter import TokenCounter
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel

@@ -39,8 +39,9 @@ from cosa.agents.llm_v0 import Llm_v0
 ```
 
 **Needed:**
+
 ```python
-from cosa.agents.v1.llm_client_factory import LlmClientFactory
+from cosa.agents.v010.llm_client_factory import LlmClientFactory
 ```
 
 ### 2. Method Updates

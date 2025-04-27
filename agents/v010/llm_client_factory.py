@@ -8,8 +8,8 @@ from pydantic_ai import Agent
 import cosa.utils.util as du
 from cosa.utils.util_stopwatch import Stopwatch
 
-from cosa.agents.v1.llm_client import LlmClient
-from cosa.agents.v1.token_counter import TokenCounter
+from cosa.agents.v010.llm_client import LlmClient
+from cosa.agents.v010.token_counter import TokenCounter
 from cosa.app.configuration_manager import ConfigurationManager
 
 

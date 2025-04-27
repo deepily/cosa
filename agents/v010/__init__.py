@@ -1,5 +1,5 @@
 """
-CoSA LLM Client Module (v1)
+CoSA LLM Client Module (v010)
 
 This package provides a modernized implementation of LLM clients and utilities,
 designed to work with various LLM providers and model types.
@@ -17,8 +17,8 @@ Design Principles:
 - Resilience: Graceful fallbacks and error handling
 
 Usage:
-    from cosa.agents.v1.llm_client_factory import LlmClientFactory
-    from cosa.agents.v1.llm_client import LlmClient
+    from cosa.agents.v010.llm_client_factory import LlmClientFactory
+    from cosa.agents.v010.llm_client import LlmClient
     
     # Use factory (recommended)
     factory = LlmClientFactory()

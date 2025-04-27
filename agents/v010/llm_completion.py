@@ -5,7 +5,7 @@ import requests
 import json
 
 import cosa.utils.util as du
-from cosa.agents.v1.token_counter import TokenCounter
+from cosa.agents.v010.token_counter import TokenCounter
 from cosa.utils.util_stopwatch import Stopwatch
 
 class LlmCompletion:
