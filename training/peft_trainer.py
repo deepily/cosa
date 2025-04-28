@@ -1247,6 +1247,7 @@ class PeftTrainer:
         - A vLLM server is started in a separate process.
         - The function waits until the server is available or until the timeout is reached.
         - Returns the process object for the vLLM server.
+        - If multiple GPUs are available, vLLM will be configured to use all of them.
         
         Parameters:
         - quantized_model_dir (str): Path to the directory containing the quantized model.
@@ -1261,30 +1262,78 @@ class PeftTrainer:
         Raises:
         - ValueError: If DEEPILY_PROJECTS_DIR is not set.
         - TimeoutError: If the server does not start within the timeout period.
+        - RuntimeError: If the vLLM server process exits unexpectedly.
         """
         # Check if DEEPILY_PROJECTS_DIR is set
         projects_dir = os.environ.get( "DEEPILY_PROJECTS_DIR" )
-        if not projects_dir:
-            raise ValueError( "DEEPILY_PROJECTS_DIR environment variable is not set." )
+        if not projects_dir: raise ValueError( "DEEPILY_PROJECTS_DIR environment variable is not set." )
         
         du.print_banner( "Starting vLLM server" )
         
-        # Command to start the vLLM server
-        cmd = f"cd {projects_dir}/vllm-pip; source .venv/bin/activate; vllm serve {quantized_model_dir} --port {port} --max-model-len {max_model_len} --gpu_memory_utilization {gpu_memory_utilization}"
+        # Check for multiple GPUs
+        gpu_count = torch.cuda.device_count()
+        gpu_devices = ",".join(str(i) for i in range(gpu_count))
         
         if self.debug:
-            print( f"Command to start vLLM server: {cmd}" )
+            print( f"Detected {gpu_count} GPU(s): {gpu_devices}" )
+            for i in range(gpu_count):
+                gpu_name = torch.cuda.get_device_name(i)
+                gpu_mem = torch.cuda.get_device_properties(i).total_memory / (1024**3)  # in GB
+                print( f"  GPU {i}: {gpu_name} with {gpu_mem:.2f} GB memory" )
+        
+        # Build the vLLM command with GPU configuration
+        if gpu_count > 1:
+            # Configure vLLM to use all available GPUs
+            tensor_parallel_size = gpu_count
+            gpu_config = f"--tensor-parallel-size {tensor_parallel_size} --gpu-memory-utilization {gpu_memory_utilization}"
+            if self.debug: print( f"Configuring vLLM to use multiple GPUs (tensor_parallel_size={tensor_parallel_size})" )
+        else:
+            # Use the single GPU with specified memory utilization
+            gpu_config = f"--gpu-memory-utilization {gpu_memory_utilization}"
+            if self.debug: print( f"Configuring vLLM to use a single GPU with memory utilization {gpu_memory_utilization}" )
+        
+        # Command to start the vLLM server
+        cmd = f"cd {projects_dir}/vllm-pip; source .venv/bin/activate; CUDA_VISIBLE_DEVICES={gpu_devices} vllm serve {quantized_model_dir} --port {port} --max-model-len {max_model_len} {gpu_config}"
+        
+        if self.debug: print( f"Command to start vLLM server: {cmd}" )
+        
+        # Create error log capture
+        server_log = []
+        server_error = None
+        
+        # Define function to monitor process status
+        def check_process_status(process, log):
+            """Monitor subprocess status and capture any error if it exits prematurely"""
+            nonlocal server_error
+            return_code = process.poll()
+            if return_code is not None:
+                # Process exited
+                stderr_output = process.stderr.read()
+                if stderr_output:
+                    error_msg = f"vLLM server exited with code {return_code}. Error: {stderr_output}"
+                    server_error = RuntimeError(error_msg)
+                    if self.debug or self.verbose:
+                        print(f"[vLLM Server ERROR] {error_msg}")
+                    # Add to log
+                    log.append(f"EXIT CODE {return_code}: {stderr_output}")
+                return False
+            return True
         
         # Start the vLLM server in a separate process
         process = subprocess.Popen( cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True )
         
         # Start a thread to read and print server output
-        def print_server_output( process ):
+        def print_server_output( process, log ):
             for line in process.stdout:
-                if self.debug or self.verbose:
+                log.append(line.strip())
+                if self.debug and self.verbose:
                     print( f"[vLLM Server] {line.strip()}" )
+                # Check if any known error patterns appear in the output
+                if "CUDA out of memory" in line or "CUDA error" in line or "Error:" in line:
+                    if self.debug or self.verbose:
+                        print( f"[vLLM Server ERROR] Detected error: {line.strip()}" )
         
-        output_thread = threading.Thread( target=print_server_output, args=( process, ), daemon=True )
+        output_thread = threading.Thread( target=print_server_output, args=( process, server_log ), daemon=True )
         output_thread.start()
         
         # Wait for the server to be available
@@ -1292,22 +1341,55 @@ class PeftTrainer:
         server_url = f"http://localhost:{port}/health"
         start_time = time.time()
         
+        # Keep track of how many times we've checked for status to periodically check process health
+        check_count = 0
+        
         while time.time() - start_time < timeout:
+            check_count += 1
+            
+            # Every 5 checks, verify the process is still running
+            if check_count % 5 == 0:
+                if not check_process_status(process, server_log):
+                    if server_error:
+                        raise server_error
+                    else:
+                        raise RuntimeError("vLLM server process terminated unexpectedly")
+            
             try:
                 response = requests.get( server_url, timeout=1 )
                 if response.status_code == 200:
-                    print( f"vLLM server is available on port {port}" )
+                    if self.debug or self.verbose:
+                        print( f"vLLM server successfully started and is responding on port {port}" )
+                        # Get and print server info if in debug mode
+                        try:
+                            info_response = requests.get(f"http://localhost:{port}/v1/models", timeout=1)
+                            print(f"Server model info: {info_response.json()}")
+                        except Exception as e:
+                            print(f"Could not fetch server info: {str(e)}")
+                    else:
+                        print( f"vLLM server is available on port {port}" )
                     return process
             except requests.RequestException:
                 # Server not yet available
                 time.sleep( 2 )
+                elapsed = time.time() - start_time
                 if self.debug:
-                    elapsed = time.time() - start_time
                     print( f"  Waiting... ({elapsed:.1f}s / {timeout}s)" )
+                # Print a progress message every 30 seconds even without debug mode
+                elif elapsed % 30 < 2:  # This ensures the message prints only once near each 30s mark
+                    print( f"  Still waiting for vLLM server... ({int(elapsed)}s / {timeout}s)" )
         
         # If we reach here, the server did not start within the timeout
+        if self.debug or self.verbose:
+            print("vLLM server startup timed out. Last log entries:")
+            for entry in server_log[-10:]:  # Show last 10 log entries
+                print(f"  {entry}")
+            
         self._stop_vllm_server( process )
-        raise TimeoutError( f"vLLM server did not start within {timeout} seconds" )
+        
+        # Consolidate the logs for the error message
+        log_tail = "\n".join(server_log[-20:]) if server_log else "No log output captured"
+        raise TimeoutError( f"vLLM server did not start within {timeout} seconds.\nLast log entries:\n{log_tail}" )
     
     def _stop_vllm_server( self, process ):
         """
@@ -1348,9 +1430,107 @@ class PeftTrainer:
                 except subprocess.TimeoutExpired:
                     process.kill()
             
-            print( "vLLM server has been stopped" )
+            if self.debug: print( "vLLM server has been stopped" )
+            return True
     
     def run_pipeline( self, pre_training_stats=False, post_training_stats=False, post_quantization_stats=False ):
+        """
+        Executes the full training pipeline from fine-tuning to quantization.
+
+        This method:
+        1. Loads model-specific configuration
+        2. Runs pre-training validation if requested
+        3. Fine-tunes the model using the proper configuration for the model
+        4. Merges the LoRA adapter with the base model
+        5. Quantizes the merged model
+        6. Optionally runs post-training validation
+
+        Args:
+            pre_training_stats (bool): Whether to run validation before training
+            post_training_stats (bool): Whether to run validation after training
+        """
+        timer = Stopwatch( msg=None )
+        trainer = PeftTrainer(
+            args.model, args.model_name, args.test_train_path, lora_dir=args.lora_dir, debug=args.debug,
+            verbose=args.verbose
+        )
+        
+        trainer.login_to_hf()
+        
+        # Run a quick pretest in memory
+        if pre_training_stats:
+            # TODO: add runtime configuration for sample size
+            trainer.run_validation_in_memory( device_map="auto", sample_size=100 )
+        
+        # Load model-specific fine-tuning configuration
+        model_config = load_model_config( trainer.model_name )
+        fine_tune_params = model_config[ "fine_tune" ]
+        
+        # Fine-tune using the dynamically loaded configuration
+        checkpoint_dir = trainer.fine_tune(
+            sample_size=fine_tune_params[ "sample_size" ],
+            batch_size=fine_tune_params[ "batch_size" ],
+            gradient_accumulation_steps=fine_tune_params[ "gradient_accumulation_steps" ],
+            logging_steps=fine_tune_params[ "logging_steps" ],
+            eval_steps=fine_tune_params[ "eval_steps" ],
+            device_map=fine_tune_params[ "device_map" ],
+            output_dir=args.lora_dir
+        )
+        
+        release_gpus( [ trainer.model, trainer.tokenizer ] )
+        
+        # Load and merge the adapter
+        trainer.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
+        merged_adapter_dir = trainer.save_merged_adapter( lora_dir=args.lora_dir )
+        release_gpus( [ trainer.model, trainer.tokenizer ] )
+        
+        if post_training_stats:
+            du.print_banner( f"Running post-training validation for {args.model_name}" )
+            
+            # Start vLLM server and wait for it to be available
+            vllm_server_process = self._start_vllm_server( merged_adapter_dir )
+            
+            # create a custom model name using as an ID the mount point for the recently quantized model directory
+            model = Llm_v0.get_model( merged_adapter_dir )
+            # TODO: add runtime configuration for sample size
+            trainer.run_validation_with_server(
+                model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=100, debug=False,
+                verbose=False
+            )
+            self._stop_vllm_server( vllm_server_process )
+        
+        du.print_banner( "Exiting prematurely!", expletive=True )
+        return
+        
+        # Quantize the merged adapter
+        quantized_model_dir = trainer.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
+        
+        # Print completion information
+        timer.print( f"Finished fine-tuning, merging and quantizing {args.model_name}" )
+        du.print_banner( f"Finished quantizing {args.model_name}" )
+        print( f"Quantized model: {quantized_model_dir}" )
+        du.print_simple_file_list( quantized_model_dir )
+        
+        # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-08-at-21-26/autoround-4-bits-sym.gptq/2025-04-08-at-21-47"
+        if post_quantization_stats:
+            # release GPU before doing anything else
+            release_gpus( [ trainer.model, trainer.tokenizer ] )
+            
+            du.print_banner( f"Running post-training validation for {args.model_name}" )
+            
+            # Start vLLM server and wait for it to be available
+            vllm_server_process = self._start_vllm_server( quantized_model_dir )
+            
+            # create a custom model name using as an ID the mount point for the recently quantized model directory
+            model = Llm_v0.get_model( quantized_model_dir )
+            # TODO: add runtime configuration for sample size
+            trainer.run_validation_with_server(
+                model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=1000, debug=False,
+                verbose=False
+            )
+            self._stop_vllm_server( vllm_server_process )
+            
+    def run_pipeline_adhoc( self, pre_training_stats=False, post_training_stats=False, post_quantization_stats=False ):
         """
         Executes the full training pipeline from fine-tuning to quantization.
         
@@ -1373,48 +1553,55 @@ class PeftTrainer:
         
         trainer.login_to_hf()
 
-        # Run a quick pretest in memory
-        if pre_training_stats:
-            # TODO: add runtime configuration for sample size
-            trainer.run_validation_in_memory( device_map="auto", sample_size=100 )
-
-        # Load model-specific fine-tuning configuration
-        model_config     = load_model_config( trainer.model_name )
-        fine_tune_params = model_config[ "fine_tune" ]
-
-        # Fine-tune using the dynamically loaded configuration
-        checkpoint_dir = trainer.fine_tune(
-                            sample_size=fine_tune_params[ "sample_size" ],
-                             batch_size=fine_tune_params[ "batch_size" ],
-            gradient_accumulation_steps=fine_tune_params[ "gradient_accumulation_steps" ],
-                          logging_steps=fine_tune_params[ "logging_steps" ],
-                             eval_steps=fine_tune_params[ "eval_steps" ],
-                             device_map=fine_tune_params[ "device_map" ],
-                             output_dir=args.lora_dir
-        )
-
-        release_gpus( [ trainer.model, trainer.tokenizer ] )
-
-        # Load and merge the adapter
-        trainer.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
-        merged_adapter_dir = trainer.save_merged_adapter( lora_dir=args.lora_dir )
-        release_gpus( [ trainer.model, trainer.tokenizer ] )
+        # # Run a quick pretest in memory
+        # if pre_training_stats:
+        #     # TODO: add runtime configuration for sample size
+        #     trainer.run_validation_in_memory( device_map="auto", sample_size=100 )
+        #
+        # # Load model-specific fine-tuning configuration
+        # model_config     = load_model_config( trainer.model_name )
+        # fine_tune_params = model_config[ "fine_tune" ]
+        #
+        # # Fine-tune using the dynamically loaded configuration
+        # checkpoint_dir = trainer.fine_tune(
+        #                     sample_size=fine_tune_params[ "sample_size" ],
+        #                      batch_size=fine_tune_params[ "batch_size" ],
+        #     gradient_accumulation_steps=fine_tune_params[ "gradient_accumulation_steps" ],
+        #                   logging_steps=fine_tune_params[ "logging_steps" ],
+        #                      eval_steps=fine_tune_params[ "eval_steps" ],
+        #                      device_map=fine_tune_params[ "device_map" ],
+        #                      output_dir=args.lora_dir
+        # )
+        #
+        # release_gpus( [ trainer.model, trainer.tokenizer ] )
+        #
+        # # Load and merge the adapter
+        # trainer.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
+        # merged_adapter_dir = trainer.save_merged_adapter( lora_dir=args.lora_dir )
+        # release_gpus( [ trainer.model, trainer.tokenizer ] )
+        
+        merged_adapter_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-28-at-11-24"
 
         if post_training_stats:
-            
             du.print_banner( f"Running post-training validation for {args.model_name}" )
             
-            # Start vLLM server and wait for it to be available
-            vllm_server_process = self._start_vllm_server( merged_adapter_dir )
-            
-            # create a custom model name using as an ID the mount point for the recently quantized model directory
-            model = Llm_v0.get_model( merged_adapter_dir )
-            # TODO: add runtime configuration for sample size
-            trainer.run_validation_with_server(
-                model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=100, debug=False,
-                verbose=False
-            )
-            self._stop_vllm_server( vllm_server_process )
+            vllm_server_process = None
+            try:
+                # Start vLLM server and wait for it to be available
+                vllm_server_process = self._start_vllm_server( merged_adapter_dir )
+                
+                # create a custom model name using as an ID the mount point for the recently quantized model directory
+                model = Llm_v0.get_model( merged_adapter_dir )
+                # TODO: add runtime configuration for sample size
+                trainer.run_validation_with_server(
+                    model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=100, debug=False,
+                    verbose=False
+                )
+            finally:
+                # Always clean up the vLLM server process if it was started
+                if vllm_server_process: self._stop_vllm_server( vllm_server_process )
+                # release GPU before doing anything else
+                release_gpus( [ trainer.model, trainer.tokenizer ] )
             
         du.print_banner( "Exiting prematurely!", expletive=True )
         return
@@ -1428,25 +1615,31 @@ class PeftTrainer:
         print( f"Quantized model: {quantized_model_dir}" )
         du.print_simple_file_list( quantized_model_dir )
         
+        # release GPU before doing anything else
+        release_gpus( [ trainer.model, trainer.tokenizer ] )
+        
         # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-08-at-21-26/autoround-4-bits-sym.gptq/2025-04-08-at-21-47"
         if post_quantization_stats:
-        
-            # release GPU before doing anything else
-            release_gpus( [ trainer.model, trainer.tokenizer ] )
             
             du.print_banner( f"Running post-training validation for {args.model_name}" )
             
-            # Start vLLM server and wait for it to be available
-            vllm_server_process = self._start_vllm_server( quantized_model_dir )
-            
-            # create a custom model name using as an ID the mount point for the recently quantized model directory
-            model = Llm_v0.get_model( quantized_model_dir )
-            # TODO: add runtime configuration for sample size
-            trainer.run_validation_with_server(
-                model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=1000, debug=False,
-                verbose=False
-            )
-            self._stop_vllm_server( vllm_server_process )
+            vllm_server_process = None
+            try:
+                # Start vLLM server and wait for it to be available
+                vllm_server_process = self._start_vllm_server( quantized_model_dir )
+                
+                # create a custom model name using as an ID the mount point for the recently quantized model directory
+                model = Llm_v0.get_model( quantized_model_dir )
+                # TODO: add runtime configuration for sample size
+                trainer.run_validation_with_server(
+                    model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=1000, debug=False,
+                    verbose=False
+                )
+            finally:
+                # Always clean up the vLLM server process if it was started
+                if vllm_server_process: self._stop_vllm_server( vllm_server_process )
+                # release GPU before doing anything else
+                release_gpus( [ trainer.model, trainer.tokenizer ] )
     
 def check_env():
     """
@@ -1472,10 +1665,11 @@ def check_env():
     - SystemExit: If any required environment variables are missing.
     """
     required_vars = [
-        ("NCCL_P2P_DISABLE", "1"),
-        ("NCCL_IB_DISABLE", "1"),
-        ("GENIE_IN_THE_BOX_ROOT", "/some/foo/path"),
-        ("GIB_CONFIG_MGR_CLI_ARGS", "")
+        ( "NCCL_P2P_DISABLE", "1" ),
+        ( "NCCL_IB_DISABLE", "1" ),
+        ( "GENIE_IN_THE_BOX_ROOT", "/some/foo/path" ),
+        ( "GIB_CONFIG_MGR_CLI_ARGS", "" ),
+        ( "DEEPILY_PROJECTS_DIR", "/mnt/DATA01/include/www.deepily.ai/projects" )
     ]
     
     missing_vars = False
@@ -1622,6 +1816,8 @@ if __name__ == "__main__":
     
     trainer.login_to_hf()
     
-    trainer.run_pipeline( pre_training_stats=args.pre_training_stats, post_training_stats=args.post_training_stats, post_quantization_stats=args.post_quantization_stats )
+    # DO NOT REMOVE THIS LINE! Comment it out solely for the purpose of debugging!
+    # trainer.run_pipeline( pre_training_stats=args.pre_training_stats, post_training_stats=args.post_training_stats, post_quantization_stats=args.post_quantization_stats )
+    trainer.run_pipeline_adhoc( pre_training_stats=args.pre_training_stats, post_training_stats=args.post_training_stats, post_quantization_stats=args.post_quantization_stats )
     
     
