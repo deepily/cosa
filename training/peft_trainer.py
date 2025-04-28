@@ -447,8 +447,8 @@ class PeftTrainer:
         print( f"Loading adapter from {adapter_path}... Done!" )
         
     def run_validation_in_memory( self,
-        switch="in_memory", adapter_path=None,  path_prefix=du.get_project_root(), device_map={"": 0},
-        sample_size=100, debug=None, verbose=None
+        switch="in_memory", adapter_path=None, path_prefix=du.get_project_root(), device_map={"": 0},
+        validation_sample_size=100, debug=None, verbose=None
     ):
         """
         Runs validation on the model with the specified adapter using in-memory inference.
@@ -478,19 +478,19 @@ class PeftTrainer:
         - pandas.DataFrame: DataFrame containing the validation results, including original prompts,
                           generated responses, and validation metrics.
         """
-        du.print_banner( f"Validating {self.model_name} w/ {sample_size} samples..." )
+        du.print_banner( f"Validating {self.model_name} w/ {validation_sample_size} samples..." )
        
         # set debug and verbose to the class defaults if not provided
         if debug   is None: debug   = self.debug
         if verbose is None: verbose = self.verbose
         
-        df = pd.read_json(f"{self.test_train_dir}/voice-commands-xml-validate.jsonl", lines=True ).sample( sample_size, random_state=42 )
+        df = pd.read_json(f"{self.test_train_dir}/voice-commands-xml-validate.jsonl", lines=True ).sample( validation_sample_size, random_state=42 )
 
         # update the prompt field
         # KLUDGE: this is a workaround for the fact that the prompt field is not being created when the validation df is created
-        print( f"Updating the prompt field for [{sample_size}] rows..." )
+        print( f"Updating the prompt field for [{validation_sample_size}] rows..." )
         df[ "prompt" ] = df.apply( lambda row: self.get_prompt( row[ "instruction" ], row[ "input" ], output="" ), axis=1 )
-        print( f"Updating the prompt field for [{sample_size}] rows... Done!" )
+        print( f"Updating the prompt field for [{validation_sample_size}] rows... Done!" )
         
         # Print value counts for the command column to see how many unique commands we have
         print( "Value counts for the 'command' column:" )
@@ -525,8 +525,8 @@ class PeftTrainer:
         return df
     
     def run_validation_with_server(
-            self, model=None, switch="", path_prefix="/var/model/genie-in-the-box",
-            device_map={"": 0}, sample_size=1000, debug=None, verbose=None
+        self, model=None, switch="", path_prefix="/var/model/genie-in-the-box",
+        device_map={"": 0}, validation_sample_size=1000, debug=None, verbose=None
     ):
         """
         Runs validation against a model server rather than loading the model in memory.
@@ -571,15 +571,15 @@ class PeftTrainer:
         
         df = pd.read_json(
             f"{self.test_train_dir}/voice-commands-xml-validate.jsonl", lines=True
-        ).sample( sample_size, random_state=42 )
+        ).sample( validation_sample_size, random_state=42 )
         
         # update the prompt field
         # KLUDGE: this is a workaround for the fact that the prompt field is not being created when the validation df is created
-        print( f"Updating the prompt field for [{sample_size}] rows..." )
+        print( f"Updating the prompt field for [{validation_sample_size}] rows..." )
         df[ "prompt" ] = df.apply( lambda row: self.get_prompt( row[ "instruction" ], row[ "input" ], output="" ), axis=1 )
-        print( f"Updating the prompt field for [{sample_size}] rows... Done!" )
+        print( f"Updating the prompt field for [{validation_sample_size}] rows... Done!" )
         
-        du.print_banner( f"Validating {self.model_name} w/ {sample_size} samples..." )
+        du.print_banner( f"Validating {self.model_name} w/ {validation_sample_size} samples..." )
         # Print value counts for the command column to see how many unique commands we have
         print( df.command.value_counts(), end="\n\n" )
         
@@ -1319,8 +1319,8 @@ class PeftTrainer:
                 return False
             return True
         
-        # Start the vLLM server in a separate process
-        process = subprocess.Popen( cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True )
+        # Start the vLLM server in a separate process with its own process group
+        process = subprocess.Popen( cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True )
         
         # Start a thread to read and print server output
         def print_server_output( process, log ):
@@ -1393,47 +1393,58 @@ class PeftTrainer:
     
     def _stop_vllm_server( self, process ):
         """
-        Stops the vLLM server process.
+        Stops the vLLM server process (spawned with start_new_session=True).
         
         Preconditions:
         - process must be a valid subprocess.Popen object representing the vLLM server process.
+        - Process should have been created with start_new_session=True.
         
         Postconditions:
         - The vLLM server process is terminated.
-        - Any child processes are also terminated.
+        - Any child processes in the same process group are also terminated.
         
         Parameters:
         - process (subprocess.Popen): The process object for the vLLM server.
+        
+        Returns:
+        - bool: True if the server was successfully stopped, False otherwise.
         """
-        if process:
-            du.print_banner( "Stopping vLLM server" )
+        if not process:
+            return False
             
-            # On Linux, use process group ID to kill all child processes
-            if hasattr( os, 'killpg' ) and hasattr( process, 'pid' ):
+        du.print_banner( "Stopping vLLM server" )
+        
+        try:
+            # Process was started with start_new_session=True, so its PID is the group ID
+            # Send SIGTERM to the child's own process group
+            if self.debug: print( f"Sending SIGTERM to process group {process.pid}" )
+            os.killpg( process.pid, 15 )  # SIGTERM
+            
+            # Wait for a clean exit, but not too long
+            try:
+                process.wait( timeout=10 )
+                if self.debug: print( "vLLM server exited cleanly" )
+            except subprocess.TimeoutExpired:
+                if self.debug: print( "vLLM server did not exit after SIGTERM, sending SIGKILL" )
+                # If it didn't exit cleanly, force kill
                 try:
-                    # Send SIGTERM to process group
-                    os.killpg( os.getpgid( process.pid ), 15 )
-                    
-                    # Wait for a clean exit, but not too long
-                    process.wait( timeout=10 )
-                except ( ProcessLookupError, subprocess.TimeoutExpired ):
-                    # If it didn't exit cleanly, force kill
-                    try:
-                        os.killpg( os.getpgid( process.pid ), 9 )
-                    except ProcessLookupError:
-                        pass
-            else:
-                # Fallback for platforms without killpg
+                    os.killpg( process.pid, 9 )  # SIGKILL
+                except ProcessLookupError:
+                    # Process is already gone
+                    pass
+        except (ProcessLookupError, OSError) as e:
+            if self.debug: print( f"Error stopping vLLM server: {str(e)}" )
+            # Process is already gone or we can't send signal
+            # Just ensure we kill the direct process
+            try:
                 process.terminate()
-                try:
-                    process.wait( timeout=10 )
-                except subprocess.TimeoutExpired:
-                    process.kill()
-            
-            if self.debug: print( "vLLM server has been stopped" )
-            return True
+            except:
+                pass
+        
+        if self.debug: print( "vLLM server has been stopped" )
+        return True
     
-    def run_pipeline( self, pre_training_stats=False, post_training_stats=False, post_quantization_stats=False ):
+    def run_pipeline( self, pre_training_stats=False, post_training_stats=False, post_quantization_stats=False, validation_sample_size=100 ):
         """
         Executes the full training pipeline from fine-tuning to quantization.
 
@@ -1460,7 +1471,7 @@ class PeftTrainer:
         # Run a quick pretest in memory
         if pre_training_stats:
             # TODO: add runtime configuration for sample size
-            trainer.run_validation_in_memory( device_map="auto", sample_size=100 )
+            trainer.run_validation_in_memory( device_map="auto", validation_sample_size=validation_sample_size )
         
         # Load model-specific fine-tuning configuration
         model_config = load_model_config( trainer.model_name )
@@ -1476,7 +1487,6 @@ class PeftTrainer:
             device_map=fine_tune_params[ "device_map" ],
             output_dir=args.lora_dir
         )
-        
         release_gpus( [ trainer.model, trainer.tokenizer ] )
         
         # Load and merge the adapter
@@ -1487,21 +1497,25 @@ class PeftTrainer:
         if post_training_stats:
             du.print_banner( f"Running post-training validation for {args.model_name}" )
             
-            # Start vLLM server and wait for it to be available
-            vllm_server_process = self._start_vllm_server( merged_adapter_dir )
-            
-            # create a custom model name using as an ID the mount point for the recently quantized model directory
-            model = Llm_v0.get_model( merged_adapter_dir )
-            # TODO: add runtime configuration for sample size
-            trainer.run_validation_with_server(
-                model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=100, debug=False,
-                verbose=False
-            )
-            self._stop_vllm_server( vllm_server_process )
-        
-        du.print_banner( "Exiting prematurely!", expletive=True )
-        return
-        
+            vllm_server_process = None
+            try:
+                # Start vLLM server and wait for it to be available
+                vllm_server_process = self._start_vllm_server( merged_adapter_dir )
+                
+                # create a custom model name using as an ID the mount point for the recently quantized model directory
+                model = Llm_v0.get_model( merged_adapter_dir )
+                # TODO: add runtime configuration for sample size
+                trainer.run_validation_with_server(
+                    model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", validation_sample_size=validation_sample_size,
+                    debug=self.debug,
+                    verbose=self.verbose
+                )
+            finally:
+                # Always clean up the vLLM server process if it was started
+                if vllm_server_process: self._stop_vllm_server( vllm_server_process )
+                # release GPU before doing anything else
+                release_gpus( [ trainer.model, trainer.tokenizer ] )
+              
         # Quantize the merged adapter
         quantized_model_dir = trainer.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
         
@@ -1511,26 +1525,30 @@ class PeftTrainer:
         print( f"Quantized model: {quantized_model_dir}" )
         du.print_simple_file_list( quantized_model_dir )
         
-        # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-08-at-21-26/autoround-4-bits-sym.gptq/2025-04-08-at-21-47"
         if post_quantization_stats:
-            # release GPU before doing anything else
-            release_gpus( [ trainer.model, trainer.tokenizer ] )
             
             du.print_banner( f"Running post-training validation for {args.model_name}" )
             
-            # Start vLLM server and wait for it to be available
-            vllm_server_process = self._start_vllm_server( quantized_model_dir )
+            vllm_server_process = None
+            try:
+                # Start vLLM server and wait for it to be available
+                vllm_server_process = self._start_vllm_server( quantized_model_dir )
+                
+                # create a custom model name using as an ID the mount point for the recently quantized model directory
+                model = Llm_v0.get_model( quantized_model_dir )
+                # TODO: add runtime configuration for sample size
+                trainer.run_validation_with_server(
+                    model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", validation_sample_size=validation_sample_size,
+                    debug=self.debug,
+                    verbose=self.verbose
+                )
+            finally:
+                # Always clean up the vLLM server process if it was started
+                if vllm_server_process: self._stop_vllm_server( vllm_server_process )
+                # release GPU before doing anything else
+                release_gpus( [ trainer.model, trainer.tokenizer ] )
             
-            # create a custom model name using as an ID the mount point for the recently quantized model directory
-            model = Llm_v0.get_model( quantized_model_dir )
-            # TODO: add runtime configuration for sample size
-            trainer.run_validation_with_server(
-                model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=1000, debug=False,
-                verbose=False
-            )
-            self._stop_vllm_server( vllm_server_process )
-            
-    def run_pipeline_adhoc( self, pre_training_stats=False, post_training_stats=False, post_quantization_stats=False ):
+    def run_pipeline_adhoc( self, pre_training_stats=False, post_training_stats=False, post_quantization_stats=False, validation_sample_size=100 ):
         """
         Executes the full training pipeline from fine-tuning to quantization.
         
@@ -1556,7 +1574,7 @@ class PeftTrainer:
         # # Run a quick pretest in memory
         # if pre_training_stats:
         #     # TODO: add runtime configuration for sample size
-        #     trainer.run_validation_in_memory( device_map="auto", sample_size=100 )
+        #     trainer.run_validation_in_memory( device_map="auto", validation_sample_size=validation_sample_size )
         #
         # # Load model-specific fine-tuning configuration
         # model_config     = load_model_config( trainer.model_name )
@@ -1594,7 +1612,7 @@ class PeftTrainer:
                 model = Llm_v0.get_model( merged_adapter_dir )
                 # TODO: add runtime configuration for sample size
                 trainer.run_validation_with_server(
-                    model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=100, debug=False,
+                    model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", validation_sample_size=100, debug=False,
                     verbose=False
                 )
             finally:
@@ -1603,9 +1621,6 @@ class PeftTrainer:
                 # release GPU before doing anything else
                 release_gpus( [ trainer.model, trainer.tokenizer ] )
             
-        du.print_banner( "Exiting prematurely!", expletive=True )
-        return
-
         # Quantize the merged adapter
         quantized_model_dir = trainer.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
 
@@ -1632,7 +1647,7 @@ class PeftTrainer:
                 model = Llm_v0.get_model( quantized_model_dir )
                 # TODO: add runtime configuration for sample size
                 trainer.run_validation_with_server(
-                    model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=1000, debug=False,
+                    model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", validation_sample_size=validation_sample_size, debug=False,
                     verbose=False
                 )
             finally:
@@ -1723,6 +1738,7 @@ def parse_arguments():
     parser.add_argument( "--pre-training-stats",      action="store_true", help="Run validation before training",             default=False )
     parser.add_argument( "--post-training-stats",     action="store_true", help="Run validation after training and merging",  default=False )
     parser.add_argument( "--post-quantization-stats", action="store_true", help="Run validation after quantization",          default=False )
+    parser.add_argument( "--validation-sample-size",  type=int,            help="Sample size for validation",                 default=100 )
     
     return parser.parse_args()
 
@@ -1816,8 +1832,18 @@ if __name__ == "__main__":
     
     trainer.login_to_hf()
     
-    # DO NOT REMOVE THIS LINE! Comment it out solely for the purpose of debugging!
-    # trainer.run_pipeline( pre_training_stats=args.pre_training_stats, post_training_stats=args.post_training_stats, post_quantization_stats=args.post_quantization_stats )
-    trainer.run_pipeline_adhoc( pre_training_stats=args.pre_training_stats, post_training_stats=args.post_training_stats, post_quantization_stats=args.post_quantization_stats )
+    trainer.run_pipeline(
+        pre_training_stats=args.pre_training_stats,
+        post_training_stats=args.post_training_stats,
+        post_quantization_stats=args.post_quantization_stats,
+        validation_sample_size=args.validation_sample_size
+    )
+    # DO NOT REMOVE THIS LINE! Use call below for debugging
+    # trainer.run_pipeline_adhoc(
+    #     pre_training_stats=args.pre_training_stats,
+    #     post_training_stats=args.post_training_stats,
+    #     post_quantization_stats=args.post_quantization_stats,
+    #     validation_sample_size=args.validation_sample_size
+    # )
     
     
