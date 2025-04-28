@@ -29,7 +29,7 @@ from cosa.training.conf import load_model_config
 import cosa.utils.util         as du
 import cosa.utils.util_pytorch as dupt
 
-from cosa.agents.llm_v0        import Llm_v0
+from cosa.agents.v000.llm_v0    import Llm_v0
 from cosa.training.quantizer   import Quantizer
 from cosa.utils.util_stopwatch import Stopwatch
 
@@ -681,6 +681,9 @@ class PeftTrainer:
         print( "Done!" )
         
         self.merged_adapter_dir = path
+        
+        du.print_banner( f"Contents of: {self.merged_adapter_dir}" )
+        du.print_simple_file_list( self.merged_adapter_dir )
         
         return self.merged_adapter_dir
         
@@ -1347,7 +1350,7 @@ class PeftTrainer:
             
             print( "vLLM server has been stopped" )
     
-    def do_all_the_things( self, pre_training_stats=False, post_training_stats=False ):
+    def run_pipeline( self, pre_training_stats=False, post_training_stats=False, post_quantization_stats=False ):
         """
         Executes the full training pipeline from fine-tuning to quantization.
         
@@ -1397,6 +1400,25 @@ class PeftTrainer:
         merged_adapter_dir = trainer.save_merged_adapter( lora_dir=args.lora_dir )
         release_gpus( [ trainer.model, trainer.tokenizer ] )
 
+        if post_training_stats:
+            
+            du.print_banner( f"Running post-training validation for {args.model_name}" )
+            
+            # Start vLLM server and wait for it to be available
+            vllm_server_process = self._start_vllm_server( merged_adapter_dir )
+            
+            # create a custom model name using as an ID the mount point for the recently quantized model directory
+            model = Llm_v0.get_model( merged_adapter_dir )
+            # TODO: add runtime configuration for sample size
+            trainer.run_validation_with_server(
+                model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=100, debug=False,
+                verbose=False
+            )
+            self._stop_vllm_server( vllm_server_process )
+            
+        du.print_banner( "Exiting prematurely!", expletive=True )
+        return
+
         # Quantize the merged adapter
         quantized_model_dir = trainer.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
 
@@ -1407,7 +1429,7 @@ class PeftTrainer:
         du.print_simple_file_list( quantized_model_dir )
         
         # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-08-at-21-26/autoround-4-bits-sym.gptq/2025-04-08-at-21-47"
-        if post_training_stats:
+        if post_quantization_stats:
         
             # release GPU before doing anything else
             release_gpus( [ trainer.model, trainer.tokenizer ] )
@@ -1424,8 +1446,6 @@ class PeftTrainer:
                 model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", sample_size=1000, debug=False,
                 verbose=False
             )
-            
-            # Terminate the vLLM server process
             self._stop_vllm_server( vllm_server_process )
     
 def check_env():
@@ -1504,10 +1524,11 @@ def parse_arguments():
     parser.add_argument( "--lora-dir",        type=str, help="Directory for LORA files" )
     
     # Optional arguments
-    parser.add_argument( "--debug",               action="store_true", help="Enable debug mode",              default=False )
-    parser.add_argument( "--verbose",             action="store_true", help="Enable verbose mode",            default=False )
-    parser.add_argument( "--pre-training-stats",  action="store_true", help="Run validation before training", default=False )
-    parser.add_argument( "--post-training-stats", action="store_true", help="Run validation after training",  default=False )
+    parser.add_argument( "--debug",                   action="store_true", help="Enable debug mode",                          default=False )
+    parser.add_argument( "--verbose",                 action="store_true", help="Enable verbose mode",                        default=False )
+    parser.add_argument( "--pre-training-stats",      action="store_true", help="Run validation before training",             default=False )
+    parser.add_argument( "--post-training-stats",     action="store_true", help="Run validation after training and merging",  default=False )
+    parser.add_argument( "--post-quantization-stats", action="store_true", help="Run validation after quantization",          default=False )
     
     return parser.parse_args()
 
@@ -1601,6 +1622,6 @@ if __name__ == "__main__":
     
     trainer.login_to_hf()
     
-    trainer.do_all_the_things( pre_training_stats=args.pre_training_stats, post_training_stats=args.post_training_stats )
+    trainer.run_pipeline( pre_training_stats=args.pre_training_stats, post_training_stats=args.post_training_stats, post_quantization_stats=args.post_quantization_stats )
     
     

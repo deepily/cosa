@@ -539,7 +539,7 @@ class XmlCoordinator:
         for question in questions:
             
             counter += 1
-            from cosa.agents.function_mapping_search import FunctionMappingSearch
+            from cosa.agents.v000.function_mapping_search import FunctionMappingSearch
             mapper = FunctionMappingSearch( question=question, last_question_asked=question, debug=self.debug, verbose=self.verbose )
             du.print_banner( f"Question {counter} of {len( questions )}: {question}", end="\n", prepend_nl=True )
             prompt_response_dict = mapper.run_prompt( include_raw_response=True )
@@ -749,7 +749,7 @@ class XmlCoordinator:
         import torch
         from huggingface_hub import InferenceClient
         import openai
-        from cosa.agents.llm_v0 import Llm_v0
+        from cosa.agents.v000.llm_v0 import Llm_v0
         
         self.reset_call_counter()
         rows = df.shape[0]
@@ -1039,7 +1039,7 @@ class XmlCoordinator:
         import torch
         from huggingface_hub import InferenceClient
         import cosa.app.util_llm_client as du_llm_client
-        from cosa.agents.llm_v0 import Llm_v0
+        from cosa.agents.v000.llm_v0 import Llm_v0
         
         self._call_counter += 1
         
