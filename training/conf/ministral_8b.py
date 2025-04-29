@@ -3,7 +3,7 @@ Configuration for fine-tuning Ministral-8B-Instruct-2410 model.
 """
 
 fine_tune_config = {
-    "sample_size": 0.01,
+    "sample_size": 1.0,
     "batch_size": 2,
     "gradient_accumulation_steps": 8,
     "logging_steps": 0.10,

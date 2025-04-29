@@ -722,9 +722,6 @@ class PeftTrainer:
         release_gpus( [ self.model, self.tokenizer ] )
         
         try:
-            # Clear CUDA cache for good measure
-            torch.cuda.empty_cache()
-            
             # Detect available GPUs
             num_gpus = torch.cuda.device_count()
             if num_gpus == 0:
@@ -734,13 +731,13 @@ class PeftTrainer:
             if num_gpus == 1:
                 # Use a specific device (cuda:0) instead of "auto" to prevent meta device placement
                 device_map = "cuda:0"
-                if self.debug: print(f"Using single GPU with device_map={device_map}")
+                if self.debug: print( f"Using single GPU with device_map={device_map}" )
             else:
                 # For multi-GPU setup, only use first GPU to avoid meta device issues
-                device_map = "cuda:0" 
-                if self.debug: print(f"Multiple GPUs detected but using only first GPU with device_map={device_map}")
+                device_map = "cuda:0"
+                if self.debug: print( f"Multiple GPUs detected but using only first GPU with device_map={device_map}" )
             
-            du.print_banner( f"Quantize merged adapter in {self.merged_adapter_dir}" )
+            du.print_banner( f"Quantizing merged adapter in {self.merged_adapter_dir}" )
             
             # Initialize quantizer with specific device mapping
             quantizer = Quantizer( self.merged_adapter_dir, device_map=device_map, local_files_only=True )
