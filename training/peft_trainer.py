@@ -718,12 +718,49 @@ class PeftTrainer:
         elif self.merged_adapter_dir is None:
             raise ValueError( "merged_adapter_dir is neither provided nor found" )
         
-        du.print_banner( f"Quantize merged adapter in {self.merged_adapter_dir}" )
-        quantizer = Quantizer( self.merged_adapter_dir )
-        quantizer.quantize_model()
-        self.quantized_model_dir = quantizer.save( self.merged_adapter_dir, include_model_name=False )
+        # Release any existing model/tokenizer to free up GPU memory
+        release_gpus( [ self.model, self.tokenizer ] )
         
-        return self.quantized_model_dir
+        try:
+            # Clear CUDA cache for good measure
+            torch.cuda.empty_cache()
+            
+            # Detect available GPUs
+            num_gpus = torch.cuda.device_count()
+            if num_gpus == 0:
+                raise RuntimeError("No GPUs available for quantization")
+                
+            # Use specific device mapping rather than "auto" to avoid meta device issues
+            if num_gpus == 1:
+                # Use a specific device (cuda:0) instead of "auto" to prevent meta device placement
+                device_map = "cuda:0"
+                if self.debug: print(f"Using single GPU with device_map={device_map}")
+            else:
+                # For multi-GPU setup, only use first GPU to avoid meta device issues
+                device_map = "cuda:0" 
+                if self.debug: print(f"Multiple GPUs detected but using only first GPU with device_map={device_map}")
+            
+            du.print_banner( f"Quantize merged adapter in {self.merged_adapter_dir}" )
+            
+            # Initialize quantizer with specific device mapping
+            quantizer = Quantizer( self.merged_adapter_dir, device_map=device_map, local_files_only=True )
+            
+            # Quantize with appropriate batch size for the GPU
+            batch_size = 1  # Conservative batch size to prevent OOM
+            quantizer.quantize_model(batch_size=batch_size)
+            
+            # Save the quantized model
+            self.quantized_model_dir = quantizer.save( self.merged_adapter_dir, include_model_name=False )
+            
+            return self.quantized_model_dir
+            
+        except Exception as e:
+            error_msg = f"Quantization failed: {str(e)}"
+            if self.debug:
+                import traceback
+                traceback.print_exc()
+                print(f"ERROR: {error_msg}")
+            raise RuntimeError(error_msg) from e
     
     def _load_model_and_tokenizer( self, device_map="auto", mode=None ):
         """
@@ -1312,8 +1349,7 @@ class PeftTrainer:
                 if stderr_output:
                     error_msg = f"vLLM server exited with code {return_code}. Error: {stderr_output}"
                     server_error = RuntimeError(error_msg)
-                    if self.debug or self.verbose:
-                        print(f"[vLLM Server ERROR] {error_msg}")
+                    print(f"[vLLM Server ERROR] {error_msg}")
                     # Add to log
                     log.append(f"EXIT CODE {return_code}: {stderr_output}")
                 return False
@@ -1330,8 +1366,7 @@ class PeftTrainer:
                     print( f"[vLLM Server] {line.strip()}" )
                 # Check if any known error patterns appear in the output
                 if "CUDA out of memory" in line or "CUDA error" in line or "Error:" in line:
-                    if self.debug or self.verbose:
-                        print( f"[vLLM Server ERROR] Detected error: {line.strip()}" )
+                    print( f"[vLLM Server ERROR] Detected error: {line.strip()}" )
         
         output_thread = threading.Thread( target=print_server_output, args=( process, server_log ), daemon=True )
         output_thread.start()
@@ -1380,11 +1415,11 @@ class PeftTrainer:
                     print( f"  Still waiting for vLLM server... ({int(elapsed)}s / {timeout}s)" )
         
         # If we reach here, the server did not start within the timeout
-        if self.debug or self.verbose:
-            print("vLLM server startup timed out. Last log entries:")
-            for entry in server_log[-10:]:  # Show last 10 log entries
-                print(f"  {entry}")
-            
+        # if self.debug or self.verbose:
+        print("vLLM server startup timed out. Last log entries:")
+        for entry in server_log[-10:]:  # Show last 10 log entries
+            print(f"  {entry}")
+        
         self._stop_vllm_server( process )
         
         # Consolidate the logs for the error message
@@ -1447,18 +1482,34 @@ class PeftTrainer:
     def run_pipeline( self, pre_training_stats=False, post_training_stats=False, post_quantization_stats=False, validation_sample_size=100 ):
         """
         Executes the full training pipeline from fine-tuning to quantization.
-
-        This method:
-        1. Loads model-specific configuration
-        2. Runs pre-training validation if requested
-        3. Fine-tunes the model using the proper configuration for the model
-        4. Merges the LoRA adapter with the base model
-        5. Quantizes the merged model
-        6. Optionally runs post-training validation
-
-        Args:
-            pre_training_stats (bool): Whether to run validation before training
-            post_training_stats (bool): Whether to run validation after training
+        
+        Requires:
+            - The trainer instance must be properly initialized with valid model_hf_id, model_name, and test_train_path
+            - Hugging Face credentials must be available for login
+            - If lora_dir is provided, it must be a valid directory path or creatable
+            - GPU resources must be available with sufficient VRAM for the model
+            - Required datasets must be available at test_train_path
+            - The specified model must be one of the supported models
+        
+        Ensures:
+            - If pre_training_stats is True, validation is performed before training
+            - The model is fine-tuned with LoRA adapters
+            - The LoRA adapter is merged with the base model
+            - A quantized version of the merged model is created
+            - If post_training_stats is True, validation is performed after merging the adapter
+            - If post_quantization_stats is True, validation is performed after quantizing the model
+            - All processes (including vLLM server) are properly cleaned up regardless of success or failure
+            - The pipeline steps are executed in the correct sequence
+            - GPU memory is properly released between steps
+            - The following instance attributes are updated:
+              - self.checkpoint_dir: Set to the path of the last training checkpoint
+              - self.merged_adapter_dir: Set to the path of the merged adapter
+              - self.quantized_model_dir: Set to the path of the quantized model
+        
+        Raises:
+            - ValueError: If required paths or credentials are invalid
+            - RuntimeError: If GPU resources are insufficient or if model loading fails
+            - TimeoutError: If the vLLM server does not start within the specified timeout
         """
         timer = Stopwatch( msg=None )
         trainer = PeftTrainer(
@@ -1472,6 +1523,8 @@ class PeftTrainer:
         if pre_training_stats:
             # TODO: add runtime configuration for sample size
             trainer.run_validation_in_memory( device_map="auto", validation_sample_size=validation_sample_size )
+        else:
+            print( f"Skipping pre-training validation for {args.model_name}" )
         
         # Load model-specific fine-tuning configuration
         model_config = load_model_config( trainer.model_name )
@@ -1515,15 +1568,11 @@ class PeftTrainer:
                 if vllm_server_process: self._stop_vllm_server( vllm_server_process )
                 # release GPU before doing anything else
                 release_gpus( [ trainer.model, trainer.tokenizer ] )
+        else:
+            print( f"Skipping post-training validation for {args.model_name}" )
               
         # Quantize the merged adapter
         quantized_model_dir = trainer.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
-        
-        # Print completion information
-        timer.print( f"Finished fine-tuning, merging and quantizing {args.model_name}" )
-        du.print_banner( f"Finished quantizing {args.model_name}" )
-        print( f"Quantized model: {quantized_model_dir}" )
-        du.print_simple_file_list( quantized_model_dir )
         
         if post_quantization_stats:
             
@@ -1547,22 +1596,50 @@ class PeftTrainer:
                 if vllm_server_process: self._stop_vllm_server( vllm_server_process )
                 # release GPU before doing anything else
                 release_gpus( [ trainer.model, trainer.tokenizer ] )
+        else:
+            print( f"Skipping post-quantization validation for {args.model_name}" )
+            
+        # Print completion information
+        msg = f"Finished fine-tuning, merging and quantizing {args.model_name}"
+        timer.print( msg )
+        du.print_banner( msg )
+        print( f"Quantized model: {quantized_model_dir}" )
+        du.print_simple_file_list( quantized_model_dir )
             
     def run_pipeline_adhoc( self, pre_training_stats=False, post_training_stats=False, post_quantization_stats=False, validation_sample_size=100 ):
         """
-        Executes the full training pipeline from fine-tuning to quantization.
+        Executes a customized version of the training pipeline for debugging and testing purposes.
         
-        This method:
-        1. Loads model-specific configuration
-        2. Runs pre-training validation if requested
-        3. Fine-tunes the model using the proper configuration for the model
-        4. Merges the LoRA adapter with the base model
-        5. Quantizes the merged model
-        6. Optionally runs post-training validation
+        Requires:
+            - The trainer instance must be properly initialized with valid model_hf_id, model_name, and test_train_path
+            - Hugging Face credentials must be available for login
+            - A valid merged adapter directory must be specified in the hardcoded path or be created during execution
+            - GPU resources must be available with sufficient VRAM for the model
+            - The specified model must be one of the supported models
         
-        Args:
-            pre_training_stats (bool): Whether to run validation before training
-            post_training_stats (bool): Whether to run validation after training
+        Ensures:
+            - Various pipeline steps can be enabled/disabled through code modifications for debugging
+            - All enabled steps are executed in the correct sequence
+            - If pre_training_stats is True and the code is uncommented, validation is performed before training
+            - If post_training_stats is True and the code is uncommented, validation is performed after merging the adapter
+            - The quantization step is always executed with the hardcoded merged adapter path
+            - If post_quantization_stats is True and the code is uncommented, validation is performed after quantization
+            - All processes (including vLLM server) are properly cleaned up regardless of success or failure
+            - GPU memory is properly released after the quantization step
+            - The following instance attributes are updated (for the steps that are executed):
+              - self.checkpoint_dir: Set to the path of the last training checkpoint
+              - self.merged_adapter_dir: Set to the path of the merged adapter
+              - self.quantized_model_dir: Set to the path of the quantized model
+        
+        Raises:
+            - ValueError: If required paths or credentials are invalid
+            - RuntimeError: If GPU resources are insufficient or if model loading fails
+            - Various exceptions based on which parts of the pipeline are enabled for testing
+        
+        Notes:
+            - This method is intended for development and debugging only
+            - Parts of the pipeline are commented out to allow targeted testing of specific components
+            - The commented sections should be adjusted based on the specific testing needs
         """
         timer = Stopwatch( msg=None )
         trainer = PeftTrainer(
@@ -1575,6 +1652,8 @@ class PeftTrainer:
         # if pre_training_stats:
         #     # TODO: add runtime configuration for sample size
         #     trainer.run_validation_in_memory( device_map="auto", validation_sample_size=validation_sample_size )
+        # else:
+        #     print( f"Skipping pre-training validation for {args.model_name}" )
         #
         # # Load model-specific fine-tuning configuration
         # model_config     = load_model_config( trainer.model_name )
@@ -1598,64 +1677,70 @@ class PeftTrainer:
         # merged_adapter_dir = trainer.save_merged_adapter( lora_dir=args.lora_dir )
         # release_gpus( [ trainer.model, trainer.tokenizer ] )
         
-        merged_adapter_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-28-at-11-24"
-
-        if post_training_stats:
-            du.print_banner( f"Running post-training validation for {args.model_name}" )
-            
-            vllm_server_process = None
-            try:
-                # Start vLLM server and wait for it to be available
-                vllm_server_process = self._start_vllm_server( merged_adapter_dir )
-                
-                # create a custom model name using as an ID the mount point for the recently quantized model directory
-                model = Llm_v0.get_model( merged_adapter_dir )
-                # TODO: add runtime configuration for sample size
-                trainer.run_validation_with_server(
-                    model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", validation_sample_size=100, debug=False,
-                    verbose=False
-                )
-            finally:
-                # Always clean up the vLLM server process if it was started
-                if vllm_server_process: self._stop_vllm_server( vllm_server_process )
-                # release GPU before doing anything else
-                release_gpus( [ trainer.model, trainer.tokenizer ] )
+        merged_adapter_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-28-at-20-33"
+        # 
+        # if post_training_stats:
+        #     du.print_banner( f"Running post-training validation for {args.model_name}" )
+        #
+        #     vllm_server_process = None
+        #     try:
+        #         # Start vLLM server and wait for it to be available
+        #         vllm_server_process = self._start_vllm_server( merged_adapter_dir )
+        #
+        #         # create a custom model name using as an ID the mount point for the recently quantized model directory
+        #         model = Llm_v0.get_model( merged_adapter_dir )
+        #         # TODO: add runtime configuration for sample size
+        #         trainer.run_validation_with_server(
+        #             model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", validation_sample_size=100, debug=False,
+        #             verbose=False
+        #         )
+        #     finally:
+        #         # Always clean up the vLLM server process if it was started
+        #         if vllm_server_process: self._stop_vllm_server( vllm_server_process )
+        #         # release GPU before doing anything else
+        #         release_gpus( [ trainer.model, trainer.tokenizer ] )
+        # else:
+        #     print( f"Skipping post-training validation for {args.model_name}" )
             
         # Quantize the merged adapter
         quantized_model_dir = trainer.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
 
-        # Print completion information
-        timer.print( f"Finished fine-tuning, merging and quantizing {args.model_name}" )
-        du.print_banner( f"Finished quantizing {args.model_name}" )
-        print( f"Quantized model: {quantized_model_dir}" )
-        du.print_simple_file_list( quantized_model_dir )
-        
         # release GPU before doing anything else
         release_gpus( [ trainer.model, trainer.tokenizer ] )
         
-        # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-08-at-21-26/autoround-4-bits-sym.gptq/2025-04-08-at-21-47"
-        if post_quantization_stats:
-            
-            du.print_banner( f"Running post-training validation for {args.model_name}" )
-            
-            vllm_server_process = None
-            try:
-                # Start vLLM server and wait for it to be available
-                vllm_server_process = self._start_vllm_server( quantized_model_dir )
-                
-                # create a custom model name using as an ID the mount point for the recently quantized model directory
-                model = Llm_v0.get_model( quantized_model_dir )
-                # TODO: add runtime configuration for sample size
-                trainer.run_validation_with_server(
-                    model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", validation_sample_size=validation_sample_size, debug=False,
-                    verbose=False
-                )
-            finally:
-                # Always clean up the vLLM server process if it was started
-                if vllm_server_process: self._stop_vllm_server( vllm_server_process )
-                # release GPU before doing anything else
-                release_gpus( [ trainer.model, trainer.tokenizer ] )
-    
+        # # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-08-at-21-26/autoround-4-bits-sym.gptq/2025-04-08-at-21-47"
+        # if post_quantization_stats:
+        #
+        #     du.print_banner( f"Running post-training validation for {args.model_name}" )
+        #
+        #     vllm_server_process = None
+        #     try:
+        #         # Start vLLM server and wait for it to be available
+        #         vllm_server_process = self._start_vllm_server( quantized_model_dir )
+        #
+        #         # create a custom model name using as an ID the mount point for the recently quantized model directory
+        #         model = Llm_v0.get_model( quantized_model_dir )
+        #         # TODO: add runtime configuration for sample size
+        #         trainer.run_validation_with_server(
+        #             model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", validation_sample_size=validation_sample_size, debug=False,
+        #             verbose=False
+        #         )
+        #     finally:
+        #         # Always clean up the vLLM server process if it was started
+        #         if vllm_server_process: self._stop_vllm_server( vllm_server_process )
+        #         # release GPU before doing anything else
+        #         release_gpus( [ trainer.model, trainer.tokenizer ] )
+        # else:
+        #     print( f"Skipping post-quantization validation for {args.model_name}" )
+        
+        # Print completion information
+        msg = f"Finished fine-tuning, merging and quantizing {args.model_name}"
+        timer.print( msg )
+        du.print_banner( msg )
+        print( f"Quantized model: {quantized_model_dir}" )
+        du.print_simple_file_list( quantized_model_dir )
+
+
 def check_env():
     """
     Verifies that required environment variables are set for proper application functioning.
@@ -1826,8 +1911,6 @@ if __name__ == "__main__":
     # suss_out_dataset()
     gib_root = check_env()
     args     = parse_arguments()
-    
-    timer    = Stopwatch( msg=None )
     trainer  = PeftTrainer( args.model, args.model_name, args.test_train_path, lora_dir=args.lora_dir, debug=args.debug, verbose=args.verbose )
     
     trainer.login_to_hf()
