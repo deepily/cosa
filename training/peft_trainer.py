@@ -38,6 +38,14 @@ from cosa.training.xml_coordinator import XmlCoordinator
 set_seed( 42 )
 
 @staticmethod
+def is_root() -> bool:
+    return os.geteuid() == 0
+
+@staticmethod
+def invoked_with_sudo() -> bool:
+    return "SUDO_UID" in os.environ
+
+@staticmethod
 def print_gpu_memory():
     """
     Prints the current GPU memory usage and allocation for all available GPUs.
@@ -150,7 +158,13 @@ def release_gpus( models, nuclear_kill_button=False ):
         try:
             # Launch external GPU cleanup but exclude self
             current_pid = os.getpid()
-            cmd = f"nvidia-smi | grep -E '[0-9]+ +C ' | awk '{{print $5}}' | grep -v {current_pid} | xargs -r sudo kill -9"
+            
+            # if they want to nuke the GPU and they're not running as root, then throw in the `sudo` cmd
+            if is_root() and invoked_with_sudo():
+                sudo_placeholder = ""
+            else:
+                sudo_placeholder = "sudo "
+            cmd = f"{sudo_placeholder}nvidia-smi | grep -E '[0-9]+ +C ' | awk '{{print $5}}' | grep -v {current_pid} | xargs -r sudo kill -9"
             subprocess.run( cmd, shell=True, check=True )
             
             # Reset each GPU individually
@@ -1604,7 +1618,8 @@ class PeftTrainer:
         if self.debug: print( "vLLM server has been stopped" )
         return True
     
-    def run_pipeline( self, pre_training_stats=False, post_training_stats=False, post_quantization_stats=False,
+    def run_pipeline( self,
+        pre_training_stats=False, post_training_stats=False, post_quantization_stats=False, nuclear_kill_button=False,
         validation_sample_size=100
     ):
         """
@@ -1639,11 +1654,6 @@ class PeftTrainer:
             - TimeoutError: If the vLLM server does not start within the specified timeout
         """
         timer = Stopwatch( msg=None )
-        # don't know why I was calling this from inside the method, the parent object, the trader already exists!!!
-        # trainer = PeftTrainer(
-        #     args.model, args.model_name, args.test_train_path, lora_dir=args.lora_dir, debug=args.debug,
-        #     verbose=args.verbose
-        # )
         
         self.login_to_hf()
         
@@ -1696,7 +1706,7 @@ class PeftTrainer:
                 # Always clean up the vLLM server process if it was started
                 if vllm_server_process: self._stop_vllm_server( vllm_server_process )
                 # release GPUs -- with prejudice -- before doing anything else
-                release_gpus( [ self.model, self.tokenizer ], nuclear_kill_button=True )
+                release_gpus( [ self.model, self.tokenizer ], nuclear_kill_button=nuclear_kill_button )
         else:
             print( f"Skipping post-training validation for {args.model_name}" )
         
@@ -1895,11 +1905,12 @@ def check_env():
     - SystemExit: If any required environment variables are missing.
     """
     required_vars = [
-        ("NCCL_P2P_DISABLE", "1"),
-        ("NCCL_IB_DISABLE", "1"),
-        ("GENIE_IN_THE_BOX_ROOT", "/some/foo/path"),
-        ("GIB_CONFIG_MGR_CLI_ARGS", ""),
-        ("DEEPILY_PROJECTS_DIR", "/mnt/DATA01/include/www.deepily.ai/projects")
+        ( "HF_HOME", "/some/foo/path" ),
+        ( "NCCL_P2P_DISABLE", "1" ),
+        ( "NCCL_IB_DISABLE", "1" ),
+        ( "GENIE_IN_THE_BOX_ROOT", "/some/foo/path" ),
+        ( "GIB_CONFIG_MGR_CLI_ARGS", "" ),
+        ( "DEEPILY_PROJECTS_DIR", "/mnt/DATA01/include/www.deepily.ai/projects" )
     ]
     
     missing_vars = False
@@ -1916,6 +1927,7 @@ def check_env():
     return os.getenv( "GENIE_IN_THE_BOX_ROOT" )
 
 
+@staticmethod
 def check_privileges():
     """
     Checks if the script is running with root privileges or with sudo.
@@ -1934,12 +1946,6 @@ def check_privileges():
     Raises:
     - SystemExit: If the script is not running with elevated privileges
     """
-    def is_root() -> bool:
-        return os.geteuid() == 0
-    
-    def invoked_with_sudo() -> bool:
-        return "SUDO_UID" in os.environ
-    
     print( "Checking credentials..." )
     if is_root():
         if invoked_with_sudo():
@@ -1947,10 +1953,14 @@ def check_privileges():
         else:
             print( "⚠️ Running as root but not via sudo (e.g. direct root or setuid)" )
     else:
-        du.print_banner( "❌ You're not running with elevated privileges?!?" )
+        du.print_banner( "❌ Wait! You're not running with elevated privileges?!?", prepend_nl=True )
         print( "This is a long running -- up to three or four hours -- process that occasionally needs to hit the nuclear reset button for GPU memory." )
         print( "Because of this you will need to execute this module using `sudo` as a prefix so that we can dislodge the occasional pesky stuck memory" )
-        print( "allocations w/o having to wake you up at midnight to present your credentials just so we can reset the GPU memory and finish the run." )
+        print( "allocations w/o having to wake you up at midnight to present your credentials just so we can finish the last 1/3 of the run." )
+        print()
+        print( "You'll need to insert the following bits *between* 'sudo' and the Python interpreter:" )
+        print( 'sudo --preserve-env=HF_HOME,NCCL_P2P_DISABLE,NCCL_IB_DISABLE,GENIE_IN_THE_BOX_ROOT,GIB_CONFIG_MGR_CLI_ARGS,DEEPILY_PROJECTS_DIR env "PATH=$PATH" python -m cosa.training.peft_trainer ...' )
+        print()
         sys.exit( 1 )
 
 
@@ -1981,24 +1991,20 @@ def parse_arguments():
     parser = argparse.ArgumentParser( description="PEFT trainer for language models" )
     
     # Required arguments
-    parser.add_argument( "--model", type=str, help="Model HuggingFace ID" )
-    parser.add_argument( "--model-name", type=str, help="Model name" )
+    parser.add_argument( "--model",           type=str, help="Model HuggingFace ID" )
+    parser.add_argument( "--model-name",      type=str, help="Model name" )
     parser.add_argument( "--test-train-path", type=str, help="Path to test/train data" )
-    parser.add_argument( "--lora-dir", type=str, help="Directory for LORA files" )
+    parser.add_argument( "--lora-dir",        type=str, help="Directory for LORA files" )
     
     # Optional arguments
-    parser.add_argument( "--debug", action="store_true", help="Enable debug mode", default=False )
-    parser.add_argument( "--verbose", action="store_true", help="Enable verbose mode", default=False )
-    parser.add_argument( "--pre-training-stats", action="store_true", help="Run validation before training",
-                         default=False
-                         )
-    parser.add_argument( "--post-training-stats", action="store_true", help="Run validation after training and merging",
-                         default=False
-                         )
-    parser.add_argument( "--post-quantization-stats", action="store_true", help="Run validation after quantization",
-                         default=False
-                         )
-    parser.add_argument( "--validation-sample-size", type=int, help="Sample size for validation", default=100 )
+    parser.add_argument( "--debug",                   action="store_true", help="Enable debug mode",                          default=False )
+    parser.add_argument( "--verbose",                 action="store_true", help="Enable verbose mode",                        default=False )
+    parser.add_argument( "--pre-training-stats",      action="store_true", help="Run validation before training",             default=False )
+    parser.add_argument( "--post-training-stats",     action="store_true", help="Run validation after training and merging",  default=False )
+    parser.add_argument( "--post-quantization-stats", action="store_true", help="Run validation after quantization",          default=False )
+    parser.add_argument( "--nuclear-kill-button",     action="store_true", help="Enable nuclear option for GPU memory reset", default=False )
+    
+    parser.add_argument( "--validation-sample-size",  type=int,            help="Sample size for validation",                 default=100 )
     
     return parser.parse_args()
 
@@ -2086,30 +2092,35 @@ if __name__ == "__main__":
     
     # suss_out_dataset()
     
-    # Check for root privileges - this is required for GPU nuclear_kill_button flag in the release_gpus function
-    check_privileges()
     # Check for required environment variables
     gib_root = check_env()
     # Validate command line arguments
     args = parse_arguments()
+    # Check for nuclear_kill_button + elevated privileges - this is required for GPU nuclear_kill_button flag in the release_gpus function
+    if args.nuclear_kill_button:
+        print( "Nuclear kill button is enabled..." )
+        check_privileges()
+    else:
+        print( "Nuclear kill button is disabled..." )
+        
     # instantiate a trainer...
     trainer = PeftTrainer(
         args.model, args.model_name, args.test_train_path, lora_dir=args.lora_dir, debug=args.debug, verbose=args.verbose
     )
-    # log into hugging face so that we get download the tokenizer, which, for some reason isn't cached (due to an odd HF bug)
-    trainer.login_to_hf()
     
     # ... And you're off to the races!
     trainer.run_pipeline(
         pre_training_stats=args.pre_training_stats,
         post_training_stats=args.post_training_stats,
         post_quantization_stats=args.post_quantization_stats,
-        validation_sample_size=args.validation_sample_size
+        validation_sample_size=args.validation_sample_size,
+        nuclear_kill_button=args.nuclear_kill_button
     )
     # DO NOT REMOVE THIS LINE! Use call below for debugging
     # trainer.run_pipeline_adhoc(
     #     pre_training_stats=args.pre_training_stats,
     #     post_training_stats=args.post_training_stats,
     #     post_quantization_stats=args.post_quantization_stats,
-    #     validation_sample_size=args.validation_sample_size
+    #     validation_sample_size=args.validation_sample_size,
+    #     nuclear_kill_button=args.nuclear_kill_button
     # )

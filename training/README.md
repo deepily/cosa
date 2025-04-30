@@ -18,22 +18,30 @@ The PEFT Trainer provides a streamlined pipeline for:
 - PEFT library
 - vLLM (for serving quantized models)
 - DEEPILY_PROJECTS_DIR environment variable set
-- Root privileges for GPU memory management
+- Root privileges (only if using the `--nuclear-kill-button` flag)
 
 ## Usage
 
 ### Basic Command
 
 ```bash
-# IMPORTANT: Must run with sudo for GPU memory management
-sudo python peft_trainer.py \
+# Run with basic options (no nuclear kill button)
+python peft_trainer.py \
   --model <huggingface_model_id> \
   --model-name <model_config_name> \
   --test-train-path <path_to_training_data> \
   --lora-dir <output_directory_for_lora_adapters>
+
+# Run with nuclear kill button option (requires sudo)
+sudo python peft_trainer.py \
+  --model <huggingface_model_id> \
+  --model-name <model_config_name> \
+  --test-train-path <path_to_training_data> \
+  --lora-dir <output_directory_for_lora_adapters> \
+  --nuclear-kill-button
 ```
 
-> **Root Privileges Required**: The trainer must be run with `sudo` as it occasionally needs to perform GPU memory cleanup operations (resetting stuck CUDA processes) during long training runs. Without proper permissions, the trainer will exit with an error message if not run with elevated privileges.
+> **Nuclear Kill Button**: The `--nuclear-kill-button` flag enables forceful GPU memory cleanup when needed. When this flag is used, the script must be run with `sudo` privileges. If the flag is set but the script is not run with sudo, it will exit with instructions to rerun with proper permissions. Without this flag, no privilege checks are performed.
 
 ### Arguments
 
@@ -49,6 +57,7 @@ sudo python peft_trainer.py \
 - `--pre-training-stats`: Run validation before training
 - `--post-training-stats`: Run validation after training and merging
 - `--post-quantization-stats`: Run validation after quantization
+- `--nuclear-kill-button`: Enable forceful GPU memory reset when needed (requires sudo)
 - `--validation-sample-size`: Number of samples to use for validation (default: 100)
 
 ## Data Format
@@ -110,6 +119,17 @@ The full training pipeline consists of:
 ## Example
 
 ```bash
+# Basic example (no nuclear kill option)
+python peft_trainer.py \
+  --model "mistralai/Ministral-8B-Instruct-2410" \
+  --model-name "Ministral-8B-Instruct-2410" \
+  --test-train-path "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/ephemera/prompts/data" \
+  --lora-dir "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora" \
+  --post-training-stats \
+  --post-quantization-stats \
+  --validation-sample-size 100
+
+# Example with nuclear kill button (requires sudo)
 sudo python peft_trainer.py \
   --model "mistralai/Ministral-8B-Instruct-2410" \
   --model-name "Ministral-8B-Instruct-2410" \
@@ -117,6 +137,7 @@ sudo python peft_trainer.py \
   --lora-dir "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora" \
   --post-training-stats \
   --post-quantization-stats \
+  --nuclear-kill-button \
   --validation-sample-size 100
 ```
 
