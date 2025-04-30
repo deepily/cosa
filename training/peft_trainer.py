@@ -26,11 +26,11 @@ from huggingface_hub import login
 # Import the model configuration loader
 from cosa.training.conf import load_model_config
 
-import cosa.utils.util         as du
+import cosa.utils.util as du
 import cosa.utils.util_pytorch as dupt
 
-from cosa.agents.v000.llm_v0    import Llm_v0
-from cosa.training.quantizer   import Quantizer
+from cosa.agents.v000.llm_v0 import Llm_v0
+from cosa.training.quantizer import Quantizer
 from cosa.utils.util_stopwatch import Stopwatch
 
 from cosa.training.xml_coordinator import XmlCoordinator
@@ -38,7 +38,64 @@ from cosa.training.xml_coordinator import XmlCoordinator
 set_seed( 42 )
 
 @staticmethod
-def release_gpus( models ):
+def print_gpu_memory():
+    """
+    Prints the current GPU memory usage and allocation for all available GPUs.
+    
+    Preconditions:
+    - The function requires the torch library to be imported.
+    - At least one CUDA-capable GPU should be available.
+    
+    Postconditions:
+    - Current GPU memory usage statistics are printed to the console for each GPU.
+    - If no GPU is available, a message indicating that is printed.
+    
+    Parameters:
+    - None
+    
+    Notes:
+    - This function is useful for monitoring GPU memory usage during model training or inference.
+    - Reports total memory, allocated memory, and reserved memory for each GPU.
+    """
+    
+    # Check if CUDA is available
+    if not torch.cuda.is_available():
+        print( "No CUDA-capable GPU available." )
+        return
+    
+    # Get the number of GPUs
+    gpu_count = torch.cuda.device_count()
+    print( f"Found {gpu_count} GPU(s):" )
+    
+    # For each GPU, get and print memory stats
+    for gpu_id in range( gpu_count ):
+        # Get device properties
+        gpu_stats = torch.cuda.get_device_properties( gpu_id )
+        
+        # Calculate memory metrics (in GB)
+        total_memory = round( gpu_stats.total_memory / 1024 / 1024 / 1024, 3 )
+        
+        # Get per-device memory stats
+        with torch.cuda.device( gpu_id ):
+            # Get allocated memory (current memory usage)
+            allocated_memory = round( torch.cuda.memory_allocated() / 1024 / 1024 / 1024, 3 )
+            
+            # Get cached/reserved memory (memory reserved by PyTorch allocator)
+            reserved_memory = round( torch.cuda.memory_reserved() / 1024 / 1024 / 1024, 3 )
+            
+            # Get peak memory stats
+            max_allocated = round( torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024, 3 )
+            max_reserved = round( torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3 )
+        
+        # Print GPU info and memory stats
+        print( f"GPU {gpu_id}: {gpu_stats.name}" )
+        print( f"  Total memory:     {total_memory} GB" )
+        print( f"  Allocated memory: {allocated_memory} GB (peak: {max_allocated} GB)" )
+        print( f"  Reserved memory:  {reserved_memory} GB (peak: {max_reserved} GB)" )
+        print( f"  Utilization:      {round(allocated_memory/total_memory * 100, 1)}%" )
+    
+@staticmethod
+def release_gpus( models, nuclear_kill_button=False ):
     """
     Releases GPU memory by moving models to CPU and clearing CUDA cache.
     
@@ -51,31 +108,69 @@ def release_gpus( models ):
     - All models are deleted from Python's memory.
     - Python's garbage collector is run to reclaim memory.
     - GPU memory cache is cleared using torch.cuda.empty_cache().
+    - If nuclear_kill_button is True, GPU processes are forcefully terminated and GPUs are reset.
     
     Parameters:
     - models (Iterable): A collection of model objects to be released from GPU memory.
+    - nuclear_kill_button (bool, optional): If True, forcefully terminates GPU processes and resets GPUs. Defaults to False.
     
     Notes:
     - This function handles models that might not have a 'cpu' method safely by checking
       for the attribute's existence and callability before invoking it.
     - This function is particularly useful after fine-tuning or inference to ensure 
       GPU memory is properly released for subsequent operations.
+    - The nuclear_kill_button option should be used with caution as it forcefully terminates processes and resets GPUs.
     """
+    
+    du.print_banner( "Releasing GPU memory...", prepend_nl=True )
+    print_gpu_memory()
+    
     for model in models:
         
         # move it to the CPU before deleting it, but test to make sure the attribute actually exists before you do
+        model_name = type(model).__name__
         if hasattr( model, 'cpu' ) and callable( getattr( model, 'cpu' ) ):
-            print( f"Moving model {model} to CPU before deleting it..." )
+            print( f"Moving model {model_name} to CPU before deleting it..." )
             model.cpu()
+        else:
+            print( f"Model {model_name} does not have a 'cpu' method, skipping..." )
         del model
+        gc.collect()
         
-    gc.collect()
     torch.cuda.empty_cache()
+
+    # Force GPU reset if nuclear_kill_button is enabled
+    if nuclear_kill_button:
+        du.print_banner( "NUCLEAR OPTION: Force resetting GPU memory!", prepend_nl=True )
+        
+        # Get the number of GPUs available
+        gpu_count = torch.cuda.device_count()
+        print( f"Detected {gpu_count} GPU(s), forcing reset..." )
+        
+        try:
+            # Launch external GPU cleanup but exclude self
+            current_pid = os.getpid()
+            cmd = f"nvidia-smi | grep -E '[0-9]+ +C ' | awk '{{print $5}}' | grep -v {current_pid} | xargs -r sudo kill -9"
+            subprocess.run( cmd, shell=True, check=True )
+            
+            # Reset each GPU individually
+            for gpu_id in range( gpu_count ):
+                print( f"Resetting GPU {gpu_id}..." )
+                subprocess.run( f"sudo nvidia-smi --gpu-reset -i {gpu_id}", shell=True, check=True )
+                
+            print( "GPU reset completed successfully" )
+        except subprocess.CalledProcessError as e:
+            print( f"Error during GPU reset: {e}" )
+        except Exception as e:
+            print( f"Unexpected error during GPU reset: {e}" )
+
+    du.print_banner( "Releasing GPU memory... Done!", prepend_nl=True )
+    print_gpu_memory()
 
 class PeftTrainer:
     
     def __init__(
-        self, model_hf_id, model_name, test_train_path, lora_dir=None, debug=False, verbose=False
+            self, model_hf_id, model_name, test_train_path, lora_dir=None, debug=False, verbose=False
     ):
         """
         Initializes a new PEFT Trainer instance with the provided parameters.
@@ -103,30 +198,31 @@ class PeftTrainer:
         - debug (bool, optional): Enable debug mode with additional logging. Defaults to False.
         - verbose (bool, optional): Enable verbose mode with more detailed output. Defaults to False.
         """
-        du.print_banner( f"Initializing PEFT Trainer for {model_name}" )
+        du.print_banner( f"Initializing PEFT Trainer for {model_name}", prepend_nl=True )
         print( f"Model ID: {model_hf_id}" )
         print( f"Path to test/train data: {test_train_path}" )
         
-        self.debug                   = debug
-        self.verbose                 = verbose
-        self.trainer                 = None
-        self.model                   = None
-        self.model_hf_id             = model_hf_id
-        self.tokenizer               = None
-        self.output_dir              = None
-        self.checkpoint_dir          = None
-        self.model_name              = model_name
-        self.test_train_dir          = test_train_path
-        self.lora_dir                = lora_dir
-        self.merged_adapter_dir      = None
-        self.quantized_model_dir     = None
+        self.debug = debug
+        self.verbose = verbose
+        self.trainer = None
+        self.model = None
+        self.model_hf_id = model_hf_id
+        self.tokenizer = None
+        self.output_dir = None
+        self.checkpoint_dir = None
+        self.model_name = model_name
+        self.test_train_dir = test_train_path
+        self.lora_dir = lora_dir
+        self.merged_adapter_dir = None
+        self.quantized_model_dir = None
         
         # stats tracking
-        self.start_gpu_memory        = -1
-        self.max_memory              = -1
+        self.start_gpu_memory = -1
+        self.max_memory = -1
         
         # models supported by this trainer
-        self.supported_model_names   = [ "Mistral-7B-Instruct-v0.2", "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct" ]
+        self.supported_model_names = [ "Mistral-7B-Instruct-v0.2", "Ministral-8B-Instruct-2410",
+            "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct" ]
         
         # Validate the model name
         self._validate_model_name()
@@ -151,12 +247,15 @@ class PeftTrainer:
         from cosa.training.conf import MODEL_CONFIG_MAP
         
         if self.model_name not in MODEL_CONFIG_MAP:
-            raise ValueError(f"Unsupported model_name: '{self.model_name}'. Must be one of: {', '.join(MODEL_CONFIG_MAP.keys())}")
-            
-        # For backward compatibility, also check supported_model_names
-        if hasattr(self, 'supported_model_names') and self.model_name not in self.supported_model_names:
-            print(f"Warning: Model '{self.model_name}' not in self.supported_model_names. Updating supported_model_names.")
-            self.supported_model_names = list(MODEL_CONFIG_MAP.keys())
+            raise ValueError(
+                f"Unsupported model_name: '{self.model_name}'. Must be one of: {', '.join( MODEL_CONFIG_MAP.keys() )}"
+                )
+        
+        # Claude snuck another check in on me, don't know why it thought that I wanted backward compatibility
+        # # For backward compatibility, also check supported_model_names
+        # if hasattr(self, 'supported_model_names') and self.model_name not in self.supported_model_names:
+        #     print(f"Warning: Model '{self.model_name}' not in self.supported_model_names. Updating supported_model_names.")
+        #     self.supported_model_names = list(MODEL_CONFIG_MAP.keys())
     
     def login_to_hf( self ):
         """
@@ -178,8 +277,10 @@ class PeftTrainer:
         print( f"Logging in to Hugging Face with token [{hf_token}]... ", end="" )
         login( token=hf_token )
         print( "Done!" )
-        
-    def get_training_prompt_stats( self, backend="cuda", device_map="auto", device="cuda:1", debug=False, verbose=False ):
+    
+    def get_training_prompt_stats( self, backend="cuda", device_map="auto", device="cuda:1", debug=False,
+                                   verbose=False
+                                   ):
         """
         Analyzes the token and word statistics of training prompts in the dataset.
         
@@ -207,17 +308,20 @@ class PeftTrainer:
         """
         self._load_model_and_tokenizer( backend=backend, device_map=device_map, mode="training" )
         
-        df = pd.read_json(f"/{self.test_train_dir}/voice-commands-xml-train.jsonl", lines=True )#.sample( 1000, random_state=42 )
+        df = pd.read_json( f"/{self.test_train_dir}/voice-commands-xml-train.jsonl", lines=True
+                           )  # .sample( 1000, random_state=42 )
         
-        token_stats = { "min": -1, "max": -1, "mean": -1}
-        word_stats  = {"min": -1, "max": -1, "mean": -1}
+        token_stats = { "min": -1, "max": -1, "mean": -1 }
+        word_stats = { "min": -1, "max": -1, "mean": -1 }
         
         token_counts = [ ]
-        word_counts  = [ ]
+        word_counts = [ ]
         counter = 0
         for row in df.itertuples():
             
-            prompt = self.get_prompt( getattr( row, "instruction" ), getattr( row, "input" ), output=getattr( row, "output" ) )
+            prompt = self.get_prompt( getattr( row, "instruction" ), getattr( row, "input" ),
+                                      output=getattr( row, "output" )
+                                      )
             tokens_metadata = self.tokenizer( prompt, return_tensors="pt" ).to( device )
             
             tokens_count = len( tokens_metadata[ "input_ids" ][ 0 ] )
@@ -248,10 +352,12 @@ class PeftTrainer:
             print( token_stats )
             du.print_banner( "Last prompt" )
             print( prompt )
-            
+        
         return token_stats, word_stats
     
-    def fine_tune( self, batch_size=8, gradient_accumulation_steps=1, logging_steps=0.05, eval_steps=0.20, sample_size=1.0, device_map="auto", output_dir="./results" ):
+    def fine_tune( self, batch_size=8, gradient_accumulation_steps=1, logging_steps=0.05, eval_steps=0.20,
+                   sample_size=1.0, device_map="auto", output_dir="./results"
+                   ):
         """
         Fine-tunes the model using PEFT (Parameter-Efficient Fine-Tuning) techniques.
         
@@ -291,9 +397,12 @@ class PeftTrainer:
         
         # I used this when loading a quantized model. Since I'm not quantizing now, it's commented out
         # self.model         = prepare_model_for_kbit_training( self.model, gradientoow_checkpointing_kwargs={'use_reentrant': True} )
-        peft_config        = self._get_peft_config()
-        training_arguments = self._get_training_args( output_dir=output_dir, batch_size=batch_size, gradient_accumulation_steps=gradient_accumulation_steps, logging_steps=logging_steps, eval_steps=eval_steps )
-        test_train_data    = self._get_test_train_data( sample_size=sample_size )
+        peft_config = self._get_peft_config()
+        training_arguments = self._get_training_args( output_dir=output_dir, batch_size=batch_size,
+                                                      gradient_accumulation_steps=gradient_accumulation_steps,
+                                                      logging_steps=logging_steps, eval_steps=eval_steps
+                                                      )
+        test_train_data = self._get_test_train_data( sample_size=sample_size )
         
         du.print_banner( "Training data", prepend_nl=True )
         print( test_train_data[ "train" ] )
@@ -301,7 +410,7 @@ class PeftTrainer:
         print( test_train_data[ "test" ] )
         
         self.trainer = SFTTrainer(
-        # self.trainer = MyKludgySFTTrainer(
+            # self.trainer = MyKludgySFTTrainer(
             
             # workaround for buggy safe tensors behavior when a model is loaded across multiple GPUs
             # save_safetensors=False,
@@ -320,20 +429,20 @@ class PeftTrainer:
         self.trainer.train()
         self._print_stats_post()
         print( run_start )
-        print( f"Run completed @ {du.get_current_time( format='%H:%M' )}")
+        print( f"Run completed @ {du.get_current_time( format='%H:%M' )}" )
         timer.print( msg=None )
         
         print( f"LORA checkpoints stashed here [{training_arguments.output_dir}]" )
         # the output directory contains the original lora_dir + date and time, and also now contains...
-        self.output_dir     = training_arguments.output_dir
+        self.output_dir = training_arguments.output_dir
         # ...the last checkpoint directory created by the fine-tuning job
         self.checkpoint_dir = self._get_last_checkpoint_dir( training_arguments.output_dir )
         
-        du.print_banner(f"Last checkpoint: {self.checkpoint_dir}")
+        du.print_banner( f"Last checkpoint: {self.checkpoint_dir}" )
         du.print_simple_file_list( self.checkpoint_dir )
         
         return self.checkpoint_dir
-
+    
     def get_last_checkpoint_dir( self ):
         """
         Returns the path to the last checkpoint directory from the most recent fine-tuning run.
@@ -348,7 +457,7 @@ class PeftTrainer:
         - str or None: Path to the directory containing the last saved checkpoint, or None if no checkpoint is available.
         """
         return self.checkpoint_dir
-
+    
     def _get_last_checkpoint_dir( self, output_dir ):
         """
         Determines the path to the most recent checkpoint directory within the given output directory.
@@ -380,7 +489,7 @@ class PeftTrainer:
         last_checkpoint_dir = os.path.join( output_dir, checkpoint_dirs[ -1 ] ) if checkpoint_dirs else None
         
         return last_checkpoint_dir
-        
+    
     def save_model( self ):
         """
         Saves the current model and tokenizer to disk with timestamped directory name.
@@ -407,7 +516,7 @@ class PeftTrainer:
             print( f"Creating output directory {path}..." )
             os.makedirs( path )
             print( f"Creating output directory {path}... Done!" )
-            
+        
         # get the current working directory
         cwd = os.getcwd()
         # change directory to save adapter
@@ -445,11 +554,12 @@ class PeftTrainer:
         print( f"Loading adapter from {adapter_path}" )
         self.model = PeftModel.from_pretrained( self.model, adapter_path )
         print( f"Loading adapter from {adapter_path}... Done!" )
-        
+    
     def run_validation_in_memory( self,
-        switch="in_memory", adapter_path=None, path_prefix=du.get_project_root(), device_map={"": 0},
-        validation_sample_size=100, debug=None, verbose=None
-    ):
+                                  switch="in_memory", adapter_path=None, path_prefix=du.get_project_root(),
+                                  device_map={ "": 0 },
+                                  validation_sample_size=100, debug=None, verbose=None
+                                  ):
         """
         Runs validation on the model with the specified adapter using in-memory inference.
         
@@ -478,18 +588,22 @@ class PeftTrainer:
         - pandas.DataFrame: DataFrame containing the validation results, including original prompts,
                           generated responses, and validation metrics.
         """
-        du.print_banner( f"Validating {self.model_name} w/ {validation_sample_size} samples..." )
-       
+        du.print_banner( f"Validating {self.model_name} w/ {validation_sample_size} samples in memory...", prepend_nl=True )
+        
         # set debug and verbose to the class defaults if not provided
-        if debug   is None: debug   = self.debug
+        if debug is None: debug = self.debug
         if verbose is None: verbose = self.verbose
         
-        df = pd.read_json(f"{self.test_train_dir}/voice-commands-xml-validate.jsonl", lines=True ).sample( validation_sample_size, random_state=42 )
-
+        df = pd.read_json( f"{self.test_train_dir}/voice-commands-xml-validate.jsonl", lines=True ).sample(
+            validation_sample_size, random_state=42
+            )
+        
         # update the prompt field
         # KLUDGE: this is a workaround for the fact that the prompt field is not being created when the validation df is created
         print( f"Updating the prompt field for [{validation_sample_size}] rows..." )
-        df[ "prompt" ] = df.apply( lambda row: self.get_prompt( row[ "instruction" ], row[ "input" ], output="" ), axis=1 )
+        df[ "prompt" ] = df.apply( lambda row: self.get_prompt( row[ "instruction" ], row[ "input" ], output="" ),
+                                   axis=1
+                                   )
         print( f"Updating the prompt field for [{validation_sample_size}] rows... Done!" )
         
         # Print value counts for the command column to see how many unique commands we have
@@ -511,7 +625,7 @@ class PeftTrainer:
             self._load_adapter( self.checkpoint_dir )
         else:
             print( "No adapter path provided or found, proceeding with validation, using model by itself" )
-            
+        
         # generate responses
         df = xml_coordinator.generate_responses(
             df, tokenizer=self.tokenizer, model=self.model, switch=switch, model_name=self.model_name, device="cuda",
@@ -525,8 +639,8 @@ class PeftTrainer:
         return df
     
     def run_validation_with_server(
-        self, model=None, switch="", path_prefix="/var/model/genie-in-the-box",
-        device_map={"": 0}, validation_sample_size=1000, debug=None, verbose=None
+            self, model=None, switch="", path_prefix="/var/model/genie-in-the-box",
+            device_map={ "": 0 }, validation_sample_size=1000, debug=None, verbose=None
     ):
         """
         Runs validation against a model server rather than loading the model in memory.
@@ -558,7 +672,7 @@ class PeftTrainer:
         - ValueError: If model is None.
         """
         # set debug and verbose to the class defaults if not provided
-        if debug   is None: debug = self.debug
+        if debug is None: debug = self.debug
         if verbose is None: verbose = self.verbose
         
         if model is None:
@@ -567,7 +681,7 @@ class PeftTrainer:
             self.model = model
         
         # advise that we're going to query a server instead
-        du.print_banner( f"Querying an LLM server w/ model [{self.model}]" )
+        du.print_banner( f"Querying an LLM server w/ model [{self.model}]", prepend_nl=True )
         
         df = pd.read_json(
             f"{self.test_train_dir}/voice-commands-xml-validate.jsonl", lines=True
@@ -576,10 +690,12 @@ class PeftTrainer:
         # update the prompt field
         # KLUDGE: this is a workaround for the fact that the prompt field is not being created when the validation df is created
         print( f"Updating the prompt field for [{validation_sample_size}] rows..." )
-        df[ "prompt" ] = df.apply( lambda row: self.get_prompt( row[ "instruction" ], row[ "input" ], output="" ), axis=1 )
+        df[ "prompt" ] = df.apply(
+            lambda row: self.get_prompt( row[ "instruction" ], row[ "input" ], output="" ), axis=1
+        )
         print( f"Updating the prompt field for [{validation_sample_size}] rows... Done!" )
         
-        du.print_banner( f"Validating {self.model_name} w/ {validation_sample_size} samples..." )
+        du.print_banner( f"Validating {self.model_name} w/ {validation_sample_size} samples via vLLM server...", prepend_nl=True )
         # Print value counts for the command column to see how many unique commands we have
         print( df.command.value_counts(), end="\n\n" )
         
@@ -597,7 +713,7 @@ class PeftTrainer:
         
         return df
     
-    def load_and_merge_adapter( self, checkpoint_dir=None, device_map={"": 0} ):
+    def load_and_merge_adapter( self, checkpoint_dir=None, device_map={ "": 0 } ):
         """
         Loads a PEFT adapter and merges it with the base model.
         
@@ -626,7 +742,7 @@ class PeftTrainer:
             self.checkpoint_dir = checkpoint_dir
         elif self.checkpoint_dir is None:
             raise ValueError( "No adapter path provided or found" )
-            
+        
         print( f"Loading adapter from {self.checkpoint_dir}... ", end="" )
         self.model = PeftModel.from_pretrained( self.model, self.checkpoint_dir )
         print( "Done!" )
@@ -686,7 +802,7 @@ class PeftTrainer:
         du.print_simple_file_list( self.merged_adapter_dir )
         
         return self.merged_adapter_dir
-        
+    
     def quantize_merged_adapter( self, merged_adapter_dir=None ):
         """
         Quantizes the merged model to reduce its size and memory footprint.
@@ -725,8 +841,8 @@ class PeftTrainer:
             # Detect available GPUs
             num_gpus = torch.cuda.device_count()
             if num_gpus == 0:
-                raise RuntimeError("No GPUs available for quantization")
-                
+                raise RuntimeError( "No GPUs available for quantization" )
+            
             # Use specific device mapping rather than "auto" to avoid meta device issues
             if num_gpus == 1:
                 # Use a specific device (cuda:0) instead of "auto" to prevent meta device placement
@@ -737,27 +853,27 @@ class PeftTrainer:
                 device_map = "cuda:0"
                 if self.debug: print( f"Multiple GPUs detected but using only first GPU with device_map={device_map}" )
             
-            du.print_banner( f"Quantizing merged adapter in {self.merged_adapter_dir}" )
+            du.print_banner( f"Quantizing merged adapter in {self.merged_adapter_dir}", prepend_nl=True )
             
             # Initialize quantizer with specific device mapping
             quantizer = Quantizer( self.merged_adapter_dir, device_map=device_map, local_files_only=True )
             
             # Quantize with appropriate batch size for the GPU
             batch_size = 1  # Conservative batch size to prevent OOM
-            quantizer.quantize_model(batch_size=batch_size)
+            quantizer.quantize_model( batch_size=batch_size )
             
             # Save the quantized model
             self.quantized_model_dir = quantizer.save( self.merged_adapter_dir, include_model_name=False )
             
             return self.quantized_model_dir
-            
+        
         except Exception as e:
-            error_msg = f"Quantization failed: {str(e)}"
+            error_msg = f"Quantization failed: {str( e )}"
             if self.debug:
                 import traceback
                 traceback.print_exc()
-                print(f"ERROR: {error_msg}")
-            raise RuntimeError(error_msg) from e
+                print( f"ERROR: {error_msg}" )
+            raise RuntimeError( error_msg ) from e
     
     def _load_model_and_tokenizer( self, device_map="auto", mode=None ):
         """
@@ -790,10 +906,10 @@ class PeftTrainer:
         if mode is None or mode not in [ "training", "inference" ]:
             raise ValueError( "Mode MUST be specified, either 'training' or 'inference'" )
         
-        torch_dtype         = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        torch_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         attn_implementation = "flash_attention_2"
-        cache_dir           = os.getenv( "HF_HOME" ) + "/hub"
-        original_cwd        = os.getcwd()
+        cache_dir = os.getenv( "HF_HOME" ) + "/hub"
+        original_cwd = os.getcwd()
         # quantization_config = AutoRoundConfig( backend=backend )
         
         if self.model is None:
@@ -813,17 +929,17 @@ class PeftTrainer:
                 dupt.print_device_allocation( self.model )
         else:
             print( "Model already loaded. Skipping" )
-            
+        
         if self.tokenizer is None:
             
             self.tokenizer = AutoTokenizer.from_pretrained( self.model_hf_id, force_download=True, from_slow=False )
             
             # Load the model-specific tokenizer configuration
-            model_config = load_model_config(self.model_name)
-            tokenizer_config = model_config["tokenizer"]
+            model_config = load_model_config( self.model_name )
+            tokenizer_config = model_config[ "tokenizer" ]
             
             # Apply tokenizer settings from configuration
-            pad_token = tokenizer_config["pad_token"]
+            pad_token = tokenizer_config[ "pad_token" ]
             
             # Handle different token attribute references
             if pad_token == "eos_token":
@@ -831,33 +947,33 @@ class PeftTrainer:
             elif pad_token == "unk_token":
                 self.tokenizer.pad_token = self.tokenizer.unk_token
                 # Convert from unk_token if needed
-                if tokenizer_config.get("pad_token_id") == "converted_from_unk_token":
-                    self.tokenizer.pad_token_id = self.tokenizer.convert_tokens_to_ids(self.tokenizer.pad_token)
+                if tokenizer_config.get( "pad_token_id" ) == "converted_from_unk_token":
+                    self.tokenizer.pad_token_id = self.tokenizer.convert_tokens_to_ids( self.tokenizer.pad_token )
             else:
                 # Direct string assignment
                 self.tokenizer.pad_token = pad_token
                 # Set ID if provided
-                if "pad_token_id" in tokenizer_config and isinstance(tokenizer_config["pad_token_id"], int):
-                    self.tokenizer.pad_token_id = tokenizer_config["pad_token_id"]
+                if "pad_token_id" in tokenizer_config and isinstance( tokenizer_config[ "pad_token_id" ], int ):
+                    self.tokenizer.pad_token_id = tokenizer_config[ "pad_token_id" ]
             
             # Set padding side based on mode
             if mode == "training":
-                print(f"Setting padding side to '{tokenizer_config['padding_side']['training']}' for training")
-                self.tokenizer.padding_side = tokenizer_config['padding_side']['training']
+                print( f"Setting padding side to '{tokenizer_config[ 'padding_side' ][ 'training' ]}' for training" )
+                self.tokenizer.padding_side = tokenizer_config[ 'padding_side' ][ 'training' ]
             elif mode == "inference":
-                print(f"Setting padding side to '{tokenizer_config['padding_side']['inference']}' for inference")
-                self.tokenizer.padding_side = tokenizer_config['padding_side']['inference']
+                print( f"Setting padding side to '{tokenizer_config[ 'padding_side' ][ 'inference' ]}' for inference" )
+                self.tokenizer.padding_side = tokenizer_config[ 'padding_side' ][ 'inference' ]
             else:
                 # this is checked above, this will never be called
-                raise ValueError("Mode MUST be specified, either 'training' or 'inference'")
+                raise ValueError( "Mode MUST be specified, either 'training' or 'inference'" )
         else:
             print( "Tokenizer already loaded. Skipping" )
-            
+        
         if original_cwd != os.getcwd():
             print( f"Switching back to original working directory: {original_cwd}" )
             os.chdir( original_cwd )
             # print( f"New working directory: {os.getcwd()}" )
-        
+    
     def _get_peft_config( self ):
         """
         Creates a PEFT configuration tailored to the specific model being fine-tuned.
@@ -876,19 +992,21 @@ class PeftTrainer:
         - Each model has its own LoRA parameters defined in training/conf/{model_name}.py
         """
         # Load the model-specific configuration
-        model_config = load_model_config(self.model_name)
-        lora_params = model_config["lora"]
+        model_config = load_model_config( self.model_name )
+        lora_params = model_config[ "lora" ]
         
         return LoraConfig(
-            lora_alpha=lora_params["lora_alpha"],
-            lora_dropout=lora_params["lora_dropout"],
-            r=lora_params["r"],
-            bias=lora_params["bias"],
-            task_type=lora_params["task_type"],
-            target_modules=lora_params["target_modules"]
+            lora_alpha=lora_params[ "lora_alpha" ],
+            lora_dropout=lora_params[ "lora_dropout" ],
+            r=lora_params[ "r" ],
+            bias=lora_params[ "bias" ],
+            task_type=lora_params[ "task_type" ],
+            target_modules=lora_params[ "target_modules" ]
         )
     
-    def _get_training_args( self, output_dir="./results", batch_size=8, gradient_accumulation_steps=1, logging_steps=0.05, eval_steps=0.5 ):
+    def _get_training_args( self, output_dir="./results", batch_size=8, gradient_accumulation_steps=1,
+                            logging_steps=0.05, eval_steps=0.5
+                            ):
         """
         Creates a configuration object with training arguments for the SFT trainer.
         
@@ -960,9 +1078,9 @@ class PeftTrainer:
         - ValueError: If self.model_name is not one of the supported models.
         """
         # Load the model-specific configuration
-        model_config = load_model_config(self.model_name)
-        return model_config["model"]["max_seq_length"]
-        
+        model_config = load_model_config( self.model_name )
+        return model_config[ "model" ][ "max_seq_length" ]
+    
     def _get_test_train_data( self, sample_size=1.0 ):
         """
         Loads and prepares the training and testing datasets.
@@ -986,7 +1104,8 @@ class PeftTrainer:
         Raises:
         - ValueError: If self.model_name is not one of the supported models (via _validate_model_name).
         """
-        if self.model_name in [ "Mistral-7B-Instruct-v0.2", "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct" ]:
+        if self.model_name in [ "Mistral-7B-Instruct-v0.2", "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct",
+            "Phi-4-mini-instruct" ]:
             extract_gpt_message = False
         else:
             self._validate_model_name()
@@ -997,7 +1116,7 @@ class PeftTrainer:
         path = f"/{self.test_train_dir}/voice-commands-xml-test.jsonl"
         test_dataset = self._get_dataset( path, sample_size=sample_size, extract_gpt_message=extract_gpt_message )
         
-        return {'train': train_dataset, 'test': test_dataset }
+        return { 'train': train_dataset, 'test': test_dataset }
     
     def _get_dataset( self, path, sample_size=1.0, extract_gpt_message=False ):
         """
@@ -1036,7 +1155,7 @@ class PeftTrainer:
         print( f"Loaded {len( rows )} of {row_count} training rows" )
         
         return Dataset.from_list( rows )
-        
+    
     def _format_prompt( self, row ):
         """
         Formats a training example into a prompt suitable for the specific model.
@@ -1063,23 +1182,23 @@ class PeftTrainer:
         - Different models require different prompt formats that are defined in their config files
         """
         # Load the model-specific configuration
-        model_config = load_model_config(self.model_name)
-        template = model_config["model"]["prompt_template"]
+        model_config = load_model_config( self.model_name )
+        template = model_config[ "model" ][ "prompt_template" ]
         
         # Format using the template from the configuration
         # Check if last_tag_func exists in the configuration
-        if "last_tag_func" in model_config["model"]:
+        if "last_tag_func" in model_config[ "model" ]:
             # Use the lambda function directly from the config
-            last_tag_func = model_config["model"]["last_tag_func"]
-            last_tag = last_tag_func(row["output"])
+            last_tag_func = model_config[ "model" ][ "last_tag_func" ]
+            last_tag = last_tag_func( row[ "output" ] )
         else:
             last_tag = ""
-            
+        
         # Format the prompt with the template
         return template.format(
-            instruction=row["instruction"],
-            input=row["input"],
-            output=row["output"],
+            instruction=row[ "instruction" ],
+            input=row[ "input" ],
+            output=row[ "output" ],
             last_tag=last_tag
         )
     
@@ -1112,17 +1231,17 @@ class PeftTrainer:
         - For some models, the closing tag is only included if output is provided
         """
         # Load the model-specific configuration
-        model_config = load_model_config(self.model_name)
-        template = model_config["model"]["prompt_template"]
+        model_config = load_model_config( self.model_name )
+        template = model_config[ "model" ][ "prompt_template" ]
         
         # Check if last_tag_func exists in the configuration
-        if "last_tag_func" in model_config["model"]:
+        if "last_tag_func" in model_config[ "model" ]:
             # Use the lambda function directly from the config
-            last_tag_func = model_config["model"]["last_tag_func"]
-            last_tag = last_tag_func(output)
+            last_tag_func = model_config[ "model" ][ "last_tag_func" ]
+            last_tag = last_tag_func( output )
         else:
             last_tag = ""
-            
+        
         # Format the prompt with the template
         return template.format(
             instruction=instruction,
@@ -1156,7 +1275,7 @@ class PeftTrainer:
         print(
             f"trainable params: {trainable_params:,} || all params: {all_param:,} || trainable%: {100 * trainable_params / all_param:.2f}"
         )
-
+    
     def _print_stats_pre( self ):
         """
         Captures and prints GPU memory statistics before training.
@@ -1179,7 +1298,7 @@ class PeftTrainer:
         self.max_memory = round( gpu_stats.total_memory / 1024 / 1024 / 1024, 3 )
         print( f"GPU = {gpu_stats.name}. Max memory = {self.max_memory} GB." )
         print( f"{self.start_gpu_memory} GB of memory reserved." )
-        
+    
     def _print_stats_post( self ):
         """
         Captures and prints GPU memory statistics after training.
@@ -1208,7 +1327,7 @@ class PeftTrainer:
         print( f"Peak reserved memory for training = {used_memory_for_trainer} GB." )
         print( f"Peak reserved memory % of max memory = {used_percentage} %." )
         print( f"Peak reserved memory for training % of max memory = {trainer_percentage} %." )
-       
+        
         # Note: Attempted to access self.trainer.metrics but SFTTrainer has no metrics attribute
         # AttributeError: 'SFTTrainer' object has no attribute 'metrics'
     
@@ -1234,8 +1353,8 @@ class PeftTrainer:
         - The timeouts help prevent hanging if there are network issues during model downloads.
         - These environment variables are used by the Hugging Face Transformers library.
         """
-        os.environ[ "HF_HOME"                 ] = hf_home
-        os.environ[ "HF_HUB_ETAG_TIMEOUT"     ] = hf_hub_etag_timeout
+        os.environ[ "HF_HOME" ] = hf_home
+        os.environ[ "HF_HUB_ETAG_TIMEOUT" ] = hf_hub_etag_timeout
         os.environ[ "HF_HUB_DOWNLOAD_TIMEOUT" ] = hf_hub_download_timeout
         
         du.print_banner( "Hugging Face Environment Variables:" )
@@ -1264,11 +1383,14 @@ class PeftTrainer:
         - GIB_CONFIG_MGR_CLI_ARGS contains configuration paths for the application.
         - Setting WANDB_DISABLE_SERVICE to "True" prevents Weights & Biases from attempting to log training data.
         """
-        os.environ[ "GENIE_IN_THE_BOX_ROOT"   ] = gib_root
-        os.environ[ "GIB_CONFIG_MGR_CLI_ARGS" ] = "config_path=/src/conf/gib-app.ini splainer_path=/src/conf/gib-app-splainer.ini config_block_id=Genie+in+the+Box:+Development"
-        os.environ[ "WANDB_DISABLE_SERVICE"   ] = wandb_disable_service
-        
-    def _start_vllm_server( self, quantized_model_dir, port=3000, max_model_len=2048, gpu_memory_utilization=0.75, timeout=180 ):
+        os.environ[ "GENIE_IN_THE_BOX_ROOT" ] = gib_root
+        os.environ[
+            "GIB_CONFIG_MGR_CLI_ARGS" ] = "config_path=/src/conf/gib-app.ini splainer_path=/src/conf/gib-app-splainer.ini config_block_id=Genie+in+the+Box:+Development"
+        os.environ[ "WANDB_DISABLE_SERVICE" ] = wandb_disable_service
+    
+    def _start_vllm_server( self, quantized_model_dir, port=3000, max_model_len=2048, gpu_memory_utilization=0.75,
+                            timeout=180
+                            ):
         """
         Starts a vLLM server for the quantized model and waits for it to be available.
         
@@ -1306,13 +1428,13 @@ class PeftTrainer:
         
         # Check for multiple GPUs
         gpu_count = torch.cuda.device_count()
-        gpu_devices = ",".join(str(i) for i in range(gpu_count))
+        gpu_devices = ",".join( str( i ) for i in range( gpu_count ) )
         
         if self.debug:
             print( f"Detected {gpu_count} GPU(s): {gpu_devices}" )
-            for i in range(gpu_count):
-                gpu_name = torch.cuda.get_device_name(i)
-                gpu_mem = torch.cuda.get_device_properties(i).total_memory / (1024**3)  # in GB
+            for i in range( gpu_count ):
+                gpu_name = torch.cuda.get_device_name( i )
+                gpu_mem = torch.cuda.get_device_properties( i ).total_memory / (1024 ** 3)  # in GB
                 print( f"  GPU {i}: {gpu_name} with {gpu_mem:.2f} GB memory" )
         
         # Build the vLLM command with GPU configuration
@@ -1320,11 +1442,15 @@ class PeftTrainer:
             # Configure vLLM to use all available GPUs
             tensor_parallel_size = gpu_count
             gpu_config = f"--tensor-parallel-size {tensor_parallel_size} --gpu-memory-utilization {gpu_memory_utilization}"
-            if self.debug: print( f"Configuring vLLM to use multiple GPUs (tensor_parallel_size={tensor_parallel_size})" )
+            if self.debug: print(
+                f"Configuring vLLM to use multiple GPUs (tensor_parallel_size={tensor_parallel_size})"
+                )
         else:
             # Use the single GPU with specified memory utilization
             gpu_config = f"--gpu-memory-utilization {gpu_memory_utilization}"
-            if self.debug: print( f"Configuring vLLM to use a single GPU with memory utilization {gpu_memory_utilization}" )
+            if self.debug: print(
+                f"Configuring vLLM to use a single GPU with memory utilization {gpu_memory_utilization}"
+                )
         
         # Command to start the vLLM server
         cmd = f"cd {projects_dir}/vllm-pip; source .venv/bin/activate; CUDA_VISIBLE_DEVICES={gpu_devices} vllm serve {quantized_model_dir} --port {port} --max-model-len {max_model_len} {gpu_config}"
@@ -1332,11 +1458,11 @@ class PeftTrainer:
         if self.debug: print( f"Command to start vLLM server: {cmd}" )
         
         # Create error log capture
-        server_log = []
+        server_log = [ ]
         server_error = None
         
         # Define function to monitor process status
-        def check_process_status(process, log):
+        def check_process_status( process, log ):
             """Monitor subprocess status and capture any error if it exits prematurely"""
             nonlocal server_error
             return_code = process.poll()
@@ -1345,31 +1471,33 @@ class PeftTrainer:
                 stderr_output = process.stderr.read()
                 if stderr_output:
                     error_msg = f"vLLM server exited with code {return_code}. Error: {stderr_output}"
-                    server_error = RuntimeError(error_msg)
-                    print(f"[vLLM Server ERROR] {error_msg}")
+                    server_error = RuntimeError( error_msg )
+                    print( f"[vLLM Server ERROR] {error_msg}" )
                     # Add to log
-                    log.append(f"EXIT CODE {return_code}: {stderr_output}")
+                    log.append( f"EXIT CODE {return_code}: {stderr_output}" )
                 return False
             return True
         
         # Start the vLLM server in a separate process with its own process group
-        process = subprocess.Popen( cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True )
+        process = subprocess.Popen( cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                    start_new_session=True
+                                    )
         
         # Start a thread to read and print server output
         def print_server_output( process, log ):
             for line in process.stdout:
-                log.append(line.strip())
+                log.append( line.strip() )
                 if self.debug and self.verbose:
                     print( f"[vLLM Server] {line.strip()}" )
                 # Check if any known error patterns appear in the output
                 if "CUDA out of memory" in line or "CUDA error" in line or "Error:" in line:
                     print( f"[vLLM Server ERROR] Detected error: {line.strip()}" )
         
-        output_thread = threading.Thread( target=print_server_output, args=( process, server_log ), daemon=True )
+        output_thread = threading.Thread( target=print_server_output, args=(process, server_log), daemon=True )
         output_thread.start()
         
         # Wait for the server to be available
-        print( f"Waiting for vLLM server to be available on port {port}..." )
+        print( f"Waiting for vLLM server to be available on port {port}. This could take a couple minutes..." )
         server_url = f"http://localhost:{port}/health"
         start_time = time.time()
         
@@ -1381,11 +1509,11 @@ class PeftTrainer:
             
             # Every 5 checks, verify the process is still running
             if check_count % 5 == 0:
-                if not check_process_status(process, server_log):
+                if not check_process_status( process, server_log ):
                     if server_error:
                         raise server_error
                     else:
-                        raise RuntimeError("vLLM server process terminated unexpectedly")
+                        raise RuntimeError( "vLLM server process terminated unexpectedly" )
             
             try:
                 response = requests.get( server_url, timeout=1 )
@@ -1394,33 +1522,33 @@ class PeftTrainer:
                         print( f"vLLM server successfully started and is responding on port {port}" )
                         # Get and print server info if in debug mode
                         try:
-                            info_response = requests.get(f"http://localhost:{port}/v1/models", timeout=1)
-                            print(f"Server model info: {info_response.json()}")
+                            info_response = requests.get( f"http://localhost:{port}/v1/models", timeout=1 )
+                            print( f"Server model info: {info_response.json()}" )
                         except Exception as e:
-                            print(f"Could not fetch server info: {str(e)}")
+                            print( f"Could not fetch server info: {str( e )}" )
                     else:
-                        print( f"vLLM server is available on port {port}" )
+                        print( f"vLLM server is now available on port {port}" )
                     return process
             except requests.RequestException:
                 # Server not yet available
                 time.sleep( 2 )
                 elapsed = time.time() - start_time
                 if self.debug:
-                    print( f"  Waiting... ({elapsed:.1f}s / {timeout}s)" )
+                    print( f"  Waiting... ({elapsed:.1f}s of max {timeout}s)" )
                 # Print a progress message every 30 seconds even without debug mode
                 elif elapsed % 30 < 2:  # This ensures the message prints only once near each 30s mark
-                    print( f"  Still waiting for vLLM server... ({int(elapsed)}s / {timeout}s)" )
+                    print( f"  Still waiting for vLLM server... ({int( elapsed )}s of max {timeout}s)" )
         
         # If we reach here, the server did not start within the timeout
         # if self.debug or self.verbose:
-        print("vLLM server startup timed out. Last log entries:")
-        for entry in server_log[-10:]:  # Show last 10 log entries
-            print(f"  {entry}")
+        print( "vLLM server startup timed out. Last log entries:" )
+        for entry in server_log[ -10: ]:  # Show last 10 log entries
+            print( f"  {entry}" )
         
         self._stop_vllm_server( process )
         
         # Consolidate the logs for the error message
-        log_tail = "\n".join(server_log[-20:]) if server_log else "No log output captured"
+        log_tail = "\n".join( server_log[ -20: ] ) if server_log else "No log output captured"
         raise TimeoutError( f"vLLM server did not start within {timeout} seconds.\nLast log entries:\n{log_tail}" )
     
     def _stop_vllm_server( self, process ):
@@ -1443,8 +1571,8 @@ class PeftTrainer:
         """
         if not process:
             return False
-            
-        du.print_banner( "Stopping vLLM server" )
+        
+        du.print_banner( "Stopping vLLM server...", prepend_nl=True )
         
         try:
             # Process was started with start_new_session=True, so its PID is the group ID
@@ -1465,7 +1593,7 @@ class PeftTrainer:
                     # Process is already gone
                     pass
         except (ProcessLookupError, OSError) as e:
-            if self.debug: print( f"Error stopping vLLM server: {str(e)}" )
+            if self.debug: print( f"Error stopping vLLM server: {str( e )}" )
             # Process is already gone or we can't send signal
             # Just ensure we kill the direct process
             try:
@@ -1476,7 +1604,9 @@ class PeftTrainer:
         if self.debug: print( "vLLM server has been stopped" )
         return True
     
-    def run_pipeline( self, pre_training_stats=False, post_training_stats=False, post_quantization_stats=False, validation_sample_size=100 ):
+    def run_pipeline( self, pre_training_stats=False, post_training_stats=False, post_quantization_stats=False,
+        validation_sample_size=100
+    ):
         """
         Executes the full training pipeline from fine-tuning to quantization.
         
@@ -1509,26 +1639,27 @@ class PeftTrainer:
             - TimeoutError: If the vLLM server does not start within the specified timeout
         """
         timer = Stopwatch( msg=None )
-        trainer = PeftTrainer(
-            args.model, args.model_name, args.test_train_path, lora_dir=args.lora_dir, debug=args.debug,
-            verbose=args.verbose
-        )
+        # don't know why I was calling this from inside the method, the parent object, the trader already exists!!!
+        # trainer = PeftTrainer(
+        #     args.model, args.model_name, args.test_train_path, lora_dir=args.lora_dir, debug=args.debug,
+        #     verbose=args.verbose
+        # )
         
-        trainer.login_to_hf()
+        self.login_to_hf()
         
         # Run a quick pretest in memory
         if pre_training_stats:
             # TODO: add runtime configuration for sample size
-            trainer.run_validation_in_memory( device_map="auto", validation_sample_size=validation_sample_size )
+            self.run_validation_in_memory( device_map="auto", validation_sample_size=validation_sample_size )
         else:
             print( f"Skipping pre-training validation for {args.model_name}" )
         
         # Load model-specific fine-tuning configuration
-        model_config = load_model_config( trainer.model_name )
+        model_config = load_model_config( self.model_name )
         fine_tune_params = model_config[ "fine_tune" ]
         
         # Fine-tune using the dynamically loaded configuration
-        checkpoint_dir = trainer.fine_tune(
+        checkpoint_dir = self.fine_tune(
             sample_size=fine_tune_params[ "sample_size" ],
             batch_size=fine_tune_params[ "batch_size" ],
             gradient_accumulation_steps=fine_tune_params[ "gradient_accumulation_steps" ],
@@ -1537,15 +1668,15 @@ class PeftTrainer:
             device_map=fine_tune_params[ "device_map" ],
             output_dir=args.lora_dir
         )
-        release_gpus( [ trainer.model, trainer.tokenizer ] )
+        release_gpus( [ self.model, self.tokenizer ] )
         
         # Load and merge the adapter
-        trainer.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
-        merged_adapter_dir = trainer.save_merged_adapter( lora_dir=args.lora_dir )
-        release_gpus( [ trainer.model, trainer.tokenizer ] )
+        self.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
+        merged_adapter_dir = self.save_merged_adapter( lora_dir=args.lora_dir )
+        release_gpus( [ self.model, self.tokenizer ] )
         
         if post_training_stats:
-            du.print_banner( f"Running post-training validation for {args.model_name}" )
+            du.print_banner( f"Running post-training validation for {args.model_name}", prepend_nl=True )
             
             vllm_server_process = None
             try:
@@ -1555,25 +1686,26 @@ class PeftTrainer:
                 # create a custom model name using as an ID the mount point for the recently quantized model directory
                 model = Llm_v0.get_model( merged_adapter_dir )
                 # TODO: add runtime configuration for sample size
-                trainer.run_validation_with_server(
-                    model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", validation_sample_size=validation_sample_size,
+                self.run_validation_with_server(
+                    model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0",
+                    validation_sample_size=validation_sample_size,
                     debug=self.debug,
                     verbose=self.verbose
                 )
             finally:
                 # Always clean up the vLLM server process if it was started
                 if vllm_server_process: self._stop_vllm_server( vllm_server_process )
-                # release GPU before doing anything else
-                release_gpus( [ trainer.model, trainer.tokenizer ] )
+                # release GPUs -- with prejudice -- before doing anything else
+                release_gpus( [ self.model, self.tokenizer ], nuclear_kill_button=True )
         else:
             print( f"Skipping post-training validation for {args.model_name}" )
-              
+        
         # Quantize the merged adapter
-        quantized_model_dir = trainer.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
+        quantized_model_dir = self.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
         
         if post_quantization_stats:
             
-            du.print_banner( f"Running post-training validation for {args.model_name}" )
+            du.print_banner( f"Running post-training validation for {args.model_name}", prepend_nl=True )
             
             vllm_server_process = None
             try:
@@ -1583,8 +1715,9 @@ class PeftTrainer:
                 # create a custom model name using as an ID the mount point for the recently quantized model directory
                 model = Llm_v0.get_model( quantized_model_dir )
                 # TODO: add runtime configuration for sample size
-                trainer.run_validation_with_server(
-                    model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", validation_sample_size=validation_sample_size,
+                self.run_validation_with_server(
+                    model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0",
+                    validation_sample_size=validation_sample_size,
                     debug=self.debug,
                     verbose=self.verbose
                 )
@@ -1592,18 +1725,20 @@ class PeftTrainer:
                 # Always clean up the vLLM server process if it was started
                 if vllm_server_process: self._stop_vllm_server( vllm_server_process )
                 # release GPU before doing anything else
-                release_gpus( [ trainer.model, trainer.tokenizer ] )
+                release_gpus( [ self.model, self.tokenizer ] )
         else:
             print( f"Skipping post-quantization validation for {args.model_name}" )
-            
+        
         # Print completion information
         msg = f"Finished fine-tuning, merging and quantizing {args.model_name}"
         timer.print( msg )
         du.print_banner( msg )
         print( f"Quantized model: {quantized_model_dir}" )
         du.print_simple_file_list( quantized_model_dir )
-            
-    def run_pipeline_adhoc( self, pre_training_stats=False, post_training_stats=False, post_quantization_stats=False, validation_sample_size=100 ):
+    
+    def run_pipeline_adhoc( self, pre_training_stats=False, post_training_stats=False, post_quantization_stats=False,
+        validation_sample_size=100
+    ):
         """
         Executes a customized version of the training pipeline for debugging and testing purposes.
         
@@ -1639,25 +1774,22 @@ class PeftTrainer:
             - The commented sections should be adjusted based on the specific testing needs
         """
         timer = Stopwatch( msg=None )
-        trainer = PeftTrainer(
-            args.model, args.model_name, args.test_train_path, lora_dir=args.lora_dir, debug=args.debug, verbose=args.verbose
-        )
         
-        trainer.login_to_hf()
-
+        self.login_to_hf()
+        
         # # Run a quick pretest in memory
         # if pre_training_stats:
         #     # TODO: add runtime configuration for sample size
-        #     trainer.run_validation_in_memory( device_map="auto", validation_sample_size=validation_sample_size )
+        #     self.run_validation_in_memory( device_map="auto", validation_sample_size=validation_sample_size )
         # else:
         #     print( f"Skipping pre-training validation for {args.model_name}" )
         #
         # # Load model-specific fine-tuning configuration
-        # model_config     = load_model_config( trainer.model_name )
+        # model_config     = load_model_config( self.model_name )
         # fine_tune_params = model_config[ "fine_tune" ]
         #
         # # Fine-tune using the dynamically loaded configuration
-        # checkpoint_dir = trainer.fine_tune(
+        # checkpoint_dir = self.fine_tune(
         #                     sample_size=fine_tune_params[ "sample_size" ],
         #                      batch_size=fine_tune_params[ "batch_size" ],
         #     gradient_accumulation_steps=fine_tune_params[ "gradient_accumulation_steps" ],
@@ -1667,17 +1799,17 @@ class PeftTrainer:
         #                      output_dir=args.lora_dir
         # )
         #
-        # release_gpus( [ trainer.model, trainer.tokenizer ] )
+        # release_gpus( [ self.model, self.tokenizer ] )
         #
         # # Load and merge the adapter
-        # trainer.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
-        # merged_adapter_dir = trainer.save_merged_adapter( lora_dir=args.lora_dir )
-        # release_gpus( [ trainer.model, trainer.tokenizer ] )
+        # self.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
+        # merged_adapter_dir = self.save_merged_adapter( lora_dir=args.lora_dir )
+        release_gpus( [ self.model, self.tokenizer ] )
         
-        merged_adapter_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-28-at-20-33"
+        merged_adapter_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-29-at-12-04"
         # 
         # if post_training_stats:
-        #     du.print_banner( f"Running post-training validation for {args.model_name}" )
+        #     du.print_banner( f"Running post-training validation for {args.model_name}", prepend_nl=True )
         #
         #     vllm_server_process = None
         #     try:
@@ -1687,7 +1819,7 @@ class PeftTrainer:
         #         # create a custom model name using as an ID the mount point for the recently quantized model directory
         #         model = Llm_v0.get_model( merged_adapter_dir )
         #         # TODO: add runtime configuration for sample size
-        #         trainer.run_validation_with_server(
+        #         self.run_validation_with_server(
         #             model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", validation_sample_size=100, debug=False,
         #             verbose=False
         #         )
@@ -1695,40 +1827,41 @@ class PeftTrainer:
         #         # Always clean up the vLLM server process if it was started
         #         if vllm_server_process: self._stop_vllm_server( vllm_server_process )
         #         # release GPU before doing anything else
-        #         release_gpus( [ trainer.model, trainer.tokenizer ] )
+        #         release_gpus( [ self.model, self.tokenizer ] )
         # else:
         #     print( f"Skipping post-training validation for {args.model_name}" )
-            
-        # Quantize the merged adapter
-        quantized_model_dir = trainer.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
-
-        # release GPU before doing anything else
-        release_gpus( [ trainer.model, trainer.tokenizer ] )
         
-        # # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-08-at-21-26/autoround-4-bits-sym.gptq/2025-04-08-at-21-47"
-        # if post_quantization_stats:
-        #
-        #     du.print_banner( f"Running post-training validation for {args.model_name}" )
-        #
-        #     vllm_server_process = None
-        #     try:
-        #         # Start vLLM server and wait for it to be available
-        #         vllm_server_process = self._start_vllm_server( quantized_model_dir )
-        #
-        #         # create a custom model name using as an ID the mount point for the recently quantized model directory
-        #         model = Llm_v0.get_model( quantized_model_dir )
-        #         # TODO: add runtime configuration for sample size
-        #         trainer.run_validation_with_server(
-        #             model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", validation_sample_size=validation_sample_size, debug=False,
-        #             verbose=False
-        #         )
-        #     finally:
-        #         # Always clean up the vLLM server process if it was started
-        #         if vllm_server_process: self._stop_vllm_server( vllm_server_process )
-        #         # release GPU before doing anything else
-        #         release_gpus( [ trainer.model, trainer.tokenizer ] )
-        # else:
-        #     print( f"Skipping post-quantization validation for {args.model_name}" )
+        # Quantize the merged adapter
+        quantized_model_dir = self.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
+        
+        # release GPU before doing anything else
+        release_gpus( [ self.model, self.tokenizer ] )
+        
+        # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-08-at-21-26/autoround-4-bits-sym.gptq/2025-04-08-at-21-47"
+        if post_quantization_stats:
+            
+            du.print_banner( f"Running post-training validation for {args.model_name}", prepend_nl=True )
+            
+            vllm_server_process = None
+            try:
+                # Start vLLM server and wait for it to be available
+                vllm_server_process = self._start_vllm_server( quantized_model_dir )
+                
+                # create a custom model name using as an ID the mount point for the recently quantized model directory
+                model = Llm_v0.get_model( quantized_model_dir )
+                # TODO: add runtime configuration for sample size
+                self.run_validation_with_server(
+                    model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0",
+                    validation_sample_size=validation_sample_size, debug=False,
+                    verbose=False
+                )
+            finally:
+                # Always clean up the vLLM server process if it was started
+                if vllm_server_process: self._stop_vllm_server( vllm_server_process )
+                # release GPU before doing anything else
+                release_gpus( [ self.model, self.tokenizer ] )
+        else:
+            print( f"Skipping post-quantization validation for {args.model_name}" )
         
         # Print completion information
         msg = f"Finished fine-tuning, merging and quantizing {args.model_name}"
@@ -1762,11 +1895,11 @@ def check_env():
     - SystemExit: If any required environment variables are missing.
     """
     required_vars = [
-        ( "NCCL_P2P_DISABLE", "1" ),
-        ( "NCCL_IB_DISABLE", "1" ),
-        ( "GENIE_IN_THE_BOX_ROOT", "/some/foo/path" ),
-        ( "GIB_CONFIG_MGR_CLI_ARGS", "" ),
-        ( "DEEPILY_PROJECTS_DIR", "/mnt/DATA01/include/www.deepily.ai/projects" )
+        ("NCCL_P2P_DISABLE", "1"),
+        ("NCCL_IB_DISABLE", "1"),
+        ("GENIE_IN_THE_BOX_ROOT", "/some/foo/path"),
+        ("GIB_CONFIG_MGR_CLI_ARGS", ""),
+        ("DEEPILY_PROJECTS_DIR", "/mnt/DATA01/include/www.deepily.ai/projects")
     ]
     
     missing_vars = False
@@ -1781,7 +1914,46 @@ def check_env():
         sys.exit( 1 )
     
     return os.getenv( "GENIE_IN_THE_BOX_ROOT" )
+
+
+def check_privileges():
+    """
+    Checks if the script is running with root privileges or with sudo.
     
+    Preconditions:
+    - None
+    
+    Postconditions:
+    - If running with root privileges, prints a confirmation message
+    - If running with sudo, prints a confirmation message
+    - If not running with elevated privileges, exits the program
+    
+    Returns:
+    - None
+    
+    Raises:
+    - SystemExit: If the script is not running with elevated privileges
+    """
+    def is_root() -> bool:
+        return os.geteuid() == 0
+    
+    def invoked_with_sudo() -> bool:
+        return "SUDO_UID" in os.environ
+    
+    print( "Checking credentials..." )
+    if is_root():
+        if invoked_with_sudo():
+            print( "✅ Running under sudo (uid 0, SUDO_UID present)" )
+        else:
+            print( "⚠️ Running as root but not via sudo (e.g. direct root or setuid)" )
+    else:
+        du.print_banner( "❌ You're not running with elevated privileges?!?" )
+        print( "This is a long running -- up to three or four hours -- process that occasionally needs to hit the nuclear reset button for GPU memory." )
+        print( "Because of this you will need to execute this module using `sudo` as a prefix so that we can dislodge the occasional pesky stuck memory" )
+        print( "allocations w/o having to wake you up at midnight to present your credentials just so we can reset the GPU memory and finish the run." )
+        sys.exit( 1 )
+
+
 def parse_arguments():
     """
     Parses command line arguments for the PEFT trainer application.
@@ -1809,20 +1981,27 @@ def parse_arguments():
     parser = argparse.ArgumentParser( description="PEFT trainer for language models" )
     
     # Required arguments
-    parser.add_argument( "--model",           type=str, help="Model HuggingFace ID" )
-    parser.add_argument( "--model-name",      type=str, help="Model name" )
+    parser.add_argument( "--model", type=str, help="Model HuggingFace ID" )
+    parser.add_argument( "--model-name", type=str, help="Model name" )
     parser.add_argument( "--test-train-path", type=str, help="Path to test/train data" )
-    parser.add_argument( "--lora-dir",        type=str, help="Directory for LORA files" )
+    parser.add_argument( "--lora-dir", type=str, help="Directory for LORA files" )
     
     # Optional arguments
-    parser.add_argument( "--debug",                   action="store_true", help="Enable debug mode",                          default=False )
-    parser.add_argument( "--verbose",                 action="store_true", help="Enable verbose mode",                        default=False )
-    parser.add_argument( "--pre-training-stats",      action="store_true", help="Run validation before training",             default=False )
-    parser.add_argument( "--post-training-stats",     action="store_true", help="Run validation after training and merging",  default=False )
-    parser.add_argument( "--post-quantization-stats", action="store_true", help="Run validation after quantization",          default=False )
-    parser.add_argument( "--validation-sample-size",  type=int,            help="Sample size for validation",                 default=100 )
+    parser.add_argument( "--debug", action="store_true", help="Enable debug mode", default=False )
+    parser.add_argument( "--verbose", action="store_true", help="Enable verbose mode", default=False )
+    parser.add_argument( "--pre-training-stats", action="store_true", help="Run validation before training",
+                         default=False
+                         )
+    parser.add_argument( "--post-training-stats", action="store_true", help="Run validation after training and merging",
+                         default=False
+                         )
+    parser.add_argument( "--post-quantization-stats", action="store_true", help="Run validation after quantization",
+                         default=False
+                         )
+    parser.add_argument( "--validation-sample-size", type=int, help="Sample size for validation", default=100 )
     
     return parser.parse_args()
+
 
 # and just like that, we no longer need this after transformers gets an update
 # class MyKludgySFTTrainer( SFTTrainer ):
@@ -1906,12 +2085,21 @@ def parse_arguments():
 if __name__ == "__main__":
     
     # suss_out_dataset()
-    gib_root = check_env()
-    args     = parse_arguments()
-    trainer  = PeftTrainer( args.model, args.model_name, args.test_train_path, lora_dir=args.lora_dir, debug=args.debug, verbose=args.verbose )
     
+    # Check for root privileges - this is required for GPU nuclear_kill_button flag in the release_gpus function
+    check_privileges()
+    # Check for required environment variables
+    gib_root = check_env()
+    # Validate command line arguments
+    args = parse_arguments()
+    # instantiate a trainer...
+    trainer = PeftTrainer(
+        args.model, args.model_name, args.test_train_path, lora_dir=args.lora_dir, debug=args.debug, verbose=args.verbose
+    )
+    # log into hugging face so that we get download the tokenizer, which, for some reason isn't cached (due to an odd HF bug)
     trainer.login_to_hf()
     
+    # ... And you're off to the races!
     trainer.run_pipeline(
         pre_training_stats=args.pre_training_stats,
         post_training_stats=args.post_training_stats,
@@ -1925,5 +2113,3 @@ if __name__ == "__main__":
     #     post_quantization_stats=args.post_quantization_stats,
     #     validation_sample_size=args.validation_sample_size
     # )
-    
-    
