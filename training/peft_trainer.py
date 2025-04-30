@@ -130,7 +130,7 @@ def release_gpus( models, nuclear_kill_button=False ):
     - The nuclear_kill_button option should be used with caution as it forcefully terminates processes and resets GPUs.
     """
     
-    du.print_banner( "Releasing GPU memory...", prepend_nl=True )
+    du.print_banner( "Releasing GPU memory... BEFORE", prepend_nl=True )
     print_gpu_memory()
     
     for model in models:
@@ -178,7 +178,7 @@ def release_gpus( models, nuclear_kill_button=False ):
         except Exception as e:
             print( f"Unexpected error during GPU reset: {e}" )
 
-    du.print_banner( "Releasing GPU memory... Done!", prepend_nl=True )
+    du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
     print_gpu_memory()
 
 class PeftTrainer:

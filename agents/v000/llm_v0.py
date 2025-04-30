@@ -91,7 +91,7 @@ class Llm_v0:
         elif self.model in Llm_v0.local_chat_dict:
             return Llm_v0.local_chat_dict[ self.model ]
         else:
-            print( f"Using default local inference URL [{Llm_v0.DEFAULT_LOCAL_COMPLETIONS_URL}]" )
+            if self.debug: print( f"Using default local inference URL [{Llm_v0.DEFAULT_LOCAL_COMPLETIONS_URL}]" )
             return Llm_v0.DEFAULT_LOCAL_COMPLETIONS_URL
         
     def _start_timer( self, msg="Asking LLM [{model}]..." ):
@@ -299,15 +299,10 @@ class Llm_v0:
         return get_completion( prompt, url=self.local_inference_url, model=self.extract_model_name( self.model ) )
         
     def _query_vllm_openai_chat(
-        # self, preamble, query, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.25, stop_sequences=[ "</response>" ],
         self, prompt, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.25, stop_sequences=[ "</response>" ],
         debug=False, verbose=False
     ):
-        print( f"CHAT self._query_vllm_openai_chat(...) called" )
-        # Define the server URL
-        # url = "http://192.168.1.21:3000/v1/completions"
-        # url = "http://127.0.0.1:3000/v1/completions"
-        
+        if self.debug or debug: print( f"CHAT self._query_vllm_openai_chat(...) called" )
         # Set the headers
         headers = {
             "Content-Type" : "application/json",
