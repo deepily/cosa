@@ -18,18 +18,22 @@ The PEFT Trainer provides a streamlined pipeline for:
 - PEFT library
 - vLLM (for serving quantized models)
 - DEEPILY_PROJECTS_DIR environment variable set
+- Root privileges for GPU memory management
 
 ## Usage
 
 ### Basic Command
 
 ```bash
-python peft_trainer.py \
+# IMPORTANT: Must run with sudo for GPU memory management
+sudo python peft_trainer.py \
   --model <huggingface_model_id> \
   --model-name <model_config_name> \
   --test-train-path <path_to_training_data> \
   --lora-dir <output_directory_for_lora_adapters>
 ```
+
+> **Root Privileges Required**: The trainer must be run with `sudo` as it occasionally needs to perform GPU memory cleanup operations (resetting stuck CUDA processes) during long training runs. Without proper permissions, the trainer will exit with an error message if not run with elevated privileges.
 
 ### Arguments
 
@@ -106,7 +110,7 @@ The full training pipeline consists of:
 ## Example
 
 ```bash
-python peft_trainer.py \
+sudo python peft_trainer.py \
   --model "mistralai/Ministral-8B-Instruct-2410" \
   --model-name "Ministral-8B-Instruct-2410" \
   --test-train-path "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/ephemera/prompts/data" \
