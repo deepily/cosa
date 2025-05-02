@@ -379,7 +379,6 @@ class PeftTrainer:
         - The model and tokenizer must be available or loadable.
         - Valid test and train datasets must be accessible at the configured paths.
         - Sufficient GPU memory must be available for the specified batch size and model.
-        
         Postconditions:
         - The model is fine-tuned with the specified parameters.
         - Training checkpoints are saved to the specified output directory.
@@ -394,7 +393,6 @@ class PeftTrainer:
         - gradient_accumulation_steps (int, optional): Number of steps to accumulate gradients. Defaults to 1.
         - logging_steps (float, optional): Fraction of total steps at which to log progress. Defaults to 0.05.
         - eval_steps (float, optional): Fraction of total steps at which to evaluate the model. Defaults to 0.20.
-        - backend (str, optional): Backend to use for model computations. Defaults to "cuda".
         - sample_size (float, optional): Fraction of the total data to use (1.0 = all data). Defaults to 1.0.
         - device_map (str, optional): Device mapping strategy for the model. Defaults to "auto".
         - output_dir (str, optional): Directory to save the fine-tuned model checkpoints. Defaults to "./results".
@@ -569,7 +567,7 @@ class PeftTrainer:
         self.model = PeftModel.from_pretrained( self.model, adapter_path )
         print( f"Loading adapter from {adapter_path}... Done!" )
     
-    def run_validation_in_memory( self,
+    def run_validation_in_memory( self, banner_prefix="",
                                   switch="in_memory", adapter_path=None, path_prefix=du.get_project_root(),
                                   device_map={ "": 0 },
                                   validation_sample_size=100, debug=None, verbose=None
@@ -589,12 +587,13 @@ class PeftTrainer:
         - The processed DataFrame with validation results is returned.
         
         Parameters:
-        - switch (str, optional): Switch parameter for the prompt generator. Defaults to "".
+        - banner_prefix (str, optional): Prefix for banner display. Defaults to "".
+        - switch (str, optional): Switch parameter for the prompt generator. Defaults to "in_memory".
         - adapter_path (str, optional): Path to the adapter to load. If None, uses the adapter 
           from the most recent fine-tuning run if available. Defaults to None.
-        - path_prefix (str, optional): Path prefix for the XML generator. Defaults to "/var/model/genie-in-the-box".
+        - path_prefix (str, optional): Path prefix for the XML generator. Defaults to project root.
         - device_map (dict, optional): Device mapping for the model. Defaults to {"": 0}.
-        - sample_size (int, optional): Number of samples to use for validation. Defaults to 1000.
+        - validation_sample_size (int, optional): Number of samples to use for validation. Defaults to 100.
         - debug (bool, optional): Enable debug mode. If None, uses the class default. Defaults to None.
         - verbose (bool, optional): Enable verbose mode. If None, uses the class default. Defaults to None.
         
@@ -602,7 +601,7 @@ class PeftTrainer:
         - pandas.DataFrame: DataFrame containing the validation results, including original prompts,
                           generated responses, and validation metrics.
         """
-        du.print_banner( f"Validating {self.model_name} w/ {validation_sample_size} samples in memory...", prepend_nl=True )
+        du.print_banner( f"{banner_prefix} Testing {self.model_name} w/ {validation_sample_size} samples in memory...".strip(), prepend_nl=True )
         
         # set debug and verbose to the class defaults if not provided
         if debug is None: debug = self.debug
@@ -652,8 +651,8 @@ class PeftTrainer:
         
         return df
     
-    def run_validation_with_server(
-            self, model=None, switch="", path_prefix="/var/model/genie-in-the-box",
+    def run_validation_with_server( self, banner_prefix="",
+            model=None, switch="", path_prefix="/var/model/genie-in-the-box",
             device_map={ "": 0 }, validation_sample_size=1000, debug=None, verbose=None
     ):
         """
@@ -670,11 +669,12 @@ class PeftTrainer:
         - The processed DataFrame with validation results is returned.
         
         Parameters:
-        - model (object, required): Model server instance to use for inference. Must support the generation interface.
+        - banner_prefix (str, optional): Prefix for banner display. Defaults to "".
+        - model (object, optional): Model server instance to use for inference. Must support the generation interface. Defaults to None.
         - switch (str, optional): Switch parameter for the prompt generator. Defaults to "".
         - path_prefix (str, optional): Path prefix for the XML generator. Defaults to "/var/model/genie-in-the-box".
         - device_map (dict, optional): Device mapping for the model. Defaults to {"": 0}.
-        - sample_size (int, optional): Number of samples to use for validation. Defaults to 1000.
+        - validation_sample_size (int, optional): Number of samples to use for validation. Defaults to 1000.
         - debug (bool, optional): Enable debug mode. If None, uses the class default. Defaults to None.
         - verbose (bool, optional): Enable verbose mode. If None, uses the class default. Defaults to None.
         
@@ -694,8 +694,7 @@ class PeftTrainer:
         else:
             self.model = model
         
-        # advise that we're going to query a server instead
-        du.print_banner( f"Querying an LLM server w/ model [{self.model}]", prepend_nl=True )
+        du.print_banner( f"{banner_prefix} Testing model [{self.model}]".strip(), prepend_nl=True )
         
         df = pd.read_json(
             f"{self.test_train_dir}/voice-commands-xml-validate.jsonl", lines=True
@@ -709,7 +708,7 @@ class PeftTrainer:
         )
         print( f"Updating the prompt field for [{validation_sample_size}] rows... Done!" )
         
-        du.print_banner( f"Validating {self.model_name} w/ {validation_sample_size} samples via vLLM server...", prepend_nl=True )
+        du.print_banner( f"Testing {self.model_name} w/ {validation_sample_size} samples via vLLM server...", prepend_nl=True )
         # Print value counts for the command column to see how many unique commands we have
         print( df.command.value_counts(), end="\n\n" )
         
@@ -848,9 +847,6 @@ class PeftTrainer:
         elif self.merged_adapter_dir is None:
             raise ValueError( "merged_adapter_dir is neither provided nor found" )
         
-        # Release any existing model/tokenizer to free up GPU memory
-        release_gpus( [ self.model, self.tokenizer ] )
-        
         try:
             # Detect available GPUs
             num_gpus = torch.cuda.device_count()
@@ -907,7 +903,7 @@ class PeftTrainer:
         
         Parameters:
         - device_map (str or dict, optional): Device mapping strategy for the model. Defaults to "auto".
-        - mode (str, required): Mode of operation, must be either "training" or "inference".
+        - mode (str, optional): Mode of operation, must be either "training" or "inference". Defaults to None.
         
         Raises:
         - ValueError: If HF_HOME is not set in the environment variables.
@@ -1402,9 +1398,9 @@ class PeftTrainer:
             "GIB_CONFIG_MGR_CLI_ARGS" ] = "config_path=/src/conf/gib-app.ini splainer_path=/src/conf/gib-app-splainer.ini config_block_id=Genie+in+the+Box:+Development"
         os.environ[ "WANDB_DISABLE_SERVICE" ] = wandb_disable_service
     
-    def _start_vllm_server( self, quantized_model_dir, port=3000, max_model_len=2048, gpu_memory_utilization=0.75,
-                            timeout=180
-                            ):
+    def _start_vllm_server( self,
+        quantized_model_dir, port=3000, max_model_len=2048, gpu_memory_utilization=0.75, timeout=180
+    ):
         """
         Starts a vLLM server for the quantized model and waits for it to be available.
         
@@ -1438,7 +1434,7 @@ class PeftTrainer:
         projects_dir = os.environ.get( "DEEPILY_PROJECTS_DIR" )
         if not projects_dir: raise ValueError( "DEEPILY_PROJECTS_DIR environment variable is not set." )
         
-        du.print_banner( "Starting vLLM server" )
+        du.print_banner( "Starting vLLM server..." )
         
         # Check for multiple GPUs
         gpu_count = torch.cuda.device_count()
@@ -1659,8 +1655,7 @@ class PeftTrainer:
         
         # Run a quick pretest in memory
         if pre_training_stats:
-            # TODO: add runtime configuration for sample size
-            self.run_validation_in_memory( device_map="auto", validation_sample_size=validation_sample_size )
+            self.run_validation_in_memory( banner_prefix="PRE-training: ", device_map="auto", validation_sample_size=validation_sample_size )
         else:
             print( f"Skipping pre-training validation for {args.model_name}" )
         
@@ -1686,8 +1681,6 @@ class PeftTrainer:
         release_gpus( [ self.model, self.tokenizer ] )
         
         if post_training_stats:
-            du.print_banner( f"Running post-training validation for {args.model_name}", prepend_nl=True )
-            
             vllm_server_process = None
             try:
                 # Start vLLM server and wait for it to be available
@@ -1695,12 +1688,9 @@ class PeftTrainer:
                 
                 # create a custom model name using as an ID the mount point for the recently quantized model directory
                 model = Llm_v0.get_model( merged_adapter_dir )
-                # TODO: add runtime configuration for sample size
                 self.run_validation_with_server(
-                    model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0",
-                    validation_sample_size=validation_sample_size,
-                    debug=self.debug,
-                    verbose=self.verbose
+                    banner_prefix="POST-training:", model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0",
+                    validation_sample_size=validation_sample_size, debug=self.debug, verbose=self.verbose
                 )
             finally:
                 # Always clean up the vLLM server process if it was started
@@ -1714,9 +1704,6 @@ class PeftTrainer:
         quantized_model_dir = self.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
         
         if post_quantization_stats:
-            
-            du.print_banner( f"Running post-training validation for {args.model_name}", prepend_nl=True )
-            
             vllm_server_process = None
             try:
                 # Start vLLM server and wait for it to be available
@@ -1724,12 +1711,9 @@ class PeftTrainer:
                 
                 # create a custom model name using as an ID the mount point for the recently quantized model directory
                 model = Llm_v0.get_model( quantized_model_dir )
-                # TODO: add runtime configuration for sample size
                 self.run_validation_with_server(
-                    model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0",
-                    validation_sample_size=validation_sample_size,
-                    debug=self.debug,
-                    verbose=self.verbose
+                    banner_prefix="POST-quantization:", model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0",
+                    validation_sample_size=validation_sample_size, debug=self.debug, verbose=self.verbose
                 )
             finally:
                 # Always clean up the vLLM server process if it was started
@@ -1740,13 +1724,14 @@ class PeftTrainer:
             print( f"Skipping post-quantization validation for {args.model_name}" )
         
         # Print completion information
+        print()
         msg = f"Finished fine-tuning, merging and quantizing {args.model_name}"
         timer.print( msg )
         du.print_banner( msg )
         print( f"Quantized model: {quantized_model_dir}" )
         du.print_simple_file_list( quantized_model_dir )
     
-    def run_pipeline_adhoc( self, pre_training_stats=False, post_training_stats=False, post_quantization_stats=False,
+    def run_pipeline_adhoc( self, pre_training_stats=False, post_training_stats=False, post_quantization_stats=False, nuclear_kill_button=False,
         validation_sample_size=100
     ):
         """
@@ -1816,7 +1801,8 @@ class PeftTrainer:
         # merged_adapter_dir = self.save_merged_adapter( lora_dir=args.lora_dir )
         release_gpus( [ self.model, self.tokenizer ] )
         
-        merged_adapter_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-29-at-12-04"
+        # merged_adapter_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-29-at-12-04"
+        merged_adapter_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Mistral-7B-Instruct-v0.2.lora/merged-on-2025-05-01-at-02-10"
         # 
         # if post_training_stats:
         #     du.print_banner( f"Running post-training validation for {args.model_name}", prepend_nl=True )
@@ -1837,7 +1823,7 @@ class PeftTrainer:
         #         # Always clean up the vLLM server process if it was started
         #         if vllm_server_process: self._stop_vllm_server( vllm_server_process )
         #         # release GPU before doing anything else
-        #         release_gpus( [ self.model, self.tokenizer ] )
+        #         release_gpus( [ self.model, self.tokenizer ], nuclear_kill_button=nuclear_kill_button )
         # else:
         #     print( f"Skipping post-training validation for {args.model_name}" )
         
@@ -1928,7 +1914,7 @@ def check_env():
 
 
 @staticmethod
-def check_privileges():
+def check_privileges(debug=False):
     """
     Checks if the script is running with root privileges or with sudo.
     
@@ -1949,17 +1935,17 @@ def check_privileges():
     print( "Checking credentials..." )
     if is_root():
         if invoked_with_sudo():
-            print( "✅ Running under sudo (uid 0, SUDO_UID present)" )
+            if debug: print( "✅ Running under sudo (uid 0, SUDO_UID present)" )
         else:
-            print( "⚠️ Running as root but not via sudo (e.g. direct root or setuid)" )
+            if debug: print( "⚠️ Running as root but not via sudo (e.g. direct root or setuid)" )
     else:
         du.print_banner( "❌ Wait! You're not running with elevated privileges?!?", prepend_nl=True )
         print( "This is a long running -- up to three or four hours -- process that occasionally needs to hit the nuclear reset button for GPU memory." )
         print( "Because of this you will need to execute this module using `sudo` as a prefix so that we can dislodge the occasional pesky stuck memory" )
         print( "allocations w/o having to wake you up at midnight to present your credentials just so we can finish the last 1/3 of the run." )
         print()
-        print( "You'll need to insert the following bits *between* 'sudo' and the Python interpreter:" )
-        print( 'sudo --preserve-env=HF_HOME,NCCL_P2P_DISABLE,NCCL_IB_DISABLE,GENIE_IN_THE_BOX_ROOT,GIB_CONFIG_MGR_CLI_ARGS,DEEPILY_PROJECTS_DIR env "PATH=$PATH" python -m cosa.training.peft_trainer ...' )
+        print( "You'll need to insert the following [bits] *between* 'sudo' and the Python interpreter:" )
+        print( 'sudo [--preserve-env=HF_HOME,NCCL_P2P_DISABLE,NCCL_IB_DISABLE,GENIE_IN_THE_BOX_ROOT,GIB_CONFIG_MGR_CLI_ARGS,DEEPILY_PROJECTS_DIR env "PATH=$PATH"] python -m cosa.training.peft_trainer ...' )
         print()
         sys.exit( 1 )
 
@@ -2008,100 +1994,20 @@ def parse_arguments():
     
     return parser.parse_args()
 
-
-# and just like that, we no longer need this after transformers gets an update
-# class MyKludgySFTTrainer( SFTTrainer ):
-#     """
-#     A custom extension of the SFTTrainer class that handles tokenizer padding side switching.
-#
-#     This class overrides the evaluation_loop method to ensure proper padding side configuration
-#     during evaluation and training phases. It temporarily switches padding_side to 'left' for
-#     evaluation and then back to 'right' for training.
-#
-#     Attributes:
-#         Inherits all attributes from SFTTrainer.
-#     """
-#
-#     def evaluation_loop( self, *args, **kwargs ):
-#         """
-#         Overrides the evaluation_loop method to handle tokenizer padding_side switching.
-#
-#         Preconditions:
-#         - self.tokenizer must be initialized and have a padding_side attribute.
-#
-#         Postconditions:
-#         - Tokenizer padding_side is set to 'left' during evaluation.
-#         - Tokenizer padding_side is restored to 'right' after evaluation completes.
-#         - The result from the parent class evaluation_loop is returned.
-#
-#         Parameters:
-#         - *args: Positional arguments to pass to the parent class's evaluation_loop method.
-#         - **kwargs: Keyword arguments to pass to the parent class's evaluation_loop method.
-#
-#         Returns:
-#         - The result returned by the parent class's evaluation_loop method.
-#         """
-#         # Set padding_side to 'left' for evaluation
-#         self.tokenizer.padding_side = 'left'
-#         result = super().evaluation_loop( *args, **kwargs )
-#         # Revert padding_side to 'right' after evaluation
-#         self.tokenizer.padding_side = 'right'
-#         return result
-#
-# def validate_model_name_arg( model_name ):
-#     """
-#     Validates that a given model name is in the list of supported models.
-#
-#     Preconditions:
-#     - model_name must be a string.
-#
-#     Postconditions:
-#     - If model_name is valid, the function completes without error.
-#     - If model_name is not valid, a ValueError is raised.
-#
-#     Parameters:
-#     - model_name (str): The model name to validate.
-#
-#     Raises:
-#     - ValueError: If model_name is not one of the supported models.
-#
-#     Supported Models:
-#     - "Mistral-7B-Instruct-v0.2"
-#     - "Ministral-8B-Instruct-2410"
-#     - "Llama-3.2-3B-Instruct"
-#     - "Phi-4-mini-instruct"
-#     """
-#     supported_model_names = ["Mistral-7B-Instruct-v0.2", "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct"]
-#     if model_name not in supported_model_names:
-#         raise ValueError(f"Unsupported model_name: '{model_name}'. Must be one of: {', '.join(supported_model_names)}")
-#
-# def suss_out_dataset():
-#
-#     path = "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/ephemera/prompts/data/voice-commands-xml-train.jsonl"
-#     train_dataset = du.get_file_as_list( path )
-#     train_dataset = [ json.loads( line )[ "gpt_message" ] for line in train_dataset ]
-#     print( f"Loaded {len( train_dataset )} training items" )
-#
-#     # for i in range( 10 ):
-#     print( train_dataset[ 0 ] )
-#
-#     train_dataset = Dataset.from_list( train_dataset )
-#     print( train_dataset[ 0 ] )
-
 if __name__ == "__main__":
-    
-    # suss_out_dataset()
     
     # Check for required environment variables
     gib_root = check_env()
+    
     # Validate command line arguments
     args = parse_arguments()
-    # Check for nuclear_kill_button + elevated privileges - this is required for GPU nuclear_kill_button flag in the release_gpus function
+    
+    # Check for nuclear_kill_button + elevated privileges
     if args.nuclear_kill_button:
-        print( "Nuclear kill button is enabled..." )
-        check_privileges()
+        if args.debug: print( "Nuclear kill button is enabled..." )
+        check_privileges( debug=args.debug )
     else:
-        print( "Nuclear kill button is disabled..." )
+        if args.debug: print( "Nuclear kill button is disabled..." )
         
     # instantiate a trainer...
     trainer = PeftTrainer(
