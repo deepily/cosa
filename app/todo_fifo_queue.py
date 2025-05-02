@@ -10,7 +10,7 @@ from cosa.agents.weather_agent import WeatherAgent
 from cosa.agents.todo_list_agent import TodoListAgent
 from cosa.agents.calendaring_agent import CalendaringAgent
 from cosa.agents.math_agent import MathAgent
-from cosa.agents.llm import Llm
+from cosa.agents.llm_v0 import Llm_v0
 from cosa.tools.search_gib import GibSearch
 
 # from lib.agents.agent_function_mapping        import FunctionMappingAgent
@@ -40,9 +40,9 @@ class TodoFifoQueue( FifoQueue ):
         self.auto_debug   = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
         self.inject_bugs  = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
         
-        # Set by set_llm() below
-        self.cmd_llm_in_memory = None
-        self.cmd_llm_tokenizer = None
+        # # Set by set_llm() below
+        # self.cmd_llm_in_memory = None
+        # self.cmd_llm_tokenizer = None
         
         # Salutations to be stripped by a brute force method until the router parses them off for us
         self.salutations = [ "computer", "little", "buddy", "pal", "ai", "jarvis", "alexa", "siri", "hal", "einstein",
@@ -58,10 +58,10 @@ class TodoFifoQueue( FifoQueue ):
             "let me think about that...", "let me think about it...", "let me check...", "checking..."
         ]
         
-    def set_llm( self, cmd_llm_in_memory, cmd_llm_tokenizer ):
-        
-        self.cmd_llm_in_memory = cmd_llm_in_memory
-        self.cmd_llm_tokenizer = cmd_llm_tokenizer
+    # def set_llm( self, cmd_llm_in_memory, cmd_llm_tokenizer ):
+    #
+    #     self.cmd_llm_in_memory = cmd_llm_in_memory
+    #     self.cmd_llm_tokenizer = cmd_llm_tokenizer
     
     def parse_salutations( self, transcription ):
         """
@@ -95,7 +95,7 @@ class TodoFifoQueue( FifoQueue ):
         prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agents/gist.txt" )
         prompt = prompt_template.format( question=question )
         # ¡OJO! LLM should be runtime configurable
-        llm = Llm( model=Llm.GROQ_LLAMA3_70B, debug=self.debug, verbose=self.verbose, default_url="¡OJO! We shouldn't have to set this value here" )
+        llm = Llm_v0( model=Llm_v0.GROQ_LLAMA3_70B, debug=self.debug, verbose=self.verbose )
         results = llm.query_llm( prompt=prompt )
         gist = dux.get_value_by_xml_tag_name( results, "gist", default_value="" ).strip()
         
@@ -114,8 +114,8 @@ class TodoFifoQueue( FifoQueue ):
             # emit_audio( msg )
             du.print_banner( msg )
             # TODO: make LLM runtime configurable
-            default_url = "¡OJO! We shouldn't have to set this value here!"
-            run_previous_best_snapshot = ConfirmationDialogue( model=Llm.GROQ_LLAMA3_1_70B, debug=self.debug, verbose=self.verbose, default_url=default_url ).confirmed( question )
+            # default_url = "¡OJO! We shouldn't have to set this value here!"
+            run_previous_best_snapshot = ConfirmationDialogue( model=Llm.GROQ_LLAMA3_1_70B, debug=self.debug, verbose=self.verbose ).confirmed( question )
             
         if run_previous_best_snapshot:
                 
@@ -325,13 +325,12 @@ class TodoFifoQueue( FifoQueue ):
         
         router_prompt_template = du.get_file_as_string( du.get_project_root() + self.config_mgr.get( "agent_router_prompt_path_wo_root" ) )
         
-        response = llm_client.query_llm_in_memory(
-            self.cmd_llm_in_memory,
-            self.cmd_llm_tokenizer,
-            router_prompt_template.format( voice_command=question ),
-            model_name=self.config_mgr.get( "vox_command_llm_name" ),
-            device=self.config_mgr.get( "vox_command_llm_device_map", default="cuda:0" )
-        )
+        prompt        = router_prompt_template.format( voice_command=question ),
+        model         = self.config_mgr.get( "router_and_vox_command_model" )
+        is_completion = self.config_mgr.get( "router_and_vox_command_is_completion", return_type="boolean", default=False )
+        
+        llm      = Llm_v0( model=model, is_completion=is_completion, debug=self.debug, verbose=self.verbose )
+        response = llm.query_llm( prompt=prompt )
         print( f"LLM response: [{response}]" )
         # Parse results
         command = dux.get_value_by_xml_tag_name( response, "command" )

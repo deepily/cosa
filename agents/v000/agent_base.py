@@ -9,7 +9,7 @@ import cosa.utils.util_pandas        as dup
 import cosa.utils.util_xml as dux
 import cosa.memory.solution_snapshot as ss
 
-from cosa.agents.llm import Llm
+from cosa.agents.llm_v0 import Llm_v0
 from cosa.agents.raw_output_formatter import RawOutputFormatter
 from cosa.agents.runnable_code import RunnableCode
 from cosa.app.configuration_manager import ConfigurationManager
@@ -58,7 +58,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.do_not_serialize      = { "df", "config_mgr", "two_word_id", "execution_state" }
         
         # ¡OJO! This one server a key may need to become more diversified in the future
-        self.default_url           = self.config_mgr.get( "tgi_server_codegen_url", default=None )
+        # self.default_url           = self.config_mgr.get( "deepily_inference_chat_url", default=None )
         
         self.prompt_template_paths = self._get_prompt_template_paths()
         self.models                = self._get_models()
@@ -171,14 +171,13 @@ class AgentBase( RunnableCode, abc.ABC ):
         
         if model_name is not None: self.model_name = model_name
         
-        llm = Llm( config_mgr=self.config_mgr, model=self.model_name, default_url=self.default_url, debug=self.debug, verbose=self.verbose )
+        llm = Llm_v0( config_mgr=self.config_mgr, model=self.model_name, debug=self.debug, verbose=self.verbose )
         response = llm.query_llm( prompt=self.prompt, temperature=temperature, top_p=top_p, top_k=top_k, max_new_tokens=max_new_tokens, stop_sequences=stop_sequences, debug=self.debug, verbose=self.verbose )
         
         # Parse XML-esque response
         self.prompt_response_dict = self._update_response_dictionary( response )
         
         # Add raw response if requested. This is useful for creating synthetic datasets
-        # See: function_mapping_search.py & xml_fine_tuning_prompt_generator.py for an example of how this is used.
         if include_raw_response:
             self.prompt_response_dict[ "xml_response" ]        = response
             self.prompt_response_dict[ "last_question_asked" ] = self.last_question_asked

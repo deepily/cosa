@@ -3,7 +3,7 @@ from cosa.utils import util_xml as dux
 
 from cosa.app.configuration_manager import ConfigurationManager
 
-from cosa.agents.llm import Llm
+from cosa.agents.llm_v0 import Llm_v0
 
 class RawOutputFormatter:
     
@@ -14,13 +14,13 @@ class RawOutputFormatter:
         
         self.question    = question
         if thoughts != "":
-            self.thoughts = f"<thoughts>{self.thoughts}</thoughts>"
+            self.thoughts = f"<thoughts>{thoughts}</thoughts>"
         else:
-            self.thoughts = thoughts
+            self.thoughts = ""
         if code != "":
             self.code = f"<code>{code}</code>"
         else:
-            self.code = code
+            self.code = ""
         self.raw_output  = raw_output.replace( "<?xml version='1.0' encoding='utf-8'?>", "" )
         
         self.config_mgr  = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS", debug=self.debug, verbose=self.verbose, silent=True )
@@ -44,10 +44,7 @@ class RawOutputFormatter:
         self.routing_command       = routing_command
         self.formatting_template   = du.get_file_as_string( du.get_project_root() + self.formatter_prompt_paths[ routing_command ] )
         self.prompt                = self._get_prompt()
-        # self.prompt_yaml           = self._get_prompt_yaml()
-        
-        default_url                = self.config_mgr.get( "tgi_server_codegen_url", default=None )
-        self.llm                   = Llm( model=self.models[ routing_command ], default_url=default_url, debug=self.debug, verbose=self.verbose )
+        self.llm                   = Llm_v0( model=self.models[ routing_command ], debug=self.debug, verbose=self.verbose )
     
     def format_output( self ):
         
@@ -64,15 +61,7 @@ class RawOutputFormatter:
             return self.formatting_template.format( question=self.question, raw_output=self.raw_output, thoughts=self.thoughts, code=self.code )
         else:
             return self.formatting_template.format( question=self.question, raw_output=self.raw_output )
-        
-    def _get_prompt_yaml( self ):
-        
-        if self.routing_command == "agent router go to receptionist":
-            return self.formatting_template.format( question=self.question, raw_output=self.raw_output, thoughts=self.thoughts )
-        else:
-            print( f"WARNING: _get_prompt_yaml() is not YET implemented for routing command {self.routing_command}" )
-            return None
-        
+    
 if __name__ == "__main__":
     
     # routing_command = "agent router go to date and time"
@@ -192,5 +181,5 @@ if __name__ == "__main__":
 #   </row>
 # </data>
 #     """
-    formatter = RawOutputFormatter( question, raw_output, routing_command, thoughts=thoughts, debug=True, verbose=False )
+    formatter = RawOutputFormatter( question, raw_output, routing_command, thoughts=thoughts, debug=True, verbose=True )
     print( formatter.format_output() )

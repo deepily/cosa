@@ -6,7 +6,7 @@ import cosa.utils.util_stopwatch as sw
 from cosa.memory import solution_snapshot as ss
 
 from cosa.agents.agent_base import AgentBase
-from cosa.agents.llm import Llm
+from cosa.agents.llm_v0 import Llm_v0
 
 import pandas as pd
 class FunctionMappingAgentJson( AgentBase ):
@@ -101,7 +101,7 @@ class FunctionMappingAgentJson( AgentBase ):
         
         return self.question != "" and self.signatures_dict != { }
         
-    def run_prompt( self, question="", prompt_model=Llm.GPT_4 ):
+    def run_prompt( self, question="", prompt_model=Llm_v0.GPT_4 ):
         
         self.user_message = self._get_user_message( question=question )
         

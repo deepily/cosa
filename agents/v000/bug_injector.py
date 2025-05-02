@@ -2,7 +2,7 @@ import cosa.utils.util as du
 import cosa.utils.util_xml as dux
 
 from cosa.agents.agent_base import AgentBase
-from cosa.agents.llm import Llm
+from cosa.agents.llm_v0 import Llm_v0
 
 class BugInjector( AgentBase ):
     def __init__( self, code, example="", debug=True, verbose=True ):
@@ -28,13 +28,13 @@ class BugInjector( AgentBase ):
         
         if model_name is not None: self.model_name = model_name
         
-        llm = Llm( model=self.model_name, default_url=self.default_url, debug=self.debug, verbose=self.verbose )
+        llm = Llm_v0( model=self.model_name, debug=self.debug, verbose=self.verbose )
         response = llm.query_llm( prompt=self.prompt, temperature=temperature, top_p=top_p, top_k=top_k, max_new_tokens=max_new_tokens, debug=self.debug, verbose=self.verbose )
         
         line_number = int( dux.get_value_by_xml_tag_name( response, "line-number", default_value="-1" ) )
         bug         =      dux.get_value_by_xml_tag_name( response, "bug",         default_value="" )
         
-        if line_number == -1: # or bug == "": # for now, we're going to allow the bug to be an empty string
+        if line_number == -1:
             du.print_banner( f"Invalid response from [{model_name}]", expletive=True )
             print( response )
         elif line_number > len( self.prompt_response_dict[ "code" ] ):

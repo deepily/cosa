@@ -5,7 +5,7 @@ import regex as re
 import cosa.utils.util as du
 import cosa.utils.util_code_runner     as ucr
 
-from cosa.agents.llm import Llm
+from cosa.agents.llm_v0 import Llm_v0
 from cosa.agents.agent_base import AgentBase
 from cosa.memory.solution_snapshot_mgr import SolutionSnapshotManager
 class RefactoringAgent( AgentBase ):
@@ -121,9 +121,9 @@ class RefactoringAgent( AgentBase ):
         else:
             return True
 
-    def run_prompt( self, prompt_model=Llm.GPT_4 ):
+    def run_prompt( self, prompt_model=Llm_v0.GPT_4 ):
         
-        prompt_model = Llm.GPT_4
+        prompt_model = Llm_v0.GPT_4
         
         self._print_token_count( self.system_message, message_name="system_message", model=prompt_model )
         self._print_token_count( self.user_message, message_name="user_message", model=prompt_model )

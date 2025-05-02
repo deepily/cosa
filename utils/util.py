@@ -1,4 +1,7 @@
 import os
+import stat
+import pwd
+import grp
 import regex as re
 import random
 import sys
@@ -7,25 +10,69 @@ from datetime import timedelta as td
 import pytz
 import json
 import traceback
+from typing import Dict, List, Any, Optional, Union, Tuple, Set, Callable
 
 debug = False
 
-def init( d ):
+def init( d: bool ) -> None:
+    """
+    Initialize the debug flag for the utility module.
     
+    Requires:
+        - d is a boolean value
+        
+    Ensures:
+        - Global debug flag is set to the provided value
+        
+    Args:
+        d: Boolean value to set the debug flag to
+    """
     global debug
     debug = d
     
-def add_to_path( path ):
-
+def add_to_path( path: str ) -> None:
+    """
+    Add a path to the Python module search path (sys.path).
+    
+    Requires:
+        - path is a valid string path
+        
+    Ensures:
+        - path is added to sys.path if not already present
+        - Appropriate message is printed to console
+        
+    Args:
+        path: The directory path to add to sys.path
+    """
     if path not in sys.path:
         sys.path.append( path )
-        print( "Added [{}] to sys.path".format( path ) )
+        print( f"Added [{path}] to sys.path" )
     else:
-        print( "Path [{}] already in sys.path".format( path ) )
+        print( f"Path [{path}] already in sys.path" )
 
 
-def get_current_datetime_raw( tz_name="US/Eastern", days_offset=0 ):
-
+def get_current_datetime_raw( tz_name: str = "US/Eastern", days_offset: int = 0 ) -> dt:
+    """
+    Get a datetime object for the current time in a specified timezone with optional offset.
+    
+    Requires:
+        - tz_name is a valid timezone string recognized by pytz
+        - days_offset is an integer (positive or negative)
+        
+    Ensures:
+        - Returns a datetime object in the specified timezone
+        - The datetime is offset by the specified number of days from the current time
+        
+    Args:
+        tz_name: The name of the timezone (default: "US/Eastern")
+        days_offset: Number of days to offset from current time (default: 0)
+        
+    Returns:
+        A datetime object in the specified timezone, offset by days_offset
+        
+    Raises:
+        pytz.exceptions.UnknownTimeZoneError: If tz_name is not a valid timezone
+    """
     # Get the current date plus or minus the specified days_offset
     now     = dt.now()
     delta   = td( days=days_offset )
@@ -35,23 +82,54 @@ def get_current_datetime_raw( tz_name="US/Eastern", days_offset=0 ):
     
     return tz_date
 
-def get_current_datetime( tz_name="US/Eastern" ):
+def get_current_datetime( tz_name: str = "US/Eastern" ) -> str:
+    """
+    Get a formatted string of the current date and time in the specified timezone.
     
+    Requires:
+        - tz_name is a valid timezone string recognized by pytz
+        
+    Ensures:
+        - Returns a formatted date-time string in the format "YYYY-MM-DD @ HH:MM:SS TZ"
+        
+    Args:
+        tz_name: The name of the timezone (default: "US/Eastern")
+        
+    Returns:
+        A formatted date-time string
+        
+    Raises:
+        pytz.exceptions.UnknownTimeZoneError: If tz_name is not a valid timezone
+    """
     tz_date = get_current_datetime_raw( tz_name )
     
     return tz_date.strftime( '%Y-%m-%d @ %H:%M:%S %Z' )
 
-def get_current_date( tz_name="US/Eastern", return_prose=False, offset=0 ):
+def get_current_date( tz_name: str = "US/Eastern", return_prose: bool = False, offset: int = 0 ) -> str:
     """
-    Returns the current date in the specified time zone.
-
+    Get the current date in the specified timezone with optional formatting.
+    
+    Requires:
+        - tz_name is a valid timezone string recognized by pytz
+        - return_prose is a boolean indicating format preference
+        - offset is an integer (positive or negative)
+        
+    Ensures:
+        - Returns a date string in either YYYY-MM-DD format or prose format
+        - The date is offset by the specified number of days from current date
+        
     Args:
-        tz_name (str): The name of the time zone. Defaults to "US/Eastern".
-        return_prose (bool): Whether to return the date in prose format. Defaults to False.
-            If True, the date will be returned in the format: "Monday, January 01, 2021".
-
+        tz_name: The name of the timezone (default: "US/Eastern")
+        return_prose: Whether to return the date in prose format (default: False)
+            If True, returns format: "Monday, January 01, 2021"
+            If False, returns format: "2021-01-01"
+        offset: Number of days to offset from the current date (default: 0)
+        
     Returns:
-        str: The current date formatted as specified.
+        A formatted date string
+        
+    Raises:
+        pytz.exceptions.UnknownTimeZoneError: If tz_name is not a valid timezone
     """
     tz_date = get_current_datetime_raw( tz_name, days_offset=offset )
     
@@ -60,17 +138,30 @@ def get_current_date( tz_name="US/Eastern", return_prose=False, offset=0 ):
     else:
         return tz_date.strftime( "%Y-%m-%d" )
 
-def get_current_time( tz_name="US/Eastern", include_timezone=True, format="%H:%M:%S" ):
+def get_current_time( tz_name: str = "US/Eastern", include_timezone: bool = True, format: str = "%H:%M:%S" ) -> str:
     """
-    A function that returns the current time in a specified time zone with optional timezone information.
-
-    Parameters:
-    - tz_name (str): The name of the timezone to get the current time in. Default is "US/Eastern".
-    - include_timezone (bool): Whether to include the timezone information in the output. Default is True.
-    - format (str): The format of the time string to return. Default is "%H:%M:%S".
-
+    Get the current time in a specified timezone with optional timezone information.
+    
+    Requires:
+        - tz_name is a valid timezone string recognized by pytz
+        - include_timezone is a boolean indicating whether to include timezone in output
+        - format is a valid datetime format string for strftime
+        
+    Ensures:
+        - Returns a formatted time string according to the specified format
+        - Includes timezone abbreviation if include_timezone is True
+        
+    Args:
+        tz_name: The name of the timezone (default: "US/Eastern")
+        include_timezone: Whether to include timezone information (default: True)
+        format: The format string for time formatting (default: "%H:%M:%S")
+        
     Returns:
-    - str: The current time in the specified timezone with optional timezone information based on the format.
+        A formatted time string
+        
+    Raises:
+        pytz.exceptions.UnknownTimeZoneError: If tz_name is not a valid timezone
+        ValueError: If format string contains invalid directives
     """
     tz_date = get_current_datetime_raw( tz_name )
     
@@ -169,12 +260,52 @@ def get_file_as_list( path, lower_case=False, clean=False, randomize=False, seed
     return lines
 
 
-def get_file_as_string( path ):
+def get_file_as_string( path: str ) -> str:
+    """
+    Read a file and return its contents as a string.
+    
+    Requires:
+        - path is a valid file path
+        - File exists and is readable
+        
+    Ensures:
+        - Returns the entire contents of the file as a string
+        
+    Args:
+        path: The path to the file to read
+        
+    Returns:
+        The contents of the file as a string
+        
+    Raises:
+        FileNotFoundError: If the file does not exist
+        PermissionError: If the file cannot be read due to permissions
+    """
     with open( path, "r" ) as file:
         return file.read()
 
 
-def get_file_as_json( path ):
+def get_file_as_json( path: str ) -> Any:
+    """
+    Read a JSON file and return its parsed contents.
+    
+    Requires:
+        - path is a valid file path
+        - File exists and contains valid JSON
+        
+    Ensures:
+        - Returns the parsed JSON content as Python objects
+        
+    Args:
+        path: The path to the JSON file to read
+        
+    Returns:
+        The parsed JSON content (could be dict, list, etc.)
+        
+    Raises:
+        FileNotFoundError: If the file does not exist
+        json.JSONDecodeError: If the file contains invalid JSON
+    """
     with open( path, "r" ) as file:
         return json.load( file )
 
@@ -222,24 +353,71 @@ def write_string_to_file( path, string ):
     with open( path, "w" ) as outfile:
         outfile.write( string )
 
-def print_banner( msg, expletive=False, chunk="¡@#!-$?%^_¿", end="\n\n", prepend_nl=False, flex=False ):
+import subprocess
 
+def print_simple_file_list( path ) :
     """
-    Prints message to console w/ 'header'/horizontal lines as brackets
+    Prints a detailed file listing for the specified directory.
+    
+    Preconditions:
+        - path must be a string representing a file system path
+        - path must exist in the file system
+        - Current user must have read permissions for the specified path
+    
+    Postconditions:
+        - Detailed file listing is printed to stdout
+        - Each line of output is printed separately
+        - Original path remains unchanged
+    
+    Parameters:
+        path (str): The directory path to list files from
+    
+    Raises:
+        FileNotFoundError: When path does not exist
+        subprocess.CalledProcessError: When shell command execution fails
+    """
+    # Verify that the path exists
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"The path '{path}' does not exist.")
 
-    :param expletive: Do you want a fancy error string, like in the cartoons?
+    # Construct the command
+    command = ['ls', '-alh', path]
 
-    :param chunk: Allows caller to use their own expletives string
+    try:
+        # Execute the command and capture the output
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        print_list( result.stdout.split( "\n" ) )
+    except subprocess.CalledProcessError as e:
+        # Handle errors in the execution of the command
+        raise subprocess.CalledProcessError(e.returncode, e.cmd, output=e.output, stderr=e.stderr)
+    
 
-    :param end: String representation of multiple or no newline characters, just like in print( "foo", end="\n\n" )
-
-    :param msg: What do you want to print to the console?
-
-    :param prepend_nl: Insert a NL char before printing the banner
-
-    :param flex: Adapt bar line length to the length of message? Defaults to False
-
-    :return: None, prints to console
+def print_banner(msg: str, expletive: bool = False, chunk: str = "¡@#!-$?%^_¿", 
+                end: str = "\n\n", prepend_nl: bool = False, flex: bool = False) -> None:
+    """
+    Print a message to console with decorative header/footer lines.
+    
+    Requires:
+        - msg is a string to display in the banner
+        - expletive is a boolean controlling display style
+        - chunk is a string used for decoration in expletive mode
+        
+    Ensures:
+        - Prints the message with decorative lines above and below
+        - Uses expletive decoration style if expletive=True
+        - Uses flexible width if flex=True
+        - Prepends a newline if prepend_nl=True
+        
+    Args:
+        msg: The message to print in the banner
+        expletive: Whether to use "cartoon-style" error decoration (default: False)
+        chunk: The string to use for expletive decoration (default: "¡@#!-$?%^_¿")
+        end: The string to print after the banner (default: "\n\n")
+        prepend_nl: Whether to print a newline before the banner (default: False)
+        flex: Whether to adapt line length to message length (default: False)
+        
+    Returns:
+        None, prints to console
     """
     if prepend_nl: print()
 
@@ -264,7 +442,6 @@ def print_banner( msg, expletive=False, chunk="¡@#!-$?%^_¿", end="\n\n", prepe
         bar_str = ""
         while len( bar_str ) < max_len:
             bar_str += "-"
-        # bar_str = "----------------------------------------------------------------------------------------------------"
 
     print( bar_str )
     if expletive:
@@ -275,66 +452,91 @@ def print_banner( msg, expletive=False, chunk="¡@#!-$?%^_¿", end="\n\n", prepe
         print( "-", msg )
     print( bar_str, end=end )
     
-def get_project_root():
-    
+def get_project_root() -> str:
     """
-    Returns the path to the root of the project.
+    Get the root directory path of the project.
     
-    If we're running in a docker container, we need to set the project root to the docker container's root. Otherwise,
-    we can just use the working directory specified in the environment variable.
-    :return:
+    Requires:
+        - None
+        
+    Ensures:
+        - Returns a valid directory path for the project root
+        - Uses environment variable if available
+        - Falls back to default path if needed
+        
+    Returns:
+        The absolute path to the project root directory
+        
+    Notes:
+        If running in a Docker container, returns the container's root path.
+        Otherwise, uses the GENIE_IN_THE_BOX_ROOT environment variable.
     """
-    
     if debug:
-        print( "GENIE_IN_THE_BOX_ROOT [{}]".format( os.getenv( "GENIE_IN_THE_BOX_ROOT" ) ) )
-        print( "          os.getcwd() [{}]".format( os.getcwd() ) )
+        print(f"GENIE_IN_THE_BOX_ROOT [{os.getenv('GENIE_IN_THE_BOX_ROOT')}]")
+        print(f"          os.getcwd() [{os.getcwd()}]")
         
     if "GENIE_IN_THE_BOX_ROOT" in os.environ:
-        return os.environ[ "GENIE_IN_THE_BOX_ROOT" ]
+        return os.environ["GENIE_IN_THE_BOX_ROOT"]
     else:
-        return "/var/genie-in-the-box"
+        path = "/var/genie-in-the-box"
+        print(f"WARNING: GENIE_IN_THE_BOX_ROOT not found in environment variables. Returning default path '{path}'")
+        return path
 
-# do the same as do the same as get_project_root() but for the GENIE_IN_THE_BOX_TGI_SERVER
-def get_tgi_server_url_for_this_context( default_url=None ):
-    
+def get_api_key( key_name: str, project_root: str = None ) -> Optional[str]:
     """
-    Get the TGI server URL for one of two execution contexts: docker or local
-
-    Args:
-        default_url (str, optional): The default URL to return if the TGI server URL is not found in the environment variables. Defaults to None.
-
-    Returns:
-        str: The TGI server URL.
-
-    Raises:
-        ValueError: If the TGI server URL is not found in the environment variables and no default URL is provided.
-    """
+    Get an API key from the configuration directory.
     
-    if debug: print( "GENIE_IN_THE_BOX_TGI_SERVER [{}]".format( os.getenv( "GENIE_IN_THE_BOX_TGI_SERVER" ) ) )
-    
-    if "GENIE_IN_THE_BOX_TGI_SERVER" in os.environ:
-        return os.environ[ "GENIE_IN_THE_BOX_TGI_SERVER" ]
-    else:
-        if default_url is None:
-            raise ValueError( "GENIE_IN_THE_BOX_TGI_SERVER not found in environment variables and default_url NOT provided" )
+    Requires:
+        - key_name is a non-empty string
+        - project_root is a valid directory path or None
         
-        return default_url
-
-# get api key
-def get_api_key( key_name, project_root=get_project_root() ):
-    
+    Ensures:
+        - Returns the API key as a string if found
+        - Returns None if the key file doesn't exist
+        - Prints error message if key isn't found
+        
+    Args:
+        key_name: The name of the API key to fetch
+        project_root: The project root directory (default: result of get_project_root())
+        
+    Returns:
+        The API key as a string, or None if not found
+    """
+    if project_root is None:
+        project_root = get_project_root()
+        
     path = project_root + f"/src/conf/keys/{key_name}"
     if debug: print( f"Fetching [{key_name}] from [{path}]..." )
     
-    # test path to see if key exists
+    # Test path to see if key exists
     if not os.path.exists( path ):
         print_banner( f"ERROR: Key [{key_name}] not found at [{path}]" )
         return None
     
     return get_file_as_string( path )
 
-def generate_domain_names( count=10, remove_dots=False, debug=False ):
+def generate_domain_names( count: int = 10, remove_dots: bool = False, debug: bool = False ) -> List[str]:
+    """
+    Generate a list of random domain names.
     
+    Requires:
+        - count is a positive integer
+        - remove_dots is a boolean
+        
+    Ensures:
+        - Returns a list of 'count' random domain names
+        - Domain names follow pattern: [subdomain][adjective][noun][tld]
+        - Dots are removed from domains if remove_dots is True
+        - Domains are printed to console if debug is True
+        
+    Args:
+        count: Number of domain names to generate (default: 10)
+        remove_dots: Whether to remove dots from domains (default: False)
+        debug: Whether to print domains to console (default: False)
+        
+    Returns:
+        A list of randomly generated domain names
+    """
     adjectives        = [ "amazing", "beautiful", "exciting", "fantastic", "hilarious", "incredible", "jubilant", "magnificent", "remarkable", "spectacular", "wonderful" ]
     nouns             = [ "apple", "banana", "cherry", "dolphin", "elephant", "giraffe", "hamburger", "iceberg", "jellyfish", "kangaroo", "lemur", "mango", "november", "octopus", "penguin", "quartz", "rainbow", "strawberry", "tornado", "unicorn", "volcano", "walrus", "xylophone", "yogurt", "zebra" ]
     
@@ -374,32 +576,86 @@ def generate_domain_names( count=10, remove_dots=False, debug=False ):
 #
 #     return search_terms
 
-def is_jsonl( string ):
+def is_jsonl( string: str ) -> bool:
+    """
+    Check if a string is a valid JSONL (JSON Lines) format.
     
+    Requires:
+        - string is a string value to check
+        
+    Ensures:
+        - Returns True if each line in the string is valid JSON
+        - Returns False if any line fails to parse as JSON
+        
+    Args:
+        string: The string to check for JSONL format
+        
+    Returns:
+        True if the string is valid JSONL, False otherwise
+    """
     try:
         # Split the string into lines
         lines = string.splitlines()
 
         # Iterate over each line and validate as JSON
         for line in lines:
-            json.loads(line)
+            json.loads( line )
 
         return True
     
     except json.JSONDecodeError:
         return False
 
-# A function that truncates a string if it exceeds a maximum length parameter. If it does add an ellipsis to the end.
-def truncate_string( string, max_len=64 ):
+def truncate_string( string: str, max_len: int = 64 ) -> str:
+    """
+    Truncate a string if it exceeds a maximum length and add ellipsis.
     
+    Requires:
+        - string is a string to potentially truncate
+        - max_len is a positive integer
+        
+    Ensures:
+        - Returns the original string if its length is <= max_len
+        - Returns a truncated string with ellipsis if length > max_len
+        - Total length of returned string will be max_len + 3 (for "...")
+        
+    Args:
+        string: The string to truncate if needed
+        max_len: Maximum length before truncation (default: 64)
+        
+    Returns:
+        The original or truncated string
+    """
     if len( string ) > max_len:
         string = string[ :max_len ] + "..."
         
     return string
 
 
-def find_files_with_prefix_and_suffix( directory, prefix, suffix ):
+def find_files_with_prefix_and_suffix( directory: str, prefix: str, suffix: str ) -> List[str]:
+    """
+    Find files in a directory that match a specific prefix and suffix.
     
+    Requires:
+        - directory is a valid directory path
+        - prefix and suffix are strings to match against filenames
+        
+    Ensures:
+        - Returns a list of full file paths that match both prefix and suffix
+        - Searches only in the specified directory (not recursively)
+        
+    Args:
+        directory: The directory to search in
+        prefix: The filename prefix to match
+        suffix: The filename suffix to match
+        
+    Returns:
+        A list of matching file paths
+        
+    Raises:
+        FileNotFoundError: If the directory does not exist
+        PermissionError: If the directory cannot be accessed
+    """
     matching_files = [ ]
     for file_name in os.listdir( directory ):
         if file_name.startswith( prefix ) and file_name.endswith( suffix ):
@@ -408,63 +664,125 @@ def find_files_with_prefix_and_suffix( directory, prefix, suffix ):
             
     return matching_files
 
-def get_files_as_strings( file_paths ):
+def get_files_as_strings( file_paths: List[str] ) -> List[str]:
+    """
+    Read multiple files and return their contents as strings.
     
+    Requires:
+        - file_paths is a list of valid file paths
+        - All files exist and are readable
+        
+    Ensures:
+        - Returns a list of file contents as strings
+        - Order of contents matches order of file_paths
+        
+    Args:
+        file_paths: A list of file paths to read
+        
+    Returns:
+        A list of file contents as strings
+        
+    Raises:
+        FileNotFoundError: If any file does not exist
+        PermissionError: If any file cannot be read
+    """
     contents = [ ]
     
     for file_path in file_paths:
-        
         contents.append( get_file_as_string( file_path ) )
         
     return contents
 
-# Add a function that takes a list and print it to the consul one line of time
-def print_list( list_to_print, end="\n" ):
+def print_list( list_to_print: List[Any], end: str = "\n" ) -> None:
+    """
+    Print each item in a list to the console.
     
+    Requires:
+        - list_to_print is a list of items that can be converted to strings
+        
+    Ensures:
+        - Prints each item in the list to the console
+        - Uses the specified end character after each item
+        
+    Args:
+        list_to_print: The list of items to print
+        end: The string to print after each item (default: newline)
+    """
     for item in list_to_print:
         print( item, end=end )
     
     
-def print_stack_trace( exception, explanation="Unknown reason", caller="Unknown caller", prepend_nl=True ):
+def print_stack_trace( exception: Exception, explanation: str = "Unknown reason", 
+                       caller: str = "Unknown caller", prepend_nl: bool = True ) -> None:
+    """
+    Print a formatted stack trace for an exception.
     
+    Requires:
+        - exception is an Exception object with a traceback
+        - explanation and caller are strings describing the error context
+        
+    Ensures:
+        - Prints a banner with error message
+        - Prints the full stack trace from the exception
+        
+    Args:
+        exception: The exception to print stack trace for
+        explanation: Description of what went wrong (default: "Unknown reason")
+        caller: Name of the function/method where exception occurred (default: "Unknown caller")
+        prepend_nl: Whether to add a newline before the banner (default: True)
+    """
     msg = f"ERROR: {explanation} in {caller}"
     print_banner( msg, prepend_nl=prepend_nl, expletive=True )
     stack_trace = traceback.format_tb( exception.__traceback__ )
     for line in stack_trace: print( line )
     
-def sanity_check_file_path( file_path, silent=False ):
-
+def sanity_check_file_path( file_path: str, silent: bool = False ) -> None:
     """
-    Check to see if file exists
-
-    :param file_path: path to be checked
-
-    :param silent: Suppresses any output, defaults to false
-
-    :return: None, throws assertion error if not
+    Check if a file exists and raise an assertion error if not.
+    
+    Requires:
+        - file_path is a string path to check
+        
+    Ensures:
+        - Raises AssertionError if the file doesn't exist
+        - Prints success message if file exists and silent is False
+        
+    Args:
+        file_path: The path to check
+        silent: Whether to suppress output messages (default: False)
+        
+    Raises:
+        AssertionError: If the file does not exist
     """
-
-    fail_msg = "That file doesn't exist: [{0}] Please correct path to file".format( file_path )
+    fail_msg = f"That file doesn't exist: [{file_path}] Please correct path to file"
     assert os.path.isfile( file_path ), fail_msg
 
     if not silent: print( f"File exists! [{file_path}]" )
     
-def get_name_value_pairs( arg_list, decode_spaces=True ):
-    
+def get_name_value_pairs( arg_list: List[str], decode_spaces: bool = True ) -> Dict[str, str]:
     """
-    Parses a list of strings -- name=value -- into dictionary format { "name":"value" }
-
-    NOTE: Only the 1st element, the name of the class called, is exempt from parsing
-
-    :raises: ValueError if any but the 1st element is not of the format: 'name=value'
-
-    :param arg_list: Space delimited input from CLI
+    Parse a list of strings in "name=value" format into a dictionary.
     
-    :param decode_spaces: Decode spaces in value? Defaults to True
-
-    :return: dictionary of name=value pairs
+    Requires:
+        - arg_list is a list of strings
+        
+    Ensures:
+        - Returns a dictionary mapping names to values
+        - Skips the first element in arg_list (assumed to be script name)
+        - Skips elements that don't contain "="
+        - Replaces "+" with spaces in values if decode_spaces is True
+        
+    Args:
+        arg_list: Space delimited input from CLI
+        decode_spaces: Whether to replace "+" with spaces in values (default: True)
+        
+    Returns:
+        A dictionary of name-value pairs
+        
+    Notes:
+        Only elements after the first (index 0) are processed. The first element
+        is assumed to be the name of the script being called.
     """
-
     name_value_pairs = { }
 
     # Quick sanity check. Do we have anything to iterate?
@@ -473,11 +791,9 @@ def get_name_value_pairs( arg_list, decode_spaces=True ):
         return { }
     
     for i, arg in enumerate( arg_list ):
-
-        print( "[{0}]th arg = [{1}]... ".format( i, arg_list[ i ] ), end="" )
+        print( f"[{i}]th arg = [{arg_list[i]}]... ", end="" )
 
         if "=" in arg:
-            
             pair  = arg.split( "=" )
             value = pair[ 1 ].replace( "+", " " ) if decode_spaces else pair[ 1 ]
             name_value_pairs[ pair[ 0 ] ] = value
@@ -489,16 +805,17 @@ def get_name_value_pairs( arg_list, decode_spaces=True ):
     print( "Name value dictionary pairs:", end="\n\n" )
 
     # get max width for right justification
-    max_len = max( [ len( key ) for key in name_value_pairs.keys() ] ) + 1
+    if name_value_pairs:
+        max_len = max( [ len( key ) for key in name_value_pairs.keys() ] ) + 1
 
-    # iterate keys and print values w/ this format:
-    #       [foo] = [bar]
-    # [flibberty] = [jibbet]
-    names = list( name_value_pairs.keys() )
-    names.sort()
+        # iterate keys and print values w/ this format:
+        #       [foo] = [bar]
+        # [flibberty] = [jibbet]
+        names = list( name_value_pairs.keys() )
+        names.sort()
 
-    for name in names:
-        print( f"[{(name.rjust( max_len, ' ' ))}] = [{name_value_pairs[ name ]}]" )
+        for name in names:
+            print( f"[{(name.rjust( max_len, ' ' ))}] = [{name_value_pairs[ name ]}]" )
     print()
 
     return name_value_pairs
@@ -509,7 +826,7 @@ if __name__ == "__main__":
     init_dict = get_name_value_pairs( sys.argv )
     
     # print( get_current_datetime() )
-    # print( get_tgi_server_url_for_this_context())
+    # print( get_local_inference_url_for_this_context())
     # print( get_api_key( "eleven11" ) )
     print( get_api_key( "openai" ) )
     # print( get_api_key( "openai", project_root="/Users/rruiz/Projects/projects-sshfs/genie-in-the-box" ) )

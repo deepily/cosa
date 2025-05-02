@@ -4,7 +4,7 @@ from cosa.utils.util_stopwatch import Stopwatch
 from cosa.agents.agent_base import AgentBase
 from cosa.memory.input_and_output_table import InputAndOutputTable
 
-from cosa.training.xml_fine_tuning_prompt_generator import XmlFineTuningPromptGenerator
+from cosa.training.xml_coordinator import XmlCoordinator
 
 class FunctionMappingSearch( AgentBase ):
     
@@ -44,14 +44,14 @@ class FunctionMappingSearch( AgentBase ):
     
 def iterate_with_runtime_stats( questions ):
     
-    prompt_generator = XmlFineTuningPromptGenerator( init_prompt_templates=False, debug=True )
+    prompt_generator = XmlCoordinator( init_prompt_templates=False, debug=True )
     interjections    = prompt_generator.get_interjections()
     salutations      = prompt_generator.get_salutations()
     responses        = []
     counter          = 0
     
     timer = Stopwatch( msg=f"Testing function mapping for {len( questions )} questions..." )
-    for question in questions:#[ 0:2 ]:
+    for question in questions: #[ 0:2 ]:
         
         counter += 1
         _, question = prompt_generator.insert_interjection( question, interjections )
@@ -87,7 +87,7 @@ if __name__ == "__main__":
         # "What's the weather forecast for today?", "What's the weather forecast for tomorrow?", "What's the weather forecast for next week?",
         "Do you remember if we talked about the weather yesterday?", "Did we talk about the weather last week?", "Do you remember the last time we talked about the weather?"
     ]
-    prompt_generator = XmlFineTuningPromptGenerator( init_prompt_templates=False, debug=True )
+    prompt_generator = XmlCoordinator( init_prompt_templates=False, debug=True )
     # interjections    = prompt_generator.get_interjections()
     # salutations      = prompt_generator.get_salutations()
     

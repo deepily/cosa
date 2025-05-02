@@ -7,11 +7,11 @@ import openai
 import cosa.utils.util_stopwatch as sw
 import cosa.utils.util as du
 import cosa.utils.util_xml as du_xml
-import cosa.app.util_llm_client  as llm_client
+# import cosa.app.util_llm_client  as llm_client
+
+from cosa.agents.llm_v0 import Llm_v0
 
 from cosa.app.configuration_manager import ConfigurationManager
-
-# from cosa.training.xml_fine_tuning_prompt_generator import XmlFineTuningPromptGenerator
 
 # Currently, all transcription mode descriptors are three words long.
 # This will become important or more important in the future?
@@ -49,12 +49,12 @@ modes_to_methods_dict = {
 class MultiModalMunger:
 
     def __init__( self, raw_transcription, prefix="", prompt_key="generic", config_path="conf/modes-vox.json",
-                  use_string_matching=True, use_ai_matching=True, debug=False, verbose=False, last_response=None,
-                  cmd_llm_name=None, cmd_llm_in_memory=None, cmd_llm_tokenizer=None, cmd_prompt_template=None, cmd_llm_device=None, ):
+                  use_string_matching=True, use_ai_matching=True, debug=False, verbose=False, last_response=None, config_mgr=None ):
+                  # cmd_llm_name=None, cmd_llm_in_memory=None, cmd_llm_tokenizer=None, cmd_prompt_template=None, cmd_llm_device=None, ):
 
         self.debug                  = debug
         self.verbose                = verbose
-        self.config_mgr             = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        self.config_mgr             = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" ) if config_mgr is None else config_mgr
         self.config_path            = config_path
         self.raw_transcription      = raw_transcription
         self.prefix                 = prefix
@@ -70,11 +70,11 @@ class MultiModalMunger:
         self.command_strings        = self._get_command_strings()
         self.class_dictionary       = self._get_class_dictionary()
         
-        self.cmd_llm_tokenizer      = cmd_llm_tokenizer
-        self.cmd_llm_in_memory      = cmd_llm_in_memory
-        self.cmd_llm_name           = cmd_llm_name
-        self.cmd_llm_device         = cmd_llm_device
-        self.cmd_prompt_template    = cmd_prompt_template
+        # self.cmd_llm_tokenizer      = cmd_llm_tokenizer
+        # self.cmd_llm_in_memory      = cmd_llm_in_memory
+        # self.cmd_llm_name           = cmd_llm_name
+        # self.cmd_llm_device         = cmd_llm_device
+        # self.cmd_prompt_template    = cmd_prompt_template
         
         print( "prompt_key:", prompt_key )
         if self.debug and self.verbose:
@@ -519,7 +519,7 @@ class MultiModalMunger:
     #     # proofread_code = self._extract_string_from_backticked_llm_output( proofread_code, tag_name="python" )
     #     # print( "POST:", proofread_code )
     #
-    #     tgi_url = self.config_mgr.get( "tgi_server_codegen_url" )
+    #     tgi_url = self.config_mgr.get( "deepily_inference_chat_url" )
     #     du.print_banner( "tgi_url: [{}]".format( tgi_url ) )
     #
     #     python_prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/python-proofreading-template.txt" )
@@ -661,41 +661,25 @@ class MultiModalMunger:
     def _get_ai_command( self, transcription ):
         
         # Add runtime switch or configuration to allow for TGI service to be used also.
-        command_dict = self._get_command_dict( match_type="ai_matching", confidence=-1.0 )
+        command_dict    = self._get_command_dict( match_type="ai_matching", confidence=-1.0 )
         
-        response = llm_client.query_llm_in_memory(
-            self.cmd_llm_in_memory,
-            self.cmd_llm_tokenizer,
-            self.cmd_prompt_template.format( voice_command=transcription ),
-            model_name=self.cmd_llm_name,
-            device=self.cmd_llm_device
-        )
+        template_path   = du.get_project_root() + self.config_mgr.get( "vox_command_prompt_path_wo_root" )
+        prompt_template = du.get_file_as_string( template_path )
+        prompt          = prompt_template.format( voice_command=transcription )
+        
+        model         = self.config_mgr.get( "router_and_vox_command_model" )
+        # url           = self.config_mgr.get( "router_and_/vox_command_url" )
+        is_completion = self.config_mgr.get( "router_and_vox_command_is_completion", return_type="boolean", default=False )
+        
+        llm      = Llm_v0( model=model, is_completion=is_completion, debug=self.debug, verbose=self.verbose )
+        response = llm.query_llm( prompt=prompt )
+        
         print( f"LLM response: [{response}]" )
         # Parse results
-        command_dict[ "command" ] = du_xml.get_value_by_xml_tag_name( response, "command" )
+        command_dict[ "command" ] =   du_xml.get_value_by_xml_tag_name( response, "command" )
         command_dict[ "args"    ] = [ du_xml.get_value_by_xml_tag_name( response, "args" ) ]
         
         return command_dict
-    
-    # def _log_odds_to_probabilities( self, log_odds ):
-    #
-    #     # Convert dictionary to a sorted list of tuples ( class_name, log_odds_value )
-    #     log_odds = sorted( log_odds.items(), key=lambda tup: tup[ 1 ], reverse=True )
-    #
-    #     # Create list comprehension & get the length of the longest class name allows us to right-justify the class names when printing.
-    #     max_class_len = max( [ len( self.class_dictionary[ item[ 0 ].strip() ] ) for item in log_odds ] )
-    #
-    #     probabilities = [ ]
-    #
-    #     for item in log_odds:
-    #
-    #         class_name = self.class_dictionary[ item[ 0 ].strip() ]
-    #         percent    = np.exp( float( item[ 1 ] ) ) * 100.0
-    #         probabilities.append( ( class_name, percent ) )
-    #
-    #         print( "{}: {:2.4f}%".format( class_name.rjust( max_class_len, ' ' ), percent ) )
-    #
-    #     return probabilities
     
     def extract_args( self, raw_text, model="NO_MODEL_SPECIFIED" ):
         

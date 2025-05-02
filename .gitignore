@@ -5,3 +5,9 @@
 
 # Skip compilation detritus
 __pycache__
+
+# Skip virtual environment
+.venv
+
+# Skip IDE files
+.idea/

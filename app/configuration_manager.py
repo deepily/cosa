@@ -1,6 +1,7 @@
 import configparser
 import os
 import json
+import ast
 
 import cosa.utils.util as du
 
@@ -395,9 +396,20 @@ class ConfigurationManager():
 
         :return: True | False
         """
-
+        print( "DEPRECATED: Use config_mgr.exists( key ) instead" )
         return config_key in self.config.options( self.config_block_id )
 
+    def exists( self, config_key ):
+        """
+        Checks to see if config_key exists in current config_block_id
+
+        Using this in conjunction w/ the get_value( "foo" ) method allows us to create optional key=value configuration pairs
+
+        :param config_key: The 'key' part of the configuration 'key=value' pair found in this sessions config_block_id
+
+        :return: True | False
+        """
+        return config_key in self.config.options( self.config_block_id )
 
     def print_configuration( self, brackets=True, include_sections=True, prefixes=None ):
 
@@ -525,7 +537,7 @@ class ConfigurationManager():
         :return: Typed representation of the 'value' half of the 'key=value' pair
         """
     
-        if self.in_config( key ):
+        if self.exists( key ):
     
             # Get the value
             value = self.config.get( self.config_block_id, key )
@@ -583,6 +595,8 @@ class ConfigurationManager():
             return value.split( ", " )
         elif return_type == "json":
             return json.loads( value )
+        elif return_type == "dict":
+            return ast.literal_eval( value )
         else:
             raise ValueError( f"Return type [{return_type}] is invalid.  Accepts: 'boolean', 'float', 'int', 'string', 'list-string' and 'json'".format( return_type ) )
         
