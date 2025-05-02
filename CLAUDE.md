@@ -6,6 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - This COSA repo is a git subproject/submodule contained within the parent "genie-in-the-box" project
 - When working within the COSA directory, only manage this repository (not the parent project)
 - Do not stage, commit, or push changes to the parent repository from here
+- NEVER commit or push changes automatically - ALWAYS wait for user review and explicit approval before committing
 
 ## Commands
 - Run tests: `pytest tests/`

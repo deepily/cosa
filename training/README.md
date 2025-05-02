@@ -1,5 +1,13 @@
 # COSA PEFT Trainer
 
+## What's Easy PEFT?
+
+*A very, very long lever*
+
+<a href="../docs/images/bender-is-broken.png" target="_blank">
+  <img src="../docs/images/bender-is-broken.png" alt="PEFT diagram" width="1024px">
+</a>
+
 This directory contains tools for Parameter-Efficient Fine-Tuning (PEFT) of large language models using LoRA (Low-Rank Adaptation).
 
 ## Overview
@@ -116,7 +124,9 @@ The full training pipeline consists of:
    - Tests model performance after quantization
    - Uses vLLM server for inference
 
-## Example
+## Examples
+
+### Basic Usage
 
 ```bash
 # Basic example (no nuclear kill option)
@@ -128,7 +138,33 @@ python peft_trainer.py \
   --post-training-stats \
   --post-quantization-stats \
   --validation-sample-size 100
+```
 
+### Advanced Usage with GPU Memory Management
+
+When using the `--nuclear-kill-button` flag for advanced GPU memory management, the trainer must be run with sudo. **It is critical to preserve environment variables and your PATH** when using sudo, otherwise the training will fail:
+
+```bash
+# Real-world example using the nuclear-kill-button for GPU memory management
+sudo --preserve-env=HF_HOME,NCCL_P2P_DISABLE,NCCL_IB_DISABLE,GENIE_IN_THE_BOX_ROOT,GIB_CONFIG_MGR_CLI_ARGS,DEEPILY_PROJECTS_DIR \
+  env "PATH=$PATH" \
+  python -m cosa.training.peft_trainer \
+    --model mistralai/Ministral-8B-Instruct-2410 \
+    --model-name Ministral-8B-Instruct-2410 \
+    --test-train-path $GENIE_IN_THE_BOX_ROOT/src/ephemera/prompts/data \
+    --lora-dir $HF_HOME/Ministral-8B-Instruct-2410.lora \
+    --pre-training-stats \
+    --post-training-stats \
+    --post-quantization-stats \
+    --validation-sample-size 1000 \
+    --nuclear-kill-button
+```
+
+> **Note:** The `--preserve-env` and `env "PATH=$PATH"` arguments are essential when using sudo, as they ensure that all necessary environment variables and paths are available to the trainer process running with elevated privileges.
+
+### Alternative with Simpler Nuclear Option
+
+```bash
 # Example with nuclear kill button (requires sudo)
 sudo python peft_trainer.py \
   --model "mistralai/Ministral-8B-Instruct-2410" \

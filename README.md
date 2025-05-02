@@ -2,6 +2,10 @@
 
 CoSA is a modular framework for building, training, and deploying specialized LLM-powered agents. It provides the infrastructure for Genie-in-the-Box, a versatile conversational AI system.
 
+<a href="docs/images/5-microphone-genie-robots.png" target="_blank">
+  <img src="docs/images/5-microphone-genie-robots.png" alt="Genie robots with microphones" width="1024px">
+</a>
+
 ## Overview
 
 CoSA implements a collection of targeted agents, each specialized for specific tasks:
@@ -45,6 +49,8 @@ CoSA implements a collection of targeted agents, each specialized for specific t
 - Transformers library
 - Hugging Face account (for model access)
 
+For a complete list of dependencies, see the [requirements.txt](./requirements.txt) file.
+
 ### Installation
 
 ```bash
@@ -64,7 +70,7 @@ CoSA is designed to be used as a submodule/subtree within the parent "genie-in-t
 
 ## LLM Model Training
 
-CoSA includes tools for fine-tuning and deploying LLM models:
+CoSA includes tools for fine-tuning and deploying LLM models using Parameter-Efficient Fine-Tuning (PEFT):
 
 ```bash
 # Example: Fine-tune a model using PEFT
@@ -75,6 +81,8 @@ python -m cosa.training.peft_trainer \
   --lora-dir "/path/to/output/lora" \
   --post-training-stats
 ```
+
+For detailed instructions on using the PEFT trainer, including all available options, data format requirements, and advanced features like GPU management, please refer to the [PEFT Trainer README](./training/README.md).
 
 ## Development Guidelines
 
