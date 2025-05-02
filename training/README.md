@@ -1,8 +1,8 @@
-# COSA PEFT Trainer
+# COSA's Easy PEFT Trainer
 
 ## What's Easy PEFT?
 
-*A very, very long lever*
+*A very long lever*
 
 <a href="../docs/images/bender-is-broken.png" target="_blank">
   <img src="../docs/images/bender-is-broken.png" alt="PEFT diagram" width="1024px">
