@@ -8,3 +8,6 @@ __pycache__
 
 # Skip virtual environment
 .venv
+
+# Skip IDE files
+.idea/
