@@ -6,10 +6,11 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from pydantic_ai import Agent
 
 import cosa.utils.util as du
-from cosa.utils.util_stopwatch import Stopwatch
+# from app import config_mgr
+# from cosa.utils.util_stopwatch import Stopwatch
 
 from cosa.agents.v010.llm_client import LlmClient
-from cosa.agents.v010.token_counter import TokenCounter
+# from cosa.agents.v010.token_counter import TokenCounter
 from cosa.app.configuration_manager import ConfigurationManager
 
 
@@ -48,16 +49,18 @@ class LlmClientFactory:
             cls._instance._initialized = False
         return cls._instance
     
-    def __init__( self ):
+    def __init__( self, debug: bool=False, verbose: bool=False ):
         # Only initialize once
         if self._initialized:
             return
         
         # Instantiate the global config manager
-        self.config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        self.config_mgr   = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
         self._initialized = True
+        self.debug        = debug
+        self.verbose      = verbose
     
-    def get_client( self, model_descriptor: str, debug: bool=False, verbose: bool=False ) -> Union[LlmClient, 'AgentWrapper']:
+    def get_client( self, model_config_key: str, debug: bool=None, verbose: bool=None ) -> Union[LlmClient, 'AgentWrapper']:
         """
         Get an LLM client for the given model descriptor.
         
@@ -67,8 +70,8 @@ class LlmClientFactory:
         and creates a vendor-specific client.
         
         Requires:
-            - model_descriptor: A string identifying the model, which can be either:
-                1. A configuration key (e.g., "deepily/ministral_8b_2410")
+            - model_config_key: A string identifying the model, which can be either:
+                1. A configuration key (e.g., "deepily/ministral_8b_2410_ft_lora")
                 2. A vendor prefixed model name (e.g., "openai:gpt-4", "groq:llama-3.1-8b-instant")
             - Valid API keys for the requested vendor if using cloud APIs
             
@@ -81,21 +84,25 @@ class LlmClientFactory:
             - ValueError if the vendor is not supported
             - Various API errors if authentication fails or the model is unavailable
         """
+        if debug   is not None: self.debug   = debug
+        if verbose is not None: self.verbose = verbose
         
         # test to see if the key exists
-        if not self.config_mgr.exists( model_descriptor ):
+        if self.debug: print( f"Checking if '{model_config_key}' exists in config_mgr..." )
+        
+        if not self.config_mgr.exists( model_config_key ):
             
-            print( f"Configuration key '{model_descriptor}' not found in config_mgr, getting vendor specific client...")
-            return self._get_vendor_specific_client( model_descriptor, debug, verbose )
+            print( f"Configuration key '{model_config_key}' not found in config_mgr, getting vendor specific client...")
+            return self._get_vendor_specific_client( model_config_key, debug, verbose )
         
         else:
             
-            model_spec   = self.config_mgr.get( model_descriptor, default=None )
-            model_params = self.config_mgr.get( f"{model_descriptor}_params", default="{}", return_type="dict" )
+            model_spec   = self.config_mgr.get( model_config_key, default=None )
+            model_params = self.config_mgr.get( f"{model_config_key}_params", default="{}", return_type="dict" )
             
             # model_tokenizer_map = self.config_mgr.get( "model_tokenizer_map", default="{}", return_type="json" )
             if debug:
-                du.print_banner( f"Model params for '{model_descriptor}':" )
+                du.print_banner( f"Model params for '{model_config_key}':" )
                 print( json.dumps( model_params, indent=4, sort_keys=True ) )
             
             default_prompt_format = self.config_mgr.get( "prompt_format_default", default="json_message" )
@@ -138,7 +145,8 @@ class LlmClientFactory:
         "anthropic" : "https://api.anthropic.com/v1",
         "google-gla": "https://generativelanguage.googleapis.com/v1",
         "vllm"      : "http://192.168.1.21:3001/v1",
-        "deepily"   : "http://192.168.1.21:3001/v1"
+        "deepily"   : "http://192.168.1.21:3001/v1",
+        "mistralai" : "https://api.mistral.ai/v1"
     }
     
     # API key environment variables
@@ -148,7 +156,8 @@ class LlmClientFactory:
         "anthropic" : "ANTHROPIC_API_KEY",
         "google-gla": "GOOGLE_API_KEY",
         "vllm"      : None,  # Local server, no key needed
-        "deepily"   : None  # Local server, no key needed
+        "deepily"   : None,  # Local server, no key needed
+        "mistralai" : "MISTRAL_API_KEY"
     }
     
     # Default parameters for LlmClient
@@ -156,12 +165,6 @@ class LlmClientFactory:
         "temperature": 0.7,
         "max_tokens" : 1024
     }
-    #
-    # # Generation parameters for Agent (pydantic-ai needs different params than OpenAI)
-    # AGENT_GENERATION_PARAMS = {
-    #     # Empty by default - the library has its own defaults
-    # }
-    #
     # Comprehensive vendor configuration for the v2 method
     VENDOR_CONFIG: Dict[str, Dict[str, Any]] = {
         "openai"    : {
@@ -184,6 +187,12 @@ class LlmClientFactory:
             "env_var"     : "GEMINI_API_KEY",
             "key_name"    : "gemini",
             "agent_prefix": "google-gla:",
+        },
+        "mistralai" : {
+            "env_var"       : "MISTRAL_API_KEY",
+            "key_name"      : "mistral",
+            "agent_prefix"  : "openai:",  # Mistral uses OpenAI-compatible API
+            "set_openai_env": True,  # Also set OPENAI_API_KEY for compatibility
         },
         "vllm"      : {
             "client_class": "LlmClient",  # Use LlmClient instead of Agent
@@ -275,7 +284,7 @@ class LlmClientFactory:
             - model_descriptor: A non-empty string in one of the following formats:
                 1. "vendor:model-name" (e.g., "openai:gpt-4", "groq:llama-3.1-8b-instant")
                 2. "vendor/model-name" (e.g., "Groq/llama-3.1-8b-instant")
-                3. Special format for Deepily models (e.g., "deepily/ministral_8b_2410")
+                3. Special format for Deepily models (e.g., "deepily/ministral_8b_2410_ft_lora")
                 4. Any other model name (will be assumed to be a vLLM model)
                 
         Ensures:
@@ -393,40 +402,49 @@ if __name__ == "__main__":
     
     # List of all available models to test
     models = [
-        # Local models
-        LlmClient.PHI_4_14B,
-        LlmClient.DEEPILY_MINISTRAL_8B_2410,
-        # Cloud API models
-        LlmClient.GROQ_LLAMA_3_1_8B,
-        # LlmClient.OPENAI_GPT_01_MINI,
-        LlmClient.GOOGLE_GEMINI_1_5_FLASH,
-        LlmClient.ANTHROPIC_CLAUDE_SONNET_3_5
+        # # Local models
+        # LlmClient.PHI_4_14B,
+        LlmClient.MINISTRAL_8B_2410,
+        # # LlmClient.DEEPILY_MINISTRAL_8B_2410,
+        # # Cloud API models
+        # LlmClient.GROQ_LLAMA_3_1_8B,
+        # # LlmClient.OPENAI_GPT_01_MINI,
+        # LlmClient.GOOGLE_GEMINI_1_5_FLASH,
+        # LlmClient.ANTHROPIC_CLAUDE_SONNET_3_5
     ]
     
     # Iterate through all models
     for model in models:
         try:
             du.print_banner( f"Testing model: {model}..." )
-            
+
             # Get client using the appropriate method
             # timer = Stopwatch( msg=f"Calling {model}..." )
-            
+
             client   = factory.get_client( model, debug=True, verbose=False )
             response = client.run( prompt )
-            
+
             # Print results
             du.print_banner( f"Response from {model}" )
             print( response )
             # timer.print( use_millis=True )
-            
+
         except Exception as e:
-            
+
             du.print_banner("Error", expletive=True)
             print(f"Error with {model}: {str(e)}")
-            
+
             du.print_banner("Stack Trace", expletive=True)
             import traceback
             traceback.print_exc()
             print()
-            
+
     print( "All tests completed." )
+
+    # id = "mistralai/Ministral-8B-Instruct-2410"
+    # config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+    # val = config_mgr.get( id, default="Key not found!" )
+    # print( f"Value for '{id}': {val}" )
+    #
+    # for key in config_mgr.get_keys():
+    #     print( f"Key: {key} == {id}: {(key.lower() == id.lower())}" )

@@ -401,15 +401,30 @@ class ConfigurationManager():
 
     def exists( self, config_key ):
         """
-        Checks to see if config_key exists in current config_block_id
-
-        Using this in conjunction w/ the get_value( "foo" ) method allows us to create optional key=value configuration pairs
-
-        :param config_key: The 'key' part of the configuration 'key=value' pair found in this sessions config_block_id
-
-        :return: True | False
+        Checks if the specified configuration key exists in the current config block.
+        
+        Requires:
+            - config_key: A non-empty string representing the configuration key to check
+            - self.config_block_id: A valid configuration block ID
+            
+        Ensures:
+            - Returns True if the key exists in the current configuration block
+            - Returns False if the key does not exist
+            - Case-insensitive matching (forces config_key to lowercase)
+            
+        Notes:
+            - ConfigParser automatically lowercases all keys when reading configuration files
+            - Therefore this method must perform case-insensitive comparison
+            - Always converts the input config_key to lowercase before checking
+            
+        Args:
+            config_key: The configuration key to check for existence
+            
+        Returns:
+            Boolean indicating whether the key exists in the current configuration block
         """
-        return config_key in self.config.options( self.config_block_id )
+        # Key must be forced to lowercase because configparser lowercases all keys internally
+        return config_key.lower() in self.config.options( self.config_block_id )
 
     def print_configuration( self, brackets=True, include_sections=True, prefixes=None ):
 

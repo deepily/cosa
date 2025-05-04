@@ -401,8 +401,8 @@ if __name__ == "__main__":
     
     # Example formatting for different models
     models = [
-        "deepily/ministral_8b_2410",
-        "deepily/phi_4_14b",
+        "deepily/ministral_8b_2410_ft_lora",
+        "kaitchup/phi_4_14b",
         "groq_llama_3_1_8b",
         "openai:gpt-4"
     ]
