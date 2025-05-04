@@ -90,6 +90,9 @@ Please refer to [CLAUDE.md](./CLAUDE.md) for detailed code style and development
 
 ## Recent and Upcoming Work
 
+### Current Version
+- **Version 0.0.2**: We are currently working on version 0.0.2, which includes refactoring and cleanup efforts.
+
 ### Recently Completed
 - **Modular LLM Client Architecture (v1)**: MVP implementation of a vendor-agnostic LLM client system
   - Support for multiple providers (OpenAI, Groq, Anthropic/Claude, Google/Gemini)
