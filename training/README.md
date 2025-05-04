@@ -1,5 +1,10 @@
 # COSA's Easy PEFT Trainer
 
+## TODO
+1. Remove the in-memory validation method and replace with the vLLM Calls we are already using for the other steps in the pipeline
+2. Finish the v001 implementation of the LLM object so that we can clean up
+3. The labyrinth based on runtime switch within the validation object
+
 ## What's Easy PEFT?
 
 *A very long lever*

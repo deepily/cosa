@@ -29,7 +29,8 @@ from cosa.training.conf import load_model_config
 import cosa.utils.util as du
 import cosa.utils.util_pytorch as dupt
 
-from cosa.agents.v000.llm_v0 import Llm_v0
+# from cosa.agents.v000.llm_v0 import Llm_v0
+import cosa.agents.v010.llm_client as llm_v010
 from cosa.training.quantizer import Quantizer
 from cosa.utils.util_stopwatch import Stopwatch
 
@@ -370,8 +371,8 @@ class PeftTrainer:
         return token_stats, word_stats
     
     def fine_tune( self, batch_size=8, gradient_accumulation_steps=1, logging_steps=0.05, eval_steps=0.20,
-                   sample_size=1.0, device_map="auto", output_dir="./results"
-                   ):
+    sample_size=1.0, device_map="auto", output_dir="./results"
+    ):
         """
         Fine-tunes the model using PEFT (Parameter-Efficient Fine-Tuning) techniques.
         
@@ -567,96 +568,12 @@ class PeftTrainer:
         self.model = PeftModel.from_pretrained( self.model, adapter_path )
         print( f"Loading adapter from {adapter_path}... Done!" )
     
-    def run_validation_in_memory( self, banner_prefix="",
-                                  switch="in_memory", adapter_path=None, path_prefix=du.get_project_root(),
-                                  device_map={ "": 0 },
-                                  validation_sample_size=100, debug=None, verbose=None
-                                  ):
-        """
-        Runs validation on the model with the specified adapter using in-memory inference.
-        
-        Preconditions:
-        - A validation dataset must be available at f"{self.test_train_dir}/voice-commands-xml-validate.jsonl".
-        - The model and tokenizer must be available or loadable.
-        - If adapter_path is provided, it must be a valid path to a saved PEFT adapter.
-        
-        Postconditions:
-        - The model is loaded with the specified adapter (if provided).
-        - Validation is performed on a sample of the validation dataset.
-        - Validation results are computed and displayed.
-        - The processed DataFrame with validation results is returned.
-        
-        Parameters:
-        - banner_prefix (str, optional): Prefix for banner display. Defaults to "".
-        - switch (str, optional): Switch parameter for the prompt generator. Defaults to "in_memory".
-        - adapter_path (str, optional): Path to the adapter to load. If None, uses the adapter 
-          from the most recent fine-tuning run if available. Defaults to None.
-        - path_prefix (str, optional): Path prefix for the XML generator. Defaults to project root.
-        - device_map (dict, optional): Device mapping for the model. Defaults to {"": 0}.
-        - validation_sample_size (int, optional): Number of samples to use for validation. Defaults to 100.
-        - debug (bool, optional): Enable debug mode. If None, uses the class default. Defaults to None.
-        - verbose (bool, optional): Enable verbose mode. If None, uses the class default. Defaults to None.
-        
-        Returns:
-        - pandas.DataFrame: DataFrame containing the validation results, including original prompts,
-                          generated responses, and validation metrics.
-        """
-        du.print_banner( f"{banner_prefix} Testing {self.model_name} w/ {validation_sample_size} samples in memory...".strip(), prepend_nl=True )
-        
-        # set debug and verbose to the class defaults if not provided
-        if debug is None: debug = self.debug
-        if verbose is None: verbose = self.verbose
-        
-        df = pd.read_json( f"{self.test_train_dir}/voice-commands-xml-validate.jsonl", lines=True ).sample(
-            validation_sample_size, random_state=42
-            )
-        
-        # update the prompt field
-        # KLUDGE: this is a workaround for the fact that the prompt field is not being created when the validation df is created
-        print( f"Updating the prompt field for [{validation_sample_size}] rows..." )
-        df[ "prompt" ] = df.apply( lambda row: self.get_prompt( row[ "instruction" ], row[ "input" ], output="" ),
-                                   axis=1
-                                   )
-        print( f"Updating the prompt field for [{validation_sample_size}] rows... Done!" )
-        
-        # Print value counts for the command column to see how many unique commands we have
-        print( "Value counts for the 'command' column:" )
-        print( df.command.value_counts(), end="\n\n" )
-        
-        xml_coordinator = XmlCoordinator( path_prefix=path_prefix, debug=debug, verbose=verbose )
-        
-        du.print_banner( "Querying LLM in memory" )
-        # load model and tokenizer...
-        self._load_model_and_tokenizer( device_map=device_map, mode="inference" )
-        
-        # ...and adapter...
-        if adapter_path is not None:
-            print( f"Loading adapter from user provided path: [{adapter_path}]" )
-            self._load_adapter( adapter_path )
-        elif self.checkpoint_dir is not None:
-            print( f"Loading adapter created by the last fine tuning job: [{self.checkpoint_dir}]" )
-            self._load_adapter( self.checkpoint_dir )
-        else:
-            print( "No adapter path provided or found, proceeding with validation, using model by itself" )
-        
-        # generate responses
-        df = xml_coordinator.generate_responses(
-            df, tokenizer=self.tokenizer, model=self.model, switch=switch, model_name=self.model_name, device="cuda",
-            max_new_tokens=128, debug=debug, verbose=verbose
-        )
-        # validate responses
-        df = xml_coordinator.validate_responses( df )
-        # print validation stats
-        xml_coordinator.print_validation_stats( df, title=f"Validation stats for model {self.model_name}" )
-        
-        return df
-    
-    def run_validation_with_server( self, banner_prefix="",
+    def run_validation( self, banner_prefix="",
             model=None, switch="", path_prefix="/var/model/genie-in-the-box",
             device_map={ "": 0 }, validation_sample_size=1000, debug=None, verbose=None
     ):
         """
-        Runs validation against a model server rather than loading the model in memory.
+        Runs validation against a model server.
         
         Preconditions:
         - A validation dataset must be available at f"{self.test_train_dir}/voice-commands-xml-validate.jsonl".
@@ -686,13 +603,14 @@ class PeftTrainer:
         - ValueError: If model is None.
         """
         # set debug and verbose to the class defaults if not provided
-        if debug is None: debug = self.debug
-        if verbose is None: verbose = self.verbose
+        if debug is not None: self.debug = debug
+        if verbose is not None: self.verbose = verbose
         
         if model is None:
             raise ValueError( "Model must be provided" )
-        else:
-            self.model = model
+        # # this is dangerous?
+        # else:
+        #     self.model = model
         
         du.print_banner( f"{banner_prefix} Testing model [{self.model}]".strip(), prepend_nl=True )
         
@@ -716,8 +634,7 @@ class PeftTrainer:
         
         # generate responses
         df = xml_coordinator.generate_responses(
-            df, tokenizer=self.tokenizer, model=self.model, switch=switch, model_name=self.model_name,
-            device=device_map, max_new_tokens=128, debug=debug, verbose=verbose
+            df, model=model, model_name=self.model_name, device=device_map, max_new_tokens=128, debug=debug, verbose=verbose
         )
         # validate responses
         df = xml_coordinator.validate_responses( df )
@@ -1399,13 +1316,13 @@ class PeftTrainer:
         os.environ[ "WANDB_DISABLE_SERVICE" ] = wandb_disable_service
     
     def _start_vllm_server( self,
-        quantized_model_dir, port=3000, max_model_len=2048, gpu_memory_utilization=0.75, timeout=180
+        model_path_or_hf_id, port=3000, max_model_len=2048, gpu_memory_utilization=0.75, timeout=180
     ):
         """
         Starts a vLLM server for the quantized model and waits for it to be available.
         
         Preconditions:
-        - quantized_model_dir must be a valid directory containing a quantized model.
+        - model_path_or_hf_id must be a valid directory containing a model or hf model id.
         - DEEPILY_PROJECTS_DIR environment variable must be set to the projects directory.
         - vLLM must be installed in the virtual environment at $DEEPILY_PROJECTS_DIR/vllm-pip/.venv.
         
@@ -1416,7 +1333,7 @@ class PeftTrainer:
         - If multiple GPUs are available, vLLM will be configured to use all of them.
         
         Parameters:
-        - quantized_model_dir (str): Path to the directory containing the quantized model.
+        - model_path_or_hf_id (str): Path to the directory containing a model.
         - port (int, optional): Port on which to run the vLLM server. Defaults to 3000.
         - max_model_len (int, optional): Maximum sequence length for the model. Defaults to 2048.
         - gpu_memory_utilization (float, optional): Fraction of GPU memory to use. Defaults to 0.75.
@@ -1434,7 +1351,7 @@ class PeftTrainer:
         projects_dir = os.environ.get( "DEEPILY_PROJECTS_DIR" )
         if not projects_dir: raise ValueError( "DEEPILY_PROJECTS_DIR environment variable is not set." )
         
-        du.print_banner( "Starting vLLM server..." )
+        du.print_banner( "Starting vLLM server...", prepend_nl=True  )
         
         # Check for multiple GPUs
         gpu_count = torch.cuda.device_count()
@@ -1458,12 +1375,10 @@ class PeftTrainer:
         else:
             # Use the single GPU with specified memory utilization
             gpu_config = f"--gpu-memory-utilization {gpu_memory_utilization}"
-            if self.debug: print(
-                f"Configuring vLLM to use a single GPU with memory utilization {gpu_memory_utilization}"
-                )
+            if self.debug: print( f"Configuring vLLM to use a single GPU with memory utilization {gpu_memory_utilization}" )
         
         # Command to start the vLLM server
-        cmd = f"cd {projects_dir}/vllm-pip; source .venv/bin/activate; CUDA_VISIBLE_DEVICES={gpu_devices} vllm serve {quantized_model_dir} --port {port} --max-model-len {max_model_len} {gpu_config}"
+        cmd = f"cd {projects_dir}/vllm-pip; source .venv/bin/activate; CUDA_VISIBLE_DEVICES={gpu_devices} vllm serve {model_path_or_hf_id} --port {port} --max-model-len {max_model_len} {gpu_config}"
         
         if self.debug: print( f"Command to start vLLM server: {cmd}" )
         
@@ -1489,9 +1404,9 @@ class PeftTrainer:
             return True
         
         # Start the vLLM server in a separate process with its own process group
-        process = subprocess.Popen( cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                    start_new_session=True
-                                    )
+        process = subprocess.Popen(
+            cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True
+        )
         
         # Start a thread to read and print server output
         def print_server_output( process, log ):
@@ -1653,9 +1568,29 @@ class PeftTrainer:
         
         self.login_to_hf()
         
-        # Run a quick pretest in memory
+        # Run a pre-training validation using vLLM server
         if pre_training_stats:
-            self.run_validation_in_memory( banner_prefix="PRE-training: ", device_map="auto", validation_sample_size=validation_sample_size )
+            vllm_server_process = None
+            try:
+                # Start vLLM server for the base model and wait for it to be available
+                vllm_server_process = self._start_vllm_server( self.model_hf_id )
+                
+                # Run validation using the server, pointing it to the HF ID
+                self.run_validation(
+                    banner_prefix="PRE-training:", 
+                    model=self.model_hf_id,
+                    path_prefix=gib_root, 
+                    switch="deepily", 
+                    device_map="auto",  # Allow using multiple GPUs
+                    validation_sample_size=validation_sample_size, 
+                    debug=self.debug, 
+                    verbose=self.verbose
+                )
+            finally:
+                # Always clean up the vLLM server process if it was started
+                if vllm_server_process: self._stop_vllm_server( vllm_server_process )
+                # Release GPU resources
+                release_gpus( [ self.model, self.tokenizer ], nuclear_kill_button=nuclear_kill_button )
         else:
             print( f"Skipping pre-training validation for {args.model_name}" )
         
@@ -1687,8 +1622,8 @@ class PeftTrainer:
                 vllm_server_process = self._start_vllm_server( merged_adapter_dir )
                 
                 # create a custom model name using as an ID the mount point for the recently quantized model directory
-                model = Llm_v0.get_model( merged_adapter_dir )
-                self.run_validation_with_server(
+                model = llm_v010.get_model( merged_adapter_dir )
+                self.run_validation(
                     banner_prefix="POST-training:", model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0",
                     validation_sample_size=validation_sample_size, debug=self.debug, verbose=self.verbose
                 )
@@ -1710,8 +1645,8 @@ class PeftTrainer:
                 vllm_server_process = self._start_vllm_server( quantized_model_dir )
                 
                 # create a custom model name using as an ID the mount point for the recently quantized model directory
-                model = Llm_v0.get_model( quantized_model_dir )
-                self.run_validation_with_server(
+                model = llm_v010.get_model( quantized_model_dir )
+                self.run_validation(
                     banner_prefix="POST-quantization:", model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0",
                     validation_sample_size=validation_sample_size, debug=self.debug, verbose=self.verbose
                 )
@@ -1772,10 +1707,32 @@ class PeftTrainer:
         
         self.login_to_hf()
         
-        # # Run a quick pretest in memory
+        # # Run a pre-training validation using vLLM server
         # if pre_training_stats:
-        #     # TODO: add runtime configuration for sample size
-        #     self.run_validation_in_memory( device_map="auto", validation_sample_size=validation_sample_size )
+        #     vllm_server_process = None
+        #     try:
+        #         # Start vLLM server for the base model and wait for it to be available
+        #         vllm_server_process = self._start_vllm_server( self.model_hf_id )
+        #         
+        #         # Create a custom model name using the base model ID
+        #         model = llm_v010.get_model( self.model_hf_id )
+        #         
+        #         # Run validation using the server
+        #         self.run_validation(
+        #             banner_prefix="PRE-training:", 
+        #             model=model, 
+        #             path_prefix=gib_root, 
+        #             switch="deepily", 
+        #             device_map="auto",  # Allow using multiple GPUs
+        #             validation_sample_size=validation_sample_size, 
+        #             debug=self.debug, 
+        #             verbose=self.verbose
+        #         )
+        #     finally:
+        #         # Always clean up the vLLM server process if it was started
+        #         if vllm_server_process: self._stop_vllm_server( vllm_server_process )
+        #         # Release GPU resources
+        #         release_gpus( [ self.model, self.tokenizer ], nuclear_kill_button=nuclear_kill_button )
         # else:
         #     print( f"Skipping pre-training validation for {args.model_name}" )
         #
@@ -1813,9 +1770,9 @@ class PeftTrainer:
         #         vllm_server_process = self._start_vllm_server( merged_adapter_dir )
         #
         #         # create a custom model name using as an ID the mount point for the recently quantized model directory
-        #         model = Llm_v0.get_model( merged_adapter_dir )
+        #         model = llm_v010.get_model( merged_adapter_dir )
         #         # TODO: add runtime configuration for sample size
-        #         self.run_validation_with_server(
+        #         self.run_validation(
         #             model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", validation_sample_size=100, debug=False,
         #             verbose=False
         #         )
@@ -1844,9 +1801,9 @@ class PeftTrainer:
                 vllm_server_process = self._start_vllm_server( quantized_model_dir )
                 
                 # create a custom model name using as an ID the mount point for the recently quantized model directory
-                model = Llm_v0.get_model( quantized_model_dir )
+                model = llm_v010.get_model( quantized_model_dir )
                 # TODO: add runtime configuration for sample size
-                self.run_validation_with_server(
+                self.run_validation(
                     model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0",
                     validation_sample_size=validation_sample_size, debug=False,
                     verbose=False
@@ -1977,10 +1934,10 @@ def parse_arguments():
     parser = argparse.ArgumentParser( description="PEFT trainer for language models" )
     
     # Required arguments
-    parser.add_argument( "--model",           type=str, help="Model HuggingFace ID" )
-    parser.add_argument( "--model-name",      type=str, help="Model name" )
-    parser.add_argument( "--test-train-path", type=str, help="Path to test/train data" )
-    parser.add_argument( "--lora-dir",        type=str, help="Directory for LORA files" )
+    parser.add_argument( "--model",                type=str, help="Model HuggingFace ID" )
+    parser.add_argument( "--model-name",           type=str, help="Model name" )
+    parser.add_argument( "--test-train-path",      type=str, help="Path to test/train data" )
+    parser.add_argument( "--lora-dir",             type=str, help="Directory for LORA files" )
     
     # Optional arguments
     parser.add_argument( "--debug",                   action="store_true", help="Enable debug mode",                          default=False )

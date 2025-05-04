@@ -115,9 +115,9 @@ class LlmCompletion:
             "top_p"      : kwargs.get( "top_p", self.generation_args.get( "top_p", 1.0 ) ),
             "stop"       : kwargs.get( "stop", self.generation_args.get( "stop", None ) ),
         }
-        timer    = Stopwatch( msg="Requesting completion..." )
+        if self.debug: timer = Stopwatch( msg="Requesting completion..." )
         response = requests.post( self.base_url, headers=headers, data=json.dumps( data ) )
-        timer.print( msg="Done!", use_millis=True )
+        if self.debug: timer.print( msg="Done!", use_millis=True )
         
         if response.status_code == 200:
             completion = response.json()

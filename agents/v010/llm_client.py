@@ -44,16 +44,27 @@ class LlmClient:
                           completion_mode=False)
         response = client.run("Your prompt here", stream=True)
     """
+    # for ad hoc use when creating the ephemeral models
+    DEEPILY_PREFIX                    = "deepily"
     # Model identifier constants
-    DEEPILY_MINISTRAL_8B_2410   = "deepily/ministral_8b_2410"
-    PHI_4_14B                   = "deepily/phi_4_14b"
-    GROQ_LLAMA_3_1_8B           = "groq:llama-3.1-8b-instant"
-    OPENAI_GPT_01_MINI          = "openai:o1-mini-2024-09-12"
-    GOOGLE_GEMINI_1_5_FLASH     = "google-gla:gemini-1.5-flash"
-    ANTHROPIC_CLAUDE_SONNET_3_5 = "anthropic:claude-3-5-sonnet-latest"
+    PHI_4_14B                         = "kaitchup/phi_4_14b"
+    # DEEPILY_MINISTRAL_8B_2410         = "deepily/ministral_8b_2410"
+    DEEPILY_MINISTRAL_8B_2410_FT_LORA = "deepily/ministral_8b_2410_ft_lora"
+    MINISTRAL_8B_2410                 = "mistralai/Ministral-8B-Instruct-2410"
+    GROQ_LLAMA_3_1_8B                 = "groq:llama-3.1-8b-instant"
+    OPENAI_GPT_01_MINI                = "openai:o1-mini-2024-09-12"
+    GOOGLE_GEMINI_1_5_FLASH           = "google-gla:gemini-1.5-flash"
+    ANTHROPIC_CLAUDE_SONNET_3_5       = "anthropic:claude-3-5-sonnet-latest"
     
     # QWEN_2_5_32B = "kaitchup/Qwen2.5-Coder-32B-Instruct-AutoRound-GPTQ-4bit"
     
+    @staticmethod
+    def get_model( mnt_point, prefix=DEEPILY_PREFIX ):
+        
+        model = f"{prefix}/{mnt_point}"
+        if "//" not in model:
+            raise ValueError( f"ERROR: Model [{model}] not in 'prefix//mnt/point' format!" )
+        return model
     
     def __init__( self,
         
@@ -196,7 +207,7 @@ class LlmClient:
             
             duration = time.perf_counter() - start_time
             completion_tokens = self.token_counter.count_tokens( self.model_name, response )
-            self._print_metadata( prompt_tokens, completion_tokens, duration=duration )
+            if self.debug and self.verbose: self._print_metadata( prompt_tokens, completion_tokens, duration=duration )
             return response
         
         # Streaming mode
@@ -219,7 +230,7 @@ class LlmClient:
         duration = time.perf_counter() - start_time
         completion_tokens = self.token_counter.count_tokens( self.model_name, output )
         
-        self._print_metadata( prompt_tokens, completion_tokens, duration )
+        if self.debug and self.verbose: self._print_metadata( prompt_tokens, completion_tokens, duration )
         return output
     
     def _format_duration( self, seconds: float ) -> str:

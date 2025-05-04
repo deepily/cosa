@@ -5,6 +5,7 @@ from xmlschema import XMLSchema
 
 import cosa.utils.util as du
 import cosa.utils.util_xml as dux
+from cosa.agents.v010 import LlmClientFactory
 from cosa.training.xml_prompt_generator import XmlPromptGenerator
 from cosa.training.xml_response_validator import XmlResponseValidator
 
@@ -723,15 +724,13 @@ class XmlCoordinator:
         
         return response
     
-    def generate_responses( self, df, tokenizer=None, model=None, switch="tgi", model_name=None, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.9, device="cuda:0", debug=False, verbose=False, silent=False ):
+    def generate_responses( self, df, model=None, model_name=None, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.9, device="cuda:0", debug=None, verbose=None, silent=False ):
         """
         Generates responses for a given DataFrame using various LLM backends.
         
         Args:
             df (pandas.DataFrame): DataFrame with prompts
-            tokenizer: Tokenizer for the model
             model: Model to use
-            switch (str): LLM backend to use ('tgi', 'deepily', 'openai', 'huggingface')
             model_name (str): Name of the model to use
             max_new_tokens (int): Maximum number of tokens to generate
             temperature (float): Temperature for generation
@@ -747,14 +746,6 @@ class XmlCoordinator:
         """
         from cosa.utils.util_stopwatch import Stopwatch
         import torch
-        from huggingface_hub import InferenceClient
-        import openai
-        from cosa.agents.v000.llm_v0 import Llm_v0
-        
-        self.reset_call_counter()
-        rows = df.shape[0]
-        
-        timer = Stopwatch( msg=f"Generating responses for {rows:,} rows...", silent=silent )
         
         # Save the original debug/verbose settings
         original_debug   = self.debug
@@ -765,26 +756,18 @@ class XmlCoordinator:
             self.debug = debug
         if verbose is not None:
             self.verbose = verbose
+            
+        # initialize variables we'll need to maintain state while iterating using the apply function
+        self.reset_call_counter()
+        factory = LlmClientFactory()
+        self.llm_client = factory.get_client( model, debug=self.debug, verbose=self.verbose )
+        rows = df.shape[0]
+        timer = Stopwatch( msg=f"Generating responses for {rows:,} rows...", silent=silent )
+
+        df[ "response" ]  = df[ "prompt" ].apply( lambda cell: self._get_response( cell, rows, timer=timer, model_name=model_name, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, silent=silent ) )
         
-        try:
-            if switch == "tgi":
-                if self.debug: print( f"Using TGI w/ model_name [{model_name}]..." )
-                df[ "response" ]  = df[ "prompt" ].apply( lambda cell: self._get_response_to_prompt( cell, rows, timer=timer, switch=switch, model_name=model_name, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, silent=silent ) )
-            elif switch == "deepily":
-                if self.debug: print( f"Using DEEPILY w/ model_name [{model_name}]..." )
-                df[ "response" ]  = df[ "prompt" ].apply( lambda cell: self._get_response_to_prompt( cell, rows, model=model, timer=timer, switch=switch, model_name=model_name, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, silent=silent ) )
-            elif switch == "openai":
-                if self.debug: print( f"Using OPENAI w/ model_name [{model_name}]..." )
-                df[ "response" ]  = df[ "gpt_message" ].apply( lambda cell: self._get_response_to_prompt( cell, rows, timer=timer, switch=switch, model_name=model_name, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, silent=silent ) )
-            elif switch == "huggingface" or switch == "in_memory":
-                if self.debug: print( f"Using HuggingFace model_name [{model_name}] in memory...", end="\n\n" )
-                df[ "response" ]  = df[ "prompt" ].apply( lambda cell: self._get_response_to_prompt( cell, rows, timer=timer, switch=switch, model_name=model_name, tokenizer=tokenizer, model=model, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p, device=device, silent=silent, debug=self.debug, verbose=self.verbose ) )
-            else:
-                raise Exception( f"Unknown runtime llm datasource switch [{switch}]" )
-        finally:
-            # Restore original debug/verbose settings
-            self.debug   = original_debug
-            self.verbose = original_verbose
+        self.debug   = original_debug
+        self.verbose = original_verbose
         
         timer.print( msg="Done!", use_millis=False, prepend_nl=True, end="\n" )
         ms_per_item = timer.get_delta_ms() / ( rows * 1.0 )
@@ -1020,8 +1003,8 @@ class XmlCoordinator:
             } )
         return events_values
     
-    def _get_response_to_prompt(
-        self, prompt, rows, model=None, switch="tgi", model_name=None, timer=None, tokenizer=None,
+    def _get_response(
+        self, prompt, rows, model=None, model_name=None, timer=None, tokenizer=None,
         max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.9, device="cuda:0", silent=False, debug=False, verbose=False
     ):
         """
@@ -1035,11 +1018,11 @@ class XmlCoordinator:
         Returns:
             str: Generated response
         """
-        import openai
+        # import openai
         import torch
-        from huggingface_hub import InferenceClient
-        import cosa.app.util_llm_client as du_llm_client
-        from cosa.agents.v000.llm_v0 import Llm_v0
+        # from huggingface_hub import InferenceClient
+        # import cosa.app.util_llm_client as du_llm_client
+        # from cosa.agents.v000.llm_v0 import Llm_v0
         
         self._call_counter += 1
         
@@ -1061,54 +1044,56 @@ class XmlCoordinator:
                     print( f"ETA: {remaining_seconds} seconds" )
             except Exception as e:
                 print( f"ETA: Error '{e}'" )
-        
-        # Handle different LLM backends
-        if switch == "tgi":
-            client = InferenceClient( self.tgi_url )
-            token_list = []
-            ellipsis_count = 0
-            
-            if debug and verbose:
-                for line in prompt.split( "\n" ):
-                    print( line )
-            
-            for token in client.text_generation(
-                prompt, max_new_tokens=max_new_tokens, stream=True, temperature=temperature, top_k=top_k, top_p=top_p, stop_sequences=[ "</response>" ]
-            ):
-                if debug:
-                    print( token, end="" )
-                else:
-                    if not silent: print( ".", end="" )
-                    ellipsis_count += 1
-                    if ellipsis_count == 120:
-                        ellipsis_count = 0
-                        print()
-                    
-                token_list.append( token )
                 
-            response = "".join( token_list ).strip()
-            return response
-            
-        elif switch == "deepily":
-            llm = Llm_v0( model=model, debug=debug, verbose=verbose )
-            results = llm.query_llm( prompt=prompt, temperature=temperature, top_p=top_p, top_k=top_k )
-            return results
-            
-        elif switch == "openai":
-            openai.api_key = du.get_api_key( "openai", project_root=du.get_project_root() )
-            response = openai.chat.completions.create(
-                model=Llm_v0.extract_model_name( model_name ),
-                messages=prompt[ "messages" ],
-                temperature=temperature,
-                max_tokens=max_new_tokens,
-                top_p=top_p,
-                frequency_penalty=0.0,
-                presence_penalty=0.0
-            )
-            return response.choices[ 0 ].message.content.strip()
-            
-        elif switch == "huggingface" or switch == "in_memory":
-            return du_llm_client.query_llm_in_memory( model, tokenizer, prompt, device=device, model_name=model_name, max_new_tokens=max_new_tokens, silent=silent, debug=debug, verbose=verbose )
-            
-        else:
-            raise Exception( f"Unknown switch [{switch}]" )
+        return self.llm_client.run( prompt )
+        
+        # # Handle different LLM backends
+        # if switch == "tgi":
+        #     client = InferenceClient( self.tgi_url )
+        #     token_list = []
+        #     ellipsis_count = 0
+        #
+        #     if debug and verbose:
+        #         for line in prompt.split( "\n" ):
+        #             print( line )
+        #
+        #     for token in client.text_generation(
+        #         prompt, max_new_tokens=max_new_tokens, stream=True, temperature=temperature, top_k=top_k, top_p=top_p, stop_sequences=[ "</response>" ]
+        #     ):
+        #         if debug:
+        #             print( token, end="" )
+        #         else:
+        #             if not silent: print( ".", end="" )
+        #             ellipsis_count += 1
+        #             if ellipsis_count == 120:
+        #                 ellipsis_count = 0
+        #                 print()
+        #
+        #         token_list.append( token )
+        #
+        #     response = "".join( token_list ).strip()
+        #     return response
+        #
+        # elif switch == "deepily":
+        #     llm = Llm_v0( model=model, debug=debug, verbose=verbose )
+        #     results = llm.query_llm( prompt=prompt, temperature=temperature, top_p=top_p, top_k=top_k )
+        #     return results
+        #
+        # elif switch == "openai":
+        #     openai.api_key = du.get_api_key( "openai", project_root=du.get_project_root() )
+        #     response = openai.chat.completions.create(
+        #         model=Llm_v0.extract_model_name( model_name ),
+        #         messages=prompt[ "messages" ],
+        #         temperature=temperature,
+        #         max_tokens=max_new_tokens,
+        #         top_p=top_p,
+        #         frequency_penalty=0.0,
+        #         presence_penalty=0.0
+        #     )
+        #     return response.choices[ 0 ].message.content.strip()
+        #
+        # elif switch == "huggingface" or switch == "in_memory":
+        #     return du_llm_client.query_llm_in_memory( model, tokenizer, prompt, device=device, model_name=model_name, max_new_tokens=max_new_tokens, silent=silent, debug=debug, verbose=verbose )
+        #
+        # else:
+        #     raise Exception( f"Unknown switch [{switch}]" )
