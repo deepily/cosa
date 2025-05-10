@@ -48,7 +48,6 @@ class LlmClient:
     DEEPILY_PREFIX                    = "deepily"
     # Model identifier constants
     PHI_4_14B                         = "kaitchup/phi_4_14b"
-    # DEEPILY_MINISTRAL_8B_2410         = "deepily/ministral_8b_2410"
     DEEPILY_MINISTRAL_8B_2410_FT_LORA = "deepily/ministral_8b_2410_ft_lora"
     MINISTRAL_8B_2410                 = "mistralai/Ministral-8B-Instruct-2410"
     GROQ_LLAMA_3_1_8B                 = "groq:llama-3.1-8b-instant"
@@ -107,9 +106,10 @@ class LlmClient:
         self.verbose         = verbose
         
         if completion_mode:
-            du.print_banner( f"TODO: Fetch COMPLETION style prompt formatter HERE", prepend_nl=True, expletive=True, chunk="¿?"  )
-            print( f"¿? '{model_name}'" )
-            print( f"Using LlmCompletion with prompt_format: '{prompt_format}'" )
+            if self.debug:
+                du.print_banner( f"TODO: Fetch COMPLETION style prompt formatter HERE", prepend_nl=True, expletive=True, chunk="¿?"  )
+                print( f"¿? '{model_name}'" )
+                print( f"Using LlmCompletion with prompt_format: '{prompt_format}'" )
             self.model = LlmCompletion( base_url=base_url, model_name=model_name, api_key=api_key, **generation_args )
         else:
             # For normal chat mode, use the Agent class
@@ -298,14 +298,14 @@ if __name__ == "__main__":
 
     model_name = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-4-bits-sym.gptq/2025-02-12-at-02-27"
     base_url   = "http://192.168.1.21:3000/v1/completions"
-    client = LlmClient( base_url=base_url, model_name=model_name, completion_mode=True )
+    client = LlmClient( base_url=base_url, model_name=model_name, completion_mode=True, debug=False )
 
     # model_name = LlmClient.GROQ_LLAMA3_1_8B
     # client = LlmClient( model_name=model_name )
     
     response = client.run( prompt, stream=False )
     # response = client.run( prompt, stream=False, **{ "temperature": 1.0, "max_tokens": 1000, "stop": [ "foo" ] } )
-    print( f"Response: {response}" )
+    print( response )
     
     # model_name = "kaitchup/Phi-4-AutoRound-GPTQ-4bit"
     # base_url   = "http://192.168.1.21:3001/v1"

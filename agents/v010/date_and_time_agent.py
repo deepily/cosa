@@ -18,6 +18,7 @@ class DateAndTimeAgent( AgentBase ):
     
     
 if __name__ == "__main__":
+    
     # question = "What time is it in San Francisco?"
     question = "What time is it in Washington DC?"
     date_agent = DateAndTimeAgent( question=question, routing_command="agent router go to date and time", debug=True, verbose=True, auto_debug=True )

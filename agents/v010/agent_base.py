@@ -56,13 +56,10 @@ class AgentBase( RunnableCode, abc.ABC ):
         
         self.df                    = None
         self.do_not_serialize      = { "df", "config_mgr", "two_word_id", "execution_state" }
-        
-        self.prompt_template_paths = self._get_prompt_template_paths()
-        self.models                = self._get_models()
-        self.serialization_topics  = self._get_serialization_topics()
-        
-        self.model_name            = self.models[ routing_command ]
-        self.prompt_template       = du.get_file_as_string( du.get_project_root() + self.prompt_template_paths[ routing_command ] )
+
+        self.model_name            = self.config_mgr.get( f"llm spec key for {routing_command}" )
+        template_path              = self.config_mgr.get( f"prompt template for {routing_command}" )
+        self.prompt_template       = du.get_file_as_string( du.get_project_root() + template_path )
         self.prompt                = None
         
         if self.df_path_key is not None:
@@ -70,50 +67,6 @@ class AgentBase( RunnableCode, abc.ABC ):
             self.df = pd.read_csv( du.get_project_root() + self.config_mgr.get( self.df_path_key ) )
             self.df = dup.cast_to_datetime( self.df )
     
-    def _get_prompt_template_paths( self ):
-        
-        return{
-            "agent router go to date and time"    : self.config_mgr.get( "agent_prompt_for_date_and_time" ),
-            "agent router go to math"             : self.config_mgr.get( "agent_prompt_for_math" ),
-            "agent router go to calendar"         : self.config_mgr.get( "agent_prompt_for_calendaring" ),
-            "agent router go to weather"          : self.config_mgr.get( "agent_prompt_for_weather" ),
-            "agent router go to todo list"        : self.config_mgr.get( "agent_prompt_for_todo_list" ),
-            "agent router go to receptionist"     : self.config_mgr.get( "agent_prompt_for_receptionist" ),
-            "agent router go to debugger"         : self.config_mgr.get( "agent_prompt_for_debugger" ),
-            "agent router go to bug injector"     : self.config_mgr.get( "agent_prompt_for_bug_injector" ),
-            "agent router go to function mapping" : self.config_mgr.get( "agent_prompt_for_function_mapping" ),
-            "agent router go to math refactoring" : self.config_mgr.get( "agent_prompt_for_math_refactoring" ),
-        }
-    
-    def _get_models( self ):
-        
-        return {
-            "agent router go to date and time"    : self.config_mgr.get( "agent_model_name_for_date_and_time" ),
-            "agent router go to math"             : self.config_mgr.get( "agent_model_name_for_math" ),
-            "agent router go to calendar"         : self.config_mgr.get( "agent_model_name_for_calendaring" ),
-            "agent router go to weather"          : self.config_mgr.get( "agent_model_name_for_weather" ),
-            "agent router go to todo list"        : self.config_mgr.get( "agent_model_name_for_todo_list" ),
-            "agent router go to receptionist"     : self.config_mgr.get( "agent_model_name_for_receptionist" ),
-            "agent router go to debugger"         : self.config_mgr.get( "agent_model_name_for_debugger" ),
-            "agent router go to bug injector"     : self.config_mgr.get( "agent_model_name_for_bug_injector" ),
-            "agent router go to function mapping" : self.config_mgr.get( "agent_model_name_for_function_mapping" ),
-            "agent router go to math refactoring" : self.config_mgr.get( "agent_model_name_for_math_refactoring" ),
-        }
-    
-    def _get_serialization_topics( self ):
-        
-        return {
-            "agent router go to date and time"   : "date-and-time",
-            "agent router go to math"            : "math",
-            "agent router go to calendar"        : "calendar",
-            "agent router go to weather"         : "weather",
-            "agent router go to todo list"       : "todo-list",
-            "agent router go to receptionist"    : "receptionist",
-            "agent router go to debugger"        : "code-debugger",
-            "agent router go to bug injector"    : "bug-injector",
-            "agent router go to function mapping": "function-mapping",
-            "agent router go to refactoring"     : "refactoring",
-        }
     def get_html( self ):
         
         return f"<li id='{self.id_hash}'>{self.run_date} Q: {self.last_question_asked}</li>"
@@ -133,7 +86,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         # Constructing the filename
         # Format: "topic-year-month-day-hour-minute-second.json", limit question to the first 96 characters
         question_short = SolutionSnapshot.remove_non_alphanumerics( self.question[ :96 ] ).replace( " ", "-" )
-        topic          = self.serialization_topics[ self.routing_command ]
+        topic          = self.config_mgr.get( f"serialization topic for {self.routing_command}" )
         topic          = topic + "-" + subtopic if subtopic is not None else topic
         now            = du.get_current_datetime_raw()
         file_path = f"{du.get_project_root()}/io/log/{topic}-{question_short}-{now.year}-{now.month}-{now.day}-{now.hour}-{now.minute}-{now.second}.json"

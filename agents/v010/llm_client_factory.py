@@ -403,9 +403,9 @@ if __name__ == "__main__":
     # List of all available models to test
     models = [
         # # Local models
-        # LlmClient.PHI_4_14B,
-        LlmClient.MINISTRAL_8B_2410,
-        # # LlmClient.DEEPILY_MINISTRAL_8B_2410,
+        LlmClient.PHI_4_14B,
+        # LlmClient.MINISTRAL_8B_2410,
+        # LlmClient.DEEPILY_MINISTRAL_8B_2410_FT_LORA,
         # # Cloud API models
         # LlmClient.GROQ_LLAMA_3_1_8B,
         # # LlmClient.OPENAI_GPT_01_MINI,
@@ -421,7 +421,7 @@ if __name__ == "__main__":
             # Get client using the appropriate method
             # timer = Stopwatch( msg=f"Calling {model}..." )
 
-            client   = factory.get_client( model, debug=True, verbose=False )
+            client   = factory.get_client( model, debug=True, verbose=True )
             response = client.run( prompt )
 
             # Print results
@@ -439,12 +439,4 @@ if __name__ == "__main__":
             traceback.print_exc()
             print()
 
-    print( "All tests completed." )
-
-    # id = "mistralai/Ministral-8B-Instruct-2410"
-    # config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
-    # val = config_mgr.get( id, default="Key not found!" )
-    # print( f"Value for '{id}': {val}" )
-    #
-    # for key in config_mgr.get_keys():
-    #     print( f"Key: {key} == {id}: {(key.lower() == id.lower())}" )
+    print( "All LLM's iterated." )
