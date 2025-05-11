@@ -9,21 +9,22 @@ import cosa.utils.util_pandas        as dup
 import cosa.utils.util_xml as dux
 import cosa.memory.solution_snapshot as ss
 
-from cosa.agents.llm_v0 import Llm_v0
-from cosa.agents.raw_output_formatter import RawOutputFormatter
+from cosa.agents.v010.raw_output_formatter import RawOutputFormatter
+
+from cosa.agents.v010.llm_client_factory import LlmClientFactory
 from cosa.agents.v010.runnable_code import RunnableCode
 from cosa.app.configuration_manager import ConfigurationManager
 from cosa.memory.solution_snapshot import SolutionSnapshot
-from cosa.agents.two_word_id_generator import TwoWordIdGenerator
+from cosa.agents.v010.two_word_id_generator import TwoWordIdGenerator
 
 class AgentBase( RunnableCode, abc.ABC ):
     
-    STATE_INITIALIZED = "initialized"
-    STATE_WAITING_TO_RUN = "waiting to run"
-    STATE_RUNNING = "running"
-    STATE_RUNNING_WAITING_FOR_RESPONSE = "running waiting for response"
-    STATE_STOPPED_ERROR = "error"
-    STATE_STOPPED_DONE = "done"
+    STATE_INITIALIZING         = "initializing"
+    STATE_WAITING_TO_RUN       = "waiting to run"
+    STATE_RUNNING              = "running"
+    STATE_WAITING_FOR_RESPONSE = "running waiting for response"
+    STATE_STOPPED_ERROR        = "error"
+    STATE_STOPPED_DONE         = "done"
     
     @abc.abstractmethod
     def restore_from_serialized_state( file_path ):
@@ -31,6 +32,7 @@ class AgentBase( RunnableCode, abc.ABC ):
     
     def __init__( self, df_path_key=None, question="", question_gist="", last_question_asked="", push_counter=-1, routing_command=None, debug=False, verbose=False, auto_debug=False, inject_bugs=False ):
         
+        self.execution_state       = AgentBase.STATE_INITIALIZING
         self.debug                 = debug
         self.verbose               = verbose
         self.auto_debug            = auto_debug
@@ -44,7 +46,6 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.id_hash               = ss.SolutionSnapshot.generate_id_hash( self.push_counter, self.run_date )
         
         self.two_word_id           = TwoWordIdGenerator().get_id()
-        self.execution_state       = AgentBase.STATE_INITIALIZED
         
         # This is a bit of a misnomer, it's the unprocessed question that was asked of the agent
         self.last_question_asked   = last_question_asked
@@ -66,6 +67,8 @@ class AgentBase( RunnableCode, abc.ABC ):
             
             self.df = pd.read_csv( du.get_project_root() + self.config_mgr.get( self.df_path_key ) )
             self.df = dup.cast_to_datetime( self.df )
+            
+        self.execution_state = AgentBase.STATE_WAITING_TO_RUN
     
     def get_html( self ):
         
@@ -117,12 +120,14 @@ class AgentBase( RunnableCode, abc.ABC ):
         
         return prompt_response_dict
     
-    def run_prompt( self, model_name=None, temperature=0.5, top_p=0.25, top_k=10, max_new_tokens=1024, stop_sequences=None, include_raw_response=False ):
+    def run_prompt( self, include_raw_response=False ):
+
+        factory = LlmClientFactory()  # No arguments for the singleton constructor
+        llm = factory.get_client( self.model_name, debug=self.debug, verbose=self.verbose )
         
-        if model_name is not None: self.model_name = model_name
-        
-        llm = Llm_v0( config_mgr=self.config_mgr, model=self.model_name, debug=self.debug, verbose=self.verbose )
-        response = llm.query_llm( prompt=self.prompt, temperature=temperature, top_p=top_p, top_k=top_k, max_new_tokens=max_new_tokens, stop_sequences=stop_sequences, debug=self.debug, verbose=self.verbose )
+        if self.debug: print( f"Prompt: {self.prompt}" )
+        response = llm.run( self.prompt )
+        if self.debug: print( f"Response: {response}" )
         
         # Parse XML-esque response
         self.prompt_response_dict = self._update_response_dictionary( response )
@@ -158,7 +163,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         elif auto_debug:
             
             # Iterative debugging agent extends this class: agent base
-            from cosa.agents.iterative_debugging_agent import IterativeDebuggingAgent
+            from cosa.agents.v010.iterative_debugging_agent import IterativeDebuggingAgent
 
             self.error = self.code_response_dict[ "output" ]
             
