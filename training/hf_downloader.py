@@ -8,14 +8,44 @@ from huggingface_hub import snapshot_download, login
 # that takes a repo_id as an argument
 class HuggingFaceDownloader:
 
-    def __init__( self, token=None ):
+    def __init__( self, token: str=None ) -> None:
+        """
+        Initialize a new HuggingFaceDownloader instance.
+        
+        Requires:
+            - token is either None or a valid Hugging Face API token string
+            
+        Ensures:
+            - The token is stored for later authentication with Hugging Face
+            - No network requests are made during initialization
+            
+        Raises:
+            - No exceptions are raised during initialization
+        """
         self.token = token
 
-    def download_model( self, repo_id ):
+    def download_model( self, repo_id: str ) -> str:
+        """
+        Download a model from Hugging Face Hub.
         
+        Requires:
+            - repo_id is a valid Hugging Face repository identifier
+            - self.token is a valid Hugging Face API token or None
+            - HF_HOME environment variable is set to a valid directory path
+            
+        Ensures:
+            - Authenticates with Hugging Face using the provided token
+            - Downloads the model to the directory specified by HF_HOME
+            - Returns the local path to the downloaded model files
+            
+        Raises:
+            - Exception with error message if download fails
+            - SystemExit(1) if an error occurs during the process
+        """
         try:
             login( token=self.token )
-            snapshot_download( repo_id=repo_id )
+            local_path = snapshot_download( repo_id=repo_id )
+            return local_path
         except Exception as e:
             print( f"Error downloading model: {e}" )
             sys.exit( 1 )
