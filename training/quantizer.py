@@ -137,5 +137,5 @@ if __name__ == "__main__":
     
     quantizer = Quantizer( model_name )
     quantizer.quantize_model( bits=bits )
-    quantizer.save( save_to_path, include_model_name=False )
+    quantizer.save( save_to_path, include_model_name=True )
     
