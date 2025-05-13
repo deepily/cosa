@@ -1,7 +1,7 @@
 import json
 import os
 import asyncio
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Optional, Tuple
 
 from pydantic_ai import Agent
 
@@ -12,7 +12,6 @@ import cosa.utils.util as du
 from cosa.agents.v010.llm_client import LlmClient
 # from cosa.agents.v010.token_counter import TokenCounter
 from cosa.app.configuration_manager import ConfigurationManager
-
 
 class LlmClientFactory:
     """
@@ -60,7 +59,7 @@ class LlmClientFactory:
         self.debug        = debug
         self.verbose      = verbose
     
-    def get_client( self, model_config_key: str, debug: bool=None, verbose: bool=None ) -> Union[LlmClient, 'AgentWrapper']:
+    def get_client( self, model_config_key: str, debug: bool=None, verbose: bool=None ) -> LlmClient | 'AgentWrapper':
         """
         Get an LLM client for the given model descriptor.
         
@@ -139,7 +138,7 @@ class LlmClientFactory:
                 return Agent( model_spec, **model_params )
     
     # Vendor configuration
-    VENDOR_URLS: Dict[str, str] = {
+    VENDOR_URLS: dict[str, str] = {
         "openai"    : "https://api.openai.com/v1",
         "groq"      : "https://api.groq.com/openai/v1",
         "anthropic" : "https://api.anthropic.com/v1",
@@ -150,7 +149,7 @@ class LlmClientFactory:
     }
     
     # API key environment variables
-    VENDOR_API_ENV_VARS: Dict[str, Optional[str]] = {
+    VENDOR_API_ENV_VARS: dict[str, Optional[str]] = {
         "openai"    : "OPENAI_API_KEY",
         "groq"      : "GROQ_API_KEY",
         "anthropic" : "ANTHROPIC_API_KEY",
@@ -161,12 +160,12 @@ class LlmClientFactory:
     }
     
     # Default parameters for LlmClient
-    CLIENT_DEFAULT_PARAMS: Dict[str, Any] = {
+    CLIENT_DEFAULT_PARAMS: dict[str, Any] = {
         "temperature": 0.7,
         "max_tokens" : 1024
     }
     # Comprehensive vendor configuration for the v2 method
-    VENDOR_CONFIG: Dict[str, Dict[str, Any]] = {
+    VENDOR_CONFIG: dict[str, dict[str, Any]] = {
         "openai"    : {
             "env_var"     : "OPENAI_API_KEY",
             "key_name"    : "openai",
@@ -273,7 +272,7 @@ class LlmClientFactory:
                     print( f"Error in AgentWrapper.run: {str( e )}" )
                 raise
     
-    def _parse_model_descriptor( self, model_descriptor: str ) -> Tuple[str, str]:
+    def _parse_model_descriptor( self, model_descriptor: str ) -> tuple[str, str]:
         """
         Parse a model descriptor to extract vendor and model name.
         
@@ -395,10 +394,14 @@ if __name__ == "__main__":
     factory = LlmClientFactory()
     
     # Prepare test prompt
-    template_path = du.get_project_root() + "/src/conf/prompts/agent-router-template-completion.txt"
-    prompt_template = du.get_file_as_string( template_path )
-    voice_command = "can I please talk to a human?"
-    prompt = prompt_template.format( voice_command=voice_command )
+    # template_path = du.get_project_root() + "/src/conf/prompts/agent-router-template-completion.txt"
+    # prompt_template = du.get_file_as_string( template_path )
+    # voice_command = "can I please talk to a human?"
+    # prompt = prompt_template.format( voice_command=voice_command )
+    
+    prompt_template = du.get_file_as_string( du.get_project_root() + ConfigurationManager().get( "prompt template for agent router go to date and time" ) )
+    question = "What time is it?"
+    prompt = prompt_template.format( question=question )
     
     # List of all available models to test
     models = [

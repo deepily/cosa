@@ -1,6 +1,6 @@
 import os
 import asyncio
-from typing import Optional, Dict, List, Union, Any, AsyncGenerator
+from typing import Optional, Any, AsyncGenerator
 
 import requests
 import json
@@ -32,8 +32,8 @@ class LlmCompletion:
     def __init__( self,
         base_url: str = "http://192.168.1.21:3000/v1/completions",
         model_name: str = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-4-bits-sym.gptq/2025-02-12-at-02-27",
-        api_key: Optional[ str ] = "EMPTY",
-        model_tokenizer_map: Optional[ Dict[str, str] ] = None,
+        api_key: Optional[str] = "EMPTY",
+        model_tokenizer_map: Optional[dict[str, str]] = None,
         debug: bool = False,
         verbose: bool = False,
         **generation_args: Any
@@ -132,7 +132,7 @@ class LlmCompletion:
             print( f"Error: {response.status_code}" )
             raise Exception( f"Error requesting completion: {response.text}" )
             
-    def _prepare_streaming_request(self, prompt: str, data: Dict[str, Any], headers: Dict[str, str]) -> str:
+    def _prepare_streaming_request(self, prompt: str, data: dict[str, Any], headers: dict[str, str]) -> str:
         """
         Prepare a streaming request (stub method for compatibility).
         
