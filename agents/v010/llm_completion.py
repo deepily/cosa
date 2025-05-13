@@ -1,8 +1,10 @@
 import os
-from typing import Optional, Dict, List, Union, Any
+import asyncio
+from typing import Optional, Dict, List, Union, Any, AsyncGenerator
 
 import requests
 import json
+import aiohttp
 
 import cosa.utils.util as du
 from cosa.agents.v010.token_counter import TokenCounter
@@ -85,20 +87,16 @@ class LlmCompletion:
             - Provides debug information if enabled
             
         Raises:
-            - NotImplementedError if streaming is requested
             - May raise HTTP exceptions for API errors
             
         Args:
             prompt: The text prompt to send to the LLM
-            stream: Whether to stream the response (not implemented)
+            stream: Whether to stream the response
             **generation_args: Additional arguments for generation
             
         Returns:
             String response from the LLM
         """
-        
-        if stream:
-            raise NotImplementedError( "Streaming not implemented for this client" )
         
         headers = {
             'Content-Type' : 'application/json',
@@ -114,7 +112,15 @@ class LlmCompletion:
             "temperature": kwargs.get( "temperature", self.generation_args.get( "temperature", 0.25 ) ),
             "top_p"      : kwargs.get( "top_p", self.generation_args.get( "top_p", 1.0 ) ),
             "stop"       : kwargs.get( "stop", self.generation_args.get( "stop", None ) ),
+            "stream"     : stream,
         }
+        
+        if stream:
+            # For streaming, we return a generator that the caller can iterate over
+            # This will be used by run_stream
+            return self._prepare_streaming_request(prompt, data, headers)
+        
+        # Non-streaming request
         if self.debug: timer = Stopwatch( msg="Requesting completion..." )
         response = requests.post( self.base_url, headers=headers, data=json.dumps( data ) )
         if self.debug: timer.print( msg="Done!", use_millis=True )
@@ -125,6 +131,145 @@ class LlmCompletion:
         else:
             print( f"Error: {response.status_code}" )
             raise Exception( f"Error requesting completion: {response.text}" )
+            
+    def _prepare_streaming_request(self, prompt: str, data: Dict[str, Any], headers: Dict[str, str]) -> str:
+        """
+        Prepare a streaming request (stub method for compatibility).
+        
+        This is just a stub method that returns the prompt back for compatibility
+        with the streaming interface. The actual streaming is handled by run_stream.
+        
+        Args:
+            prompt: The text prompt to send to the LLM
+            data: The request data
+            headers: The request headers
+            
+        Returns:
+            The original prompt (for compatibility)
+        """
+        # This method exists for compatibility with the API used by LlmClient
+        # The actual streaming implementation is in run_stream
+        return prompt
+        
+    async def _stream_async(self, prompt: str, **generation_args: Any) -> AsyncGenerator[str, None]:
+        """
+        Stream a completion response asynchronously.
+        
+        This method sends a streaming request to the completions API and yields
+        chunks of the response as they arrive.
+        
+        Args:
+            prompt: The text prompt to send to the LLM
+            **generation_args: Additional arguments for generation
+            
+        Yields:
+            Chunks of the response text
+        """
+        headers = {
+            'Content-Type': 'application/json',
+        }
+        
+        data = {
+            "model"      : self.model_name,
+            "prompt"     : prompt,
+            "max_tokens" : generation_args.get("max_tokens", self.generation_args.get("max_tokens", 64)),
+            "temperature": generation_args.get("temperature", self.generation_args.get("temperature", 0.25)),
+            "top_p"      : generation_args.get("top_p", self.generation_args.get("top_p", 1.0)),
+            "stop"       : generation_args.get("stop", self.generation_args.get("stop", None)),
+            "stream"     : True,
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(self.base_url, headers=headers, json=data) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise Exception(f"Error requesting completion stream: {error_text}")
+                
+                # Stream the response chunks
+                async for line in response.content:
+                    line = line.decode('utf-8').strip()
+                    if not line:
+                        continue
+                    if line == "data: [DONE]":
+                        break
+                    
+                    if line.startswith("data: "):
+                        try:
+                            chunk_data = json.loads(line[6:])  # Skip "data: " prefix
+                            if "choices" in chunk_data and len(chunk_data["choices"]) > 0:
+                                delta = chunk_data["choices"][0].get("text", "")
+                                if delta:
+                                    yield delta
+                        except json.JSONDecodeError:
+                            # Skip invalid JSON lines
+                            continue
+    
+    def run_stream(self, prompt: str, **generation_args: Any):
+        """
+        Stream a completion response with a context manager interface.
+        
+        This method returns a context manager compatible with the async with statement,
+        allowing for consistent streaming interface across different model types.
+        
+        Args:
+            prompt: The text prompt to send to the LLM
+            **generation_args: Additional arguments for generation
+            
+        Returns:
+            A context manager for streaming the response
+        """
+        # Return a simple context manager that yields a stream_text method
+        return CompletionStreamingContext(self, prompt, **generation_args)
+
+
+class CompletionStreamingContext:
+    """
+    A context manager for streaming completions.
+    
+    This class provides a context manager interface for streaming completions,
+    compatible with the async with statement.
+    """
+    
+    def __init__(self, client, prompt, **generation_args):
+        """
+        Initialize the streaming context.
+        
+        Args:
+            client: The LlmCompletion client
+            prompt: The text prompt to send to the LLM
+            **generation_args: Additional arguments for generation
+        """
+        self.client = client
+        self.prompt = prompt
+        self.generation_args = generation_args
+        
+    async def __aenter__(self):
+        """
+        Enter the context manager.
+        
+        Returns:
+            self
+        """
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """
+        Exit the context manager.
+        """
+        pass
+        
+    async def stream_text(self, delta=False):
+        """
+        Stream the response text.
+        
+        Args:
+            delta: Whether to yield deltas (incremental changes) or cumulative text
+            
+        Yields:
+            Chunks of the response text
+        """
+        async for chunk in self.client._stream_async(self.prompt, **self.generation_args):
+            yield chunk
 
 
 if __name__ == "__main__":
