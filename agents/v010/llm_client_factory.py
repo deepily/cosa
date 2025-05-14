@@ -1,7 +1,7 @@
 import json
 import os
 import asyncio
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 
 from pydantic_ai import Agent
 
@@ -10,9 +10,7 @@ import cosa.utils.util as du
 # from cosa.utils.util_stopwatch import Stopwatch
 
 from cosa.agents.v010.llm_client import LlmClient
-# from cosa.agents.v010.token_counter import TokenCounter
 from cosa.app.configuration_manager import ConfigurationManager
-
 
 class LlmClientFactory:
     """
@@ -42,7 +40,7 @@ class LlmClientFactory:
     """
     _instance: Optional['LlmClientFactory'] = None
     
-    def __new__( cls ):
+    def __new__( cls, debug: bool=False, verbose: bool=False ):
         if cls._instance is None:
             cls._instance = super( LlmClientFactory, cls ).__new__( cls )
             # Initialize the instance
@@ -60,7 +58,7 @@ class LlmClientFactory:
         self.debug        = debug
         self.verbose      = verbose
     
-    def get_client( self, model_config_key: str, debug: bool=None, verbose: bool=None ) -> Union[LlmClient, 'AgentWrapper']:
+    def get_client( self, model_config_key: str, debug: bool=None, verbose: bool=None ) -> Union['LlmClient', 'AgentWrapper']:
         """
         Get an LLM client for the given model descriptor.
         
@@ -109,6 +107,9 @@ class LlmClientFactory:
             prompt_format         = model_params.get( "prompt_format", default_prompt_format )
             completion_mode       = prompt_format in [ "instruction_completion", "special_token" ]
             
+            # Extract stream parameter if present (will be used in run() calls)
+            self.stream_enabled   = model_params.get( "stream", False )
+            
             # Remove parameters that will be passed explicitly, so that **model_params doesn't complain about multiple values
             model_params.pop( "prompt_format", None )
             model_params.pop( "model_name", None )
@@ -139,7 +140,7 @@ class LlmClientFactory:
                 return Agent( model_spec, **model_params )
     
     # Vendor configuration
-    VENDOR_URLS: Dict[str, str] = {
+    VENDOR_URLS: dict[str, str] = {
         "openai"    : "https://api.openai.com/v1",
         "groq"      : "https://api.groq.com/openai/v1",
         "anthropic" : "https://api.anthropic.com/v1",
@@ -150,7 +151,7 @@ class LlmClientFactory:
     }
     
     # API key environment variables
-    VENDOR_API_ENV_VARS: Dict[str, Optional[str]] = {
+    VENDOR_API_ENV_VARS: dict[str, Optional[str]] = {
         "openai"    : "OPENAI_API_KEY",
         "groq"      : "GROQ_API_KEY",
         "anthropic" : "ANTHROPIC_API_KEY",
@@ -161,12 +162,12 @@ class LlmClientFactory:
     }
     
     # Default parameters for LlmClient
-    CLIENT_DEFAULT_PARAMS: Dict[str, Any] = {
+    CLIENT_DEFAULT_PARAMS: dict[str, Any] = {
         "temperature": 0.7,
         "max_tokens" : 1024
     }
     # Comprehensive vendor configuration for the v2 method
-    VENDOR_CONFIG: Dict[str, Dict[str, Any]] = {
+    VENDOR_CONFIG: dict[str, dict[str, Any]] = {
         "openai"    : {
             "env_var"     : "OPENAI_API_KEY",
             "key_name"    : "openai",
@@ -273,7 +274,7 @@ class LlmClientFactory:
                     print( f"Error in AgentWrapper.run: {str( e )}" )
                 raise
     
-    def _parse_model_descriptor( self, model_descriptor: str ) -> Tuple[str, str]:
+    def _parse_model_descriptor( self, model_descriptor: str ) -> tuple[str, str]:
         """
         Parse a model descriptor to extract vendor and model name.
         
@@ -395,17 +396,21 @@ if __name__ == "__main__":
     factory = LlmClientFactory()
     
     # Prepare test prompt
-    template_path = du.get_project_root() + "/src/conf/prompts/agent-router-template-completion.txt"
-    prompt_template = du.get_file_as_string( template_path )
-    voice_command = "can I please talk to a human?"
-    prompt = prompt_template.format( voice_command=voice_command )
+    # template_path = du.get_project_root() + "/src/conf/prompts/agent-router-template-completion.txt"
+    # prompt_template = du.get_file_as_string( template_path )
+    # voice_command = "can I please talk to a human?"
+    # prompt = prompt_template.format( voice_command=voice_command )
+    
+    prompt_template = du.get_file_as_string( du.get_project_root() + ConfigurationManager().get( "prompt template for agent router go to date and time" ) )
+    question = "What time is it?"
+    prompt = prompt_template.format( question=question )
     
     # List of all available models to test
     models = [
         # # Local models
-        # LlmClient.PHI_4_14B,
-        LlmClient.MINISTRAL_8B_2410,
-        # # LlmClient.DEEPILY_MINISTRAL_8B_2410,
+        LlmClient.PHI_4_14B,
+        # LlmClient.MINISTRAL_8B_2410,
+        # LlmClient.DEEPILY_MINISTRAL_8B_2410_FT_LORA,
         # # Cloud API models
         # LlmClient.GROQ_LLAMA_3_1_8B,
         # # LlmClient.OPENAI_GPT_01_MINI,
@@ -421,7 +426,7 @@ if __name__ == "__main__":
             # Get client using the appropriate method
             # timer = Stopwatch( msg=f"Calling {model}..." )
 
-            client   = factory.get_client( model, debug=True, verbose=False )
+            client   = factory.get_client( model, debug=True, verbose=True )
             response = client.run( prompt )
 
             # Print results
@@ -439,12 +444,4 @@ if __name__ == "__main__":
             traceback.print_exc()
             print()
 
-    print( "All tests completed." )
-
-    # id = "mistralai/Ministral-8B-Instruct-2410"
-    # config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
-    # val = config_mgr.get( id, default="Key not found!" )
-    # print( f"Value for '{id}': {val}" )
-    #
-    # for key in config_mgr.get_keys():
-    #     print( f"Key: {key} == {id}: {(key.lower() == id.lower())}" )
+    print( "All LLM's iterated." )

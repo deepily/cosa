@@ -1,5 +1,26 @@
 """
 Model configuration module for fine-tuning different language models.
+
+This module provides a standardized configuration system for the PEFT (Parameter-Efficient Fine-Tuning) Trainer,
+allowing different language models to be fine-tuned with model-specific settings. Each model has its own
+configuration file in this directory that defines four essential configuration dictionaries:
+
+1. fine_tune_config: General training parameters like batch size, gradient accumulation steps, and logging frequency
+2. lora_config: LoRA-specific parameters for efficient fine-tuning (ranks, dropout, target modules)
+3. tokenizer_config: Tokenizer-specific settings for the model (padding tokens, padding direction)
+4. model_config: Model-specific parameters (sequence length, prompt templates)
+
+The PEFT Trainer (peft_trainer.py) imports and uses these configurations via the load_model_config() function,
+which dynamically loads the appropriate configuration based on the selected model name. This centralized
+configuration approach allows for:
+
+1. Easy addition of new models by adding a new config file and entry in MODEL_CONFIG_MAP
+2. Consistent parameter organization across different model architectures
+3. Separation of model-specific details from the trainer logic
+4. Simplified experiment tracking with standardized configuration format
+
+The relationship between conf files and the PEFT Trainer is defined by the load_model_config() function,
+which the trainer calls to obtain all necessary parameters for initializing and fine-tuning a specific model.
 """
 
 from importlib import import_module

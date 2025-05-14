@@ -5,6 +5,7 @@ from typing import Optional, Any, Dict, List, Union, Tuple
 
 from boto3 import client
 from openai import base_url
+from sqlalchemy.util import counter
 
 import cosa.utils.util as du
 from cosa.agents.v010.llm_completion import LlmCompletion
@@ -48,7 +49,6 @@ class LlmClient:
     DEEPILY_PREFIX                    = "deepily"
     # Model identifier constants
     PHI_4_14B                         = "kaitchup/phi_4_14b"
-    # DEEPILY_MINISTRAL_8B_2410         = "deepily/ministral_8b_2410"
     DEEPILY_MINISTRAL_8B_2410_FT_LORA = "deepily/ministral_8b_2410_ft_lora"
     MINISTRAL_8B_2410                 = "mistralai/Ministral-8B-Instruct-2410"
     GROQ_LLAMA_3_1_8B                 = "groq:llama-3.1-8b-instant"
@@ -107,9 +107,10 @@ class LlmClient:
         self.verbose         = verbose
         
         if completion_mode:
-            du.print_banner( f"TODO: Fetch COMPLETION style prompt formatter HERE", prepend_nl=True, expletive=True, chunk="¿?"  )
-            print( f"¿? '{model_name}'" )
-            print( f"Using LlmCompletion with prompt_format: '{prompt_format}'" )
+            if self.debug:
+                du.print_banner( f"TODO: Fetch COMPLETION style prompt formatter HERE", prepend_nl=True, expletive=True, chunk="¿?"  )
+                print( f"¿? '{model_name}'" )
+                print( f"Using LlmCompletion with prompt_format: '{prompt_format}'" )
             self.model = LlmCompletion( base_url=base_url, model_name=model_name, api_key=api_key, **generation_args )
         else:
             # For normal chat mode, use the Agent class
@@ -123,30 +124,50 @@ class LlmClient:
         
         This asynchronous method handles streaming responses from the LLM,
         capturing chunks as they arrive and returning the combined result.
+        It works with both Agent (Chat) and LlmCompletion modes.
         
         Requires:
             - prompt: A non-empty string to send to the LLM
             - self.model: An initialized model with async streaming capability
+            - self.completion_mode: Boolean indicating whether to use completion API
             
         Ensures:
             - Streams response chunks from the LLM
             - Displays progress if self.debug is True
             - Collects all chunks into a single response
+            - Handles both chat and completion API formats
             
         Returns:
             - Complete response string from the LLM
         """
         output = [ ]
         
-        # Use run_stream which returns a context manager for streaming
-        async with self.model.run_stream( prompt, **generation_args ) as result:
-            # Stream text as deltas
-            async for chunk in result.stream_text( delta=True ):
-                if self.debug:
-                    print( chunk, end="", flush=True )
-                else:
-                    print( ".", end="", flush=True )
-                output.append( chunk )
+        if self.completion_mode:
+            # Use run_stream for LlmCompletion
+            async with self.model.run_stream( prompt, **generation_args ) as result:
+                # Stream text as deltas
+                counter = 0
+                async for chunk in result.stream_text( delta=True ):
+                    if self.debug:
+                        print( chunk, end="", flush=True )
+                    else:
+                        counter += 1
+                        if counter % 128 == 0: print()
+                        print( ".", end="", flush=True )
+                    output.append( chunk )
+        else:
+            # Use run_stream for Agent (Chat)
+            async with self.model.run_stream( prompt, **generation_args ) as result:
+                # Stream text as deltas
+                async for chunk in result.stream_text( delta=True ):
+                    counter = 0
+                    if self.debug:
+                        print( chunk, end="", flush=True )
+                    else:
+                        counter += 1
+                        if counter % 128 == 0: print()
+                        print( ".", end="", flush=True )
+                    output.append( chunk )
         
         return "".join( output )
     
@@ -192,8 +213,11 @@ class LlmClient:
             "max_tokens" : kwargs.get( "max_tokens", self.generation_args.get( "max_tokens", 64 ) ),
             "stop"       : kwargs.get( "stop", self.generation_args.get( "stop", None ) ),
             "top_p"      : kwargs.get( "top_p", self.generation_args.get( "top_p", 1.0 ) ),
+            # Allow stream to be set from generation_args if not explicitly provided
+            "stream"     : stream or self.generation_args.get( "stream", False ),
         }
-        if not stream:
+        # Check both the explicit parameter and the updated_gen_args
+        if not updated_gen_args["stream"]:
             
             # Add timing for non-streaming mode too
             start_time = time.perf_counter()
@@ -291,21 +315,29 @@ class LlmClient:
 if __name__ == "__main__":
     
     # prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/vox-command-template-completion-mistral-8b.txt" )
-    prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agent-router-template-completion.txt" )
+    # prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agent-router-template-completion.txt" )
+    prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agents/date-and-time.txt" )
+    # prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agents/date-and-time-reasoner.txt" )
     
-    voice_command = "can I please talk to a human?"
-    prompt = prompt_template.format( voice_command=voice_command )
-
-    model_name = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-4-bits-sym.gptq/2025-02-12-at-02-27"
-    base_url   = "http://192.168.1.21:3000/v1/completions"
-    client = LlmClient( base_url=base_url, model_name=model_name, completion_mode=True )
+    # voice_command = "can I please talk to a human?"
+    question = "What time is it?"
+    # prompt = prompt_template.format( voice_command=voice_command )
+    prompt = prompt_template.format( question=question )
+    
+    # model_name = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-4-bits-sym.gptq/2025-02-12-at-02-27"
+    # model_name = "/mnt/DATA01/include/www.deepily.ai/projects/models/OpenCodeReasoning-Nemotron-14B-autoround-4-bits-sym.gptq/2025-05-12-at-21-15"
+    model_name = "kaitchup/Phi-4-AutoRound-GPTQ-4bit"
+    # base_url   = "http://192.168.1.21:3000/v1/completions"
+    base_url   = "http://192.168.1.21:3001/v1/completions"
+    client = LlmClient( base_url=base_url, model_name=model_name, completion_mode=True, debug=True, verbose=True )
 
     # model_name = LlmClient.GROQ_LLAMA3_1_8B
     # client = LlmClient( model_name=model_name )
     
-    response = client.run( prompt, stream=False )
+    response = client.run( prompt, stream=True, **{ "temperature": 0.25, "max_tokens": 7500 } )
     # response = client.run( prompt, stream=False, **{ "temperature": 1.0, "max_tokens": 1000, "stop": [ "foo" ] } )
-    print( f"Response: {response}" )
+    du.print_banner( "Response", prepend_nl=True )
+    print( response )
     
     # model_name = "kaitchup/Phi-4-AutoRound-GPTQ-4bit"
     # base_url   = "http://192.168.1.21:3001/v1"

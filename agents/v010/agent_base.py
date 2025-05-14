@@ -9,21 +9,34 @@ import cosa.utils.util_pandas        as dup
 import cosa.utils.util_xml as dux
 import cosa.memory.solution_snapshot as ss
 
-from cosa.agents.llm_v0 import Llm_v0
-from cosa.agents.raw_output_formatter import RawOutputFormatter
+from cosa.agents.v010.raw_output_formatter import RawOutputFormatter
+
+from cosa.agents.v010.llm_client_factory import LlmClientFactory
 from cosa.agents.v010.runnable_code import RunnableCode
 from cosa.app.configuration_manager import ConfigurationManager
 from cosa.memory.solution_snapshot import SolutionSnapshot
-from cosa.agents.two_word_id_generator import TwoWordIdGenerator
+from cosa.agents.v010.two_word_id_generator import TwoWordIdGenerator
 
 class AgentBase( RunnableCode, abc.ABC ):
     
-    STATE_INITIALIZED = "initialized"
-    STATE_WAITING_TO_RUN = "waiting to run"
-    STATE_RUNNING = "running"
-    STATE_RUNNING_WAITING_FOR_RESPONSE = "running waiting for response"
-    STATE_STOPPED_ERROR = "error"
-    STATE_STOPPED_DONE = "done"
+    STATE_INITIALIZING         = "initializing"
+    STATE_WAITING_TO_RUN       = "waiting to run"
+    STATE_RUNNING              = "running"
+    STATE_WAITING_FOR_RESPONSE = "running waiting for response"
+    STATE_STOPPED_ERROR        = "error"
+    STATE_STOPPED_DONE         = "done"
+    
+    # ROUTING_COMMAND_TEMPLATE         = "agent router go to {routing_command}"
+    # PROMPT_TEMPLATE_KEY_TEMPLATE     = "prompt template for agent router go to {routing_command}"
+    # LLM_SPEC_KEY_TEMPLATE            = "llm spec key for agent router go to {routing_command}"
+    # SERIALIZATION_TOPIC_KEY_TEMPLATE = "serialization topic for agent router go to {routing_command}"
+    #
+    # @staticmethod
+    # def build_routing_command( routing_command ):
+    #     """
+    #     Returns the routing command for the given routing command.
+    #     """
+    #     return AgentBase.ROUTING_COMMAND_TEMPLATE.format( routing_command=routing_command )
     
     @abc.abstractmethod
     def restore_from_serialized_state( file_path ):
@@ -31,6 +44,7 @@ class AgentBase( RunnableCode, abc.ABC ):
     
     def __init__( self, df_path_key=None, question="", question_gist="", last_question_asked="", push_counter=-1, routing_command=None, debug=False, verbose=False, auto_debug=False, inject_bugs=False ):
         
+        self.execution_state       = AgentBase.STATE_INITIALIZING
         self.debug                 = debug
         self.verbose               = verbose
         self.auto_debug            = auto_debug
@@ -44,7 +58,6 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.id_hash               = ss.SolutionSnapshot.generate_id_hash( self.push_counter, self.run_date )
         
         self.two_word_id           = TwoWordIdGenerator().get_id()
-        self.execution_state       = AgentBase.STATE_INITIALIZED
         
         # This is a bit of a misnomer, it's the unprocessed question that was asked of the agent
         self.last_question_asked   = last_question_asked
@@ -56,64 +69,19 @@ class AgentBase( RunnableCode, abc.ABC ):
         
         self.df                    = None
         self.do_not_serialize      = { "df", "config_mgr", "two_word_id", "execution_state" }
-        
-        self.prompt_template_paths = self._get_prompt_template_paths()
-        self.models                = self._get_models()
-        self.serialization_topics  = self._get_serialization_topics()
-        
-        self.model_name            = self.models[ routing_command ]
-        self.prompt_template       = du.get_file_as_string( du.get_project_root() + self.prompt_template_paths[ routing_command ] )
+
+        self.model_name            = self.config_mgr.get( f"llm spec key for {routing_command}" )
+        template_path              = self.config_mgr.get( f"prompt template for {routing_command}" )
+        self.prompt_template       = du.get_file_as_string( du.get_project_root() + template_path )
         self.prompt                = None
         
         if self.df_path_key is not None:
             
             self.df = pd.read_csv( du.get_project_root() + self.config_mgr.get( self.df_path_key ) )
             self.df = dup.cast_to_datetime( self.df )
+            
+        self.execution_state = AgentBase.STATE_WAITING_TO_RUN
     
-    def _get_prompt_template_paths( self ):
-        
-        return{
-            "agent router go to date and time"    : self.config_mgr.get( "agent_prompt_for_date_and_time" ),
-            "agent router go to math"             : self.config_mgr.get( "agent_prompt_for_math" ),
-            "agent router go to calendar"         : self.config_mgr.get( "agent_prompt_for_calendaring" ),
-            "agent router go to weather"          : self.config_mgr.get( "agent_prompt_for_weather" ),
-            "agent router go to todo list"        : self.config_mgr.get( "agent_prompt_for_todo_list" ),
-            "agent router go to receptionist"     : self.config_mgr.get( "agent_prompt_for_receptionist" ),
-            "agent router go to debugger"         : self.config_mgr.get( "agent_prompt_for_debugger" ),
-            "agent router go to bug injector"     : self.config_mgr.get( "agent_prompt_for_bug_injector" ),
-            "agent router go to function mapping" : self.config_mgr.get( "agent_prompt_for_function_mapping" ),
-            "agent router go to math refactoring" : self.config_mgr.get( "agent_prompt_for_math_refactoring" ),
-        }
-    
-    def _get_models( self ):
-        
-        return {
-            "agent router go to date and time"    : self.config_mgr.get( "agent_model_name_for_date_and_time" ),
-            "agent router go to math"             : self.config_mgr.get( "agent_model_name_for_math" ),
-            "agent router go to calendar"         : self.config_mgr.get( "agent_model_name_for_calendaring" ),
-            "agent router go to weather"          : self.config_mgr.get( "agent_model_name_for_weather" ),
-            "agent router go to todo list"        : self.config_mgr.get( "agent_model_name_for_todo_list" ),
-            "agent router go to receptionist"     : self.config_mgr.get( "agent_model_name_for_receptionist" ),
-            "agent router go to debugger"         : self.config_mgr.get( "agent_model_name_for_debugger" ),
-            "agent router go to bug injector"     : self.config_mgr.get( "agent_model_name_for_bug_injector" ),
-            "agent router go to function mapping" : self.config_mgr.get( "agent_model_name_for_function_mapping" ),
-            "agent router go to math refactoring" : self.config_mgr.get( "agent_model_name_for_math_refactoring" ),
-        }
-    
-    def _get_serialization_topics( self ):
-        
-        return {
-            "agent router go to date and time"   : "date-and-time",
-            "agent router go to math"            : "math",
-            "agent router go to calendar"        : "calendar",
-            "agent router go to weather"         : "weather",
-            "agent router go to todo list"       : "todo-list",
-            "agent router go to receptionist"    : "receptionist",
-            "agent router go to debugger"        : "code-debugger",
-            "agent router go to bug injector"    : "bug-injector",
-            "agent router go to function mapping": "function-mapping",
-            "agent router go to refactoring"     : "refactoring",
-        }
     def get_html( self ):
         
         return f"<li id='{self.id_hash}'>{self.run_date} Q: {self.last_question_asked}</li>"
@@ -133,7 +101,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         # Constructing the filename
         # Format: "topic-year-month-day-hour-minute-second.json", limit question to the first 96 characters
         question_short = SolutionSnapshot.remove_non_alphanumerics( self.question[ :96 ] ).replace( " ", "-" )
-        topic          = self.serialization_topics[ self.routing_command ]
+        topic          = self.config_mgr.get( f"serialization topic for {self.routing_command}" )
         topic          = topic + "-" + subtopic if subtopic is not None else topic
         now            = du.get_current_datetime_raw()
         file_path = f"{du.get_project_root()}/io/log/{topic}-{question_short}-{now.year}-{now.month}-{now.day}-{now.hour}-{now.minute}-{now.second}.json"
@@ -164,12 +132,14 @@ class AgentBase( RunnableCode, abc.ABC ):
         
         return prompt_response_dict
     
-    def run_prompt( self, model_name=None, temperature=0.5, top_p=0.25, top_k=10, max_new_tokens=1024, stop_sequences=None, include_raw_response=False ):
+    def run_prompt( self, include_raw_response=False ):
+
+        factory = LlmClientFactory()  # No arguments for the singleton constructor
+        llm = factory.get_client( self.model_name, debug=self.debug, verbose=self.verbose )
         
-        if model_name is not None: self.model_name = model_name
-        
-        llm = Llm_v0( config_mgr=self.config_mgr, model=self.model_name, debug=self.debug, verbose=self.verbose )
-        response = llm.query_llm( prompt=self.prompt, temperature=temperature, top_p=top_p, top_k=top_k, max_new_tokens=max_new_tokens, stop_sequences=stop_sequences, debug=self.debug, verbose=self.verbose )
+        if self.debug: print( f"Prompt: {self.prompt}" )
+        response = llm.run( self.prompt )
+        if self.debug: print( f"Response: {response}" )
         
         # Parse XML-esque response
         self.prompt_response_dict = self._update_response_dictionary( response )
@@ -205,7 +175,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         elif auto_debug:
             
             # Iterative debugging agent extends this class: agent base
-            from cosa.agents.iterative_debugging_agent import IterativeDebuggingAgent
+            from cosa.agents.v010.iterative_debugging_agent import IterativeDebuggingAgent
 
             self.error = self.code_response_dict[ "output" ]
             
@@ -240,10 +210,10 @@ class AgentBase( RunnableCode, abc.ABC ):
         print( "AgentBase.is_format_output_runnable() not implemented" )
         pass
     
-    def format_output( self ):
+    def run_formatter( self ):
         
         formatter = RawOutputFormatter( self.last_question_asked, self.code_response_dict[ "output" ], self.routing_command, debug=self.debug, verbose=self.verbose )
-        self.answer_conversational = formatter.format_output()
+        self.answer_conversational = formatter.run_formatter()
         
         return self.answer_conversational
     
@@ -256,6 +226,6 @@ class AgentBase( RunnableCode, abc.ABC ):
         
         self.run_prompt()
         self.run_code()
-        self.format_output()
+        self.run_formatter()
         
         return self.answer_conversational
