@@ -1,7 +1,7 @@
 import json
 import os
 import asyncio
-from typing import Any, Optional, Tuple
+from typing import Any, Optional, Tuple, Union
 
 from pydantic_ai import Agent
 
@@ -10,7 +10,6 @@ import cosa.utils.util as du
 # from cosa.utils.util_stopwatch import Stopwatch
 
 from cosa.agents.v010.llm_client import LlmClient
-# from cosa.agents.v010.token_counter import TokenCounter
 from cosa.app.configuration_manager import ConfigurationManager
 
 class LlmClientFactory:
@@ -41,7 +40,7 @@ class LlmClientFactory:
     """
     _instance: Optional['LlmClientFactory'] = None
     
-    def __new__( cls ):
+    def __new__( cls, debug: bool=False, verbose: bool=False ):
         if cls._instance is None:
             cls._instance = super( LlmClientFactory, cls ).__new__( cls )
             # Initialize the instance
@@ -59,7 +58,7 @@ class LlmClientFactory:
         self.debug        = debug
         self.verbose      = verbose
     
-    def get_client( self, model_config_key: str, debug: bool=None, verbose: bool=None ) -> LlmClient | 'AgentWrapper':
+    def get_client( self, model_config_key: str, debug: bool=None, verbose: bool=None ) -> Union['LlmClient', 'AgentWrapper']:
         """
         Get an LLM client for the given model descriptor.
         
@@ -107,6 +106,9 @@ class LlmClientFactory:
             default_prompt_format = self.config_mgr.get( "prompt_format_default", default="json_message" )
             prompt_format         = model_params.get( "prompt_format", default_prompt_format )
             completion_mode       = prompt_format in [ "instruction_completion", "special_token" ]
+            
+            # Extract stream parameter if present (will be used in run() calls)
+            self.stream_enabled   = model_params.get( "stream", False )
             
             # Remove parameters that will be passed explicitly, so that **model_params doesn't complain about multiple values
             model_params.pop( "prompt_format", None )

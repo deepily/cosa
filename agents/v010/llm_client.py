@@ -213,8 +213,11 @@ class LlmClient:
             "max_tokens" : kwargs.get( "max_tokens", self.generation_args.get( "max_tokens", 64 ) ),
             "stop"       : kwargs.get( "stop", self.generation_args.get( "stop", None ) ),
             "top_p"      : kwargs.get( "top_p", self.generation_args.get( "top_p", 1.0 ) ),
+            # Allow stream to be set from generation_args if not explicitly provided
+            "stream"     : stream or self.generation_args.get( "stream", False ),
         }
-        if not stream:
+        # Check both the explicit parameter and the updated_gen_args
+        if not updated_gen_args["stream"]:
             
             # Add timing for non-streaming mode too
             start_time = time.perf_counter()

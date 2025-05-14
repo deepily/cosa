@@ -26,6 +26,18 @@ class AgentBase( RunnableCode, abc.ABC ):
     STATE_STOPPED_ERROR        = "error"
     STATE_STOPPED_DONE         = "done"
     
+    # ROUTING_COMMAND_TEMPLATE         = "agent router go to {routing_command}"
+    # PROMPT_TEMPLATE_KEY_TEMPLATE     = "prompt template for agent router go to {routing_command}"
+    # LLM_SPEC_KEY_TEMPLATE            = "llm spec key for agent router go to {routing_command}"
+    # SERIALIZATION_TOPIC_KEY_TEMPLATE = "serialization topic for agent router go to {routing_command}"
+    #
+    # @staticmethod
+    # def build_routing_command( routing_command ):
+    #     """
+    #     Returns the routing command for the given routing command.
+    #     """
+    #     return AgentBase.ROUTING_COMMAND_TEMPLATE.format( routing_command=routing_command )
+    
     @abc.abstractmethod
     def restore_from_serialized_state( file_path ):
         pass
@@ -198,10 +210,10 @@ class AgentBase( RunnableCode, abc.ABC ):
         print( "AgentBase.is_format_output_runnable() not implemented" )
         pass
     
-    def format_output( self ):
+    def run_formatter( self ):
         
         formatter = RawOutputFormatter( self.last_question_asked, self.code_response_dict[ "output" ], self.routing_command, debug=self.debug, verbose=self.verbose )
-        self.answer_conversational = formatter.format_output()
+        self.answer_conversational = formatter.run_formatter()
         
         return self.answer_conversational
     
@@ -214,6 +226,6 @@ class AgentBase( RunnableCode, abc.ABC ):
         
         self.run_prompt()
         self.run_code()
-        self.format_output()
+        self.run_formatter()
         
         return self.answer_conversational

@@ -34,7 +34,7 @@ class RawOutputFormatter:
         factory                    = LlmClientFactory( debug=self.debug, verbose=self.verbose )
         self.llm                   = factory.get_client( model_name, debug=self.debug, verbose=self.verbose )
     
-    def format_output( self ):
+    def run_formatter( self ):
 
         response = self.llm.run( self.prompt )
         output   = dux.get_value_by_xml_tag_name( response, "rephrased-answer" )
@@ -58,4 +58,4 @@ if __name__ == "__main__":
     raw_output        = "As an AI, I am programmed to follow guidelines and respond to queries in a helpful and appropriate manner. If someone were to ask me to perform an inappropriate action or provide explicit content, I would simply respond with a message that I am unable to assist with such requests."
    
     formatter = RawOutputFormatter( question, raw_output, routing_command, thoughts=thoughts, debug=True, verbose=True )
-    print( formatter.format_output() )
+    print( formatter.run_formatter() )

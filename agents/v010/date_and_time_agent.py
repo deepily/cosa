@@ -1,3 +1,6 @@
+from flask.cli import routes_command
+from google.api.routing_pb2 import routing
+
 from cosa.agents.v010.agent_base import AgentBase
 
 class DateAndTimeAgent( AgentBase ):
@@ -21,6 +24,9 @@ if __name__ == "__main__":
     
     # question = "What time is it in San Francisco?"
     question = "What time is it in Washington DC?"
-    date_agent = DateAndTimeAgent( question=question, routing_command="agent router go to date and time", debug=True, verbose=True, auto_debug=True )
+    date_agent = DateAndTimeAgent( question=question, debug=True, verbose=True, auto_debug=True )
     date_agent.run_prompt()
-    # date_agent.run_code()
+    date_agent.run_code()
+    date_agent.run_formatter()
+    
+    print( f"Formtted response: {date_agent.answer_conversational}" )
