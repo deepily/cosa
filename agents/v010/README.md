@@ -46,6 +46,7 @@ pip install kagiapi lancedb
 ## Special Notes
 
 - The WeatherAgent has been updated to use a new `search_gib_v010.py` file that imports `RawOutputFormatter` from the v010 package.
+- IMPORTANT: `tools/search_gib_v010.py` was created as a temporary solution to satisfy dependencies and needs to be kept in mind when making v010 the default agent implementation. This will need to be addressed when migrating the entire codebase to v010.
 - The ReceptionistAgent depends on the InputAndOutputTable class, which in turn relies on QuestionEmbeddingsTable and requires the lancedb package.
 
 ## Configuration Updates
