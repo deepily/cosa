@@ -59,26 +59,27 @@ Examining the successfully migrated `date_and_time_agent.py` highlights the foll
 3. **LLM Interaction**: Use factory pattern instead of direct LLM instantiation
 4. **Output Formatting**: Use the enhanced run_formatter() method
 
-### Agent-by-Agent Migration Process
+### Revised Copy-and-Modify Approach
 
-For each remaining agent, follow this standard pattern:
+After review, we're adopting a more efficient copy-and-modify approach:
 
-1. **Create Skeleton File**
-   - Create new file in v010 directory with same name as v000 version
-   - Update imports to use v010 versions of dependencies
+1. **Copy File**
+   - Copy the original agent file from v000 to v010 directory
+   - This preserves all unique agent functionality and specialized methods
 
-2. **Migrate Core Functionality**
-   - Keep same parameter signature for backward compatibility
-   - Update super() call to match v010 AgentBase requirements
-   - Preserve agent-specific initialization code (xml_response_tag_names, etc.)
+2. **Update Imports**
+   - Change import paths from v000 to v010 packages
+   - Update any deprecated imports with their v010 equivalents
 
-3. **Update LLM Interaction**
-   - Replace direct LLM usage with factory-based approach
+3. **Modify LLM Interaction**
+   - Replace direct Llm_v0 usage with LlmClientFactory pattern
    - Update any formatter usage to use run_formatter() method
 
-4. **Add Testing Code**
-   - Include a minimal __main__ section to test agent functionality
-   - Verify agent works in both streaming and non-streaming modes
+4. **Test Migration**
+   - Verify the agent works with the v010 architecture
+   - Test both streaming and non-streaming configurations
+
+This approach minimizes the risk of errors and preserves agent-specific behavior while still modernizing the core architecture.
 
 ### Configuration Integration
 
@@ -144,9 +145,11 @@ if __name__ == "__main__":
 
 ### Migration Schedule / Todo List
 
+> **NOTE:** This migration work is scheduled to begin on 2025-05-14. We've adjusted our strategy to use a copy-and-modify approach rather than a template-based approach to preserve agent-specific functionality.
+
 | Agent | Priority | Status | Est. Effort | Notes |
 |-------|----------|--------|-------------|-------|
-| calendaring_agent.py | High | ⏳ Not Started | 1 hour | |
+| calendaring_agent.py | High | ⏳ Not Started | 1 hour | First task for 2025-05-14 |
 | todo_list_agent.py | High | ⏳ Not Started | 1 hour | |
 | math_agent.py | High | ⏳ Not Started | 1 hour | |
 | weather_agent.py | High | ⏳ Not Started | 1 hour | |
