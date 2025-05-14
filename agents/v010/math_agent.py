@@ -1,0 +1,50 @@
+import cosa.utils.util as du
+import cosa.utils.util_xml as dux
+
+from cosa.utils.util_stopwatch import Stopwatch
+from cosa.memory.solution_snapshot import SolutionSnapshot
+from cosa.agents.v010.agent_base import AgentBase
+
+class MathAgent( AgentBase ):
+    def __init__( self, question="", question_gist="", last_question_asked="", push_counter=-1, routing_command="agent router go to math", debug=False, verbose=False, auto_debug=False, inject_bugs=False ):
+        
+        super().__init__( df_path_key=None, question=question, question_gist=question_gist, last_question_asked=last_question_asked, routing_command=routing_command, push_counter=push_counter, debug=debug, verbose=verbose, auto_debug=auto_debug, inject_bugs=inject_bugs )
+        
+        # du.print_banner( "MathAgent.__init__()" )
+        print( "¡OJO! MathAgent is using last_question_asked because it wants all the specificity contained within the voice to text transcription" )
+        self.prompt = self.prompt_template.format( question=self.last_question_asked )
+        self.xml_response_tag_names   = [ "thoughts", "brainstorm", "evaluation", "code", "example", "returns", "explanation" ]
+    
+        # self.serialize_prompt_to_json = self.config_mgr.get( "agent_todo_list_serialize_prompt_to_json", default=False, return_type="boolean" )
+        # self.serialize_code_to_json   = self.config_mgr.get( "agent_todo_list_serialize_code_to_json",   default=False, return_type="boolean" )
+    
+    def restore_from_serialized_state( self, file_path ):
+        
+        raise NotImplementedError( "MathAgent.restore_from_serialized_state() not implemented" )
+    
+    def run_formatter( self ):
+        
+        """
+        Format the output based on the configuration for math agent.
+
+        If 'formatter_prompt_for_math_terse' is True, set the answer as the output from 'code_response_dict'.
+        Otherwise, call the superclass method 'run_formatter' and set the answer accordingly.
+        """
+        terse_output = self.config_mgr.get( "formatter_prompt_for_math_terse", default=False, return_type="boolean" )
+        
+        if terse_output:
+            self.answer_conversational = self.code_response_dict[ "output" ]
+        else:
+            super().run_formatter()
+            
+        return self.answer_conversational
+
+if __name__ == "__main__":
+    
+    question = "What's the square root of 144?"
+    math_agent = MathAgent( question=question, debug=True, verbose=True, auto_debug=True )
+    math_agent.run_prompt()
+    math_agent.run_code()
+    math_agent.run_formatter()
+    
+    print( f"Formatted response: {math_agent.answer_conversational}" )
