@@ -2,6 +2,7 @@ import os
 import random
 import regex as re
 from xmlschema import XMLSchema
+from typing import Optional, Any, Union
 
 import cosa.utils.util as du
 import cosa.utils.util_xml as dux
@@ -17,7 +18,7 @@ class XmlPromptGenerator:
     - Adding natural language variations (interjections, salutations)
     """
     
-    def __init__( self, path_prefix=du.get_project_root(), debug=False, verbose=False, silent=False ):
+    def __init__( self, path_prefix: str=du.get_project_root(), debug: bool=False, verbose: bool=False, silent: bool=False ) -> None:
         self.debug                              = debug
         self.verbose                            = verbose
         self.silent                             = silent
@@ -59,15 +60,20 @@ class XmlPromptGenerator:
         self.interjections                      = self.get_interjections()
         self.salutations                        = self.get_salutations()
     
-    def _test_command_paths( self, commands ):
+    def _test_command_paths( self, commands: dict ) -> None:
         """
         Verifies that all command file paths exist.
         
-        Args:
-            commands (dict): Dictionary mapping command names to file paths
+        Requires:
+            - commands is dictionary with string values
+            - path_prefix is set
+        
+        Ensures:
+            - Checks existence of all command files
+            - Prints status if not silent
         
         Raises:
-            Exception: If any command file path doesn't exist
+            - Exception if any command file missing
         """
         for command in commands.keys():
             path_exists = os.path.exists( self.path_prefix + commands[ command ] )
@@ -79,12 +85,16 @@ class XmlPromptGenerator:
         if not self.silent:
             print()
     
-    def _get_compound_vox_commands( self ):
+    def _get_compound_vox_commands( self ) -> dict:
         """
         Returns dictionary of compound voice commands and their corresponding file paths.
         
-        Returns:
-            dict: Dictionary mapping command names to file paths
+        Requires:
+            - None
+        
+        Ensures:
+            - Returns command name to file path mapping
+            - All file paths are tested for existence
         """
         compound_commands = {
             "go to current tab"                : "/src/ephemera/prompts/data/synthetic-data-load-url-current-tab.txt",
@@ -106,12 +116,16 @@ class XmlPromptGenerator:
         
         return compound_commands
     
-    def _get_simple_vox_commands( self ):
+    def _get_simple_vox_commands( self ) -> dict:
         """
         Returns dictionary of simple voice commands and their corresponding file paths.
         
-        Returns:
-            dict: Dictionary mapping command names to file paths
+        Requires:
+            - None
+        
+        Ensures:
+            - Returns command name to file path mapping
+            - All file paths are tested for existence
         """
         simple_commands = {
             "search using clipboard current tab"               : "/src/ephemera/prompts/data/synthetic-data-search-clipboard-in-current-tab.txt",
@@ -132,12 +146,16 @@ class XmlPromptGenerator:
         
         return simple_commands
     
-    def _get_compound_agent_router_commands( self ):
+    def _get_compound_agent_router_commands( self ) -> dict:
         """
         Returns dictionary of compound agent router commands and their file paths.
         
-        Returns:
-            dict: Dictionary mapping command names to file paths
+        Requires:
+            - None
+        
+        Ensures:
+            - Returns command name to file path mapping
+            - All file paths are tested for existence
         """
         agent_routing_compound_commands = {
             "agent router go to date and time"   : "/src/ephemera/prompts/data/synthetic-data-agent-routing-date-and-time.txt",
@@ -149,12 +167,16 @@ class XmlPromptGenerator:
         
         return agent_routing_compound_commands
     
-    def _get_simple_agent_router_commands( self ):
+    def _get_simple_agent_router_commands( self ) -> dict:
         """
         Returns dictionary of simple agent router commands and their file paths.
         
-        Returns:
-            dict: Dictionary mapping command names to file paths
+        Requires:
+            - None
+        
+        Ensures:
+            - Returns command name to file path mapping
+            - All file paths are tested for existence
         """
         simple_commands = {
             "agent router go to todo list": "/src/ephemera/prompts/data/synthetic-data-agent-routing-todo-lists.txt",
@@ -165,12 +187,16 @@ class XmlPromptGenerator:
         
         return simple_commands
     
-    def _get_compound_agent_function_mapping_commands( self ):
+    def _get_compound_agent_function_mapping_commands( self ) -> dict:
         """
         Returns dictionary of compound agent function mapping commands.
         
-        Returns:
-            dict: Dictionary mapping command names to file paths
+        Requires:
+            - None
+        
+        Ensures:
+            - Returns command name to file path mapping
+            - Handles configuration loading errors
         """
         try:
             from cosa.app.configuration_manager import ConfigurationManager
@@ -186,33 +212,50 @@ class XmlPromptGenerator:
                 print( f"Warning: Could not load function mapping commands: {e}" )
             return {}
     
-    def _compile_vox_cmd_commands( self ):
+    def _compile_vox_cmd_commands( self ) -> str:
         """
         Compiles both compound and simple voice commands into XML format.
         
-        Returns:
-            str: Formatted XML string of all voice commands
+        Requires:
+            - vox_cmd_compound_commands initialized
+            - vox_cmd_simple_commands initialized
+        
+        Ensures:
+            - Returns XML formatted commands
+            - Combines compound and simple commands
         """
         compound_categories = "".join( [ "        <command>" + command + "</command>\n" for command in self.vox_cmd_compound_commands.keys() ] )
         simple_categories   = "".join( [ "        <command>" + command + "</command>\n" for command in self.vox_cmd_simple_commands.keys() ] )
         
         return ( compound_categories + simple_categories ).strip()
     
-    def _compile_agent_router_commands( self ):
+    def _compile_agent_router_commands( self ) -> str:
         """
         Compiles both compound and simple agent router commands into XML format.
         
-        Returns:
-            str: Formatted XML string of all agent router commands
+        Requires:
+            - agent_router_compound_commands initialized
+            - agent_router_simple_commands initialized
+        
+        Ensures:
+            - Returns XML formatted commands
+            - Combines compound and simple commands
         """
         compound_categories = "".join( [ "        <command>" + command + "</command>\n" for command in self.agent_router_compound_commands.keys() ] )
         simple_categories   = "".join( [ "        <command>" + command + "</command>\n" for command in self.agent_router_simple_commands.keys() ] )
         
         return ( compound_categories + simple_categories ).strip()
     
-    def _init_common_templates( self ):
+    def _init_common_templates( self ) -> None:
         """
         Initializes common templates used for prompt formatting.
+        
+        Requires:
+            - None
+        
+        Ensures:
+            - Sets common template attributes
+            - Templates are properly formatted
         """
         self.common_input_template = """
         Below is the raw human voice command transcription formatted using simple XML:
@@ -238,9 +281,16 @@ class XmlPromptGenerator:
             <args>{args}</args>
         </response>"""
     
-    def _init_vox_cmd_templates( self ):
+    def _init_vox_cmd_templates( self ) -> None:
         """
         Initializes voice command templates.
+        
+        Requires:
+            - vox_cmd_commands is compiled
+        
+        Ensures:
+            - Sets vox command template attributes
+            - Templates include command choices
         """
         self.vox_cmd_instruction_template_gpt = """INSTRUCTIONS:
         Your job is to discern the intent of a human voice command transcription and translate it into a standardized command that a browser on your computer would understand.
@@ -270,9 +320,16 @@ class XmlPromptGenerator:
         Requirement: The first word of your response MUST be `<response>`
         Hint: Anything that isn't a part of the command itself should be treated as arguments related to the command."""
     
-    def _init_agent_router_templates( self ):
+    def _init_agent_router_templates( self ) -> None:
         """
         Initializes agent router templates.
+        
+        Requires:
+            - agent_router_commands is compiled
+        
+        Ensures:
+            - Sets agent router template attributes
+            - Templates include command choices
         """
         self.agent_router_instruction_template_gpt = """INSTRUCTIONS:
         Your job is to discern the intent of a human voice command transcription and translate it into a standardized agent routing command that another LLM would understand.
@@ -302,18 +359,19 @@ class XmlPromptGenerator:
         Requirement: The first word of your response MUST be `<response>`
         Hint: Anything that isn't a part of the command itself should be treated as arguments related to the command."""
     
-    def get_prompt_template( self, name ):
+    def get_prompt_template( self, name: str ) -> str:
         """
         Returns a formatted prompt template for the specified command type.
         
-        Args:
-            name (str): The command type ('vox command' or 'agent router')
-            
-        Returns:
-            str: Formatted prompt template
-            
+        Requires:
+            - name is 'vox command' or 'agent router'
+        
+        Ensures:
+            - Returns properly formatted template
+            - Template includes appropriate commands
+        
         Raises:
-            ValueError: If an unknown prompt template name is provided
+            - ValueError if unknown template name
         """
         if name == "vox command":
             instruction = self.vox_cmd_instruction_template.format( command_choices=self.vox_cmd_commands )
@@ -347,16 +405,17 @@ class XmlPromptGenerator:
         
         return prompt
     
-    def _get_prompt_instruction_format( self, instruction, input_text ):
+    def _get_prompt_instruction_format( self, instruction: str, input_text: str ) -> str:
         """
         Formats instruction and input into a standardized prompt format.
         
-        Args:
-            instruction (str): The instruction/task for the model
-            input_text (str): The input context for the model
-            
-        Returns:
-            str: Formatted prompt
+        Requires:
+            - instruction is non-empty string
+            - input_text is non-empty string
+        
+        Ensures:
+            - Returns formatted prompt
+            - Includes task and response sections
         """
         return f"""### Instruction:
         
@@ -372,17 +431,17 @@ class XmlPromptGenerator:
     ### Response:
     """
     
-    def get_prompt( self, instruction, input_text, output="" ):
+    def get_prompt( self, instruction: str, input_text: str, output: str="" ) -> str:
         """
         Formats a prompt with instruction, input, and optional output.
         
-        Args:
-            instruction (str): The instruction/task for the model
-            input_text (str): The input context for the model
-            output (str, optional): The expected output (for training)
-            
-        Returns:
-            str: Formatted prompt
+        Requires:
+            - instruction is non-empty string
+            - input_text is non-empty string
+        
+        Ensures:
+            - Returns formatted prompt
+            - Uses common templates
         """
         human_says = self.common_human_says_template.format( voice_command=input_text )
         prompt_input = self.common_input_template.format( human_says=human_says, response_format=self.common_response_format )
@@ -390,18 +449,16 @@ class XmlPromptGenerator:
         
         return prompt
     
-    def format_gpt_message( self, instruction, voice_command, command, args ):
+    def format_gpt_message( self, instruction: str, voice_command: str, command: str, args: str ) -> dict:
         """
         Formats a message for chat models.
         
-        Args:
-            instruction (str): System instruction
-            voice_command (str): User voice command
-            command (str): Expected command response
-            args (str): Command arguments
-            
-        Returns:
-            dict: GPT message dictionary
+        Requires:
+            - All parameters are strings
+        
+        Ensures:
+            - Returns message dictionary
+            - Contains required role structure
         """
         return {
             "messages": [
@@ -411,27 +468,30 @@ class XmlPromptGenerator:
             ]
         }
     
-    def get_interjections( self, requested_length=None ):
+    def get_interjections( self, requested_length: Optional[int]=None ) -> list:
         """
         Gets a list of interjections for more natural language generation.
         
-        Args:
-            requested_length (int, optional): Number of interjections to return
-            
-        Returns:
-            list: List of interjection phrases
+        Requires:
+            - requested_length is None or positive integer
+        
+        Ensures:
+            - Returns list of interjections
+            - Length matches requested_length if specified
         """
         return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-interjections-um-er-uh-etc.txt", requested_length=requested_length )
     
-    def get_salutations( self, requested_length=500 ):
+    def get_salutations( self, requested_length: int=500 ) -> list:
         """
         Gets randomized salutations with computer names.
         
-        Args:
-            requested_length (int, optional): Number of salutations to return
-            
-        Returns:
-            list: List of formatted salutations
+        Requires:
+            - requested_length is positive integer
+        
+        Ensures:
+            - Returns list of salutations
+            - Computer names substituted
+            - Length matches requested_length
         """
         names       = self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-receptionist-names.txt", requested_length=None )
         salutations = self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-receptionist-salutations.txt", requested_length=requested_length )
@@ -446,16 +506,18 @@ class XmlPromptGenerator:
         
         return salutations
     
-    def insert_interjection( self, text, interjections=None ):
+    def insert_interjection( self, text: str, interjections: Optional[list]=None ) -> tuple[str, str]:
         """
         Inserts a random interjection into the provided text.
         
-        Args:
-            text (str): The text to modify
-            interjections (list, optional): List of interjections to choose from
-            
-        Returns:
-            tuple: (inserted_interjection, modified_text)
+        Requires:
+            - text is a string
+            - interjections is None or list of strings
+        
+        Ensures:
+            - Returns tuple with interjection and modified text
+            - Randomly inserts interjection
+            - Capitalizes if at beginning
         """
         if interjections is None:
             interjections = self.interjections
@@ -477,16 +539,18 @@ class XmlPromptGenerator:
             
         return interjection, " ".join( words )
     
-    def prepend_salutation( self, text, salutations=None ):
+    def prepend_salutation( self, text: str, salutations: Optional[list]=None ) -> tuple[str, str]:
         """
         Prepends a random salutation to the given text.
         
-        Args:
-            text (str): The text to modify
-            salutations (list, optional): List of salutations to choose from
-            
-        Returns:
-            tuple: (chosen_salutation, modified_text)
+        Requires:
+            - text is a string
+            - salutations is None or list of strings
+        
+        Ensures:
+            - Returns tuple with salutation and modified text
+            - Text starts with salutation if provided
+            - First character lowercased
         """
         if salutations is None:
             salutations = self.salutations
@@ -500,16 +564,18 @@ class XmlPromptGenerator:
             # Lowercase the first word of the text
             return salutation, salutation + " " + text[0].lower() + text[1:]
     
-    def _get_placeholder_values( self, placeholder_file, requested_length=None ):
+    def _get_placeholder_values( self, placeholder_file: str, requested_length: Optional[int]=None ) -> list:
         """
         Loads placeholder values from a file.
         
-        Args:
-            placeholder_file (str): Path to the placeholder file
-            requested_length (int, optional): Number of values to return
-            
-        Returns:
-            list: List of placeholder values
+        Requires:
+            - placeholder_file is valid path string
+            - requested_length is None or positive integer
+        
+        Ensures:
+            - Returns list of placeholder values
+            - Duplicates added if needed to match length
+            - Length matches requested_length if specified
         """
         # A requested_length of None used as the second value in a list slice returns the entire list
         placeholders = du.get_file_as_list(
@@ -528,61 +594,72 @@ class XmlPromptGenerator:
         
         return placeholders
     
-    def get_search_terms( self, requested_length=100 ):
+    def get_search_terms( self, requested_length: int=100 ) -> list:
         """
         Gets placeholder search terms.
         
-        Args:
-            requested_length (int): Number of search terms to return
-            
-        Returns:
-            list: List of search terms
+        Requires:
+            - requested_length is positive integer
+        
+        Ensures:
+            - Returns list of search terms
+            - Length matches requested_length
         """
         return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-search-terms.txt", requested_length=requested_length )
     
-    def get_cities_and_countries( self, requested_length=100 ):
+    def get_cities_and_countries( self, requested_length: Optional[int]=100 ) -> list:
         """
         Gets placeholder city and country names.
         
-        Args:
-            requested_length (int): Number of location names to return
-            
-        Returns:
-            list: List of city and country names
+        Requires:
+            - requested_length is None or positive integer
+        
+        Ensures:
+            - Returns list of location names
+            - Length matches requested_length if specified
         """
         return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-cities-and-countries.txt", requested_length=requested_length )
     
-    def get_domain_names( self, requested_length=100 ):
+    def get_domain_names( self, requested_length: int=100 ) -> list:
         """
         Generates domain names for URL commands.
         
-        Args:
-            requested_length (int): Number of domain names to generate
-            
-        Returns:
-            list: List of generated domain names
+        Requires:
+            - requested_length is positive integer
+        
+        Ensures:
+            - Returns list of domain names
+            - Length equals requested_length
         """
         return du.generate_domain_names( requested_length )
     
-    def serialize_prompt( self, prompt, prompt_path ):
+    def serialize_prompt( self, prompt: str, prompt_path: str ) -> None:
         """
         Writes a prompt to a file.
         
-        Args:
-            prompt (str): The prompt to serialize
-            prompt_path (str): Path to save the prompt
+        Requires:
+            - prompt is a string
+            - prompt_path is valid path string
+        
+        Ensures:
+            - Prompt written to file
+            - Path is relative to path_prefix
         """
         path = self.path_prefix + prompt_path
         
         du.print_banner( f"Serializing prompt to [{path}]", prepend_nl=True )
         du.write_string_to_file( path, prompt )
         
-    def serialize_prompts( self, prompt_path_prefix ):
+    def serialize_prompts( self, prompt_path_prefix: str ) -> None:
         """
         Writes all prompt templates to files.
         
-        Args:
-            prompt_path_prefix (str): Directory prefix for saving prompts
+        Requires:
+            - prompt_path_prefix is valid directory path
+        
+        Ensures:
+            - All templates serialized
+            - Files created at specified location
         """
         self.serialize_prompt( self.get_prompt_template( "vox command" ), prompt_path_prefix + "vox-command-template.txt" )
         self.serialize_prompt( self.get_prompt_template( "agent router" ), prompt_path_prefix + "agent-router-template.txt" )

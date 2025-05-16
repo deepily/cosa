@@ -8,10 +8,29 @@ from cosa.tools.search_kagi import KagiSearch
 from cosa.agents.v010.raw_output_formatter import RawOutputFormatter
 
 import cosa.utils.util as du
+from typing import Optional, Union, Any, dict
 
 class GibSearch:
+    """
+    Vendor-neutral wrapper for web search functionality (v010).
     
-    def __init__( self, query=None, url=None, debug=False, verbose=False ):
+    Provides a simple interface to KagiSearch and potentially other search providers.
+    Uses v010 version of RawOutputFormatter.
+    """
+    def __init__( self, query: Optional[str]=None, url: Optional[str]=None, debug: bool=False, verbose: bool=False ) -> None:
+        """
+        Initialize the GibSearch wrapper.
+        
+        Requires:
+            - Either query or url should be provided (not both)
+            
+        Ensures:
+            - Creates KagiSearch instance with provided parameters
+            - Initializes results to None
+            
+        Raises:
+            - None
+        """
         
         self.debug     = debug
         self.verbose   = verbose
@@ -20,12 +39,38 @@ class GibSearch:
         self._searcher = KagiSearch( query=query, url=url, debug=debug, verbose=verbose )
         self._results  = None
     
-    def search_and_summarize_the_web( self ):
+    def search_and_summarize_the_web( self ) -> None:
+        """
+        Perform web search and summarization.
         
+        Requires:
+            - Query or URL was provided at initialization
+            - KagiSearch instance is initialized
+            
+        Ensures:
+            - Populates self._results with search data
+            - Results include meta, data, and summary sections
+            
+        Raises:
+            - KagiSearch errors propagated
+        """
         self._results = self._searcher.search_fastgpt()
         
-    def get_results( self, scope="all" ):
+    def get_results( self, scope: str="all" ) -> Optional[Union[dict, str, list]]:
+        """
+        Get search results by scope.
         
+        Requires:
+            - search_and_summarize_the_web() has been called
+            - scope is one of: 'all', 'meta', 'data', 'summary', 'references'
+            
+        Ensures:
+            - Returns requested portion of results
+            - Returns None for invalid scope with error message
+            
+        Raises:
+            - KeyError if results structure is invalid
+        """
         if scope == "all":
             return self._results
         elif scope == "meta":

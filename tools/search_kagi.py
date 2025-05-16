@@ -4,10 +4,29 @@ from kagiapi import KagiClient
 import cosa.utils.util as du
 
 from cosa.utils.util_stopwatch import Stopwatch
+from typing import Optional, dict, Any
 
 class KagiSearch:
+    """
+    Wrapper for Kagi search API functionality.
     
-    def __init__( self, query=None, url=None, debug=False, verbose=False ):
+    Provides FastGPT search and URL summarization capabilities.
+    """
+    def __init__( self, query: Optional[str]=None, url: Optional[str]=None, debug: bool=False, verbose: bool=False ) -> None:
+        """
+        Initialize KagiSearch client.
+        
+        Requires:
+            - Kagi API key available through du.get_api_key()
+            - Either query or url provided for search/summarization
+            
+        Ensures:
+            - Creates KagiClient with API key
+            - Sets query or url for operations
+            
+        Raises:
+            - KeyError if API key not found
+        """
         
         self.debug    = debug
         self.verbose  = verbose
@@ -30,8 +49,22 @@ class KagiSearch:
     #
     #     return response.json()
     
-    def search_fastgpt( self ):
+    def search_fastgpt( self ) -> dict[str, Any]:
+        """
+        Perform FastGPT search with query.
         
+        Requires:
+            - self.query is set and non-empty
+            - Kagi client is initialized
+            
+        Ensures:
+            - Returns dict with 'meta' and 'data' sections
+            - 'data' contains 'output' with search results
+            - Prints timing information
+            
+        Raises:
+            - KagiAPI errors propagated
+        """
         timer    = Stopwatch( f"Kagi FastGPT query: [{self.query}]" )
         response = self._kagi.fastgpt( query=self.query )
         timer.print( "Done!", use_millis=True )
@@ -56,8 +89,22 @@ class KagiSearch:
     #
     #     return response.json()
     
-    def get_summary( self ):
+    def get_summary( self ) -> dict[str, Any]:
+        """
+        Get summary of URL content.
         
+        Requires:
+            - self.url is set and valid
+            - Kagi client is initialized
+            
+        Ensures:
+            - Returns dict with summary data
+            - Uses 'agnes' engine for summarization
+            - Prints timing information
+            
+        Raises:
+            - KagiAPI errors propagated
+        """
         timer = Stopwatch( "Kagi: Summarize" )
         if self.debug: print( f"Kagi: Summarize: URL: [{self.url}]" )
         response = self._kagi.summarize( url=self.url, engine="agnes", summary_type="summary" )

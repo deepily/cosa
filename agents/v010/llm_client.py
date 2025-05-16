@@ -1,7 +1,7 @@
 import os
 import time
 import asyncio
-from typing import Optional, Any, Dict, List, Union, Tuple
+from typing import Optional, Any
 
 from boto3 import client
 from openai import base_url
@@ -59,7 +59,21 @@ class LlmClient:
     # QWEN_2_5_32B = "kaitchup/Qwen2.5-Coder-32B-Instruct-AutoRound-GPTQ-4bit"
     
     @staticmethod
-    def get_model( mnt_point, prefix=DEEPILY_PREFIX ):
+    def get_model( mnt_point: str, prefix: str=DEEPILY_PREFIX ) -> str:
+        """
+        Construct a model identifier in the required format.
+        
+        Requires:
+            - mnt_point is a non-empty string
+            - prefix is a non-empty string
+            
+        Ensures:
+            - Returns model string in 'prefix//mnt_point' format
+            - Validates that '//' is present in the constructed model
+            
+        Raises:
+            - ValueError if the constructed model doesn't contain '//'
+        """
         
         model = f"{prefix}/{mnt_point}"
         if "//" not in model:
@@ -73,11 +87,11 @@ class LlmClient:
         completion_mode: bool = False,
         prompt_format: str = "",
         api_key: Optional[ str ] = "EMPTY",
-        model_tokenizer_map: Optional[ Dict[str, str] ] = None,
+        model_tokenizer_map: Optional[dict[str, str]] = None,
         debug: bool = False,
         verbose: bool = False,
         **generation_args: Any
-    ):
+    ) -> None:
         """
         Initialize an LLM client with the given configuration.
         

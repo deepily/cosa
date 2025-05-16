@@ -1,7 +1,7 @@
 import os
 import json
 import re
-from typing import Dict, Optional, Union, List
+from typing import Optional
 
 import cosa.utils.util as du
 from cosa.app.configuration_manager import ConfigurationManager
@@ -17,16 +17,18 @@ class PromptFormatter:
     3. json_message: Used by OpenAI, Claude, Groq API, etc.
     
     Requires:
-        - ConfigurationManager instance
+        - ConfigurationManager instance available via CLI args
         - Template files for each format type
+        - Template directory with read/write permissions
         
     Ensures:
         - Consistent prompt formatting for different model types
         - Template-based approach allows for easy updates
         - All formats return strings for consistent interface
+        - Default templates created if not found
     """
     
-    def __init__( self, template_dir: Optional[str]=None, debug: bool=False, verbose: bool=False ):
+    def __init__( self, template_dir: Optional[str]=None, debug: bool=False, verbose: bool=False ) -> None:
         """
         Initialize the prompt formatter with configuration and templates.
         
@@ -144,7 +146,7 @@ class PromptFormatter:
         default_format = self.config_mgr.get( "prompt_format_default", "json_message" )
         return default_format
     
-    def format_prompt( self, model_name: str, instructions: str, input_text: str, output: str = "" ) -> str:
+    def format_prompt( self, model_name: str, instructions: str, input_text: str, output: str="" ) -> str:
         """
         Format a prompt according to the appropriate template for the model.
         Uses template files for consistent formatting across the system.
@@ -342,7 +344,7 @@ class PromptFormatter:
         # Fallback: sanitize the model name by keeping alphanumeric and underscores
         return re.sub( r'[^a-z0-9_]', '_', model_name_lower )
     
-    def create_template_examples( self ) -> Dict[ str, str ]:
+    def create_template_examples( self ) -> dict[str, str]:
         """
         Create example templates for all supported format types.
         

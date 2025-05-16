@@ -126,14 +126,14 @@ if __name__ == "__main__":
         print( "Usage: python quantizer.py <model_name> <save_to_path> <bits>" )
         sys.exit( 1 )
         
-    model_name   = sys.argv[ 1 ]
-    save_to_path = sys.argv[ 2 ]
+    model_name: str = sys.argv[ 1 ]
+    save_to_path: str = sys.argv[ 2 ]
     
     # check if bits is provided, if not default to 4
     if len( sys.argv ) == 4:
-        bits = int( sys.argv[ 3 ] )
+        bits: int = int( sys.argv[ 3 ] )
     else:
-        bits = 4
+        bits: int = 4
     
     quantizer = Quantizer( model_name )
     quantizer.quantize_model( bits=bits )

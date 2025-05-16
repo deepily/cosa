@@ -1,21 +1,43 @@
 import os
 import subprocess
 from subprocess import PIPE, run
+from typing import Any, Optional
 
 debug = os.getenv( "GIB_CODE_EXEC_DEBUG", "False" ) == "True"
 import cosa.utils.util as du
 
 @staticmethod
-def initialize_code_response_dict():
+def initialize_code_response_dict() -> dict[str, Any]:
+    """
+    Initialize the code response dictionary with default values.
     
+    Requires:
+        - None
+        
+    Ensures:
+        - Returns a dictionary with default unsuccessful run state
+        - Contains 'return_code' set to -1
+        - Contains 'output' set to "No code run yet"
+    """
     # defaults to unsuccessful run state
     return {
         "return_code": -1,
              "output": "No code run yet"
     }
 
-def _ensure_proper_appendages( code, always_appended ):
+def _ensure_proper_appendages( code: list[str], always_appended: list[str] ) -> list[str]:
+    """
+    Ensure proper appendages are added to code list without duplication.
     
+    Requires:
+        - code is a list of code lines
+        - always_appended is a list of lines to append
+        
+    Ensures:
+        - Returns code with always_appended lines added
+        - Removes duplicates based on normalized keys
+        - Preserves order of original code
+    """
     # du.print_banner( "code BEFORE:", prepend_nl=True )
     # du.print_list( code )
     #
@@ -69,10 +91,24 @@ def _ensure_proper_appendages( code, always_appended ):
 #
 #         return code
 
-def _append_post_function_code( code, code_return_type, example_code, path_to_df=None, debug=False, verbose=False ):
-    
+def _append_post_function_code( code: list[str], code_return_type: str, example_code: str, path_to_df: Optional[str]=None, debug: bool=False, verbose: bool=False ) -> list[str]:
     """
-    Appends the method's invocation example code to the given code list and the prints the returned solution value based on the code return type (dataframe or plain print).
+    Append post-function invocation code to process and print the solution.
+    
+    Requires:
+        - code is a list of code lines
+        - code_return_type is one of: "dataframe", "string", or other valid types
+        - example_code is a string containing the function invocation example
+        - path_to_df is None or a valid filepath string
+        - debug is a boolean flag
+        - verbose is a boolean flag
+        
+    Ensures:
+        - Returns modified code list with example code and print statements appended
+        - For dataframe type, adds dataframe display code
+        - For other types, adds appropriate print statements
+        - Preserves the original code order
+    """
     
     When added, example and print code should look ~like this:
     <pre><code>
@@ -139,8 +175,20 @@ def _append_post_function_code( code, code_return_type, example_code, path_to_df
     
     return code
 
-def _remove_all_but_the_1st_of_repeated_lines( the_list, search_string ):
+def _remove_all_but_the_1st_of_repeated_lines( the_list: list[str], search_string: str ) -> list[str]:
+    """
+    Remove all but the first occurrence of lines containing the search string.
     
+    Requires:
+        - the_list is a list of strings
+        - search_string is a non-empty string to search for
+        
+    Ensures:
+        - Returns a new list with only the first occurrence of lines containing search_string
+        - All subsequent occurrences of lines containing search_string are removed
+        - Order of remaining elements is preserved
+        - Lines not containing search_string are kept unchanged
+    """
     # From: https://chat.openai.com/c/db28026c-444d-4a4b-b24b-bbb88fa52521
     match_indices = [ ]
     
@@ -159,8 +207,19 @@ def _remove_all_but_the_1st_of_repeated_lines( the_list, search_string ):
     
     return the_list
 
-def _get_imports( path_to_df ):
+def _get_imports( path_to_df: Optional[str] ) -> list[str]:
+    """
+    Generate import statements based on whether a dataframe path is provided.
     
+    Requires:
+        - path_to_df is None or a valid file path string
+        
+    Ensures:
+        - Returns a list of import statements
+        - If path_to_df is None: returns basic imports only
+        - If path_to_df is provided: includes pandas imports and dataframe loading code
+        - Always includes sys, path, and basic utility imports
+    """
     # if there's no dataframe to open or prep, then skip it
     if path_to_df is None:
         code_preamble = [
@@ -182,8 +241,19 @@ def _get_imports( path_to_df ):
     return code_preamble
 
 
-def _remove_consecutive_empty_strings( strings ):
+def _remove_consecutive_empty_strings( strings: list[str] ) -> list[str]:
+    """
+    Remove consecutive empty strings from a list, keeping only single empty strings.
     
+    Requires:
+        - strings is a list of strings (may contain empty strings)
+        
+    Ensures:
+        - Returns a new list with consecutive empty strings reduced to single empty string
+        - Non-empty strings are preserved in their original order
+        - Single empty strings between non-empty strings are preserved
+        - Removes only consecutive duplicate empty strings
+    """
     # Initialize an empty list to store the result
     result = [ ]
     
@@ -202,8 +272,28 @@ def _remove_consecutive_empty_strings( strings ):
     return result
 
 # TODO: Flip return none on timeout from true to false!
-def assemble_and_run_solution( solution_code, example_code, path_to_df=None, solution_code_returns="string", python_runtime="python3", debug=False, verbose=False, inject_bugs=False, return_none_on_timeout=True ):
+def assemble_and_run_solution( solution_code: list[str], example_code: str, path_to_df: Optional[str]=None, solution_code_returns: str="string", python_runtime: str="python3", debug: bool=False, verbose: bool=False, inject_bugs: bool=False, return_none_on_timeout: bool=True ) -> dict[str, Any]:
+    """
+    Assemble and execute the solution code with necessary imports and post-processing.
     
+    Requires:
+        - solution_code is a list of code lines to execute
+        - example_code is a string with the function invocation example
+        - path_to_df is None or a valid file path for dataframe input
+        - solution_code_returns is one of: "string", "dataframe", etc.
+        - python_runtime is a valid Python runtime command
+        - debug, verbose, inject_bugs, return_none_on_timeout are boolean flags
+        
+    Ensures:
+        - Returns a dictionary with 'return_code' and 'output' keys
+        - Executes the assembled code in a subprocess
+        - Handles timeouts based on return_none_on_timeout flag
+        - Includes proper imports and post-processing based on return type
+        - Captures both stdout and stderr from the execution
+        
+    Raises:
+        - No exceptions raised directly, errors are captured in return dict
+    """
     if debug and verbose:
         du.print_banner( "Solution code BEFORE:", prepend_nl=True)
         du.print_list( solution_code)
@@ -285,8 +375,20 @@ def assemble_and_run_solution( solution_code, example_code, path_to_df=None, sol
     
     return results_dict
 
-def test_assemble_and_run_solution( debug=False, verbose=False):
-
+def test_assemble_and_run_solution( debug: bool=False, verbose: bool=False) -> None:
+    """
+    Test the assemble_and_run_solution function with sample code.
+    
+    Requires:
+        - debug is a boolean flag for debug output
+        - verbose is a boolean flag for verbose output
+        
+    Ensures:
+        - Executes a test solution with dataframe processing
+        - Tests the code assembly and execution pipeline
+        - Prints results if debug/verbose flags are set
+        - Validates the solution execution process
+    """
     solution_code = [
         "def check_birthdays(df):",
         "    today = pd.Timestamp('today')",

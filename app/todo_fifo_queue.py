@@ -1,4 +1,5 @@
 import random
+from typing import Any, Optional, tuple, list
 
 from cosa.agents.confirmation_dialog import ConfirmationDialogue
 from cosa.agents.math_refactoring_agent import MathRefactoringAgent
@@ -24,7 +25,30 @@ import cosa.app.util_llm_client  as llm_client
 from cosa.memory.solution_snapshot import SolutionSnapshot
 
 class TodoFifoQueue( FifoQueue ):
-    def __init__( self, socketio, snapshot_mgr, app, config_mgr=None, debug=False, verbose=False, silent=False ):
+    """
+    Queue for managing todo items with agent routing capabilities.
+    
+    Handles question parsing, agent routing, and snapshot management for
+    conversational AI tasks.
+    """
+    def __init__( self, socketio: Any, snapshot_mgr: Any, app: Any, config_mgr: Optional[Any]=None, debug: bool=False, verbose: bool=False, silent: bool=False ) -> None:
+        """
+        Initialize the todo FIFO queue.
+        
+        Requires:
+            - socketio is a valid SocketIO instance or None for testing
+            - snapshot_mgr is a valid snapshot manager or None for testing
+            - app is a Flask application instance or None for testing
+            - config_mgr is None or a valid ConfigurationManager
+            
+        Ensures:
+            - Sets up queue management components
+            - Initializes salutations and filler phrase lists
+            - Configures debug settings from config_mgr
+            
+        Raises:
+            - None
+        """
         
         super().__init__()
         self.debug        = debug
@@ -63,13 +87,21 @@ class TodoFifoQueue( FifoQueue ):
     #     self.cmd_llm_in_memory = cmd_llm_in_memory
     #     self.cmd_llm_tokenizer = cmd_llm_tokenizer
     
-    def parse_salutations( self, transcription ):
+    def parse_salutations( self, transcription: str ) -> tuple[str, str]:
         """
-        Takes a string of words and returns a tuple of two strings.
-        The first string is the salutations, and the second string is the remaining string after the salutations.
-
-        :param transcription: str
-        :return: tuple of two strings
+        Parse salutations from the beginning of a transcription.
+        
+        Requires:
+            - transcription is a string
+            - self.salutations list is initialized
+            
+        Ensures:
+            - Returns tuple of (salutations, remaining_text)
+            - Salutations are extracted based on self.salutations list
+            - Punctuation is handled properly
+            
+        Raises:
+            - None
         """
         # Normalize the transcription by removing extra spaces after punctuation
         # From: https://chat.openai.com/share/5783e1d5-c9ce-4503-9338-270a4c9095b2
@@ -90,8 +122,22 @@ class TodoFifoQueue( FifoQueue ):
         
         return ' '.join( prefix_holder ), remaining_string
     
-    def get_gist( self, question ):
+    def get_gist( self, question: str ) -> str:
+        """
+        Extract the gist of a question using LLM.
         
+        Requires:
+            - question is a non-empty string
+            - Gist prompt template exists
+            
+        Ensures:
+            - Returns a concise gist of the question
+            - Uses LLM to extract main intent
+            - Returns empty string if extraction fails
+            
+        Raises:
+            - FileNotFoundError if prompt template missing
+        """
         prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agents/gist.txt" )
         prompt = prompt_template.format( question=question )
         # ¡OJO! LLM should be runtime configurable
@@ -101,8 +147,23 @@ class TodoFifoQueue( FifoQueue ):
         
         return gist
     
-    def push_job( self, question ):
+    def push_job( self, question: str ) -> str:
+        """
+        Push a new job onto the queue based on the question.
         
+        Requires:
+            - question is a non-empty string
+            - Queue and snapshot manager are initialized
+            
+        Ensures:
+            - Handles blocking objects for confirmation
+            - Searches for similar snapshots if applicable
+            - Routes to appropriate agent or snapshot
+            - Returns status message
+            
+        Raises:
+            - None (exceptions handled internally)
+        """
         run_previous_best_snapshot = False
         similar_snapshots = [ ]
         
@@ -115,7 +176,7 @@ class TodoFifoQueue( FifoQueue ):
             du.print_banner( msg )
             # TODO: make LLM runtime configurable
             # default_url = "¡OJO! We shouldn't have to set this value here!"
-            run_previous_best_snapshot = ConfirmationDialogue( model=Llm.GROQ_LLAMA3_1_70B, debug=self.debug, verbose=self.verbose ).confirmed( question )
+            run_previous_best_snapshot = ConfirmationDialogue( model=Llm_v0.GROQ_LLAMA3_1_70B, debug=self.debug, verbose=self.verbose ).confirmed( question )
             
         if run_previous_best_snapshot:
                 
@@ -271,8 +332,24 @@ class TodoFifoQueue( FifoQueue ):
             #
             # return f'No similar snapshots found, adding NEW FunctionMappingAgent to TODO queue. Queue size [{self.size()}]'
 
-    def _get_math_refactoring_agent( self, question, question_gist, last_question_asked, push_counter ):
+    def _get_math_refactoring_agent( self, question: str, question_gist: str, last_question_asked: str, push_counter: int ) -> MathRefactoringAgent:
+        """
+        Create a math refactoring agent for the given question.
         
+        Requires:
+            - question is the refactoring request
+            - question_gist is the extracted gist
+            - last_question_asked includes salutations
+            - push_counter is a valid integer
+            
+        Ensures:
+            - Finds similar snapshots for refactoring
+            - Creates MathRefactoringAgent with examples
+            - Returns configured agent instance
+            
+        Raises:
+            - None
+        """
         # DEMO KLUDGE: if the question doesn't start with "refactor", then we're going to search for similar snapshots
         threshold = 85.0
         path_to_snapshots = du.get_project_root() + "/src/conf/long-term-memory/solutions/"
@@ -282,8 +359,21 @@ class TodoFifoQueue( FifoQueue ):
         agent = MathRefactoringAgent( similar_snapshots=similar_snapshots, path_to_solutions=path_to_snapshots, debug=True, verbose=False )
         return agent
     
-    def _dump_code( self, best_snapshot ):
+    def _dump_code( self, best_snapshot: SolutionSnapshot ) -> None:
+        """
+        Debug helper to print snapshot code.
         
+        Requires:
+            - best_snapshot is a valid SolutionSnapshot
+            - best_snapshot.code exists
+            
+        Ensures:
+            - Prints code if debug and verbose are True
+            - Formats output with banner
+            
+        Raises:
+            - None
+        """
         if self.debug and self.verbose:
             lines_of_code = best_snapshot.code
             if len( lines_of_code ) > 0:
@@ -295,9 +385,26 @@ class TodoFifoQueue( FifoQueue ):
             if len( lines_of_code ) > 0:
                 print()
                 
-    def _queue_best_snapshot( self, best_snapshot, best_score=100.0 ):
+    def _queue_best_snapshot( self, best_snapshot: SolutionSnapshot, best_score: float=100.0 ) -> str:
+        """
+        Queue the best matching snapshot for execution.
+        
+        Requires:
+            - best_snapshot is a valid SolutionSnapshot
+            - best_score is between 0 and 100
+            - Queue is initialized
             
-            job = best_snapshot.get_copy()
+        Ensures:
+            - Creates a copy of the snapshot
+            - Configures job with current settings
+            - Pushes job to queue
+            - Emits socket updates
+            - Returns status message
+            
+        Raises:
+            - None
+        """
+        job = best_snapshot.get_copy()
             print( "Python object ID for copied job: " + str( id( job ) ) )
             job.debug   = self.debug
             job.verbose = self.verbose
@@ -321,8 +428,24 @@ class TodoFifoQueue( FifoQueue ):
             
             return f'Job added to queue. Queue size [{self.size()}]'
     
-    def _get_routing_command( self, question ):
+    def _get_routing_command( self, question: str ) -> tuple[str, str]:
+        """
+        Determine the routing command for a question.
         
+        Requires:
+            - question is a non-empty string
+            - Config has agent router prompt path
+            - LLM configuration is available
+            
+        Ensures:
+            - Returns tuple of (command, args)
+            - Uses LLM to determine appropriate agent
+            - Parses XML response for command and args
+            
+        Raises:
+            - FileNotFoundError if prompt template missing
+            - LLM errors propagated
+        """
         router_prompt_template = du.get_file_as_string( du.get_project_root() + self.config_mgr.get( "agent_router_prompt_path_wo_root" ) )
         
         prompt        = router_prompt_template.format( voice_command=question ),

@@ -10,7 +10,7 @@ from datetime import timedelta as td
 import pytz
 import json
 import traceback
-from typing import Dict, List, Any, Optional, Union, Tuple, Set, Callable
+from typing import Any, Optional, Union, Set, Callable
 
 debug = False
 
@@ -170,17 +170,25 @@ def get_current_time( tz_name: str = "US/Eastern", include_timezone: bool = True
     else:
         return tz_date.strftime( format )
 
-def get_name_value_pairs( arg_list, debug=False, verbose=False ):
+def get_name_value_pairs( arg_list: list[str], debug: bool=False, verbose: bool=False ) -> dict[str, str]:
     """
     Parses a list of strings -- name=value -- into dictionary format { "name":"value" }
 
-    NOTE: Only the 1st element, the name of the class called is exempt from parsing
-
-    :raises: ValueError if any but the 1st element is not of the format: 'name=value'
-
-    :param arg_list: Space delimited input from CLI
-
-    :return: dictionary of name=value pairs
+    Requires:
+        - arg_list is a list of strings
+        
+    Ensures:
+        - Returns dictionary mapping names to values
+        - Skips the first element in arg_list
+        - Only processes strings containing "="
+        
+    Args:
+        arg_list: Space delimited input from CLI
+        debug: Whether to print debug information
+        verbose: Whether to print verbose output
+        
+    Returns:
+        Dictionary of name=value pairs
     """
     
     # Quick sanity check. Do we have anything to iterate?
@@ -222,12 +230,12 @@ def get_name_value_pairs( arg_list, debug=False, verbose=False ):
     return name_value_pairs
 
 
-def get_file_as_source_code_with_line_numbers( path ):
+def get_file_as_source_code_with_line_numbers( path: str ) -> str:
     
     source_code = get_file_as_list( path, lower_case=False, clean=False, randomize=False )
     return get_source_code_with_line_numbers( source_code )
     
-def get_source_code_with_line_numbers( source_code, join_str="" ):
+def get_source_code_with_line_numbers( source_code: list[str], join_str: str="" ) -> str:
     
     # iterate through the source code and prepend the line number to each line
     for i in range( len( source_code ) ):
@@ -238,8 +246,19 @@ def get_source_code_with_line_numbers( source_code, join_str="" ):
     
     return source_code
 
-# Load a plain text file as a list of lines.
-def get_file_as_list( path, lower_case=False, clean=False, randomize=False, seed=42, strip_newlines=False ):
+def get_file_as_list( path: str, lower_case: bool=False, clean: bool=False, randomize: bool=False, seed: int=42, strip_newlines: bool=False ) -> list[str]:
+    """Load a plain text file as a list of lines.
+    
+    Requires:
+        - path is a valid file path
+        
+    Ensures:
+        - Returns list of lines from file
+        - Applies transformations based on parameters
+        - Lines are lowercased if lower_case=True
+        - Lines are stripped if clean=True
+        - List is shuffled if randomize=True
+    """
     
     with open( path, "r", encoding="utf-8" ) as file:
         lines = file.readlines()
@@ -310,8 +329,21 @@ def get_file_as_json( path: str ) -> Any:
         return json.load( file )
 
 
-def get_file_as_dictionary( path, lower_case=False, omit_comments=True, debug=False, verbose=False ):
-    # ¡OJO! The pipe symbol is a reserved character used to delimit white space. See the keywords "space" or "| at |" below.
+def get_file_as_dictionary( path: str, lower_case: bool=False, omit_comments: bool=True, debug: bool=False, verbose: bool=False ) -> dict[str, str]:
+    """Load a file as a dictionary with key=value pairs.
+    
+    Requires:
+        - path is a valid file path
+        - File contains lines in format "key = value"
+        
+    Ensures:
+        - Returns dictionary of key-value pairs
+        - Skips comment lines starting with # or //
+        - Removes pipe symbols from start/end of keys/values
+        
+    Note:
+        The pipe symbol is a reserved character used to delimit white space.
+    """
     
     lines = get_file_as_list( path, lower_case=lower_case )
     
@@ -338,7 +370,19 @@ def get_file_as_dictionary( path, lower_case=False, omit_comments=True, debug=Fa
     
     return lines_as_dict
 
-def write_lines_to_file( path, lines, strip_blank_lines=False, world_read_write=False ):
+def write_lines_to_file( path: str, lines: list[str], strip_blank_lines: bool=False, world_read_write: bool=False ) -> None:
+    """
+    Write a list of lines to a file.
+    
+    Requires:
+        - path is a valid writable file path
+        - lines is a list of strings
+        
+    Ensures:
+        - Writes lines to file joined by newlines
+        - Strips blank lines if requested
+        - Sets world read/write permissions if requested
+    """
 
     if strip_blank_lines:
         lines = [ line for line in lines if line.strip() != "" ]
@@ -348,14 +392,25 @@ def write_lines_to_file( path, lines, strip_blank_lines=False, world_read_write=
         
     if world_read_write: os.chmod( path, 0o666 )
         
-def write_string_to_file( path, string ):
+def write_string_to_file( path: str, string: str ) -> None:
+    """
+    Write a string to a file.
+    
+    Requires:
+        - path is a valid writable file path
+        - string is the content to write
+        
+    Ensures:
+        - Writes string to file
+        - Overwrites existing file if present
+    """
     
     with open( path, "w" ) as outfile:
         outfile.write( string )
 
 import subprocess
 
-def print_simple_file_list( path ) :
+def print_simple_file_list( path: str ) -> None:
     """
     Prints a detailed file listing for the specified directory.
     
@@ -759,9 +814,9 @@ def sanity_check_file_path( file_path: str, silent: bool = False ) -> None:
 
     if not silent: print( f"File exists! [{file_path}]" )
     
-def get_name_value_pairs( arg_list: List[str], decode_spaces: bool = True ) -> Dict[str, str]:
+def get_name_value_pairs_v2( arg_list: List[str], decode_spaces: bool = True ) -> Dict[str, str]:
     """
-    Parse a list of strings in "name=value" format into a dictionary.
+    Parse a list of strings in "name=value" format into a dictionary (version 2).
     
     Requires:
         - arg_list is a list of strings

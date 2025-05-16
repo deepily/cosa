@@ -34,13 +34,28 @@ Methods:
 
 import random
 from functools import wraps
+from typing import Callable, Any
 
 # Singleton decorator
-def singleton( cls ):
+def singleton( cls: type ) -> Callable[..., Any]:
+    """
+    Decorator that implements the Singleton pattern.
+    
+    Requires:
+        - cls is a valid class type
+        
+    Ensures:
+        - Only one instance of cls is created
+        - All calls return the same instance
+        - Thread-safe in single-threaded environments
+        
+    Raises:
+        - None
+    """
     instances = { }
     
     @wraps( cls )
-    def get_instance( *args, **kwargs ):
+    def get_instance( *args: Any, **kwargs: Any ) -> Any:
         if cls not in instances:
             instances[ cls ] = cls( *args, **kwargs )
         return instances[ cls ]
@@ -51,7 +66,29 @@ def singleton( cls ):
 # The TwoWordIDGenerator class with a singleton decorator
 @singleton
 class TwoWordIdGenerator:
-    def __init__( self ):
+    """
+    Generator for unique two-word identifiers.
+    
+    Uses the Singleton pattern to ensure consistent ID generation
+    across the application. Combines adjectives and nouns to create
+    memorable, unique identifiers.
+    """
+    
+    def __init__( self ) -> None:
+        """
+        Initialize the generator with word lists.
+        
+        Requires:
+            - No external dependencies
+            
+        Ensures:
+            - Initializes adjectives and nouns lists
+            - Creates empty set for tracking generated IDs
+            - Single instance via singleton decorator
+            
+        Raises:
+            - None
+        """
         # List of adjectives and nouns
         self.adjectives = [
             'beautiful', 'quick', 'shiny', 'clever', 'silent', 'brave', 'lazy', 'strong',
@@ -69,13 +106,28 @@ class TwoWordIdGenerator:
         # Dictionary to store generated unique combinations
         self.generated_ids = set()  # Using a set for faster lookup
     
-    def get_id( self ):
-        """Generate a unique two-word identifier
+    def get_id( self ) -> str:
+        """
+        Generate a unique two-word identifier.
         
         This method randomly selects an adjective and a noun from the
         pre-defined lists and combines them to form a unique identifier.
         The generated identifier is stored in the `generated_ids` set
         to ensure that it is not generated again.
+        
+        Requires:
+            - self.adjectives is non-empty list
+            - self.nouns is non-empty list
+            - self.generated_ids is a set
+            
+        Ensures:
+            - Returns unique adjective-noun combination
+            - Combination is added to generated_ids set
+            - Never returns duplicate IDs
+            - Eventually exhausts all combinations
+            
+        Raises:
+            - None (infinite loop if all combinations used)
         """
         while True:
             # Generate a random adjective and noun combination

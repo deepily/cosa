@@ -1,3 +1,5 @@
+from typing import Any
+
 import cosa.utils.util as du
 import cosa.utils.util_xml as dux
 
@@ -5,7 +7,29 @@ from cosa.agents.v010.agent_base import AgentBase
 from cosa.agents.v010.llm_client_factory import LlmClientFactory
 
 class BugInjector( AgentBase ):
-    def __init__( self, code, example="", debug=True, verbose=True ):
+    """
+    Agent that intentionally injects bugs into code for testing purposes.
+    
+    This agent uses an LLM to intelligently modify working code by introducing
+    bugs that would realistically occur during development.
+    """
+    
+    def __init__( self, code: list[str], example: str="", debug: bool=True, verbose: bool=True ) -> None:
+        """
+        Initialize a bug injector with code to modify.
+        
+        Requires:
+            - code is a non-empty list of code lines
+            - routing command 'agent router go to bug injector' exists in config
+            
+        Ensures:
+            - Initializes with bug injector routing command
+            - Sets up prompt_response_dict with provided code and example
+            - Generates initial prompt for bug injection
+            
+        Raises:
+            - KeyError if bug injector config is missing
+        """
         
         super().__init__( df_path_key=None, debug=debug, verbose=verbose, routing_command="agent router go to bug injector" )
         
@@ -15,13 +39,43 @@ class BugInjector( AgentBase ):
         }
         self.prompt                 = self._get_prompt()
         
-    def _get_prompt( self ):
+    def _get_prompt( self ) -> str:
+        """
+        Generate prompt for bug injection with line numbers.
+        
+        Requires:
+            - self.prompt_response_dict contains 'code' list
+            - self.prompt_template is loaded from config
+            
+        Ensures:
+            - Returns formatted prompt with numbered code lines
+            - Code is properly formatted for LLM processing
+            
+        Raises:
+            - None
+        """
         
         code_with_line_numbers = du.get_source_code_with_line_numbers( self.prompt_response_dict[ "code" ].copy(), join_str="\n" )
         
         return self.prompt_template.format( code_with_line_numbers=code_with_line_numbers )
     
-    def run_prompt( self, **kwargs ):
+    def run_prompt( self, **kwargs ) -> dict[str, Any]:
+        """
+        Execute bug injection prompt and modify code.
+        
+        Requires:
+            - self.prompt is set with valid bug injection prompt
+            - LLM response contains 'line-number' and 'bug' XML tags
+            
+        Ensures:
+            - Returns updated prompt_response_dict with modified code
+            - Injects bug at specified line number if valid
+            - Prepends blank line to align with 1-based line numbers
+            - Prints debug info if debug=True
+            
+        Raises:
+            - None (invalid responses are handled gracefully)
+        """
         
         if self.debug: print( "BugInjector.run_prompt() called..." )
         
@@ -60,7 +114,19 @@ class BugInjector( AgentBase ):
             
         return self.prompt_response_dict
     
-    def restore_from_serialized_state( self, file_path ):
+    def restore_from_serialized_state( self, file_path: str ) -> None:
+        """
+        Restore bug injector state from JSON file.
+        
+        Requires:
+            - file_path points to valid JSON file
+            
+        Ensures:
+            - Raises NotImplementedError (not implemented)
+            
+        Raises:
+            - NotImplementedError always
+        """
         
         raise NotImplementedError( "BugInjector.restore_from_serialized_state() not implemented" )
 

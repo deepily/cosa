@@ -5,8 +5,31 @@ from cosa.app.configuration_manager      import ConfigurationManager
 from cosa.agents.v010.llm_client_factory import LlmClientFactory
 
 class RawOutputFormatter:
+    """
+    Formatter for converting raw agent output to conversational responses.
     
-    def __init__(self, question, raw_output, routing_command, thoughts="", code="", debug=False, verbose=False ):
+    Uses LLM to rephrase technical output into natural language.
+    """
+    
+    def __init__(self, question: str, raw_output: str, routing_command: str, thoughts: str="", code: str="", debug: bool=False, verbose: bool=False ) -> None:
+        """
+        Initialize output formatter with context.
+        
+        Requires:
+            - question and raw_output are non-empty strings
+            - routing_command maps to valid formatter config
+            - Config has formatter template and LLM spec
+            
+        Ensures:
+            - Loads appropriate formatter template
+            - Initializes LLM client for formatting
+            - Wraps optional thoughts/code in XML tags
+            - Removes XML declarations from raw_output
+            
+        Raises:
+            - KeyError if formatter config missing
+            - FileNotFoundError if template missing
+        """
         
         self.debug       = debug
         self.verbose     = verbose
@@ -34,14 +57,44 @@ class RawOutputFormatter:
         factory                    = LlmClientFactory( debug=self.debug, verbose=self.verbose )
         self.llm                   = factory.get_client( model_name, debug=self.debug, verbose=self.verbose )
     
-    def run_formatter( self ):
+    def run_formatter( self ) -> str:
+        """
+        Execute formatter prompt to rephrase output.
+        
+        Requires:
+            - self.prompt is set with formatting prompt
+            - LLM is accessible via self.llm
+            
+        Ensures:
+            - Returns rephrased answer from 'rephrased-answer' XML tag
+            - Natural language response suitable for users
+            
+        Raises:
+            - LLM exceptions if formatting fails
+            - XML parsing errors if response malformed
+        """
 
         response = self.llm.run( self.prompt )
         output   = dux.get_value_by_xml_tag_name( response, "rephrased-answer" )
 
         return output
     
-    def _get_prompt( self ):
+    def _get_prompt( self ) -> str:
+        """
+        Generate formatting prompt based on routing command.
+        
+        Requires:
+            - self.formatting_template is loaded
+            - Question and raw_output are set
+            
+        Ensures:
+            - Returns prompt with appropriate context
+            - Includes thoughts/code for certain routing commands
+            - Formatted according to template requirements
+            
+        Raises:
+            - None
+        """
 
         if self.routing_command in [ "agent router go to receptionist", "agent router go to math" ]:
             return self.formatting_template.format( question=self.question, raw_output=self.raw_output, thoughts=self.thoughts, code=self.code )

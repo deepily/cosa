@@ -6,7 +6,29 @@ from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.agents.v010.agent_base import AgentBase
 
 class MathAgent( AgentBase ):
-    def __init__( self, question="", question_gist="", last_question_asked="", push_counter=-1, routing_command="agent router go to math", debug=False, verbose=False, auto_debug=False, inject_bugs=False ):
+    """
+    Agent for solving mathematical problems and calculations.
+    
+    This agent generates Python code to solve math questions,
+    using the last_question_asked for maximum specificity.
+    """
+    
+    def __init__( self, question: str="", question_gist: str="", last_question_asked: str="", push_counter: int=-1, routing_command: str="agent router go to math", debug: bool=False, verbose: bool=False, auto_debug: bool=False, inject_bugs: bool=False ) -> None:
+        """
+        Initialize math agent for mathematical computations.
+        
+        Requires:
+            - Math routing command exists in config
+            - Valid prompt template for math queries
+            
+        Ensures:
+            - Uses last_question_asked for specificity from voice transcription
+            - Sets up prompt with full question text
+            - Defines expected XML response tags
+            
+        Raises:
+            - KeyError if required config missing
+        """
         
         super().__init__( df_path_key=None, question=question, question_gist=question_gist, last_question_asked=last_question_asked, routing_command=routing_command, push_counter=push_counter, debug=debug, verbose=verbose, auto_debug=auto_debug, inject_bugs=inject_bugs )
         
@@ -18,11 +40,39 @@ class MathAgent( AgentBase ):
         # self.serialize_prompt_to_json = self.config_mgr.get( "agent_todo_list_serialize_prompt_to_json", default=False, return_type="boolean" )
         # self.serialize_code_to_json   = self.config_mgr.get( "agent_todo_list_serialize_code_to_json",   default=False, return_type="boolean" )
     
-    def restore_from_serialized_state( self, file_path ):
+    def restore_from_serialized_state( self, file_path: str ) -> None:
+        """
+        Restore math agent state from JSON file.
+        
+        Requires:
+            - file_path points to valid JSON file
+            
+        Ensures:
+            - Raises NotImplementedError (not implemented)
+            
+        Raises:
+            - NotImplementedError always
+        """
         
         raise NotImplementedError( "MathAgent.restore_from_serialized_state() not implemented" )
     
-    def run_formatter( self ):
+    def run_formatter( self ) -> str:
+        """
+        Format math output based on configuration.
+        
+        Requires:
+            - self.code_response_dict contains 'output' field
+            - Config has 'formatter_prompt_for_math_terse' setting
+            
+        Ensures:
+            - Returns formatted answer
+            - If terse_output=True, returns raw output
+            - Otherwise uses parent formatter
+            - Updates self.answer_conversational
+            
+        Raises:
+            - KeyError if output missing from response
+        """
         
         """
         Format the output based on the configuration for math agent.

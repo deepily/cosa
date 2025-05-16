@@ -1,6 +1,7 @@
 import abc
 import json
 import os
+from typing import Optional, Any
 
 import pandas as pd
 
@@ -39,10 +40,42 @@ class AgentBase( RunnableCode, abc.ABC ):
     #     return AgentBase.ROUTING_COMMAND_TEMPLATE.format( routing_command=routing_command )
     
     @abc.abstractmethod
-    def restore_from_serialized_state( file_path ):
+    def restore_from_serialized_state( file_path: str ) -> 'AgentBase':
+        """
+        Restore an agent from a serialized JSON state file.
+        
+        Requires:
+            - file_path is a valid path to an existing JSON file
+            - JSON file contains all necessary agent state information
+            
+        Ensures:
+            - Returns a new AgentBase instance with restored state
+            - All instance variables are properly initialized from the file
+            
+        Raises:
+            - NotImplementedError (must be implemented by subclasses)
+        """
         pass
     
-    def __init__( self, df_path_key=None, question="", question_gist="", last_question_asked="", push_counter=-1, routing_command=None, debug=False, verbose=False, auto_debug=False, inject_bugs=False ):
+    def __init__( self, df_path_key: Optional[str]=None, question: str="", question_gist: str="", last_question_asked: str="", push_counter: int=-1, routing_command: Optional[str]=None, debug: bool=False, verbose: bool=False, auto_debug: bool=False, inject_bugs: bool=False ) -> None:
+        """
+        Initialize a base agent with configuration and state.
+        
+        Requires:
+            - routing_command must be provided for proper initialization
+            - df_path_key (if provided) must map to a valid CSV file path in config
+            
+        Ensures:
+            - execution_state is set to STATE_INITIALIZING then STATE_WAITING_TO_RUN
+            - config_mgr is properly initialized
+            - model_name and prompt_template are loaded from config
+            - DataFrame is loaded and datetime columns cast if df_path_key provided
+            - All instance variables are initialized
+            
+        Raises:
+            - KeyError if routing_command configuration keys are missing
+            - FileNotFoundError if template or DataFrame file not found
+        """
         
         self.execution_state       = AgentBase.STATE_INITIALIZING
         self.debug                 = debug
@@ -82,15 +115,58 @@ class AgentBase( RunnableCode, abc.ABC ):
             
         self.execution_state = AgentBase.STATE_WAITING_TO_RUN
     
-    def get_html( self ):
+    def get_html( self ) -> str:
+        """
+        Generate HTML representation of this agent instance.
         
+        Requires:
+            - id_hash, run_date, and last_question_asked are initialized
+            
+        Ensures:
+            - Returns a formatted HTML <li> element with agent info
+            - HTML includes unique id, timestamp, and question
+            
+        Raises:
+            - None
+        """
         return f"<li id='{self.id_hash}'>{self.run_date} Q: {self.last_question_asked}</li>"
     
     @abc.abstractmethod
-    def restore_from_serialized_state( file_path ):
+    def restore_from_serialized_state( file_path: str ) -> 'AgentBase':
+        """
+        Restore an agent from a serialized JSON state file.
+        
+        Requires:
+            - file_path is a valid path to an existing JSON file
+            - JSON file contains all necessary agent state information
+            
+        Ensures:
+            - Returns a new AgentBase instance with restored state
+            - All instance variables are properly initialized from the file
+            
+        Raises:
+            - NotImplementedError (must be implemented by subclasses)
+        """
         pass
     
-    def serialize_to_json( self, subtopic=None ):
+    def serialize_to_json( self, subtopic: Optional[str]=None ) -> None:
+        """
+        Serialize agent state to a JSON file for persistence.
+        
+        Requires:
+            - config_mgr has valid 'serialization topic' for routing_command
+            - /io/log directory exists and is writable
+            
+        Ensures:
+            - Creates JSON file with agent state (excluding do_not_serialize fields)
+            - File is saved with descriptive name including topic, question, and timestamp
+            - File permissions are set to 0o666
+            - Prints confirmation of serialization path
+            
+        Raises:
+            - OSError if file cannot be created or permissions cannot be set
+            - KeyError if required config keys are missing
+        """
 
         # Convert object's state to a dictionary
         state_dict = self.__dict__
@@ -113,7 +189,22 @@ class AgentBase( RunnableCode, abc.ABC ):
 
         print( f"Serialized to {file_path}" )
         
-    def _update_response_dictionary( self, response ):
+    def _update_response_dictionary( self, response: str ) -> dict[str, Any]:
+        """
+        Parse LLM response XML into structured dictionary.
+        
+        Requires:
+            - response is a valid XML string
+            - self.xml_response_tag_names is defined with expected tags
+            
+        Ensures:
+            - Returns dictionary with parsed values for each expected tag
+            - 'code' and 'examples' tags are parsed as nested lists
+            - Other tags are parsed as simple string values
+            
+        Raises:
+            - None (malformed XML results in empty/partial dictionary)
+        """
         
         if self.debug and self.verbose: print( f"update_response_dictionary called..." )
         
@@ -132,7 +223,23 @@ class AgentBase( RunnableCode, abc.ABC ):
         
         return prompt_response_dict
     
-    def run_prompt( self, include_raw_response=False ):
+    def run_prompt( self, include_raw_response: bool=False ) -> dict[str, Any]:
+        """
+        Execute the prompt against the configured LLM.
+        
+        Requires:
+            - self.prompt is set to a valid prompt string
+            - self.model_name is configured
+            - LLM client factory can provide client for model_name
+            
+        Ensures:
+            - Returns parsed response dictionary with expected XML tags
+            - Updates self.prompt_response_dict with parsed values
+            - If include_raw_response=True, adds raw XML and question to dict
+            
+        Raises:
+            - LLM-specific exceptions if prompt execution fails
+        """
 
         factory = LlmClientFactory()  # No arguments for the singleton constructor
         llm = factory.get_client( self.model_name, debug=self.debug, verbose=self.verbose )
@@ -151,7 +258,23 @@ class AgentBase( RunnableCode, abc.ABC ):
         
         return self.prompt_response_dict
     
-    def run_code( self, auto_debug=None, inject_bugs=None ):
+    def run_code( self, auto_debug: Optional[bool]=None, inject_bugs: Optional[bool]=None ) -> dict[str, Any]:
+        """
+        Execute generated code with optional debugging.
+        
+        Requires:
+            - self.prompt_response_dict contains 'code' and 'example' fields
+            - Code is syntactically valid Python (unless inject_bugs=True)
+            
+        Ensures:
+            - Returns code response dictionary with output/error info
+            - If code runs successfully, sets self.error to None
+            - If auto_debug=True and code fails, attempts iterative debugging
+            - Updates self.code_response_dict with results
+            
+        Raises:
+            - None (errors are captured in response dictionary)
+        """
         
         # Use this object's settings, if temporary overriding values aren't provided
         if auto_debug  is None: auto_debug  = self.auto_debug
@@ -205,12 +328,39 @@ class AgentBase( RunnableCode, abc.ABC ):
         
             return self.code_response_dict
     
-    def is_format_output_runnable( self ):
+    def is_format_output_runnable( self ) -> bool:
+        """
+        Check if output formatting is available.
         
+        Requires:
+            - None
+            
+        Ensures:
+            - Prints not implemented message
+            - Returns False (base implementation)
+            
+        Raises:
+            - None
+        """
         print( "AgentBase.is_format_output_runnable() not implemented" )
-        pass
+        return False
     
-    def run_formatter( self ):
+    def run_formatter( self ) -> str:
+        """
+        Format raw output into conversational response.
+        
+        Requires:
+            - self.last_question_asked is set
+            - self.code_response_dict contains 'output' field
+            - self.routing_command is configured for formatter
+            
+        Ensures:
+            - Returns formatted conversational answer
+            - Updates self.answer_conversational with result
+            
+        Raises:
+            - KeyError if required formatter config is missing
+        """
         
         formatter = RawOutputFormatter( self.last_question_asked, self.code_response_dict[ "output" ], self.routing_command, debug=self.debug, verbose=self.verbose )
         self.answer_conversational = formatter.run_formatter()
@@ -218,11 +368,37 @@ class AgentBase( RunnableCode, abc.ABC ):
         return self.answer_conversational
     
     # Create a message to check and see if the formatting ran to completion
-    def formatter_ran_to_completion( self ):
+    def formatter_ran_to_completion( self ) -> bool:
+        """
+        Check if formatter completed successfully.
         
+        Requires:
+            - None
+            
+        Ensures:
+            - Returns True if answer_conversational is set
+            - Returns False if answer_conversational is None
+            
+        Raises:
+            - None
+        """
         return self.answer_conversational is not None
     
-    def do_all( self ):
+    def do_all( self ) -> str:
+        """
+        Execute complete agent workflow: prompt -> code -> format.
+        
+        Requires:
+            - Agent is properly initialized with prompt and config
+            
+        Ensures:
+            - Runs prompt execution, code execution, and formatting
+            - Returns final conversational answer
+            - Updates all relevant instance variables
+            
+        Raises:
+            - Any exceptions from run_prompt, run_code, or run_formatter
+        """
         
         self.run_prompt()
         self.run_code()

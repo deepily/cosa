@@ -35,7 +35,9 @@ accounts for Ministral's specific characteristics as a distilled model with memo
 and architectural differences from other models in the collection.
 """
 
-fine_tune_config = {
+from typing import Union, Callable
+
+fine_tune_config: dict[str, Union[float, int, str]] = {
     "sample_size": 0.01,
     "batch_size": 2,
     "gradient_accumulation_steps": 8,
@@ -44,7 +46,7 @@ fine_tune_config = {
     "device_map": "auto"
 }
 
-lora_config = {
+lora_config: dict[str, Union[int, float, str, list[str]]] = {
     "lora_alpha": 16,
     "lora_dropout": 0.05,
     "r": 32,  # higher value to address low trainable parameter %
@@ -53,7 +55,7 @@ lora_config = {
     "target_modules": ["k_proj", "q_proj", "v_proj", "o_proj", "gate_proj", "down_proj", "up_proj"]
 }
 
-tokenizer_config = {
+tokenizer_config: dict[str, Union[str, dict[str, str]]] = {
     "pad_token": "eos_token",
     "padding_side": {
         "training": "right",
@@ -61,7 +63,7 @@ tokenizer_config = {
     }
 }
 
-model_config = {
+model_config: dict[str, Union[int, str, Callable[[str], str]]] = {
     "max_seq_length": 683,
     "prompt_template": """<s>[INST]{instruction}
 

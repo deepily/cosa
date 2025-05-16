@@ -1,5 +1,6 @@
 import os
 import json
+from typing import Optional, Any
 
 import cosa.utils.util as du
 import cosa.utils.util_code_runner as ucr
@@ -9,8 +10,33 @@ from cosa.agents.v010.agent_base import AgentBase
 
 
 class IterativeDebuggingAgent( AgentBase ):
+    """
+    Agent that iteratively debugs code using multiple LLMs until a solution is found.
     
-    def __init__( self, error_message, path_to_code, example=None, returns=None, minimalist=True, debug=False, verbose=False ):
+    This agent attempts to fix code errors by using different language models in sequence,
+    testing the fixes until the code runs successfully or all models have been tried.
+    """
+    
+    def __init__( self, error_message: str, path_to_code: str, example: Optional[str]=None, returns: Optional[str]=None, minimalist: bool=True, debug: bool=False, verbose: bool=False ) -> None:
+        """
+        Initialize the iterative debugging agent.
+        
+        Requires:
+            - error_message is a non-empty string with the error to debug
+            - path_to_code is a valid relative path to the code file
+            - The code file exists at project_root + path_to_code
+            - Config has 'llm_model_keys_for_debugger' setting
+            
+        Ensures:
+            - Loads the available LLM models for debugging
+            - Formats the code with line numbers
+            - Sets up appropriate prompt based on minimalist mode
+            - Initializes XML response tags based on mode
+            
+        Raises:
+            - FileNotFoundError if the code file doesn't exist
+            - ConfigException if required config settings missing
+        """
         
         super().__init__( routing_command="agent router go to debugger", debug=debug, verbose=verbose )
         
@@ -34,7 +60,23 @@ class IterativeDebuggingAgent( AgentBase ):
         # this is already set in the parent class: agent base
         # self.do_not_serialize       = [ "config_mgr" ]
         
-    def _load_available_llm_specs( self ):
+    def _load_available_llm_specs( self ) -> list[dict[str, Any]]:
+        """
+        Load LLM specifications from configuration.
+        
+        Requires:
+            - Config has 'llm_model_keys_for_debugger' as valid JSON
+            - Each key in model_keys exists in configuration as JSON
+            
+        Ensures:
+            - Returns list of LLM specification dictionaries
+            - Each spec dict contains model configuration details
+            - Prints loading status for each model
+            
+        Raises:
+            - ConfigException if required settings not found
+            - JSONDecodeError if invalid JSON in config
+        """
         
         model_keys = self.config_mgr.get( "llm_model_keys_for_debugger", return_type="json" )
         
@@ -47,7 +89,25 @@ class IterativeDebuggingAgent( AgentBase ):
         
         return available_llms
     
-    def _get_prompt( self ):
+    def _get_prompt( self ) -> str:
+        """
+        Create debugging prompt based on mode.
+        
+        Requires:
+            - self.error_message is set
+            - self.formatted_code contains code with line numbers
+            - Config has 'agent_prompt_for_debugger_minimalist' if minimalist=True
+            
+        Ensures:
+            - Returns formatted prompt string
+            - If minimalist, loads minimalist template
+            - Otherwise uses existing prompt_template
+            - Sets self.prompt_template for non-minimalist first call
+            
+        Raises:
+            - FileNotFoundError if prompt template file missing
+            - ConfigException if required config not found
+        """
         
         if self.debug: print( f"IterativeDebuggingAgent._get_prompt() minimalist: {self.minimalist}", end="\n" )
         if self.minimalist:
@@ -58,7 +118,26 @@ class IterativeDebuggingAgent( AgentBase ):
         else:
             return self.prompt_template.format( error_message=self.error_message, formatted_code=self.formatted_code )
     
-    def run_prompts( self, debug=None ):
+    def run_prompts( self, debug: Optional[bool]=None ) -> dict[str, Any]:
+        """
+        Run debugging prompts through available LLMs until success.
+        
+        Requires:
+            - self.available_llms has at least one LLM spec
+            - Each LLM spec has required 'model' and 'short_name' fields
+            - self.prompt is set
+            
+        Ensures:
+            - Attempts debugging with each LLM in sequence
+            - Updates self.successfully_debugged on success
+            - Updates self.code only if debugging succeeds
+            - Returns final code_response_dict
+            - Serializes each attempt to log
+            
+        Raises:
+            - LLM-specific exceptions from run_prompt
+            - RuntimeError if code execution fails
+        """
         
         if debug is not None: self.debug = debug
         
@@ -126,7 +205,25 @@ class IterativeDebuggingAgent( AgentBase ):
             
         return code_response_dict
     
-    def _patch_code_in_response_dict( self, prompt_response_dict ):
+    def _patch_code_in_response_dict( self, prompt_response_dict: dict[str, Any] ) -> None:
+        """
+        Patch a single line of code in the response dictionary.
+        
+        Requires:
+            - prompt_response_dict has 'line-number' as string int
+            - prompt_response_dict has 'one-line-of-code' field
+            - self.path_to_code is a valid file path
+            
+        Ensures:
+            - Updates self.prompt_response_dict with full code
+            - Replaces specified line with patched code
+            - Removes XML escapes from the patched line
+            - Updates 'code' field in self.prompt_response_dict
+            
+        Raises:
+            - KeyError if required fields missing from dict
+            - ValueError if line-number is not valid integer
+        """
         
         print( "Patching code in response dictionary..." )
         formatted_code = du.get_file_as_source_code_with_line_numbers( self.project_root + self.path_to_code )
@@ -147,11 +244,42 @@ class IterativeDebuggingAgent( AgentBase ):
         self.prompt_response_dict[ "code" ][ line_number ] = line_of_code
         if self.debug: self.print_code( msg="AFTER patching code in response dictionary" )
 
-    def was_successfully_debugged( self ):
+    def was_successfully_debugged( self ) -> bool:
+        """
+        Check if debugging attempt was successful.
+        
+        Requires:
+            - self.successfully_debugged is initialized
+            
+        Ensures:
+            - Returns True if code was successfully debugged
+            - Returns False otherwise
+            
+        Raises:
+            - None
+        """
         
         return self.successfully_debugged
     
-    def serialize_to_json( self, topic, now, run_descriptor="Run 1 of 1", short_name="phind34b" ):
+    def serialize_to_json( self, topic: str, now: Any, run_descriptor: str="Run 1 of 1", short_name: str="phind34b" ) -> None:
+        """
+        Serialize agent state to JSON file.
+        
+        Requires:
+            - topic is a non-empty string
+            - now has year, month, day, hour, minute, second attributes
+            - /io/log/ directory exists at project root
+            
+        Ensures:
+            - Saves agent state to JSON file
+            - Excludes fields in self.do_not_serialize
+            - Creates filename with timestamp and descriptor
+            - Sets file permissions to 0o666
+            
+        Raises:
+            - OSError if file cannot be written
+            - AttributeError if now lacks required attributes
+        """
 
         # Convert object's state to a dictionary
         state_dict = self.__dict__
@@ -172,7 +300,25 @@ class IterativeDebuggingAgent( AgentBase ):
         print( f"Serialized to {file_path}" )
     
     @staticmethod
-    def restore_from_serialized_state( file_path ):
+    def restore_from_serialized_state( file_path: str ) -> 'IterativeDebuggingAgent':
+        """
+        Restore agent instance from serialized JSON file.
+        
+        Requires:
+            - file_path is a valid path to existing JSON file
+            - JSON contains required fields: error_message, path_to_code
+            - JSON structure matches IterativeDebuggingAgent state
+            
+        Ensures:
+            - Returns new IterativeDebuggingAgent instance
+            - Restores all attributes from JSON
+            - Skips reinitializing constructor parameters
+            
+        Raises:
+            - FileNotFoundError if file doesn't exist
+            - JSONDecodeError if invalid JSON
+            - KeyError if required fields missing
+        """
         
         print( f"Restoring from {file_path}..." )
         
@@ -195,7 +341,21 @@ class IterativeDebuggingAgent( AgentBase ):
         
         return restored_agent
     
-    def is_code_runnable( self ):
+    def is_code_runnable( self ) -> bool:
+        """
+        Check if there is code available to run.
+        
+        Requires:
+            - self.prompt_response_dict is initialized
+            
+        Ensures:
+            - Returns True if code field exists and is non-empty
+            - Returns False otherwise
+            - Prints diagnostic message if no code found
+            
+        Raises:
+            - None
+        """
         
         if self.prompt_response_dict is not None and len( self.prompt_response_dict[ "code" ] ) > 0:
             return True

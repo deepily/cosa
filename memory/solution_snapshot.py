@@ -5,6 +5,7 @@ import json
 import copy
 import regex as re
 from collections import OrderedDict
+from typing import Optional, Union, Any, list, dict
 
 import cosa.utils.util as du
 import cosa.utils.util_stopwatch as sw
@@ -18,28 +19,81 @@ import openai
 import numpy as np
 
 class SolutionSnapshot( RunnableCode ):
+    """
+    Captures and persists a complete solution to a question.
     
+    Stores question, code, embeddings, and execution results for
+    future reuse and similarity matching.
+    """
     @staticmethod
-    def get_timestamp():
+    def get_timestamp() -> str:
+        """
+        Get current timestamp.
         
+        Requires:
+            - None
+            
+        Ensures:
+            - Returns formatted datetime string
+            
+        Raises:
+            - None
+        """
         return du.get_current_datetime()
     
     @staticmethod
-    def remove_non_alphanumerics( input, replacement_char="" ):
+    def remove_non_alphanumerics( input: str, replacement_char: str="" ) -> str:
+        """
+        Remove non-alphanumeric characters from input.
         
+        Requires:
+            - input is a string
+            - replacement_char is a string
+            
+        Ensures:
+            - Returns lowercase string with non-alphanumeric chars replaced
+            - Preserves spaces
+            
+        Raises:
+            - None
+        """
         regex = re.compile( "[^a-zA-Z0-9 ]" )
         cleaned_output = regex.sub( replacement_char, input ).lower()
         
         return cleaned_output
     
     @staticmethod
-    def escape_single_quotes( input ):
+    def escape_single_quotes( input: str ) -> str:
+        """
+        Remove single quotes from input.
         
+        Requires:
+            - input is a string
+            
+        Ensures:
+            - Returns string with single quotes removed
+            
+        Raises:
+            - None
+        """
         return input.replace( "'", "" )
     
     @staticmethod
-    def generate_embedding( text ):
+    def generate_embedding( text: str ) -> list[float]:
+        """
+        Generate OpenAI embedding for text.
         
+        Requires:
+            - text is a non-empty string
+            - OpenAI API key is available
+            
+        Ensures:
+            - Returns list of 1536 floats
+            - Uses text-embedding-ada-002 model
+            
+        Raises:
+            - OpenAI API errors propagated
+        """
         timer = sw.Stopwatch( msg=f"Generating embedding for [{du.truncate_string( text )}]...", silent=True )
         openai.api_key = du.get_api_key( "openai" )
         
@@ -52,13 +106,38 @@ class SolutionSnapshot( RunnableCode ):
         return response.data[ 0 ].embedding
     
     @staticmethod
-    def generate_id_hash( push_counter, run_date ):
+    def generate_id_hash( push_counter: int, run_date: str ) -> str:
+        """
+        Generate unique ID hash for snapshot.
         
+        Requires:
+            - push_counter is an integer
+            - run_date is a string
+            
+        Ensures:
+            - Returns SHA256 hash as hex string
+            - Combines counter and date for uniqueness
+            
+        Raises:
+            - None
+        """
         return hashlib.sha256( (str( push_counter ) + run_date).encode() ).hexdigest()
     
     @staticmethod
-    def get_default_stats_dict():
+    def get_default_stats_dict() -> dict:
+        """
+        Get default runtime statistics dictionary.
         
+        Requires:
+            - None
+            
+        Ensures:
+            - Returns dict with all required stats fields
+            - Initial values set appropriately
+            
+        Raises:
+            - None
+        """
         return {
            "first_run_ms": 0,
             "run_count"  : -1,
@@ -69,19 +148,49 @@ class SolutionSnapshot( RunnableCode ):
         }
     
     @staticmethod
-    def get_embedding_similarity( this_embedding, that_embedding ):
+    def get_embedding_similarity( this_embedding: list[float], that_embedding: list[float] ) -> float:
+        """
+        Calculate similarity between two embeddings.
         
+        Requires:
+            - Both embeddings are lists of floats
+            - Both embeddings have same length
+            
+        Ensures:
+            - Returns similarity score as percentage (0-100)
+            - Uses dot product calculation
+            
+        Raises:
+            - None
+        """
         return np.dot( this_embedding, that_embedding ) * 100
     
-    def __init__( self, push_counter=-1, question="", question_gist="", synonymous_questions=OrderedDict(), synonymous_question_gists=OrderedDict(), non_synonymous_questions=[],
-                  last_question_asked="", answer="", answer_conversational="", error="", routing_command="",
-                  created_date=get_timestamp(), updated_date=get_timestamp(), run_date=get_timestamp(),
-                  runtime_stats=get_default_stats_dict(),
-                  id_hash="", solution_summary="", code=[], code_returns="", code_example="", code_type="raw", thoughts="",
-                  programming_language="Python", language_version="3.10",
-                  question_embedding=[ ], question_gist_embedding=[ ], solution_embedding=[ ], code_embedding=[ ], thoughts_embedding=[ ],
-                  solution_directory="/src/conf/long-term-memory/solutions/", solution_file=None, debug=False, verbose=False
-                  ):
+    def __init__( self, push_counter: int=-1, question: str="", question_gist: str="", synonymous_questions: OrderedDict=OrderedDict(), synonymous_question_gists: OrderedDict=OrderedDict(), non_synonymous_questions: list=[],
+                  last_question_asked: str="", answer: str="", answer_conversational: str="", error: str="", routing_command: str="",
+                  created_date: str=get_timestamp(), updated_date: str=get_timestamp(), run_date: str=get_timestamp(),
+                  runtime_stats: dict=get_default_stats_dict(),
+                  id_hash: str="", solution_summary: str="", code: list[str]=[], code_returns: str="", code_example: str="", code_type: str="raw", thoughts: str="",
+                  programming_language: str="Python", language_version: str="3.10",
+                  question_embedding: list[float]=[ ], question_gist_embedding: list[float]=[ ], solution_embedding: list[float]=[ ], code_embedding: list[float]=[ ], thoughts_embedding: list[float]=[ ],
+                  solution_directory: str="/src/conf/long-term-memory/solutions/", solution_file: Optional[str]=None, debug: bool=False, verbose: bool=False
+                  ) -> None:
+        """
+        Initialize a solution snapshot.
+        
+        Requires:
+            - All string parameters are strings or empty
+            - All list parameters are lists or empty
+            - Embeddings are lists of floats when provided
+            
+        Ensures:
+            - Initializes all fields with provided or default values
+            - Generates missing embeddings if content provided
+            - Creates unique ID hash if not provided
+            - Writes to file if embeddings were generated
+            
+        Raises:
+            - None (handles errors internally)
+        """
         
         super().__init__( debug=debug, verbose=verbose )
         
@@ -176,8 +285,22 @@ class SolutionSnapshot( RunnableCode ):
         if dirty: self.write_current_state_to_file()
         
     @classmethod
-    def from_json_file( cls, filename, debug=False ):
+    def from_json_file( cls, filename: str, debug: bool=False ) -> 'SolutionSnapshot':
+        """
+        Load snapshot from JSON file.
         
+        Requires:
+            - filename is a valid file path
+            - File contains valid JSON data
+            
+        Ensures:
+            - Returns new SolutionSnapshot instance
+            - All fields populated from JSON data
+            
+        Raises:
+            - FileNotFoundError if file doesn't exist
+            - JSONDecodeError if invalid JSON
+        """
         if debug: print( f"Reading {filename}..." )
         with open( filename, "r" ) as f:
             data = json.load( f )
@@ -185,8 +308,21 @@ class SolutionSnapshot( RunnableCode ):
         return cls( **data )
     
     @classmethod
-    def create( cls, agent ):
+    def create( cls, agent: Any ) -> 'SolutionSnapshot':
+        """
+        Create snapshot from agent instance.
         
+        Requires:
+            - agent has required attributes (question, code, etc.)
+            - agent.prompt_response_dict is populated
+            
+        Ensures:
+            - Returns new SolutionSnapshot with agent data
+            - Copies all relevant fields from agent
+            
+        Raises:
+            - AttributeError if agent missing required fields
+        """
         print( "(create_solution_snapshot) TODO: Reconcile how we're going to get a dynamic path to the solution file's directory" )
         
         # Instantiate a new SolutionSnapshot object using the contents of the calendaring or function mapping agent
@@ -210,8 +346,22 @@ class SolutionSnapshot( RunnableCode ):
                # solution_directory=calendaring_agent.solution_directory
         )
     
-    def add_synonymous_question( self, question, salutation="", score=100.0 ):
+    def add_synonymous_question( self, question: str, salutation: str="", score: float=100.0 ) -> None:
+        """
+        Add a synonymous question to the snapshot.
         
+        Requires:
+            - question is a non-empty string
+            - score is between 0 and 100
+            
+        Ensures:
+            - Adds question to synonymous_questions if not present
+            - Updates last_question_asked with full text
+            - Updates timestamp if question added
+            
+        Raises:
+            - None
+        """
         # We're doing a mechanical peel off of the salutation before it even gets here, and adding it back in for conversationality sake here
         # Also: Add last question in unmodified form before cleaning it
         if len( salutation ) > 0:
@@ -227,74 +377,225 @@ class SolutionSnapshot( RunnableCode ):
         else:
             print( f"Question [{question}] is already listed as a synonymous question." )
         
-    def get_last_synonymous_question( self ):
+    def get_last_synonymous_question( self ) -> str:
+        """
+        Get the most recently added synonymous question.
         
+        Requires:
+            - synonymous_questions is not empty
+            
+        Ensures:
+            - Returns last question in ordered dict
+            
+        Raises:
+            - IndexError if no synonymous questions
+        """
         return list( self.synonymous_questions.keys() )[ -1 ]
         
-    def complete( self, answer, code=[ ], solution_summary="" ):
+    def complete( self, answer: str, code: list[str]=[ ], solution_summary: str="" ) -> None:
+        """
+        Complete the snapshot with execution results.
         
+        Requires:
+            - answer is a string
+            - code is a list of strings
+            - solution_summary is a string
+            
+        Ensures:
+            - Sets answer, code, and solution summary
+            - Generates embeddings for code and summary
+            
+        Raises:
+            - None
+        """
         self.answer = answer
         self.set_code( code )
         self.set_solution_summary( solution_summary )
         # self.completion_date  = SolutionSnapshot.get_current_datetime()
         
-    def set_solution_summary( self, solution_summary ):
-
+    def set_solution_summary( self, solution_summary: str ) -> None:
+        """
+        Set solution summary and generate embedding.
+        
+        Requires:
+            - solution_summary is a string
+            
+        Ensures:
+            - Updates solution_summary field
+            - Generates new embedding
+            - Updates timestamp
+            
+        Raises:
+            - None
+        """
         self.solution_summary = solution_summary
         self.solution_embedding = self.generate_embedding( solution_summary )
         self.updated_date = self.get_timestamp()
 
-    def set_code( self, code ):
-
+    def set_code( self, code: list[str] ) -> None:
+        """
+        Set code and generate embedding.
+        
+        Requires:
+            - code is a list of strings
+            
+        Ensures:
+            - Updates code field
+            - Generates embedding from joined code
+            - Updates timestamp
+            
+        Raises:
+            - None
+        """
         # ¡OJO! code is a list of strings, not a string!
         self.code           = code
         self.code_embedding = self.generate_embedding( " ".join( code ) )
         self.updated_date   = self.get_timestamp()
     
-    def get_question_similarity( self, other_snapshot ):
+    def get_question_similarity( self, other_snapshot: 'SolutionSnapshot' ) -> float:
+        """
+        Calculate question similarity with another snapshot.
         
+        Requires:
+            - Both snapshots have question embeddings
+            
+        Ensures:
+            - Returns similarity score as percentage (0-100)
+            - Uses dot product calculation
+            
+        Raises:
+            - ValueError if either embedding is missing
+        """
         if not self.question_embedding or not other_snapshot.question_embedding:
             raise ValueError( "Both snapshots must have a question embedding to compare." )
         return np.dot( self.question_embedding, other_snapshot.question_embedding ) * 100
     
-    def get_question_gist_similarity( self, other_snapshot ):
+    def get_question_gist_similarity( self, other_snapshot: 'SolutionSnapshot' ) -> float:
+        """
+        Calculate question gist similarity with another snapshot.
         
+        Requires:
+            - Both snapshots have question gist embeddings
+            
+        Ensures:
+            - Returns similarity score as percentage (0-100)
+            - Uses dot product calculation
+            
+        Raises:
+            - ValueError if either embedding is missing
+        """
         if not self.question_gist_embedding or not other_snapshot.question_gist_embedding:
             raise ValueError( "Both snapshots must have a question gist embedding to compare." )
         
         return np.dot( self.question_gist_embedding, other_snapshot.question_gist_embedding ) * 100
     
-    def get_solution_summary_similarity( self, other_snapshot ):
+    def get_solution_summary_similarity( self, other_snapshot: 'SolutionSnapshot' ) -> float:
+        """
+        Calculate solution summary similarity with another snapshot.
         
+        Requires:
+            - Both snapshots have solution embeddings
+            
+        Ensures:
+            - Returns similarity score as percentage (0-100)
+            - Uses dot product calculation
+            
+        Raises:
+            - ValueError if either embedding is missing
+        """
         if not self.solution_embedding or not other_snapshot.solution_embedding:
             raise ValueError( "Both snapshots must have a solution summary embedding to compare." )
         
         return np.dot( self.solution_embedding, other_snapshot.solution_embedding ) * 100
     
-    def get_code_similarity( self, other_snapshot ):
+    def get_code_similarity( self, other_snapshot: 'SolutionSnapshot' ) -> float:
+        """
+        Calculate code similarity with another snapshot.
         
+        Requires:
+            - Both snapshots have code embeddings
+            
+        Ensures:
+            - Returns similarity score as percentage (0-100)
+            - Uses dot product calculation
+            
+        Raises:
+            - ValueError if either embedding is missing
+        """
         if not self.code_embedding or not other_snapshot.code_embedding:
             raise ValueError( "Both snapshots must have a code embedding to compare." )
         
         return np.dot( self.code_embedding, other_snapshot.code_embedding ) * 100
     
-    def to_jsons( self, verbose=True ):
+    def to_jsons( self, verbose: bool=True ) -> str:
+        """
+        Serialize snapshot to JSON string.
         
+        Requires:
+            - Object is properly initialized
+            
+        Ensures:
+            - Returns valid JSON string
+            - Excludes non-serializable fields
+            - All data preserved for loading
+            
+        Raises:
+            - JSON serialization errors
+        """
         # TODO: decide what we're going to exclude from serialization, and why or why not!
         # Right now I'm just doing this for the sake of expediency as I'm playing with class inheritance for agents
         fields_to_exclude = [ "prompt_response", "prompt_response_dict", "code_response_dict", "phind_tgi_url", "config_mgr" ]
         data = { field: value for field, value in self.__dict__.items() if field not in fields_to_exclude }
         return json.dumps( data )
         
-    def get_copy( self ):
+    def get_copy( self ) -> 'SolutionSnapshot':
+        """
+        Get shallow copy of snapshot.
+        
+        Requires:
+            - None
+            
+        Ensures:
+            - Returns new instance with same values
+            - Shallow copy (references shared)
+            
+        Raises:
+            - None
+        """
         return copy.copy( self )
     
-    def get_html( self ):
+    def get_html( self ) -> str:
+        """
+        Get HTML representation of snapshot.
         
+        Requires:
+            - id_hash, run_date, last_question_asked are set
+            
+        Ensures:
+            - Returns HTML list item string
+            - Includes play and delete spans
+            
+        Raises:
+            - None
+        """
         return f"<li id='{self.id_hash}'><span class='play'>{self.run_date} Q: {self.last_question_asked}</span> <span class='delete'></span></li>"
      
-    def write_current_state_to_file( self ):
+    def write_current_state_to_file( self ) -> None:
+        """
+        Write snapshot to JSON file.
         
+        Requires:
+            - solution_directory is valid path
+            - All required fields populated
+            
+        Ensures:
+            - Creates JSON file with snapshot data
+            - Generates unique filename if needed
+            - Sets file permissions to 0o666
+            
+        Raises:
+            - OSError if file operations fail
+        """
         # Get the project root directory
         project_root = du.get_project_root()
         # Define the directory where the file will be saved
@@ -330,9 +631,20 @@ class SolutionSnapshot( RunnableCode ):
         # Set the file permissions to world-readable and writable
         os.chmod( file_path, 0o666 )
         
-    # Add a method to delete this snapshot file from the local file system if it exists
-    def delete_file( self ):
+    def delete_file( self ) -> None:
+        """
+        Delete snapshot file from filesystem.
         
+        Requires:
+            - solution_file and solution_directory are set
+            
+        Ensures:
+            - Removes file if it exists
+            - Prints status message
+            
+        Raises:
+            - None (handles errors internally)
+        """
         file_path = f"{du.get_project_root()}{self.solution_directory}{self.solution_file}"
         
         if os.path.isfile( file_path ):
@@ -362,8 +674,22 @@ class SolutionSnapshot( RunnableCode ):
             self.runtime_stats[ "last_run_ms"   ]  = delta_ms
             self.runtime_stats[ "time_saved_ms" ]  = ( self.runtime_stats[ "first_run_ms" ] * self.runtime_stats[ "run_count" ] ) - self.runtime_stats[ "total_ms" ]
     
-    def run_code( self, debug=False, verbose=False ):
+    def run_code( self, debug: bool=False, verbose: bool=False ) -> dict:
+        """
+        Execute stored code.
         
+        Requires:
+            - code, code_example, code_returns are populated
+            - routing_command determines data file path
+            
+        Ensures:
+            - Executes code using code runner
+            - Updates answer with output
+            - Returns code response dictionary
+            
+        Raises:
+            - Code execution errors propagated
+        """
         if self.routing_command == "agent router go to todo list":
             path_to_df = "/src/conf/long-term-memory/todo.csv"
         elif self.routing_command == "agent router go to calendar":
@@ -383,8 +709,21 @@ class SolutionSnapshot( RunnableCode ):
         
         return self.code_response_dict
     
-    def format_output( self ):
+    def format_output( self ) -> str:
+        """
+        Format raw output for conversational response.
         
+        Requires:
+            - last_question_asked, answer, routing_command are set
+            
+        Ensures:
+            - Creates formatted conversational answer
+            - Extracts rephrased answer if available
+            - Returns formatted string
+            
+        Raises:
+            - None
+        """
         # du.print_banner( f"Formatting output for {self.routing_command}" )
         formatter                  = RawOutputFormatter( self.last_question_asked, self.answer, self.routing_command, debug=self.debug, verbose=self.verbose )
         self.answer_conversational = formatter.format_output()
@@ -395,8 +734,20 @@ class SolutionSnapshot( RunnableCode ):
         
         return self.answer_conversational
     
-    def formatter_ran_to_completion( self ):
+    def formatter_ran_to_completion( self ) -> bool:
+        """
+        Check if formatter completed successfully.
         
+        Requires:
+            - None
+            
+        Ensures:
+            - Returns True if answer_conversational is set
+            - Returns False otherwise
+            
+        Raises:
+            - None
+        """
         return self.answer_conversational is not None
     
 # Add main method

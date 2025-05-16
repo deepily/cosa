@@ -1,4 +1,5 @@
 import json
+from typing import Any, tuple
 
 import cosa.utils.util as du
 
@@ -7,7 +8,29 @@ from cosa.agents.v010.raw_output_formatter import RawOutputFormatter
 from cosa.memory.input_and_output_table import InputAndOutputTable
 
 class ReceptionistAgent( AgentBase ):
-    def __init__( self, question="", question_gist="", last_question_asked="", push_counter=-1, routing_command="agent router go to receptionist", debug=False, verbose=False, auto_debug=False, inject_bugs=False ):
+    """
+    Agent that handles general conversation and memory retrieval.
+    
+    This agent acts as a receptionist, answering questions based on
+    previous conversations stored in the input/output table memory.
+    """
+    
+    def __init__( self, question: str="", question_gist: str="", last_question_asked: str="", push_counter: int=-1, routing_command: str="agent router go to receptionist", debug: bool=False, verbose: bool=False, auto_debug: bool=False, inject_bugs: bool=False ) -> None:
+        """
+        Initialize the receptionist agent with memory access.
+        
+        Requires:
+            - InputAndOutputTable can be initialized
+            - Config has necessary prompt templates
+            
+        Ensures:
+            - Initializes memory table for Q&A storage
+            - Loads appropriate prompt template
+            - Sets up XML response tags for category and answer
+            
+        Raises:
+            - ConfigException if required config missing
+        """
         
         super().__init__( df_path_key=None, question=question, question_gist=question_gist, last_question_asked=last_question_asked, routing_command=routing_command, push_counter=push_counter, debug=debug, verbose=verbose, auto_debug=auto_debug, inject_bugs=inject_bugs )
         
@@ -17,13 +40,42 @@ class ReceptionistAgent( AgentBase ):
         self.serialize_prompt_to_json = self.config_mgr.get( "agent_receptionist_serialize_prompt_to_json", default=False, return_type="boolean" )
         # self.serialize_code_to_json   = self.config_mgr.get( "agent_receptionist_serialize_code_to_json",   default=False, return_type="boolean" )
     
-    def _get_prompt( self ):
+    def _get_prompt( self ) -> str:
+        """
+        Generate prompt with memory entries.
+        
+        Requires:
+            - self.last_question_asked is set
+            - self.prompt_template has query, date_today, entries placeholders
+            
+        Ensures:
+            - Returns formatted prompt with current date and memory entries
+            - Memory entries formatted as XML fragments
+            
+        Raises:
+            - KeyError if template missing required placeholders
+        """
         
         date_today, entries = self._get_df_metadata()
         
         return self.prompt_template.format( query=self.last_question_asked, date_today=date_today, entries=entries )
     
-    def _get_df_metadata( self ):
+    def _get_df_metadata( self ) -> tuple[str, str]:
+        """
+        Retrieve memory entries and current date.
+        
+        Requires:
+            - self.io_tbl is initialized
+            - Memory table has date, input, output_final columns
+            
+        Ensures:
+            - Returns tuple of (current_date, formatted_entries)
+            - Each entry formatted as XML memory fragment
+            - All entries joined with newlines
+            
+        Raises:
+            - KeyError if expected columns missing from rows
+        """
         
         entries    = []
         rows       = self.io_tbl.get_all_qnr()
@@ -35,7 +87,22 @@ class ReceptionistAgent( AgentBase ):
         
         return date_today, entries
     
-    def run_prompt( self, **kwargs ):
+    def run_prompt( self, **kwargs ) -> dict[str, Any]:
+        """
+        Execute prompt and extract conversational answer.
+        
+        Requires:
+            - Parent class run_prompt works correctly
+            - Response contains 'answer' field
+            
+        Ensures:
+            - Sets self.answer_conversational from response
+            - Optionally serializes prompt to JSON
+            - Returns complete response dictionary
+            
+        Raises:
+            - KeyError if response missing 'answer' field
+        """
         
         results = super().run_prompt( **kwargs )
         
@@ -47,11 +114,37 @@ class ReceptionistAgent( AgentBase ):
         
         return results
     
-    def is_code_runnable( self ):
+    def is_code_runnable( self ) -> bool:
+        """
+        Check if agent has runnable code.
+        
+        Requires:
+            - None
+            
+        Ensures:
+            - Always returns False (receptionist doesn't run code)
+            
+        Raises:
+            - None
+        """
         
         return False
     
-    def run_code( self, auto_debug=None, inject_bugs=None ):
+    def run_code( self, auto_debug: Any=None, inject_bugs: Any=None ) -> dict[str, Any]:
+        """
+        Placeholder code execution (not used by receptionist).
+        
+        Requires:
+            - None
+            
+        Ensures:
+            - Returns success response with informative message
+            - Sets self.code_response_dict
+            - Prints informative message
+            
+        Raises:
+            - None
+        """
         
         print( "NOT Running code, this is a receptionist agent" )
         self.code_response_dict = {
@@ -60,12 +153,39 @@ class ReceptionistAgent( AgentBase ):
         }
         return self.code_response_dict
     
-    def code_ran_to_completion( self ):
+    def code_ran_to_completion( self ) -> bool:
+        """
+        Check if code ran successfully (always true for receptionist).
+        
+        Requires:
+            - None
+            
+        Ensures:
+            - Always returns True to satisfy interface
+            
+        Raises:
+            - None
+        """
         
         # This is a necessary lie to satisfy the interface
         return True
     
-    def run_formatter( self ):
+    def run_formatter( self ) -> str:
+        """
+        Format output based on content category.
+        
+        Requires:
+            - self.prompt_response_dict has 'category' and 'thoughts' fields
+            - self.answer_conversational is set
+            
+        Ensures:
+            - Applies formatter only for non-benign content
+            - Updates self.answer_conversational if formatted
+            - Returns final conversational answer
+            
+        Raises:
+            - KeyError if required fields missing from response dict
+        """
         
         # Only reformat the output if it's humorous or salacious
         if self.prompt_response_dict[ "category" ] != "benign":
@@ -83,7 +203,24 @@ class ReceptionistAgent( AgentBase ):
    
     
     @staticmethod
-    def restore_from_serialized_state( file_path ):
+    def restore_from_serialized_state( file_path: str ) -> 'ReceptionistAgent':
+        """
+        Restore agent from serialized JSON state.
+        
+        Requires:
+            - file_path points to valid JSON file
+            - JSON contains required constructor parameters
+            
+        Ensures:
+            - Returns new ReceptionistAgent with restored state
+            - All attributes restored from JSON
+            - Constructor parameters handled correctly
+            
+        Raises:
+            - FileNotFoundError if file doesn't exist
+            - JSONDecodeError if invalid JSON
+            - KeyError if required fields missing
+        """
         
         print( f"Restoring from {file_path}..." )
         

@@ -1,3 +1,5 @@
+from typing import Any, Optional
+
 import cosa.utils.util as du
 
 from cosa.agents.v010.agent_base import AgentBase
@@ -6,7 +8,29 @@ from cosa.memory.solution_snapshot import SolutionSnapshot as ss
 
 
 class WeatherAgent( AgentBase ):
-    def __init__( self, prepend_date_and_time=True, question="", question_gist="", last_question_asked="", push_counter=-1, routing_command="agent router go to weather", debug=False, verbose=False, auto_debug=False, inject_bugs=False ):
+    """
+    Agent that answers weather-related questions using web search.
+    
+    This agent uses the GibSearch tool to fetch current weather information
+    from the web and format it for the user.
+    """
+    
+    def __init__( self, prepend_date_and_time: bool=True, question: str="", question_gist: str="", last_question_asked: str="", push_counter: int=-1, routing_command: str="agent router go to weather", debug: bool=False, verbose: bool=False, auto_debug: bool=False, inject_bugs: bool=False ) -> None:
+        """
+        Initialize the weather agent.
+        
+        Requires:
+            - GibSearch tool is available
+            - last_question_asked is a weather-related query
+            
+        Ensures:
+            - Prepends current date/time to queries for cache freshness
+            - Initializes without DataFrame (uses web search instead)
+            - Sets up empty XML response tags (not used)
+            
+        Raises:
+            - ImportError if GibSearch not available
+        """
         
         # Prepend a date and time to force the cache to update on an hourly basis
         self.reformulated_last_question_asked = f"It's {du.get_current_time( format='%I:00 %p' )} on {du.get_current_date( return_prose=True )}. {last_question_asked}"
@@ -19,11 +43,39 @@ class WeatherAgent( AgentBase ):
         # self.serialize_prompt_to_json = self.config_mgr.get( "agent_weather_serialize_prompt_to_json", default=False, return_type="boolean" )
         # self.serialize_code_to_json   = self.config_mgr.get( "agent_weather_serialize_code_to_json",   default=False, return_type="boolean" )
     
-    def restore_from_serialized_state( self, file_path ):
+    def restore_from_serialized_state( self, file_path: str ) -> None:
+        """
+        Restore agent from serialized state (not implemented).
+        
+        Requires:
+            - file_path is a valid path
+            
+        Ensures:
+            - Raises NotImplementedError
+            
+        Raises:
+            - NotImplementedError always
+        """
         
         raise NotImplementedError( "WeatherAgent.restore_from_serialized_state() not implemented" )
     
-    def run_code( self, auto_debug=None, inject_bugs=None ):
+    def run_code( self, auto_debug: Optional[bool]=None, inject_bugs: Optional[bool]=None ) -> dict[str, Any]:
+        """
+        Search the web for weather information.
+        
+        Requires:
+            - self.reformulated_last_question_asked is set
+            - GibSearch tool is available
+            
+        Ensures:
+            - Performs web search for weather info
+            - Returns code_response_dict with output and return_code
+            - Sets self.answer on success
+            - Sets self.error on failure
+            
+        Raises:
+            - Catches all exceptions and returns error in response dict
+        """
         
         try:
             search   = GibSearch( query=self.reformulated_last_question_asked, debug=self.debug, verbose=self.verbose)
@@ -46,19 +98,70 @@ class WeatherAgent( AgentBase ):
         
         return self.code_response_dict
     
-    def run_prompt( self, **kwargs ):
+    def run_prompt( self, **kwargs ) -> None:
+        """
+        Run prompt (not implemented for weather agent).
+        
+        Requires:
+            - None
+            
+        Ensures:
+            - Raises NotImplementedError
+            
+        Raises:
+            - NotImplementedError always
+        """
         
         raise NotImplementedError( "WeatherAgent.run_prompt() not implemented" )
     
-    def is_code_runnable( self ):
+    def is_code_runnable( self ) -> bool:
+        """
+        Check if agent has runnable code.
+        
+        Requires:
+            - None
+            
+        Ensures:
+            - Always returns True (web search is always runnable)
+            
+        Raises:
+            - None
+        """
         
         return True
     
-    def is_prompt_executable( self ):
+    def is_prompt_executable( self ) -> bool:
+        """
+        Check if agent has executable prompt.
+        
+        Requires:
+            - None
+            
+        Ensures:
+            - Always returns False (no LLM prompt used)
+            
+        Raises:
+            - None
+        """
         
         return False
     
-    def do_all( self ):
+    def do_all( self ) -> str:
+        """
+        Execute complete weather query workflow.
+        
+        Requires:
+            - self.reformulated_last_question_asked is set
+            - GibSearch tool is available
+            
+        Ensures:
+            - Runs web search for weather data
+            - Formats response conversationally
+            - Returns final answer
+            
+        Raises:
+            - May propagate exceptions from run_code or run_formatter
+        """
         
         # No prompt to run just yet!
         # self.run_prompt()

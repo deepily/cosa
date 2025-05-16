@@ -1,3 +1,5 @@
+from typing import Optional
+
 import cosa.utils.util as du
 import cosa.utils.util_xml as dux
 
@@ -15,9 +17,36 @@ class ConfirmationDialogue:
     Configuration:
         - "prompt_template_for_confirmation_dialog": Path to the prompt template file (required)
         - "llm_spec_key_for_confirmation_dialog": LLM model specification (required when model_name not provided)
+        
+    Requires:
+        - Valid configuration with required keys
+        - Access to LLM via factory
+        
+    Ensures:
+        - Provides consistent yes/no/ambiguous classification
+        - Handles different phrasings of affirmative/negative responses
+        
+    Raises:
+        - Configuration errors if setup fails
     """
     
-    def __init__( self, model_name=None, config_mgr=None, debug=False, verbose=False ):
+    def __init__( self, model_name: Optional[str]=None, config_mgr: Optional[ConfigurationManager]=None, debug: bool=False, verbose: bool=False ) -> None:
+        """
+        Initialize confirmation dialogue utility.
+        
+        Requires:
+            - Either model_name or 'llm_spec_key_for_confirmation_dialog' in config
+            - 'prompt_template_for_confirmation_dialog' exists in config
+            
+        Ensures:
+            - Sets up config_mgr if not provided
+            - Loads prompt template from configured path
+            - Model name is set from parameter or config
+            
+        Raises:
+            - KeyError if required config keys missing
+            - FileNotFoundError if template file missing
+        """
         
         self.config_mgr = config_mgr or ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
         
@@ -38,17 +67,24 @@ class ConfirmationDialogue:
         )
         self.prompt_template = du.get_file_as_string( du.get_project_root() + prompt_template_path )
     
-    def confirmed( self, utterance, default=None ):
+    def confirmed( self, utterance: str, default: Optional[bool]=None ) -> bool:
         """
         Determines if the response is a confirmed 'yes' or 'no'.
-
-        :param utterance: The utterance string to evaluate.
-        :param default: The optional default boolean value to return in ambiguous cases.
-                       If not provided and the response is ambiguous, a ValueError is raised.
-        :return: True if the response is 'yes', False if 'no', and default if provided 
-                 for ambiguous cases. Raises ValueError if response is ambiguous and no 
-                 default is provided.
-        :raises ValueError: If the response is ambiguous and no default value is provided.
+        
+        Requires:
+            - utterance is a non-empty string
+            - self.prompt_template exists and contains {utterance} placeholder
+            - LLM is accessible via factory.get_client
+            
+        Ensures:
+            - Returns True for affirmative responses
+            - Returns False for negative responses
+            - Returns default for ambiguous responses (if provided)
+            - Response is parsed from 'summary' XML tag
+            
+        Raises:
+            - ValueError if response is ambiguous and no default provided
+            - LLM-specific exceptions if prompt execution fails
         """
         self.prompt = self.prompt_template.format( utterance=utterance )
         
