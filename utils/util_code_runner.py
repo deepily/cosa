@@ -3,12 +3,6 @@ import subprocess
 from subprocess import PIPE, run
 
 debug = os.getenv( "GIB_CODE_EXEC_DEBUG", "False" ) == "True"
-
-# import sys
-# if debug:
-#     sys.path.sort()
-#     for path in sys.path: print( path )
-
 import cosa.utils.util as du
 
 @staticmethod
@@ -225,14 +219,17 @@ def assemble_and_run_solution( solution_code, example_code, path_to_df=None, sol
     
     if inject_bugs:
         
-        from cosa.agents.bug_injector import BugInjector
+        from cosa.agents.v010.bug_injector import BugInjector
         
         du.print_banner( "Injecting bugs...", prepend_nl=True, expletive=True, chunk="buggy 🦂 bug injector 💉 " )
         bug_injector  = BugInjector( solution_code, example=example_code, debug=debug, verbose=verbose )
         response_dict = bug_injector.run_prompt()
         solution_code = response_dict[ "code" ]
         
-    code_path = du.get_project_root() + "/io/code.py"
+    from cosa.app.configuration_manager import ConfigurationManager
+    config_mgr = ConfigurationManager()
+    code_file_path = config_mgr.get("code_execution_file_path")
+    code_path = du.get_project_root() + code_file_path
     du.write_lines_to_file( code_path, solution_code )
     
     # Stash current working directory, so we can return to it after code has finished executing

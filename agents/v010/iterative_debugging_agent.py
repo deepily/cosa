@@ -36,12 +36,12 @@ class IterativeDebuggingAgent( AgentBase ):
         
     def _load_available_llm_specs( self ):
         
-        model_keys = self.config_mgr.get( "llm_model_keys_for_debugger", default=[ ], return_type="json" )
+        model_keys = self.config_mgr.get( "llm_model_keys_for_debugger", return_type="json" )
         
         available_llms = []
         for key in model_keys:
             print( f"Loading debugger LLM: {key}... ", end="" )
-            llm_spec = self.config_mgr.get( key, default={ }, return_type="json" )
+            llm_spec = self.config_mgr.get( key, return_type="json" )
             available_llms.append( llm_spec )
             print( llm_spec )
         
@@ -205,39 +205,60 @@ class IterativeDebuggingAgent( AgentBase ):
         
 if __name__ == "__main__":
     
-    error_message = """
-    File "/Users/rruiz/Projects/projects-sshfs/genie-in-the-box/io/code.py", line 11
-    birthdays = df[(df.event_type == 'birthday') && (df.start_date <= week_from_today) && (df.end_date >= today)]
+    # Create a simple error scenario to test the debugging agent
+    import os
+    from cosa.app.configuration_manager import ConfigurationManager
+    
+    config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+    code_file_path = config_mgr.get("code_execution_file_path")
+    test_file_path = du.get_project_root() + code_file_path
+    
+    error_message = f"""
+    File "{test_file_path}", line 3
+        print("Hello World"
+             ^
+    SyntaxError: unexpected EOF while parsing
     """
-    #     error_message = """
-    #     Traceback (most recent call last):
-    #   File "/Users/rruiz/Projects/projects-sshfs/genie-in-the-box/io/code.py", line 20, in <module>
-    #     solution = get_concerts_this_week( df )
-    #   File "/Users/rruiz/Projects/projects-sshfs/genie-in-the-box/io/code.py", line 14, in get_concerts_this_week
-    #     mask = (df['event_type'] == 'concert') & (df['start_date'] >= start_date) & (df['start_date'] < end_date)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/ops/common.py", line 81, in new_method
-    #     return method(self, other)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/arraylike.py", line 60, in __ge__
-    #     return self._cmp_method(other, operator.ge)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/series.py", line 6096, in _cmp_method
-    #     res_values = ops.comparison_op(lvalues, rvalues, op)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/ops/array_ops.py", line 279, in comparison_op
-    #     res_values = op(lvalues, rvalues)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/ops/common.py", line 81, in new_method
-    #     return method(self, other)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/arraylike.py", line 60, in __ge__
-    #     return self._cmp_method(other, operator.ge)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/arrays/datetimelike.py", line 937, in _cmp_method
-    #     return invalid_comparison(self, other, op)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/ops/invalid.py", line 36, in invalid_comparison
-    #     raise TypeError(f"Invalid comparison between dtype={left.dtype} and {typ}")
-    # TypeError: Invalid comparison between dtype=datetime64[ns] and date"""
-
-    source_code_path = "/io/code.py"
-    example          = "solution = check_birthdays(df)"
-    debugging_agent  = IterativeDebuggingAgent( error_message, source_code_path, example=example, returns="DataFrame", minimalist=True, debug=True, verbose=False )
-    # # Deserialize from file
-    # # debugging_agent = IterativeDebuggingAgent.restore_from_serialized_state( du.get_project_root() + "/io/log/code-debugging-on-2024-2-28-at-14-28-run-1-of-3-using-llm-phind34b-step-1-of-1.json" )
-    debugging_agent.run_prompts()
-    # debugging_agent.run_code()
+    
+    # Create a test file with a deliberate syntax error
+    test_code = '''
+    def greeting():
+        print("Hello World"
+    '''
+    
+    # Write the test code to a temporary file
+    with open(test_file_path, 'w') as f:
+        f.write(test_code)
+    
+    print("=== Testing IterativeDebuggingAgent ===")
+    print(f"Error to debug: {error_message}")
+    print(f"File path: {test_file_path}")
+    
+    # Initialize the debugging agent
+    debugging_agent = IterativeDebuggingAgent(
+        error_message=error_message,
+        path_to_code=code_file_path,
+        example="greeting()",
+        returns="None", 
+        minimalist=True,
+        debug=True,
+        verbose=True
+    )
+    
+    # Run the debugging process
+    print("\n=== Running debugging process ===")
+    result = debugging_agent.run_prompts()
+    
+    # Check if debugging was successful
+    if debugging_agent.was_successfully_debugged():
+        print("\n✅ Debugging successful!")
+        print("Fixed code:")
+        debugging_agent.print_code()
+    else:
+        print("\n❌ Debugging failed")
+        print(f"Result: {result}")
+    
+    # Clean up
+    if os.path.exists(test_file_path):
+        os.remove(test_file_path)
     

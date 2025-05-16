@@ -66,25 +66,64 @@ class BugInjector( AgentBase ):
 
 if __name__ == "__main__":
     
-    code = [
-        "import datetime",
-        "import pytz",
-        "def get_time():",
-        "    import datetime",
-        "    now = datetime.datetime.now()",
-        "    tz_name = 'America/New_York'",
-        "    tz = pytz.timezone( tz_name )",
-        "    tz_date = now.astimezone( tz )",
-        "    return tz_date.strftime( '%I:%M %p %Z' )",
-        "solution = get_time()",
-        "print( solution )"
+    # Test code examples to inject bugs into
+    test_cases = [
+        {
+            "name": "Simple function",
+            "code": [
+                "def greet(name):",
+                "    return f'Hello, {name}!'",
+                "",
+                "result = greet('World')",
+                "print(result)"
+            ],
+            "example": "result = greet('World')"
+        },
+        {
+            "name": "Math calculation",
+            "code": [
+                "def calculate_area(radius):",
+                "    import math",
+                "    area = math.pi * radius ** 2",
+                "    return area",
+                "",
+                "circle_area = calculate_area(5)",
+                "print(f'Area: {circle_area}')"
+            ],
+            "example": "circle_area = calculate_area(5)"
+        }
     ]
     
-    bug_injector  = BugInjector( code, example="solution = get_time()", debug=True, verbose=True )
-    code_response_dict = bug_injector.run_code()
-    bug_injector.print_code( msg="BEFORE: Bug Injection", end="\n" )
-    
-    response_dict = bug_injector.run_prompt()
-    bug_injector.run_code()
-    
-    bug_injector.print_code( msg=" AFTER: Bug Injection" )
+    for test_case in test_cases:
+        print(f"\n=== Testing Bug Injection: {test_case['name']} ===")
+        
+        # Initialize bug injector
+        bug_injector = BugInjector(
+            code=test_case["code"].copy(),  # Use copy to preserve original
+            example=test_case["example"],
+            debug=True,
+            verbose=True
+        )
+        
+        # Show original code
+        print("\nOriginal code:")
+        bug_injector.print_code()
+        
+        # Run bug injection
+        print("\nInjecting bug...")
+        response_dict = bug_injector.run_prompt()
+        
+        # Show code with injected bug
+        print("\nCode with injected bug:")
+        bug_injector.print_code()
+        
+        # Try to run the buggy code
+        print("\nAttempting to run buggy code:")
+        code_response = bug_injector.run_code()
+        
+        if code_response["success"]:
+            print(f"Output: {code_response['output']}")
+        else:
+            print(f"Error (as expected): {code_response['output']}")
+        
+        print("-" * 50)

@@ -34,27 +34,47 @@ class CalendaringAgent( AgentBase ):
         
         raise NotImplementedError( f"CalendaringAgent.restore_from_serialized_state( file_path={file_path} ) not implemented" )
     
-# Add main method
 if __name__ == "__main__":
     
-    running_job = CalendaringAgent( question="What did we talk about yesterday?", debug=True, auto_debug=True )
-    # print( agent.prompt )
-    response_dict = running_job.run_prompt()
-    # Print dictionary as Jason string
-    print( json.dumps( response_dict, indent=4 ) )
+    # Test the CalendaringAgent with various queries
+    test_questions = [
+        "What events do I have this week?",
+        "Show me all birthdays this month",
+        "What meetings are scheduled for tomorrow?"
+    ]
     
-    if running_job.is_code_runnable():
+    for i, question in enumerate(test_questions, 1):
+        print(f"\n=== Test {i}: {question} ===")
         
-        code_response_dict = running_job.run_code()
-        print( json.dumps( code_response_dict, indent=4 ) )
+        try:
+            # Initialize the calendaring agent
+            cal_agent = CalendaringAgent(
+                question=question,
+                last_question_asked=question,
+                question_gist=question,
+                debug=True,
+                verbose=True,
+                auto_debug=True
+            )
+            
+            # Run the prompt
+            print("\nRunning prompt...")
+            response_dict = cal_agent.run_prompt()
+            
+            # Run the code if available
+            if cal_agent.is_code_runnable():
+                print("\nRunning code...")
+                code_result = cal_agent.run_code()
+                print(f"Code output: {code_result.get('output', 'No output')}")
+                
+                # Run formatter to get conversational response
+                print("\nRunning formatter...")
+                cal_agent.run_formatter()
+                print(f"Formatted response: {cal_agent.answer_conversational}")
+            else:
+                print("No runnable code generated")
+                
+        except Exception as e:
+            print(f"Test failed with error: {e}")
         
-        answer = running_job.run_formatter()
-        print( answer )
-        
-    else:
-        print( "Code not runnable?!?" )
-        
-    if running_job.code_ran_to_completion() and running_job.formatter_ran_to_completion():
-        print( "Job complete..." )
-    else:
-        print( "Job FAILED?" )
+        print("-" * 50)
