@@ -231,12 +231,45 @@ def get_name_value_pairs( arg_list: list[str], debug: bool=False, verbose: bool=
 
 
 def get_file_as_source_code_with_line_numbers( path: str ) -> str:
+    """
+    Read a file and return its contents with line numbers prepended.
     
+    Requires:
+        - path is a valid file path
+        
+    Ensures:
+        - Returns file contents as a string with line numbers
+        - Line numbers are formatted as 3-digit zero-padded numbers
+        
+    Args:
+        path: The path to the file to read
+        
+    Returns:
+        File contents with line numbers prepended
+    """
     source_code = get_file_as_list( path, lower_case=False, clean=False, randomize=False )
     return get_source_code_with_line_numbers( source_code )
     
 def get_source_code_with_line_numbers( source_code: list[str], join_str: str="" ) -> str:
+    """
+    Add line numbers to source code lines and join them into a single string.
     
+    Requires:
+        - source_code is a list of strings representing code lines
+        - join_str is a string to use for joining lines
+        
+    Ensures:
+        - Returns a string with line numbers prepended to each line
+        - Line numbers are formatted as 3-digit zero-padded numbers
+        - Lines are joined with the specified join_str
+        
+    Args:
+        source_code: List of source code lines
+        join_str: String to use for joining lines (default: empty string)
+        
+    Returns:
+        Source code with line numbers as a single string
+    """
     # iterate through the source code and prepend the line number to each line
     for i in range( len( source_code ) ):
         source_code[ i ] = f"{i + 1:03d} {source_code[ i ]}"
@@ -570,7 +603,7 @@ def get_api_key( key_name: str, project_root: str = None ) -> Optional[str]:
     
     return get_file_as_string( path )
 
-def generate_domain_names( count: int = 10, remove_dots: bool = False, debug: bool = False ) -> List[str]:
+def generate_domain_names( count: int = 10, remove_dots: bool = False, debug: bool = False ) -> list[str]:
     """
     Generate a list of random domain names.
     
@@ -687,7 +720,7 @@ def truncate_string( string: str, max_len: int = 64 ) -> str:
     return string
 
 
-def find_files_with_prefix_and_suffix( directory: str, prefix: str, suffix: str ) -> List[str]:
+def find_files_with_prefix_and_suffix( directory: str, prefix: str, suffix: str ) -> list[str]:
     """
     Find files in a directory that match a specific prefix and suffix.
     
@@ -719,7 +752,7 @@ def find_files_with_prefix_and_suffix( directory: str, prefix: str, suffix: str 
             
     return matching_files
 
-def get_files_as_strings( file_paths: List[str] ) -> List[str]:
+def get_files_as_strings( file_paths: list[str] ) -> list[str]:
     """
     Read multiple files and return their contents as strings.
     
@@ -748,7 +781,7 @@ def get_files_as_strings( file_paths: List[str] ) -> List[str]:
         
     return contents
 
-def print_list( list_to_print: List[Any], end: str = "\n" ) -> None:
+def print_list( list_to_print: list[Any], end: str = "\n" ) -> None:
     """
     Print each item in a list to the console.
     
@@ -814,7 +847,7 @@ def sanity_check_file_path( file_path: str, silent: bool = False ) -> None:
 
     if not silent: print( f"File exists! [{file_path}]" )
     
-def get_name_value_pairs_v2( arg_list: List[str], decode_spaces: bool = True ) -> Dict[str, str]:
+def get_name_value_pairs_v2( arg_list: list[str], decode_spaces: bool = True ) -> dict[str, str]:
     """
     Parse a list of strings in "name=value" format into a dictionary (version 2).
     

@@ -89,6 +89,8 @@ class ConfigurationManager():
             self.config_path     = du.get_project_root() + cli_args[ "config_path" ]
             self.splainer_path   = du.get_project_root() + cli_args[ "splainer_path" ]
             self.config_block_id = cli_args[ "config_block_id" ]
+            # Decode URL-encoded spaces (plus signs) back to actual spaces
+            self.config_block_id = self.config_block_id.replace( "+", " " )
             
             # Now delete those three keys from cli_args
             del cli_args[ "config_path" ]

@@ -108,7 +108,6 @@ def _append_post_function_code( code: list[str], code_return_type: str, example_
         - For dataframe type, adds dataframe display code
         - For other types, adds appropriate print statements
         - Preserves the original code order
-    """
     
     When added, example and print code should look ~like this:
     <pre><code>
@@ -122,15 +121,6 @@ def _append_post_function_code( code: list[str], code_return_type: str, example_
     code[ -2 ] = "solution = get_events_this_week( df )"
     code[ -1 ] = "print( solution.to_xml( index=False )"
     </code></pre>
-    Parameters:
-        code (list): A list of code lines.
-        code_return_type (str): The return type of the code.
-        example_code (str): The example code to be appended.
-        debug (bool, optional): Whether to print debug information. Defaults to False.
-        verbose (bool, optional): Whether to print verbose information. Defaults to False.
-
-    Returns:
-        list: The updated code list with the example code appended.
     """
     # code_return_type if occasionally 'pandas.core.frame.DataFrame', so we need to extract the last part of the string
     code_return_type = code_return_type.lower().split( "." )[ -1 ]
@@ -155,24 +145,6 @@ def _append_post_function_code( code: list[str], code_return_type: str, example_
         always_appended.append( "print( solution )" )
         
     code = _ensure_proper_appendages( code, always_appended )
-    ######################################################################################################
-    # We may not need to use this brute force solution below, after using an order dictionary in the method above, because
-    # insertion with the same key will overwrite the value with the same code value but will essentially ignore any duplicates
-    # that occur after the first declaration
-    ######################################################################################################
-    # Remove redundant imports, if present
-    # code = _remove_all_but_the_1st_of_repeated_lines( code, "import pandas as pd" )
-    # code = _remove_all_but_the_1st_of_repeated_lines( code, "import datetime" )
-    # code = _remove_all_but_the_1st_of_repeated_lines( code, "import pytz" )
-    # code = _remove_all_but_the_1st_of_repeated_lines( code, "import lib.utils.util as du" )
-    # code = _remove_all_but_the_1st_of_repeated_lines( code, "import lib.utils.util_pandas as dup" )
-    # #  Remove redundant debug settings, if present
-    # code = _remove_all_but_the_1st_of_repeated_lines( code, "debug = True" )
-    # code = _remove_all_but_the_1st_of_repeated_lines( code, "debug = False" )
-    
-    # Remove any repeated example code
-    # code = _remove_all_but_the_1st_of_repeated_lines( code, example_code )
-    
     return code
 
 def _remove_all_but_the_1st_of_repeated_lines( the_list: list[str], search_string: str ) -> list[str]:
@@ -401,50 +373,6 @@ def test_assemble_and_run_solution( debug: bool=False, verbose: bool=False) -> N
     path_to_df   = "/src/conf/long-term-memory/events.csv"
     results      = assemble_and_run_solution( solution_code, example_code, solution_code_returns="dataframe", path_to_df=path_to_df, debug=debug, verbose=verbose )
     
-    # solution_code = [
-    #     "import datetime",
-    #     "import pytz",
-    #     "import pandas as pd",
-    #     "import lib.utils.util as du",
-    #     "import lib.utils.util_pandas as dup",
-    #     "debug = False",
-    #     "",
-    #     "def get_events_for_this_week( df ):",
-    #     "    import pandas as pd",
-    #     "    import datetime",
-    #     "    import pandas as pd",
-    #     "    import datetime",
-    #     "    today = datetime.date.today()",
-    #     "    start_of_week = today - pd.DateOffset(days=today.weekday())",
-    #     "    end_of_week = start_of_week + pd.DateOffset(days=7)",
-    #     "    solution = df[(df['event_type'] == 'concert') & (df['start_date'].between(start_of_week, end_of_week))]",
-    #     "    return solution",
-    #     "",
-    #     "",
-    #     "df = pd.read_csv( du.get_project_root() + '/src/conf/long-term-memory/events.csv' )",
-    #     "df = dup.cast_to_datetime( df, debug=debug )",
-    # ]
-    # example_code = "solution = get_events_for_this_week( df )"
-    # results = assemble_and_run_solution( solution_code, example_code, solution_code_returns="pandas.core.frame.DataFrame", path_to_df="/src/conf/long-term-memory/events.csv", debug=debug, verbose=verbose )
-    
-    # solution_code = [
-    #     "import datetime",
-    #     "import pytz",
-    #     "import datetime",
-    #     "import pytz",
-    #     "def get_time():",
-    #     "    import datetime",
-    #     "    now = datetime.datetime.now()",
-    #     "    tz_name = 'America/New_York'",
-    #     "    tz = pytz.timezone( tz_name )",
-    #     "    tz_date = now.astimezone( tz )",
-    #     "    return tz_date.strftime( '%I:%M %p %Z' )"
-    # ]
-    # example_code = "solution = get_time()"
-    # results = assemble_and_run_solution( solution_code, example_code, solution_code_returns="string", debug=debug, verbose=verbose, inject_bugs=False )
-
-    # du.print_banner( f"results[ 'return_code' ] = [{results[ 'return_code' ]}]..." )
-    # for line in results[ "output" ].split( "\n" ): print( line )
         
 if __name__ == "__main__":
     test_assemble_and_run_solution( debug=True, verbose=True )
