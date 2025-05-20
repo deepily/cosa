@@ -5,7 +5,7 @@ import json
 import copy
 import regex as re
 from collections import OrderedDict
-from typing import Optional, Union, Any, list, dict
+from typing import Optional, Union, Any
 
 import cosa.utils.util as du
 import cosa.utils.util_stopwatch as sw

@@ -83,7 +83,7 @@ class IterativeDebuggingAgent( AgentBase ):
         available_llms = []
         for key in model_keys:
             print( f"Loading debugger LLM: {key}... ", end="" )
-            llm_spec = self.config_mgr.get( key, return_type="json" )
+            llm_spec = self.config_mgr.get( key )
             available_llms.append( llm_spec )
             print( llm_spec )
         
@@ -124,7 +124,7 @@ class IterativeDebuggingAgent( AgentBase ):
         
         Requires:
             - self.available_llms has at least one LLM spec
-            - Each LLM spec has required 'model' and 'short_name' fields
+            - Each LLM spec has required 'model' field
             - self.prompt is set
             
         Ensures:
@@ -151,21 +151,22 @@ class IterativeDebuggingAgent( AgentBase ):
             if self.successfully_debugged:
                 break
                 
-            model_name     = llm[ "model" ]
-            short_name     = llm[ "short_name" ]
-            temperature    = llm[ "temperature"    ] if "temperature"    in llm else 0.50
-            top_p          = llm[ "top_p"          ] if "top_p"          in llm else 0.25
-            top_k          = llm[ "top_k"          ] if "top_k"          in llm else 10
-            max_new_tokens = llm[ "max_new_tokens" ] if "max_new_tokens" in llm else 1024
-            stop_sequences = llm[ "stop_sequences" ] if "stop_sequences" in llm else []
+            # model_id       = llm[ "model_id"       ] if "model_id"       in llm else model_name.split("/")[-1]
+            # temperature    = llm[ "temperature"    ] if "temperature"    in llm else 0.50
+            # top_p          = llm[ "top_p"          ] if "top_p"          in llm else 0.25
+            # top_k          = llm[ "top_k"          ] if "top_k"          in llm else 10
+            # max_new_tokens = llm[ "max_new_tokens" ] if "max_new_tokens" in llm else 1024
+            # stop_sequences = llm[ "stop_sequences" ] if "stop_sequences" in llm else []
             
-            du.print_banner( f"{run_descriptor}: Executing debugging prompt using model [{model_name}] and short name [{short_name}]...", end="\n" )
+            du.print_banner( f"{run_descriptor}: Executing debugging prompt using model [{llm}]...", end="\n" )
             
-            prompt_response_dict = self.run_prompt( model_name=model_name, temperature=temperature, top_p=top_p, top_k=top_k, max_new_tokens=max_new_tokens, stop_sequences=stop_sequences )
+            # prompt_response_dict = self.run_prompt( model_name=model_name, temperature=temperature, top_p=top_p, top_k=top_k, max_new_tokens=max_new_tokens, stop_sequences=stop_sequences )
+            prompt_response_dict = self.run_prompt()
             
-            # Serialize the prompt response
-            topic = "code-debugging-minimalist" if self.minimalist else "code-debugging"
-            self.serialize_to_json( topic, du.get_current_datetime_raw(), run_descriptor=run_descriptor, short_name=short_name )
+            # TODO: debug and reinstate if/when needed in the future
+            #  Serialize the prompt response
+            # topic = "code-debugging-minimalist" if self.minimalist else "code-debugging"
+            # self.serialize_to_json( topic, du.get_current_datetime_raw(), run_descriptor=run_descriptor, model_id=model_id )
             
             du.print_banner( f"{run_descriptor}: Prompt response dictionary" )
             print( json.dumps( prompt_response_dict, indent=4 ) )
@@ -261,7 +262,7 @@ class IterativeDebuggingAgent( AgentBase ):
         
         return self.successfully_debugged
     
-    def serialize_to_json( self, topic: str, now: Any, run_descriptor: str="Run 1 of 1", short_name: str="phind34b" ) -> None:
+    def serialize_to_json( self, topic: str, now: Any, run_descriptor: str="Run 1 of 1", model_id: str="phi_4" ) -> None:
         """
         Serialize agent state to JSON file.
         
@@ -287,10 +288,9 @@ class IterativeDebuggingAgent( AgentBase ):
         # Convert object's state to a dictionary, omitting specified fields
         state_dict = { key: value for key, value in self.__dict__.items() if key not in self.do_not_serialize }
 
-        # Constructing the filename, format: "topic-run-on-year-month-day-at-hour-minute-run-1-of-3-using-llm-short_name-step-N-of-M.json"
+        # Constructing the filename, format: "topic-run-on-year-month-day-at-hour-minute-run-1-of-3-using-llm-model_id-step-N-of-M.json"
         run_descriptor = run_descriptor.replace( " ", "-" ).lower()
-        short_name     = short_name.replace( " ", "-" ).lower()
-        file_path       = f"{du.get_project_root()}/io/log/{topic}-on-{now.year}-{now.month}-{now.day}-at-{now.hour}-{now.minute}-{now.second}-{run_descriptor}-using-llm-{short_name}.json"
+        file_path       = f"{du.get_project_root()}/io/log/{topic}-on-{now.year}-{now.month}-{now.day}-at-{now.hour}-{now.minute}-{now.second}-{run_descriptor}-using-llm-{model_id}.json"
 
         # Serialize and save to file
         with open( file_path, 'w' ) as file:
