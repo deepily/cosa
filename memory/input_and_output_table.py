@@ -6,25 +6,7 @@ from cosa.app.configuration_manager import ConfigurationManager
 from cosa.utils.util_stopwatch import Stopwatch
 
 import lancedb
-from typing import Optional, list, dict, Any
-
-
-# def singleton( cls ):
-#
-#     instances = { }
-#
-#     def wrapper( *args, **kwargs ):
-#
-#         if cls not in instances:
-#             print( "Instantiating QueryAndResponseTable() singleton...", end="\n\n" )
-#             instances[ cls ] = cls( *args, **kwargs )
-#         else:
-#             print( "Reusing QueryAndResponseTable() singleton..." )
-#
-#         return instances[ cls ]
-#
-#     return wrapper
-
+from typing import Optional, Any
 
 # @singleton
 class InputAndOutputTable():
@@ -204,7 +186,7 @@ class InputAndOutputTable():
         
         return stats_dict
     
-    def get_all_qnr( self, max_rows: int=1000 ) -> list[dict]:
+    def get_all_qnr( self, max_rows: int=50 ) -> list[dict]:
         """
         Get all questions and responses for agent router commands.
         

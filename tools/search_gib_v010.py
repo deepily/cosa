@@ -8,7 +8,7 @@ from cosa.tools.search_kagi import KagiSearch
 from cosa.agents.v010.raw_output_formatter import RawOutputFormatter
 
 import cosa.utils.util as du
-from typing import Optional, Union, Any, dict
+from typing import Optional, Union, Any
 
 class GibSearch:
     """

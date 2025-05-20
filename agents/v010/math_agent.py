@@ -34,6 +34,7 @@ class MathAgent( AgentBase ):
         
         # du.print_banner( "MathAgent.__init__()" )
         print( "¡OJO! MathAgent is using last_question_asked because it wants all the specificity contained within the voice to text transcription" )
+        
         self.prompt = self.prompt_template.format( question=self.last_question_asked )
         self.xml_response_tag_names   = [ "thoughts", "brainstorm", "evaluation", "code", "example", "returns", "explanation" ]
     
@@ -83,6 +84,7 @@ class MathAgent( AgentBase ):
         terse_output = self.config_mgr.get( "formatter_prompt_for_math_terse", default=False, return_type="boolean" )
         
         if terse_output:
+            if self.debug: print( "MathAgent.run_formatter() terse_output=True. NOT consulting with a formatter before returning an answer." )
             self.answer_conversational = self.code_response_dict[ "output" ]
         else:
             super().run_formatter()

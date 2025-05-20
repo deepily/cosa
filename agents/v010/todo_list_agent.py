@@ -1,5 +1,5 @@
 import json
-from typing import Any, tuple, Optional
+from typing import Any, Optional
 
 import cosa.utils.util as du
 
@@ -37,7 +37,7 @@ class TodoListAgent( AgentBase ):
         self.xml_response_tag_names   = [ "thoughts", "code", "example", "returns", "explanation" ]
         self.serialize_prompt_to_json = self.config_mgr.get( "agent_todo_list_serialize_prompt_to_json", default=False, return_type="boolean" )
         self.serialize_code_to_json   = self.config_mgr.get( "agent_todo_list_serialize_code_to_json",   default=False, return_type="boolean" )
-    
+        
     def _get_prompt( self ) -> str:
         """
         Generate prompt with todo list metadata.
@@ -184,9 +184,9 @@ if __name__ == "__main__":
     
     question = "What's on my to do list for today?"
     
-    # todolist_agent = TodoListAgent( question=question, debug=True, verbose=False, auto_debug=True, inject_bugs=False )
-    todolist_agent = TodoListAgent.restore_from_serialized_state( du.get_project_root() + "/io/log/todo-list-code-whats-on-my-to-do-list-for-today-2024-3-5-12-51-55.json" )
-    # todolist_agent.run_prompt()
+    todolist_agent = TodoListAgent( question=question, debug=True, verbose=False, auto_debug=True, inject_bugs=False )
+    # todolist_agent = TodoListAgent.restore_from_serialized_state( du.get_project_root() + "/io/log/todo-list-code-whats-on-my-to-do-list-for-today-2024-3-5-12-51-55.json" )
+    todolist_agent.run_prompt()
     
     results = todolist_agent.run_code()
     du.print_list( results )

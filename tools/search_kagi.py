@@ -4,7 +4,7 @@ from kagiapi import KagiClient
 import cosa.utils.util as du
 
 from cosa.utils.util_stopwatch import Stopwatch
-from typing import Optional, dict, Any
+from typing import Optional, Any
 
 class KagiSearch:
     """

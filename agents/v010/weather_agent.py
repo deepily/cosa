@@ -33,7 +33,10 @@ class WeatherAgent( AgentBase ):
         """
         
         # Prepend a date and time to force the cache to update on an hourly basis
-        self.reformulated_last_question_asked = f"It's {du.get_current_time( format='%I:00 %p' )} on {du.get_current_date( return_prose=True )}. {last_question_asked}"
+        if prepend_date_and_time:
+            self.reformulated_last_question_asked = f"It's {du.get_current_time( format='%I:00 %p' )} on {du.get_current_date( return_prose=True )}. {last_question_asked}"
+        else:
+            self.reformulated_last_question_asked = last_question_asked
         
         super().__init__( df_path_key=None, question=question, question_gist=question_gist, last_question_asked=last_question_asked, routing_command=routing_command, push_counter=push_counter, debug=debug, verbose=verbose, auto_debug=auto_debug, inject_bugs=inject_bugs )
         

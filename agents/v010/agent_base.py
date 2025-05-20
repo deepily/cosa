@@ -98,14 +98,18 @@ class AgentBase( RunnableCode, abc.ABC ):
         
         self.two_word_id           = TwoWordIdGenerator().get_id()
         
-        # This is a bit of a misnomer, it's the unprocessed question that was asked of the agent
-        # we know that one or the other must be a non-zero length string
+        # This is a bit of a misnomer, last_question_asked is the unprocessed version of the question that was asked of the agent
+        # TEST 1:
         if last_question_asked == "":
             self.last_question_asked = question
         else:
             self.last_question_asked = last_question_asked
+        # TEST 2:
+        if question == "":
+            self.question = self.last_question_asked
+        else:
+            self.question = ss.SolutionSnapshot.remove_non_alphanumerics( question )
             
-        self.question              = ss.SolutionSnapshot.remove_non_alphanumerics( question )
         self.question_gist         = question_gist
         self.answer_conversational = None
         

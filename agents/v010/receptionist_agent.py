@@ -1,5 +1,5 @@
 import json
-from typing import Any, tuple
+from typing import Any
 
 import cosa.utils.util as du
 
@@ -56,6 +56,8 @@ class ReceptionistAgent( AgentBase ):
             - KeyError if template missing required placeholders
         """
         
+        # ¡OJO!: this call is fundamentally in elegant because it grabs a bunch of previous QnQ handled by the receptionist and throws them in.
+        # there is zero look up of semantically related content... This is not even RAG, it's pre-rag force. You can do better!
         date_today, entries = self._get_df_metadata()
         
         return self.prompt_template.format( query=self.last_question_asked, date_today=date_today, entries=entries )
@@ -244,8 +246,8 @@ class ReceptionistAgent( AgentBase ):
     
 if __name__ == "__main__":
     
-    question = "What have we talked about lately?"
-    # question = "What's your name?"
+    # question = "What have we talked about lately?"
+    question = "What's your name?"
     # question = "How are you today Einstein?"
     # question = "Good morning dear receptionist, what's today's date?"
     

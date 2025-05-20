@@ -12,14 +12,14 @@ Decorators:
     singleton: A decorator that enforces the Singleton design pattern on a class, ensuring only one instance is created.
 
 Usage Example:
-    >>> generator = TwoWordIdGenerator()
-    >>> unique_id = generator.get_id()
-    >>> print(unique_id)
+    generator = TwoWordIdGenerator()
+    unique_id = generator.get_id()
+    print(unique_id)
     'bright lion'
 
     # Ensure the Singleton pattern:
-    >>> another_generator = TwoWordIdGenerator()
-    >>> print(generator is another_generator)
+    another_generator = TwoWordIdGenerator()
+    print(generator is another_generator)
     True
 
 Attributes:
@@ -135,7 +135,7 @@ class TwoWordIdGenerator:
             noun = random.choice( self.nouns )
             combination = f"{adjective} {noun}"
             
-            # Check if this combination has already been generated
+            # Check if this combination has already been generated in this session
             if combination not in self.generated_ids:
                 # If unique, store it in the dictionary and return it
                 self.generated_ids.add( combination )
