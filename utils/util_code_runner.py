@@ -289,8 +289,17 @@ def assemble_and_run_solution( solution_code: list[str], example_code: str, path
         solution_code = response_dict[ "code" ]
         
     from cosa.app.configuration_manager import ConfigurationManager
-    config_mgr = ConfigurationManager()
-    code_file_path = config_mgr.get("code_execution_file_path")
+    
+    # Get the code execution file path, with a fallback for test environments
+    try:
+        config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        code_file_path = config_mgr.get( "code_execution_file_path" )
+    except ValueError as e:
+        # We're likely in a test environment without the environment variable set
+        du.print_banner( f"ConfigurationManager error: {str(e)}", expletive=True, chunk="🤔" )
+        print("Using fallback code execution file path for testing")
+        code_file_path = "/io/code_execution.py"
+        
     code_path = du.get_project_root() + code_file_path
     du.write_lines_to_file( code_path, solution_code )
     
@@ -375,5 +384,6 @@ def test_assemble_and_run_solution( debug: bool=False, verbose: bool=False) -> N
     
         
 if __name__ == "__main__":
+    
     test_assemble_and_run_solution( debug=True, verbose=True )
     # pass

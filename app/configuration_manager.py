@@ -18,6 +18,7 @@ def singleton( cls: type ) -> Callable[..., Any]:
         - Only one instance of cls is created
         - All calls return the same instance
         - Prints messages about instance creation/reuse
+        - Provides a reset method for testing
         
     Raises:
         - None
@@ -27,6 +28,14 @@ def singleton( cls: type ) -> Callable[..., Any]:
     
     def wrapper( *args: Any, **kwargs: Any ) -> Any:
         
+        # Check for the special _reset_singleton flag for testing
+        if kwargs.pop( "_reset_singleton", False ):
+            if cls in instances:
+                print( "Resetting ConfigurationManager() singleton for testing..." )
+                del instances[ cls ]
+            else:
+                print( "No ConfigurationManager() singleton instance to reset" )
+        
         if cls not in instances:
             print( "Instantiating ConfigurationManager() singleton...", end="\n\n" )
             instances[ cls ] = cls( *args, **kwargs )
@@ -34,6 +43,17 @@ def singleton( cls: type ) -> Callable[..., Any]:
             print( "Reusing ConfigurationManager() singleton..." )
             
         return instances[ cls ]
+    
+    # Add reset method to the wrapper function itself
+    def reset_for_testing():
+        """Reset the singleton instance for testing purposes"""
+        if cls in instances:
+            print( "Resetting ConfigurationManager() singleton..." )
+            del instances[ cls ]
+            return True
+        return False
+    
+    wrapper.reset_for_testing = reset_for_testing
     
     return wrapper
 
@@ -59,7 +79,7 @@ class ConfigurationManager():
             
         Ensures:
             - Singleton instance is created or reused
-            - Configuration is loaded from files or environment
+            - Configuration is loaded from explicitly provided filepaths or specified by an environment variable
             - Inheritance hierarchy is calculated
             - Default values are applied
             - CLI overrides are processed
@@ -67,6 +87,8 @@ class ConfigurationManager():
             
         Raises:
             - ValueError if env_var_name is provided but not found in environment
+            - ValueError if no initialization parameters are provided (zero-argument case)
+            - ValueError if conflicting initialization parameters are provided
             - FileNotFoundError if config_path or splainer_path don't exist
             - AssertionError if config_block_id doesn't exist in configuration
         """
@@ -74,6 +96,21 @@ class ConfigurationManager():
         self.verbose         = verbose
         self.silent          = silent
         self.mute_splainer   = mute_splainer
+        
+        # Zero-argument constructor check
+        if env_var_name is None and config_path is None and splainer_path is None:
+            raise ValueError(
+                "ConfigurationManager initialization error: No initialization parameters provided.\n"
+                "RECOMMENDED: Use ConfigurationManager(env_var_name=\"GIB_CONFIG_MGR_CLI_ARGS\")\n"
+                "ALTERNATIVE: Provide explicit config_path and splainer_path arguments"
+            )
+            
+        # Check for conflicting initialization methods
+        if env_var_name is not None and (config_path is not None or splainer_path is not None):
+            raise ValueError(
+                "ConfigurationManager initialization error: Conflicting initialization parameters.\n"
+                "Either provide env_var_name OR provide both config_path and splainer_path, not both."
+            )
         
         if env_var_name is not None:
             
@@ -98,6 +135,13 @@ class ConfigurationManager():
             del cli_args[ "config_block_id" ]
         
         else:
+            # If using explicit paths, both must be provided
+            if config_path is None or splainer_path is None:
+                raise ValueError(
+                    "ConfigurationManager initialization error: Incomplete explicit path configuration.\n"
+                    "When using explicit paths, both config_path and splainer_path must be provided."
+                )
+                
             self.config_path     = config_path
             self.splainer_path   = splainer_path
             self.config_block_id = config_block_id
@@ -821,24 +865,76 @@ class ConfigurationManager():
         self.splainer = splainer
     
 if __name__ == "__main__":
-
-    # for key, value in os.environ.items():
-    #     print( f"{key} = {value}" )
-    # print()
-    # print( "GIB_CONFIG_MGR_CLI_ARGS" in os.environ )
     
-    # config_path     = du.get_project_root() + "/src/conf/gib-app.ini"
-    # splainer_path   = du.get_project_root() + "/src/conf/gib-app-splainer.ini"
-    # config_block_id = "Genie in the Box: Development"
-    # config_manager  = ConfigurationManager( config_path, splainer_path, config_block_id=config_block_id, debug=False, verbose=False, silent=False )
+    import cosa.utils.util_stopwatch as sw
     
-    config_manager  = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
-
-    foo_mgr         = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+    du.print_banner( "Testing ConfigurationManager Initialization Methods", prepend_nl=True, chunk="🧪 " )
     
-    # foo_mgr         = ConfigurationManager( config_path, splainer_path, config_block_id=config_block_id, debug=False, verbose=False, silent=False )
+    # Reset singleton before each test to ensure clean testing
+    ConfigurationManager.reset_for_testing()
     
-    # config_manager.print_configuration( brackets=True )
-    #
-    # foo = config_manager.get( "foo" )
-    # print( f"foo: [{foo}] type: [{type( foo )}]" )
+    # Test 1: Zero-argument constructor (should fail)
+    timer = sw.Stopwatch( msg="Testing zero-argument constructor...", silent=False )
+    try:
+        config_mgr = ConfigurationManager( _reset_singleton=True )
+        print( "❌ ERROR: Zero-argument constructor succeeded but should have failed" )
+    except ValueError as e:
+        print( f"✅ Expected error: {str(e)}" )
+    timer.print( "Test complete", use_millis=True )
+    
+    # Test 2: Environment variable constructor
+    timer = sw.Stopwatch( msg="Testing env_var_name constructor...", silent=False )
+    try:
+        config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS", _reset_singleton=True )
+        print( f"✅ Successfully initialized with env_var_name" )
+    except ValueError as e:
+        print( f"❌ Error: {str(e)}" )
+    timer.print( "Test complete", use_millis=True )
+    
+    # Test 3: Explicit paths constructor
+    timer = sw.Stopwatch( msg="Testing explicit paths constructor...", silent=False )
+    try:
+        config_path     = du.get_project_root() + "/src/conf/gib-app.ini"
+        splainer_path   = du.get_project_root() + "/src/conf/gib-app-splainer.ini"
+        config_block_id = "default"
+        
+        config_mgr = ConfigurationManager(
+            config_path     = config_path,
+            splainer_path   = splainer_path, 
+            config_block_id = config_block_id,
+            silent          = True,
+            _reset_singleton = True
+        )
+        print( f"✅ Successfully initialized with explicit paths" )
+    except ValueError as e:
+        print( f"❌ Error: {str(e)}" )
+    timer.print( "Test complete", use_millis=True )
+    
+    # Test 4: Conflicting parameters (should fail)
+    timer = sw.Stopwatch( msg="Testing conflicting parameters...", silent=False )
+    try:
+        config_mgr = ConfigurationManager(
+            env_var_name  = "GIB_CONFIG_MGR_CLI_ARGS",
+            config_path   = "/some/path",
+            splainer_path = "/some/path",
+            _reset_singleton = True
+        )
+        print( "❌ ERROR: Conflicting parameters succeeded but should have failed" )
+    except ValueError as e:
+        print( f"✅ Expected error: {str(e)}" )
+    timer.print( "Test complete", use_millis=True )
+    
+    # Test 5: Incomplete explicit paths (should fail)
+    timer = sw.Stopwatch( msg="Testing incomplete paths...", silent=False )
+    try:
+        # Only provide config_path without splainer_path
+        config_mgr = ConfigurationManager(
+            config_path = "/some/path", 
+            _reset_singleton = True
+        )
+        print( "❌ ERROR: Incomplete paths succeeded but should have failed" )
+    except ValueError as e:
+        print( f"✅ Expected error: {str(e)}" )
+    timer.print( "Test complete", use_millis=True )
+    
+    du.print_banner( "All tests completed", prepend_nl=True, chunk="✨ " )

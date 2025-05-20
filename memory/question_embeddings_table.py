@@ -5,7 +5,7 @@ from cosa.app.configuration_manager import ConfigurationManager
 from cosa.utils.util_stopwatch import Stopwatch
 
 import lancedb
-from typing import list, Any
+from typing import Any
 
 
 # def singleton( cls ):

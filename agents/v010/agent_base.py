@@ -64,6 +64,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         Requires:
             - routing_command must be provided for proper initialization
             - df_path_key (if provided) must map to a valid CSV file path in config
+            - Either question or last_question_asked must be a non-empty string
             
         Ensures:
             - execution_state is set to STATE_INITIALIZING then STATE_WAITING_TO_RUN
@@ -71,11 +72,16 @@ class AgentBase( RunnableCode, abc.ABC ):
             - model_name and prompt_template are loaded from config
             - DataFrame is loaded and datetime columns cast if df_path_key provided
             - All instance variables are initialized
+            - last_question_asked is set to question if empty
             
         Raises:
             - KeyError if routing_command configuration keys are missing
             - FileNotFoundError if template or DataFrame file not found
+            - ValueError if both question and last_question_asked are empty strings
         """
+        
+        # Quick sanity check to make sure that either question or last question are non-zero length strings
+        if question == "" and last_question_asked == "": raise ValueError( "Either `question` or `last_question_asked` must be provided." )
         
         self.execution_state       = AgentBase.STATE_INITIALIZING
         self.debug                 = debug
@@ -93,7 +99,12 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.two_word_id           = TwoWordIdGenerator().get_id()
         
         # This is a bit of a misnomer, it's the unprocessed question that was asked of the agent
-        self.last_question_asked   = last_question_asked
+        # we know that one or the other must be a non-zero length string
+        if last_question_asked == "":
+            self.last_question_asked = question
+        else:
+            self.last_question_asked = last_question_asked
+            
         self.question              = ss.SolutionSnapshot.remove_non_alphanumerics( question )
         self.question_gist         = question_gist
         self.answer_conversational = None

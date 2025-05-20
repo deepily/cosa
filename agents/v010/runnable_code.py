@@ -155,4 +155,71 @@ class RunnableCode:
 # Add main method
 if __name__ == "__main__":
     
-    pass
+    import time
+    
+    def run_test(title, code, example, should_succeed=True):
+        """Run a test case with the given code and example."""
+        du.print_banner(f"TEST: {title}", prepend_nl=True)
+        
+        # Create test instance with debug mode
+        test_runner = RunnableCode(debug=True, verbose=True, )
+        
+        # Set up prompt response dictionary
+        test_runner.prompt_response_dict = {
+            "code": code.strip().split("\n"),
+            "example": example,
+            "returns": "string"
+        }
+        
+        # Print the test code
+        test_runner.print_code("Test Code")
+        
+        # Check if code is runnable
+        print(f"Is code runnable? {test_runner.is_code_runnable()}")
+        
+        # Execute the code
+        start_time = time.time()
+        result = test_runner.run_code()
+        duration = time.time() - start_time
+        
+        # Verify results
+        success = test_runner.code_ran_to_completion()
+        print(f"Code ran successfully: {success}")
+        print(f"Execution time: {duration:.4f} seconds")
+        print(f"Return code: {result['return_code']}")
+        print(f"Output: {result['output']}")
+        
+        # Check if result matches expectation
+        if success == should_succeed:
+            print("✅ Test PASSED")
+        else:
+            print("❌ Test FAILED")
+        
+        return success, result
+    
+    print("Running tests for RunnableCode...")
+    
+    # Test 1: Simple Hello World
+    hello_code = """
+def say_hello():
+    return "Hello, World!"
+"""
+    hello_example = "solution = say_hello()"
+    
+    # Test 2: Code with error
+    error_code = """
+def divide(a, b):
+    return a / b
+"""
+    error_example = "divide(10, 0)"
+    
+    # Run the tests
+    t1_success, t1_result = run_test("Simple Hello World", hello_code, hello_example)
+    t2_success, t2_result = run_test("Division by Zero Error", error_code, error_example, should_succeed=False)
+    
+    # Final summary
+    du.print_banner("TEST SUMMARY", prepend_nl=True)
+    print(f"Test 1 (Hello World): {'PASSED' if t1_success else 'FAILED'}")
+    print(f"Test 2 (Error Handling): {'PASSED' if not t2_success else 'FAILED'}")
+    
+    print("\nAll tests completed.")
