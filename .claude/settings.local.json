@@ -10,7 +10,8 @@
       "Bash(mv:*)",
       "Bash(python:*)",
       "WebFetchTool(domain:huggingface.co)",
-      "Bash(rg:*)"
+      "Bash(rg:*)",
+      "WebFetch(domain:github.com)"
     ],
     "deny": []
   }

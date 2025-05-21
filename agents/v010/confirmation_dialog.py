@@ -15,7 +15,7 @@ class ConfirmationDialogue:
     a lightweight utility for confirmation dialogs rather than a full agent.
     
     Configuration:
-        - "prompt_template_for_confirmation_dialog": Path to the prompt template file (required)
+        - "prompt template for confirmation dialog": Path to the prompt template file (required)
         - "llm_spec_key_for_confirmation_dialog": LLM model specification (required when model_name not provided)
         
     Requires:
@@ -36,7 +36,7 @@ class ConfirmationDialogue:
         
         Requires:
             - Either model_name or 'llm_spec_key_for_confirmation_dialog' in config
-            - 'prompt_template_for_confirmation_dialog' exists in config
+            - 'prompt template for confirmation dialog' exists in config
             
         Ensures:
             - Sets up config_mgr if not provided
@@ -62,9 +62,7 @@ class ConfirmationDialogue:
         self.prompt = None
         
         # Get prompt template path from config
-        prompt_template_path = self.config_mgr.get( 
-            "prompt_template_for_confirmation_dialog"
-        )
+        prompt_template_path = self.config_mgr.get( "prompt template for confirmation dialog" )
         self.prompt_template = du.get_file_as_string( du.get_project_root() + prompt_template_path )
     
     def confirmed( self, utterance: str, default: Optional[bool]=None ) -> bool:

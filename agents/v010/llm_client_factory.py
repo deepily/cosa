@@ -6,6 +6,7 @@ from typing import Any, Optional, Union
 from pydantic_ai import Agent
 
 import cosa.utils.util as du
+from app import config_mgr
 # from app import config_mgr
 # from cosa.utils.util_stopwatch import Stopwatch
 
@@ -435,8 +436,9 @@ class LlmClientFactory:
 
 if __name__ == "__main__":
     
-    # Initialize factory
+    # Initialize factory++
     factory = LlmClientFactory()
+    config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
     
     # Prepare test prompt
     # template_path = du.get_project_root() + "/src/conf/prompts/agent-router-template-completion.txt"
@@ -444,14 +446,15 @@ if __name__ == "__main__":
     # voice_command = "can I please talk to a human?"
     # prompt = prompt_template.format( voice_command=voice_command )
     
-    prompt_template = du.get_file_as_string( du.get_project_root() + ConfigurationManager().get( "prompt template for agent router go to date and time" ) )
+    prompt_template = du.get_file_as_string( du.get_project_root() + config_mgr.get( "prompt template for agent router go to date and time" ) )
     question = "What time is it?"
     prompt = prompt_template.format( question=question )
     
     # List of all available models to test
     models = [
         # # Local models
-        LlmClient.PHI_4_14B,
+        # LlmClient.PHI_4_14B,
+        LlmClient.GROQ_LLAMA_3_3_70B,
         # LlmClient.MINISTRAL_8B_2410,
         # LlmClient.DEEPILY_MINISTRAL_8B_2410_FT_LORA,
         # # Cloud API models

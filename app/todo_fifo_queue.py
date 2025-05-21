@@ -1,26 +1,22 @@
 import random
-from typing import Any, Optional, tuple, list
+from typing import Any, Optional
 
-from cosa.agents.confirmation_dialog import ConfirmationDialogue
-from cosa.agents.math_refactoring_agent import MathRefactoringAgent
+from cosa.agents.v010.confirmation_dialog import ConfirmationDialogue
 from cosa.app.fifo_queue import FifoQueue
 
-from cosa.agents.date_and_time_agent import DateAndTimeAgent
-from cosa.agents.receptionist_agent import ReceptionistAgent
-from cosa.agents.weather_agent import WeatherAgent
-from cosa.agents.todo_list_agent import TodoListAgent
-from cosa.agents.calendaring_agent import CalendaringAgent
-from cosa.agents.math_agent import MathAgent
-from cosa.agents.llm_v0 import Llm_v0
+from cosa.agents.v010.date_and_time_agent import DateAndTimeAgent
+from cosa.agents.v010.receptionist_agent import ReceptionistAgent
+from cosa.agents.v010.weather_agent import WeatherAgent
+from cosa.agents.v010.todo_list_agent import TodoListAgent
+from cosa.agents.v010.calendaring_agent import CalendaringAgent
+from cosa.agents.v010.math_agent import MathAgent
+from cosa.agents.v010.llm_client_factory import LlmClientFactory
 from cosa.tools.search_gib import GibSearch
-
-# from lib.agents.agent_function_mapping        import FunctionMappingAgent
 
 # from app       import emit_audio
 from cosa.utils import util     as du
 from cosa.utils import util_xml as dux
 
-import cosa.app.util_llm_client  as llm_client
 
 from cosa.memory.solution_snapshot import SolutionSnapshot
 
@@ -64,9 +60,8 @@ class TodoFifoQueue( FifoQueue ):
         self.auto_debug   = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
         self.inject_bugs  = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
         
-        # # Set by set_llm() below
-        # self.cmd_llm_in_memory = None
-        # self.cmd_llm_tokenizer = None
+        # Initialize LLM client factory for v010 compatibility
+        self.llm_factory = LlmClientFactory( config_mgr=config_mgr, debug=debug, verbose=verbose )
         
         # Salutations to be stripped by a brute force method until the router parses them off for us
         self.salutations = [ "computer", "little", "buddy", "pal", "ai", "jarvis", "alexa", "siri", "hal", "einstein",
@@ -82,11 +77,6 @@ class TodoFifoQueue( FifoQueue ):
             "let me think about that...", "let me think about it...", "let me check...", "checking..."
         ]
         
-    # def set_llm( self, cmd_llm_in_memory, cmd_llm_tokenizer ):
-    #
-    #     self.cmd_llm_in_memory = cmd_llm_in_memory
-    #     self.cmd_llm_tokenizer = cmd_llm_tokenizer
-    
     def parse_salutations( self, transcription: str ) -> tuple[str, str]:
         """
         Parse salutations from the beginning of a transcription.
@@ -138,11 +128,13 @@ class TodoFifoQueue( FifoQueue ):
         Raises:
             - FileNotFoundError if prompt template missing
         """
-        prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agents/gist.txt" )
+        prompt_template_path = self.config_mgr.get( "prompt template for gist generation" )
+        prompt_template = du.get_file_as_string( du.get_project_root() + prompt_template_path )
         prompt = prompt_template.format( question=question )
-        # ¡OJO! LLM should be runtime configurable
-        llm = Llm_v0( model=Llm_v0.GROQ_LLAMA3_70B, debug=self.debug, verbose=self.verbose )
-        results = llm.query_llm( prompt=prompt )
+        
+        llm_spec_key = self.config_mgr.get( "llm spec key for gist generation" )
+        llm_client = self.llm_factory.get_client( llm_spec_key, debug=self.debug, verbose=self.verbose )
+        results = llm_client.run( prompt )
         gist = dux.get_value_by_xml_tag_name( results, "gist", default_value="" ).strip()
         
         return gist
@@ -174,9 +166,9 @@ class TodoFifoQueue( FifoQueue ):
             # from app import emit_audio
             # emit_audio( msg )
             du.print_banner( msg )
-            # TODO: make LLM runtime configurable
-            # default_url = "¡OJO! We shouldn't have to set this value here!"
-            run_previous_best_snapshot = ConfirmationDialogue( model=Llm_v0.GROQ_LLAMA3_1_70B, debug=self.debug, verbose=self.verbose ).confirmed( question )
+            confirmation_llm_spec = self.config_mgr.get( "llm spec key for confirmation dialog" )
+            confirmation_client = self.llm_factory.get_client( confirmation_llm_spec, debug=self.debug, verbose=self.verbose )
+            run_previous_best_snapshot = ConfirmationDialogue( llm_client=confirmation_client, debug=self.debug, verbose=self.verbose ).confirmed( question )
             
         if run_previous_best_snapshot:
                 
@@ -278,32 +270,46 @@ class TodoFifoQueue( FifoQueue ):
                 msg = search.get_results( scope="summary" )
             
             elif command == "agent router go to calendar":
-                agent = CalendaringAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                calendar_llm_spec = self.config_mgr.get( "llm spec key for calendar agent" )
+                calendar_client = self.llm_factory.get_client( calendar_llm_spec, debug=self.debug, verbose=self.verbose )
+                agent = CalendaringAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=calendar_client, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="calendaring" )
                 ding_for_new_job = True
             elif command == "agent router go to math":
                 if question.lower().strip().startswith( "refactor " ):
-                    agent = self._get_math_refactoring_agent( question, question_gist, salutation_plus_question, self.push_counter )
-                    msg = starting_a_new_job.format( agent_type="math refactoring" )
+                    # raise a not implemented exception
+                    raise NotImplementedError( "Refactoring agent not implemented yet!" )
+                    # agent = self._get_math_refactoring_agent( question, question_gist, salutation_plus_question, self.push_counter )
+                    # msg = starting_a_new_job.format( agent_type="math refactoring" )
                 else:
-                    agent = MathAgent( question=salutation_plus_question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                    math_llm_spec = self.config_mgr.get( "llm spec key for math agent" )
+                    math_client = self.llm_factory.get_client( math_llm_spec, debug=self.debug, verbose=self.verbose )
+                    agent = MathAgent( question=salutation_plus_question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=math_client, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                     msg = starting_a_new_job.format( agent_type="math" )
                 ding_for_new_job = True
             elif command == "agent router go to todo list":
-                agent = TodoListAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                todo_llm_spec = self.config_mgr.get( "llm spec key for todo list agent" )
+                todo_client = self.llm_factory.get_client( todo_llm_spec, debug=self.debug, verbose=self.verbose )
+                agent = TodoListAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=todo_client, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="todo list" )
                 ding_for_new_job = True
             elif command == "agent router go to date and time":
-                agent = DateAndTimeAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                datetime_llm_spec = self.config_mgr.get( "llm spec key for date and time agent" )
+                datetime_client = self.llm_factory.get_client( datetime_llm_spec, debug=self.debug, verbose=self.verbose )
+                agent = DateAndTimeAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=datetime_client, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="date and time" )
                 ding_for_new_job = True
             elif command == "agent router go to weather":
-                agent = WeatherAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                weather_llm_spec = self.config_mgr.get( "llm spec key for weather agent" )
+                weather_client = self.llm_factory.get_client( weather_llm_spec, debug=self.debug, verbose=self.verbose )
+                agent = WeatherAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=weather_client, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="weather" )
                 # ding_for_new_job = False
             elif command == "agent router go to receptionist" or command == "none":
                 print( f"Routing '{command}' to receptionist..." )
-                agent = ReceptionistAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                receptionist_llm_spec = self.config_mgr.get( "llm spec key for receptionist agent" )
+                receptionist_client = self.llm_factory.get_client( receptionist_llm_spec, debug=self.debug, verbose=self.verbose )
+                agent = ReceptionistAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=receptionist_client, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 # Randomly grab hemming and hawing string and prepend it to a randomly chosen thinking string
                 msg = f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}".strip()
                 # ding_for_new_job = False
@@ -332,32 +338,33 @@ class TodoFifoQueue( FifoQueue ):
             #
             # return f'No similar snapshots found, adding NEW FunctionMappingAgent to TODO queue. Queue size [{self.size()}]'
 
-    def _get_math_refactoring_agent( self, question: str, question_gist: str, last_question_asked: str, push_counter: int ) -> MathRefactoringAgent:
-        """
-        Create a math refactoring agent for the given question.
-        
-        Requires:
-            - question is the refactoring request
-            - question_gist is the extracted gist
-            - last_question_asked includes salutations
-            - push_counter is a valid integer
-            
-        Ensures:
-            - Finds similar snapshots for refactoring
-            - Creates MathRefactoringAgent with examples
-            - Returns configured agent instance
-            
-        Raises:
-            - None
-        """
-        # DEMO KLUDGE: if the question doesn't start with "refactor", then we're going to search for similar snapshots
-        threshold = 85.0
-        path_to_snapshots = du.get_project_root() + "/src/conf/long-term-memory/solutions/"
-        exemplar_snapshot = self.snapshot_mgr.get_snapshots_by_question( question, question_gist=question_gist, threshold_question=95.0, threshold_gist=92.5 )[ 0 ][ 1 ]
-        similar_snapshots = self.snapshot_mgr.get_snapshots_by_code_similarity( exemplar_snapshot, threshold=threshold )
-        
-        agent = MathRefactoringAgent( similar_snapshots=similar_snapshots, path_to_solutions=path_to_snapshots, debug=True, verbose=False )
-        return agent
+    # TODO: implement math refactoring agent?
+    # def _get_math_refactoring_agent( self, question: str, question_gist: str, last_question_asked: str, push_counter: int ) -> MathRefactoringAgent:
+    #     """
+    #     Create a math refactoring agent for the given question.
+    #
+    #     Requires:
+    #         - question is the refactoring request
+    #         - question_gist is the extracted gist
+    #         - last_question_asked includes salutations
+    #         - push_counter is a valid integer
+    #
+    #     Ensures:
+    #         - Finds similar snapshots for refactoring
+    #         - Creates MathRefactoringAgent with examples
+    #         - Returns configured agent instance
+    #
+    #     Raises:
+    #         - None
+    #     """
+    #     # DEMO KLUDGE: if the question doesn't start with "refactor", then we're going to search for similar snapshots
+    #     threshold = 85.0
+    #     path_to_snapshots = du.get_project_root() + "/src/conf/long-term-memory/solutions/"
+    #     exemplar_snapshot = self.snapshot_mgr.get_snapshots_by_question( question, question_gist=question_gist, threshold_question=95.0, threshold_gist=92.5 )[ 0 ][ 1 ]
+    #     similar_snapshots = self.snapshot_mgr.get_snapshots_by_code_similarity( exemplar_snapshot, threshold=threshold )
+    #
+    #     agent = MathRefactoringAgent( similar_snapshots=similar_snapshots, path_to_solutions=path_to_snapshots, debug=True, verbose=False )
+    #     return agent
     
     def _dump_code( self, best_snapshot: SolutionSnapshot ) -> None:
         """
@@ -405,28 +412,28 @@ class TodoFifoQueue( FifoQueue ):
             - None
         """
         job = best_snapshot.get_copy()
-            print( "Python object ID for copied job: " + str( id( job ) ) )
-            job.debug   = self.debug
-            job.verbose = self.verbose
-            job.add_synonymous_question( best_snapshot.last_question_asked, score=best_score )
-            
-            job.run_date     = du.get_current_datetime()
-            job.push_counter = self.push_counter + 1
-            job.id_hash      = SolutionSnapshot.generate_id_hash( job.push_counter, job.run_date )
-            
-            print()
-            
-            if self.size() != 0:
-                suffix = "s" if self.size() > 1 else ""
-                from app import emit_audio
-                emit_audio( f"{self.size()} job{suffix} ahead of this one" )
-            else:
-                print( "No jobs ahead of this one in the todo Q" )
-            
-            self.push( job )
-            self.socketio.emit( 'todo_update', { 'value': self.size() } )
-            
-            return f'Job added to queue. Queue size [{self.size()}]'
+        print( "Python object ID for copied job: " + str( id( job ) ) )
+        job.debug   = self.debug
+        job.verbose = self.verbose
+        job.add_synonymous_question( best_snapshot.last_question_asked, score=best_score )
+        
+        job.run_date     = du.get_current_datetime()
+        job.push_counter = self.push_counter + 1
+        job.id_hash      = SolutionSnapshot.generate_id_hash( job.push_counter, job.run_date )
+        
+        print()
+        
+        if self.size() != 0:
+            suffix = "s" if self.size() > 1 else ""
+            from app import emit_audio
+            emit_audio( f"{self.size()} job{suffix} ahead of this one" )
+        else:
+            print( "No jobs ahead of this one in the todo Q" )
+        
+        self.push( job )
+        self.socketio.emit( 'todo_update', { 'value': self.size() } )
+        
+        return f'Job added to queue. Queue size [{self.size()}]'
     
     def _get_routing_command( self, question: str ) -> tuple[str, str]:
         """
@@ -439,21 +446,21 @@ class TodoFifoQueue( FifoQueue ):
             
         Ensures:
             - Returns tuple of (command, args)
-            - Uses LLM to determine appropriate agent
+            - Uses LLM to determine the appropriate agent
             - Parses XML response for command and args
             
         Raises:
             - FileNotFoundError if prompt template missing
             - LLM errors propagated
         """
-        router_prompt_template = du.get_file_as_string( du.get_project_root() + self.config_mgr.get( "agent_router_prompt_path_wo_root" ) )
+        router_prompt_template_path = self.config_mgr.get( "prompt template for agent router" )
+        router_prompt_template = du.get_file_as_string( du.get_project_root() + router_prompt_template_path )
         
-        prompt        = router_prompt_template.format( voice_command=question ),
-        model         = self.config_mgr.get( "router_and_vox_command_model" )
-        is_completion = self.config_mgr.get( "router_and_vox_command_is_completion", return_type="boolean", default=False )
+        prompt = router_prompt_template.format( voice_command=question )
         
-        llm      = Llm_v0( model=model, is_completion=is_completion, debug=self.debug, verbose=self.verbose )
-        response = llm.query_llm( prompt=prompt )
+        llm_spec_key = self.config_mgr.get( "llm spec key for agent router" )
+        llm_client = self.llm_factory.get_client( llm_spec_key, debug=self.debug, verbose=self.verbose )
+        response = llm_client.run( prompt )
         print( f"LLM response: [{response}]" )
         # Parse results
         command = dux.get_value_by_xml_tag_name( response, "command" )

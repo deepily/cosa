@@ -52,6 +52,7 @@ class LlmClient:
     DEEPILY_MINISTRAL_8B_2410_FT_LORA = "deepily/ministral_8b_2410_ft_lora"
     MINISTRAL_8B_2410                 = "mistralai/Ministral-8B-Instruct-2410"
     GROQ_LLAMA_3_1_8B                 = "groq:llama-3.1-8b-instant"
+    GROQ_LLAMA_3_3_70B                = "groq:llama-3.3-70b-versatile"
     OPENAI_GPT_01_MINI                = "openai:o1-mini-2024-09-12"
     GOOGLE_GEMINI_1_5_FLASH           = "google-gla:gemini-1.5-flash"
     ANTHROPIC_CLAUDE_SONNET_3_5       = "anthropic:claude-3-5-sonnet-latest"
