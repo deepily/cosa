@@ -2,15 +2,39 @@ import configparser
 import os
 import json
 import ast
+from typing import Optional, Union, Any, Callable
 
 import cosa.utils.util as du
 
 # Idea for the "singleton" decorator: https://stackabuse.com/creating-a-singleton-in-python/
-def singleton( cls ):
+def singleton( cls: type ) -> Callable[..., Any]:
+    """
+    Decorator that implements the Singleton pattern.
+    
+    Requires:
+        - cls is a valid class type
+        
+    Ensures:
+        - Only one instance of cls is created
+        - All calls return the same instance
+        - Prints messages about instance creation/reuse
+        - Provides a reset method for testing
+        
+    Raises:
+        - None
+    """
     
     instances = { }
     
-    def wrapper( *args, **kwargs ):
+    def wrapper( *args: Any, **kwargs: Any ) -> Any:
+        
+        # Check for the special _reset_singleton flag for testing
+        if kwargs.pop( "_reset_singleton", False ):
+            if cls in instances:
+                print( "Resetting ConfigurationManager() singleton for testing..." )
+                del instances[ cls ]
+            else:
+                print( "No ConfigurationManager() singleton instance to reset" )
         
         if cls not in instances:
             print( "Instantiating ConfigurationManager() singleton...", end="\n\n" )
@@ -20,34 +44,73 @@ def singleton( cls ):
             
         return instances[ cls ]
     
+    # Add reset method to the wrapper function itself
+    def reset_for_testing():
+        """Reset the singleton instance for testing purposes"""
+        if cls in instances:
+            print( "Resetting ConfigurationManager() singleton..." )
+            del instances[ cls ]
+            return True
+        return False
+    
+    wrapper.reset_for_testing = reset_for_testing
+    
     return wrapper
 
 @singleton
 class ConfigurationManager():
+    """
+    Manages application configuration with inheritance and override capabilities.
     
-    def __init__( self, env_var_name=None, config_path=None, splainer_path=None, config_block_id="default", debug=False, verbose=False, silent=False, mute_splainer=False, cli_args=None ):
+    This singleton class handles configuration loading from INI files, supports
+    inheritance between configuration blocks, environment variable overrides,
+    and provides explanatory documentation for configuration keys.
+    """
+    
+    def __init__( self, env_var_name: Optional[str]=None, config_path: Optional[str]=None, splainer_path: Optional[str]=None, config_block_id: str="default", debug: bool=False, verbose: bool=False, silent: bool=False, mute_splainer: bool=False, cli_args: Optional[dict[str, str]]=None ) -> None:
 
         """
-        Instantiates configuration manager object
+        Initialize the configuration manager.
         
-        :param env_var_name: If set, then the configuration manager will look for three environment variables: config_path, splainer_path and config_block_id
-
-        :param config_path: Fully qualified path to configuration file
-        
-        :param splainer_path: Fully qualified path to splainer file
-
-        :param config_block_id: [Text identifying which block to read from] Defaults to global 'default' block
-
-        :param debug: Defaults to False
-
-        :param verbose: Defaults to False
-
-        :param silent: Shuts off *all* configuration/startup output to console.  Use when you're sure that your configuration is solid.
+        Requires:
+            - If env_var_name is provided, the environment variable must exist and contain valid config info
+            - Either env_var_name OR (config_path and splainer_path) must be provided
+            - config_path and splainer_path must be valid file paths if provided
+            
+        Ensures:
+            - Singleton instance is created or reused
+            - Configuration is loaded from explicitly provided filepaths or specified by an environment variable
+            - Inheritance hierarchy is calculated
+            - Default values are applied
+            - CLI overrides are processed
+            - Splainer definitions are loaded
+            
+        Raises:
+            - ValueError if env_var_name is provided but not found in environment
+            - ValueError if no initialization parameters are provided (zero-argument case)
+            - ValueError if conflicting initialization parameters are provided
+            - FileNotFoundError if config_path or splainer_path don't exist
+            - AssertionError if config_block_id doesn't exist in configuration
         """
         self.debug           = debug
         self.verbose         = verbose
         self.silent          = silent
         self.mute_splainer   = mute_splainer
+        
+        # Zero-argument constructor check
+        if env_var_name is None and config_path is None and splainer_path is None:
+            raise ValueError(
+                "ConfigurationManager initialization error: No initialization parameters provided.\n"
+                "RECOMMENDED: Use ConfigurationManager(env_var_name=\"GIB_CONFIG_MGR_CLI_ARGS\")\n"
+                "ALTERNATIVE: Provide explicit config_path and splainer_path arguments"
+            )
+            
+        # Check for conflicting initialization methods
+        if env_var_name is not None and (config_path is not None or splainer_path is not None):
+            raise ValueError(
+                "ConfigurationManager initialization error: Conflicting initialization parameters.\n"
+                "Either provide env_var_name OR provide both config_path and splainer_path, not both."
+            )
         
         if env_var_name is not None:
             
@@ -63,6 +126,8 @@ class ConfigurationManager():
             self.config_path     = du.get_project_root() + cli_args[ "config_path" ]
             self.splainer_path   = du.get_project_root() + cli_args[ "splainer_path" ]
             self.config_block_id = cli_args[ "config_block_id" ]
+            # Decode URL-encoded spaces (plus signs) back to actual spaces
+            self.config_block_id = self.config_block_id.replace( "+", " " )
             
             # Now delete those three keys from cli_args
             del cli_args[ "config_path" ]
@@ -70,6 +135,13 @@ class ConfigurationManager():
             del cli_args[ "config_block_id" ]
         
         else:
+            # If using explicit paths, both must be provided
+            if config_path is None or splainer_path is None:
+                raise ValueError(
+                    "ConfigurationManager initialization error: Incomplete explicit path configuration.\n"
+                    "When using explicit paths, both config_path and splainer_path must be provided."
+                )
+                
             self.config_path     = config_path
             self.splainer_path   = splainer_path
             self.config_block_id = config_block_id
@@ -82,7 +154,26 @@ class ConfigurationManager():
             config_block_id=self.config_block_id, config_path=self.config_path, splainer_path=self.splainer_path, debug=debug, verbose=verbose, silent=silent, cli_args=cli_args
         )
 
-    def init( self, config_block_id=None, config_path=None, splainer_path=None, silent=False, debug=False, verbose=False, cli_args=None ):
+    def init( self, config_block_id: Optional[str]=None, config_path: Optional[str]=None, splainer_path: Optional[str]=None, silent: bool=False, debug: bool=False, verbose: bool=False, cli_args: Optional[dict[str, str]]=None ) -> None:
+        """
+        Initialize or reinitialize the configuration.
+        
+        Requires:
+            - config_path and splainer_path must be valid files if provided
+            - config_block_id must exist in the configuration if provided
+            
+        Ensures:
+            - Configuration is loaded from specified files
+            - Block ID is updated if provided
+            - Inheritance hierarchy is recalculated
+            - Default values are applied
+            - CLI overrides are processed
+            - Splainer definitions are loaded
+            
+        Raises:
+            - FileNotFoundError if paths don't exist
+            - AssertionError if config_block_id not found
+        """
 
         # update paths, if provided
         if config_path is not None:
@@ -116,14 +207,21 @@ class ConfigurationManager():
         self._override_configuration( cli_args )
         self._load_splainer_definitions()
 
-    def _override_configuration( self, cli_args ):
-
+    def _override_configuration( self, cli_args: Optional[dict[str, str]] ) -> None:
         """
-        Overrides configuration based on file key=value pairs
-
-        :param cli_args: Dictionary containing overriding key=value pairs
-
-        :return: None
+        Override configuration values with CLI arguments.
+        
+        Requires:
+            - cli_args is None or a dictionary of key-value pairs
+            - self.config and self.config_block_id are initialized
+            
+        Ensures:
+            - Configuration values are updated with cli_args values
+            - config_path and config_block_id are not overridden (immutable)
+            - Prints status messages for each override
+            
+        Raises:
+            - None
         """
 
         # overwrite current configuration values if the cli_args {} has anything to add...
@@ -147,7 +245,23 @@ class ConfigurationManager():
 
             if self.debug: print( "Skipping cli_args processing" )
 
-    def _calculate_defaults( self ):
+    def _calculate_defaults( self ) -> None:
+        """
+        Apply default values to the current configuration block.
+        
+        Requires:
+            - self.config is initialized with sections
+            - self.config_block_id is set
+            - 'default' section exists in configuration
+            
+        Ensures:
+            - All keys from 'default' section are added to current block
+            - Existing keys in current block are not overwritten
+            - Nothing happens if current block is 'default'
+            
+        Raises:
+            - None
+        """
 
         if not self.silent: du.print_banner( "Calculating defaults...", prepend_nl=True )
 
@@ -162,7 +276,24 @@ class ConfigurationManager():
         else:
             if not self.silent: print( "Not adding default key=pair values because we're already in the 'default' block" )
 
-    def _calculate_inheritance( self ):
+    def _calculate_inheritance( self ) -> None:
+        """
+        Calculate and apply configuration inheritance.
+        
+        Requires:
+            - self.config and self.config_block_id are initialized
+            - If 'inherits' key exists, it points to valid block or file
+            
+        Ensures:
+            - Inheritance hierarchy is resolved recursively
+            - Inherited values are applied to current block
+            - Immutable keys (starting with '@_') are handled properly
+            - Values in current block override inherited values
+            
+        Raises:
+            - AssertionError if inherited block doesn't exist
+            - FileNotFoundError if inherited file doesn't exist
+        """
 
         if not self.silent: du.print_banner( "Calculating inheritance... * = parent block" )
 
@@ -219,16 +350,23 @@ class ConfigurationManager():
 
         # print()
 
-    def _load_key_value_pairs_from_file( self, config_path, key_value_pairs ):
-
+    def _load_key_value_pairs_from_file( self, config_path: str, key_value_pairs: dict[str, str] ) -> dict[str, str]:
         """
-        Loads key value pairs from a file
-
-        :param config_path: path to config file
-
-        :param key_value_pairs: Dictionary to hold new key value pairs
-
-        :return: Dictionary of updated key value pairs
+        Load key-value pairs from a configuration file.
+        
+        Requires:
+            - config_path is a valid file path
+            - key_value_pairs is a dictionary to update
+            - File contains a 'base' section
+            
+        Ensures:
+            - Returns updated dictionary with values from file
+            - Existing values in key_value_pairs may be overwritten
+            - Only reads from 'base' section of the file
+            
+        Raises:
+            - AssertionError if 'base' section not found
+            - FileNotFoundError if config_path doesn't exist
         """
 
         if self.verbose and self.debug: print( "_load_key_value_pairs_from_file(...) called" )
@@ -256,18 +394,23 @@ class ConfigurationManager():
 
         return key_value_pairs
 
-    def _scan_and_update_keys( self, key_value_pairs, parent_block_keys ):
-
+    def _scan_and_update_keys( self, key_value_pairs: dict[str, str], parent_block_keys: list[str] ) -> None:
         """
-        Scans keys and adds them to the parent block
-
-        NOTE: Only adds keys to the parent block if they do not violate immutability and scoping rules
-
-        :param key_value_pairs: key=value pairs found *outside* of the parent block. Candidates to be added to the parent config block ID
-
-        :param parent_block_keys: key=value pairs found *inside* the parent block
-
-        :return: None
+        Scan and update configuration keys respecting immutability rules.
+        
+        Requires:
+            - key_value_pairs contains inherited key-value pairs
+            - parent_block_keys contains keys in current block
+            - self.config and self.config_block_id are initialized
+            
+        Ensures:
+            - Immutable keys (starting with '@_') are removed/ignored
+            - Inherited values are added if not already present
+            - Existing values in parent block are not overwritten
+            - Status messages are printed for violations
+            
+        Raises:
+            - None
         """
 
         if not self.silent: print( "Scanning for immutable keys..." )
@@ -299,7 +442,23 @@ class ConfigurationManager():
         if found: print()
         if not self.silent: print( "Scanning for immutable keys... Done!" )
 
-    def _build_inheritance_list( self, block_id, inheritance_list ):
+    def _build_inheritance_list( self, block_id: str, inheritance_list: list[str] ) -> list[str]:
+        """
+        Recursively build the inheritance hierarchy list.
+        
+        Requires:
+            - block_id is a valid configuration block or file path
+            - inheritance_list is an existing list to append to
+            
+        Ensures:
+            - Returns list with complete inheritance chain
+            - Handles both block IDs and file paths
+            - Recursively follows 'inherits' keys
+            - Avoids duplicate entries for files
+            
+        Raises:
+            - AssertionError if block_id not found (unless it's a file)
+        """
 
         if self.debug and self.verbose: print( "_build_inheritance_list() called for [{0}]...".format( block_id ) )
 
@@ -337,22 +496,41 @@ class ConfigurationManager():
 
         return inheritance_list
 
-    def _sanity_check_config_block( self, block_id ):
-
+    def _sanity_check_config_block( self, block_id: str ) -> None:
         """
-        Verifies that a config block ID exists
-
-        :param block_id: Block ID to be checked
-
-        :return: None
-
-        :raises: AssertionError when block ID doesn't exist in configuration
+        Verify that a configuration block exists.
+        
+        Requires:
+            - block_id is a non-empty string
+            - self.config is initialized
+            
+        Ensures:
+            - Returns normally if block exists
+            - Raises AssertionError if block doesn't exist
+            
+        Raises:
+            - AssertionError with descriptive message if block not found
         """
 
         fail_msg = "Configuration block doesn't exist: [{0}] Check spelling?".format( block_id )
         assert block_id in self.config.sections(), fail_msg
 
-    def print_sections( self ):
+    def print_sections( self ) -> None:
+        """
+        Print all configuration sections to console.
+        
+        Requires:
+            - self.config is initialized with sections
+            - self.config_block_id is set
+            
+        Ensures:
+            - Prints sorted list of sections
+            - Current block marked with asterisk
+            - Banner is displayed
+            
+        Raises:
+            - None
+        """
 
         sections = self.config.sections()
         sections.sort()
@@ -368,38 +546,46 @@ class ConfigurationManager():
 
         print()
 
-    def set_config( self, config_key, value ):
-
+    def set_config( self, config_key: str, value: Any ) -> None:
         """
-        Sets or updates key=value pairs in the current_block_id
-
-        This is *super* helpful when you want to make minor temporary tweaks to a particular modeling session, or if you
-        want to compare two customized sessions whose only diffs are the values set at runtime by this method.
-
-        :param config_key: The 'key' part of the 'key=value' configuration pair
-
-        :param value: The 'value' part of the 'key=value' configuration pair
-
-        :return: None
+        Set or update a configuration value.
+        
+        Requires:
+            - config_key is a non-empty string
+            - value can be converted to string
+            - self.config and self.config_block_id are initialized
+            
+        Ensures:
+            - Configuration value is updated in current block
+            - Value is converted to string before storage
+            - Existing values are overwritten
+            
+        Raises:
+            - None
         """
 
         self.config.set( self.config_block_id, config_key, str( value ) )
 
-    def in_config( self, config_key ):
-
+    def in_config( self, config_key: str ) -> bool:
         """
-        Checks to see if config_key exists in current config_block_id
-
-        Using this in conjunction w/ the get_value( "foo" ) method allows us to create optional key=value configuration pairs
-
-        :param config_key: The 'key' part of the configuration 'key=value' pair found in this sessions config_block_id
-
-        :return: True | False
+        Check if configuration key exists (DEPRECATED).
+        
+        Requires:
+            - config_key is a non-empty string
+            - self.config and self.config_block_id are initialized
+            
+        Ensures:
+            - Returns True if key exists in current block
+            - Returns False otherwise
+            - Prints deprecation warning
+            
+        Raises:
+            - None
         """
         print( "DEPRECATED: Use config_mgr.exists( key ) instead" )
         return config_key in self.config.options( self.config_block_id )
 
-    def exists( self, config_key ):
+    def exists( self, config_key: str ) -> bool:
         """
         Checks if the specified configuration key exists in the current config block.
         
@@ -426,25 +612,21 @@ class ConfigurationManager():
         # Key must be forced to lowercase because configparser lowercases all keys internally
         return config_key.lower() in self.config.options( self.config_block_id )
 
-    def print_configuration( self, brackets=True, include_sections=True, prefixes=None ):
-
+    def print_configuration( self, brackets: bool=True, include_sections: bool=True, prefixes: Optional[list[str]]=None ) -> None:
         """
-        High level wrapper to _print_configuration_to_stdout()
-
-        Prints current configuration key=value pairs to console, sorted & segregated by stems
-
-        :param brackets: Formatting option that adds brackets to name=value pairs
-
-        :param include_sections: What section is this configuration based on? Defaults to True
-
-        :param prefixes: array of prefixes to match
-
-        :return: None, prints to console
-
-        Example:
-        <pre><code>
-        Foo!  Bar!  Baz!
-        </code></pre>
+        Print configuration key-value pairs to console.
+        
+        Requires:
+            - self.config and self.config_block_id are initialized
+            
+        Ensures:
+            - Prints configuration sorted by key
+            - Optionally filters by prefixes
+            - Optionally includes section information
+            - Values optionally wrapped in brackets
+            
+        Raises:
+            - None
         """
 
         # Let them know what this configuration set is based on
@@ -476,32 +658,40 @@ class ConfigurationManager():
         du.print_banner( "Configuration for [{0}]".format( self.config_block_id ), end="\n" )
         self.print_configuration_to_stdout( keys, self.config, block_id, brackets )
 
-    def get_keys( self ):
-
+    def get_keys( self ) -> list[str]:
         """
-        Gets keys for current session configuration
-
-        :return: list of keys
+        Get all keys in the current configuration block.
+        
+        Requires:
+            - self.config and self.config_block_id are initialized
+            
+        Ensures:
+            - Returns list of all keys in current block
+            - List may be empty if no keys exist
+            
+        Raises:
+            - None
         """
 
         return self.config.options( self.config_block_id )
 
-    def print_configuration_to_stdout( self, keys, configuration, block_id, brackets=True ):
-
+    def print_configuration_to_stdout( self, keys: list[str], configuration: configparser.ConfigParser, block_id: str, brackets: bool=True ) -> None:
         """
-        Private abstracted view of printing configuration key=value pairs
-
-        Prints sorted contents of configuration object to the console
-
-        :param keys: List of keys to be looked up in the configuration object
-
-        :param configuration: Object
-
-        :param block_id: Title of config block to be used
-
-        :param brackets: Do we want the 'value' half of the 'key=value' pair to be bracketed? Good for debugging [expected_values]
-
-        :returns: None
+        Print configuration keys and values to stdout.
+        
+        Requires:
+            - keys is a list of valid configuration keys
+            - configuration contains the specified block_id
+            - All keys exist in the specified block
+            
+        Ensures:
+            - Keys are sorted alphabetically
+            - Values are left-justified for alignment
+            - Empty lines inserted between different key stems
+            - Values optionally wrapped in brackets
+            
+        Raises:
+            - None
         """
 
         keys.sort()
@@ -529,27 +719,25 @@ class ConfigurationManager():
             
         print()
 
-    # def get( self, key, default="@@@_None_@@@", silent=False, return_type="string" )
-    def get( self, key, default="@@@_None_@@@", silent=False, return_type="string" ):
+    def get( self, key: str, default: Union[str, int, float, bool, list]="@@@_None_@@@", silent: bool=False, return_type: str="string" ) -> Optional[Union[str, int, float, bool, list, dict]]:
     
         """
-        Wrapper for accessing configuration object
-    
-        Designed to catch missing keys in the current configuration file and explain them according to the contents of
-        the splainer-doc.ini file.  If no key is found, and after giving you splainer feedback, it returns None to the
-        calling code, which then fails.  Hopefully this will help you to understand why it failed.
-    
-        :param key: The 'key' half of the 'key=value' pair
-    
-        :param default: Allows you to specify a value to return when there's no value to be found in the 'key=value' pair
-        NOTE: current default="@@@_None_@@@", essentially making "@@@_None_@@@" a reserved word, ¡OJO!
-    
-        :param silent: Turn off the 'splainer messaging, useful for stealth feature addition.  Defaults to False
-    
-        :param return_type: Which of the five types should this value be returned as? Accepts: 'boolean', 'float', 'int/integer',
-        'str/string' and 'list-string' Defaults to 'string'
-    
-        :return: Typed representation of the 'value' half of the 'key=value' pair
+        Get a configuration value with optional type conversion.
+        
+        Requires:
+            - key is a non-empty string
+            - return_type is one of: 'boolean', 'float', 'int', 'string', 'list-string', 'json', 'dict'
+            - self.config and self.config_block_id are initialized
+            
+        Ensures:
+            - Returns typed value if key exists
+            - Returns typed default if key doesn't exist and default provided
+            - Returns None if key doesn't exist and no default
+            - Provides splainer explanation for missing keys unless silent
+            
+        Raises:
+            - ValueError if return_type is invalid
+            - JSON/AST parsing errors for json/dict types
         """
     
         if self.exists( key ):
@@ -582,17 +770,23 @@ class ConfigurationManager():
     
                 return None
 
-    def _get_typed_value( self, value, return_type ):
-
+    def _get_typed_value( self, value: Any, return_type: str ) -> Union[str, int, float, bool, list, dict]:
         """
-        Casts the string value to the requested type. Helper method for get(...)
-
-        :param value: String representing the raw value
-
-        :param return_type: Which of the five types should this value be returned as? Accepts: 'boolean', 'float', 'int/integer',
-            'str/string' and 'list-string' Throws ValueError if not one of these five. NOT case sensitive.
-
-        :return: Input value cast to specified type
+        Convert a configuration value to the requested type.
+        
+        Requires:
+            - value can be converted to the requested type
+            - return_type is a valid type identifier (case-insensitive)
+            
+        Ensures:
+            - Returns value converted to specified type
+            - Handles boolean conversion from string 'True'
+            - Handles list-string by splitting on ', '
+            - Handles JSON and dict parsing
+            
+        Raises:
+            - ValueError if return_type is invalid
+            - Type conversion errors for the specific type
         """
         # Force return type to lowercase
         return_type = return_type.lower()
@@ -615,27 +809,21 @@ class ConfigurationManager():
         else:
             raise ValueError( f"Return type [{return_type}] is invalid.  Accepts: 'boolean', 'float', 'int', 'string', 'list-string' and 'json'".format( return_type ) )
         
-    def splain_me( self, key, end="\n\n" ):
-
+    def splain_me( self, key: str, end: str="\n\n" ) -> None:
         """
-        Colloquial lookup of configuration key definitions, prints to console.
-
-        :param key: Term to lookup in the splainer dictionary
-
-        :param end: Formatting option, use "\n" for one carriage return
-
-        :return: None
-
-        Example:
-        <pre><code>
-        config_mgr.splain_me( "42" )
-
-        [42] = I'm sorry Dave, I'm afraid I can't tell you that.  You could ask Douglas Adams though.
-
-        config_mgr.splain_me( "flux_capacitor" )
-
-        [flux_capacitor] = A Y-shaped electronic device that's essential to time travel
-        </code></pre>
+        Explain a configuration key using the splainer documentation.
+        
+        Requires:
+            - key is a non-empty string
+            - self.splainer is initialized
+            
+        Ensures:
+            - Prints explanation if key found in splainer
+            - Prints error message if key not found
+            - Uses specified line ending for formatting
+            
+        Raises:
+            - None
         """
 
         if key in self.splainer.sections():
@@ -649,14 +837,22 @@ class ConfigurationManager():
             print( "\n'Splainer says: ¿WUH? The key [{0}] NOT found in the 'splainer.ini file. "
                    "Check spelling and/or contact the project maintainer?".format( key ), end=end )
 
-    def _load_splainer_definitions( self ):
-
+    def _load_splainer_definitions( self ) -> None:
         """
-        Loads the splainer doc
-
-        :param splainer_path: Where's the 'splainer file located?
-
-        :return: None
+        Load explanatory documentation for configuration keys.
+        
+        Requires:
+            - self.splainer_path is set to a valid file path
+            - Splainer file is in valid INI format
+            
+        Ensures:
+            - self.splainer is populated with ConfigParser object
+            - Splainer definitions are available for use
+            - Status message is printed
+            
+        Raises:
+            - FileNotFoundError if splainer file doesn't exist
+            - ConfigParser errors if file format is invalid
         """
 
         du.print_banner( f"Loading splainer file [{self.splainer_path}]..." )
@@ -669,24 +865,76 @@ class ConfigurationManager():
         self.splainer = splainer
     
 if __name__ == "__main__":
-
-    # for key, value in os.environ.items():
-    #     print( f"{key} = {value}" )
-    # print()
-    # print( "GIB_CONFIG_MGR_CLI_ARGS" in os.environ )
     
-    # config_path     = du.get_project_root() + "/src/conf/gib-app.ini"
-    # splainer_path   = du.get_project_root() + "/src/conf/gib-app-splainer.ini"
-    # config_block_id = "Genie in the Box: Development"
-    # config_manager  = ConfigurationManager( config_path, splainer_path, config_block_id=config_block_id, debug=False, verbose=False, silent=False )
+    import cosa.utils.util_stopwatch as sw
     
-    config_manager  = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
-
-    foo_mgr         = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+    du.print_banner( "Testing ConfigurationManager Initialization Methods", prepend_nl=True, chunk="🧪 " )
     
-    # foo_mgr         = ConfigurationManager( config_path, splainer_path, config_block_id=config_block_id, debug=False, verbose=False, silent=False )
+    # Reset singleton before each test to ensure clean testing
+    ConfigurationManager.reset_for_testing()
     
-    # config_manager.print_configuration( brackets=True )
-    #
-    # foo = config_manager.get( "foo" )
-    # print( f"foo: [{foo}] type: [{type( foo )}]" )
+    # Test 1: Zero-argument constructor (should fail)
+    timer = sw.Stopwatch( msg="Testing zero-argument constructor...", silent=False )
+    try:
+        config_mgr = ConfigurationManager( _reset_singleton=True )
+        print( "❌ ERROR: Zero-argument constructor succeeded but should have failed" )
+    except ValueError as e:
+        print( f"✅ Expected error: {str(e)}" )
+    timer.print( "Test complete", use_millis=True )
+    
+    # Test 2: Environment variable constructor
+    timer = sw.Stopwatch( msg="Testing env_var_name constructor...", silent=False )
+    try:
+        config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS", _reset_singleton=True )
+        print( f"✅ Successfully initialized with env_var_name" )
+    except ValueError as e:
+        print( f"❌ Error: {str(e)}" )
+    timer.print( "Test complete", use_millis=True )
+    
+    # Test 3: Explicit paths constructor
+    timer = sw.Stopwatch( msg="Testing explicit paths constructor...", silent=False )
+    try:
+        config_path     = du.get_project_root() + "/src/conf/gib-app.ini"
+        splainer_path   = du.get_project_root() + "/src/conf/gib-app-splainer.ini"
+        config_block_id = "default"
+        
+        config_mgr = ConfigurationManager(
+            config_path     = config_path,
+            splainer_path   = splainer_path, 
+            config_block_id = config_block_id,
+            silent          = True,
+            _reset_singleton = True
+        )
+        print( f"✅ Successfully initialized with explicit paths" )
+    except ValueError as e:
+        print( f"❌ Error: {str(e)}" )
+    timer.print( "Test complete", use_millis=True )
+    
+    # Test 4: Conflicting parameters (should fail)
+    timer = sw.Stopwatch( msg="Testing conflicting parameters...", silent=False )
+    try:
+        config_mgr = ConfigurationManager(
+            env_var_name  = "GIB_CONFIG_MGR_CLI_ARGS",
+            config_path   = "/some/path",
+            splainer_path = "/some/path",
+            _reset_singleton = True
+        )
+        print( "❌ ERROR: Conflicting parameters succeeded but should have failed" )
+    except ValueError as e:
+        print( f"✅ Expected error: {str(e)}" )
+    timer.print( "Test complete", use_millis=True )
+    
+    # Test 5: Incomplete explicit paths (should fail)
+    timer = sw.Stopwatch( msg="Testing incomplete paths...", silent=False )
+    try:
+        # Only provide config_path without splainer_path
+        config_mgr = ConfigurationManager(
+            config_path = "/some/path", 
+            _reset_singleton = True
+        )
+        print( "❌ ERROR: Incomplete paths succeeded but should have failed" )
+    except ValueError as e:
+        print( f"✅ Expected error: {str(e)}" )
+    timer.print( "Test complete", use_millis=True )
+    
+    du.print_banner( "All tests completed", prepend_nl=True, chunk="✨ " )

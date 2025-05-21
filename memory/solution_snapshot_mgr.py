@@ -1,4 +1,5 @@
 import os
+from typing import Optional, dict, list, tuple, Any
 
 import cosa.utils.util as du
 from cosa.memory import solution_snapshot as ss
@@ -7,7 +8,28 @@ from cosa.memory.question_embeddings_table import QuestionEmbeddingsTable
 
 
 class SolutionSnapshotManager:
-    def __init__( self, path, debug=False, verbose=False ):
+    """
+    Manages solution snapshots stored as JSON files.
+    
+    Handles loading, searching, and managing solution snapshots with
+    embedding-based similarity search capabilities.
+    """
+    def __init__( self, path: str, debug: bool=False, verbose: bool=False ) -> None:
+        """
+        Initialize the solution snapshot manager.
+        
+        Requires:
+            - path is a valid directory path
+            - Directory contains JSON snapshot files
+            
+        Ensures:
+            - Loads all snapshots from directory
+            - Creates lookup dictionaries by question and gist
+            - Initializes embeddings table
+            
+        Raises:
+            - OSError if directory doesn't exist
+        """
         
         self.debug                              = debug
         self.verbose                            = verbose
@@ -20,8 +42,22 @@ class SolutionSnapshotManager:
         
         self.load_snapshots()
         
-    def load_snapshots( self ):
+    def load_snapshots( self ) -> None:
+        """
+        Load all snapshots from the directory.
         
+        Requires:
+            - self.path is set
+            - Directory exists
+            
+        Ensures:
+            - Populates all snapshot dictionaries
+            - Initializes embeddings table
+            - Prints debug info if enabled
+            
+        Raises:
+            - None (handles errors internally)
+        """
         self._snapshots_by_question             = self._load_snapshots_by_question()
         self._snapshots_by_synonymous_questions = self._load_snapshots_by_synonymous_questions( self._snapshots_by_question )
         self._snapshots_by_question_gist        = self._load_snapshots_by_gist( self._snapshots_by_question )
@@ -31,8 +67,21 @@ class SolutionSnapshotManager:
             print( self )
             if self.verbose: self.print_snapshots()
         
-    def _load_snapshots_by_question( self ):
+    def _load_snapshots_by_question( self ) -> dict[str, Any]:
+        """
+        Load snapshots indexed by question.
         
+        Requires:
+            - self.path is a valid directory
+            - Directory contains JSON files
+            
+        Ensures:
+            - Returns dict mapping questions to snapshots
+            - Filters out hidden files and non-JSON files
+            
+        Raises:
+            - None (handles errors internally)
+        """
         snapshots_by_question = { }
         if self.debug: print( f"Loading snapshots by question from [{self.path}]..." )
         
@@ -46,8 +95,20 @@ class SolutionSnapshotManager:
     
         return snapshots_by_question
     
-    def _load_snapshots_by_gist( self, snapshots_by_question ):
+    def _load_snapshots_by_gist( self, snapshots_by_question: dict[str, Any] ) -> dict[str, tuple[float, Any]]:
+        """
+        Create gist-based index of snapshots.
         
+        Requires:
+            - snapshots_by_question is populated
+            
+        Ensures:
+            - Returns dict mapping gists to (score, snapshot) tuples
+            - Includes all synonymous gists
+            
+        Raises:
+            - None
+        """
         snapshots_by_gist = { }
         if self.debug: print( f"Loading by gist snapshots from [{self.path}]..." )
         
@@ -63,8 +124,20 @@ class SolutionSnapshotManager:
         print()
         return snapshots_by_gist
     
-    def _load_snapshots_by_synonymous_questions( self, snapshots_by_question ):
+    def _load_snapshots_by_synonymous_questions( self, snapshots_by_question: dict[str, Any] ) -> dict[str, tuple[float, Any]]:
+        """
+        Create synonymous question index.
         
+        Requires:
+            - snapshots_by_question is populated
+            
+        Ensures:
+            - Returns dict mapping synonymous questions to (score, snapshot) tuples
+            - Includes all synonymous questions from snapshots
+            
+        Raises:
+            - None
+        """
         snapshots_by_synomymous_questions = { }
         
         for _, snapshot in snapshots_by_question.items():
@@ -80,8 +153,21 @@ class SolutionSnapshotManager:
         print()
         return snapshots_by_synomymous_questions
     
-    def add_snapshot( self, snapshot ):
+    def add_snapshot( self, snapshot: ss.SolutionSnapshot ) -> None:
+        """
+        Add a new snapshot to the manager.
         
+        Requires:
+            - snapshot is a valid SolutionSnapshot
+            - snapshot.question is set
+            
+        Ensures:
+            - Adds snapshot to question index
+            - Writes snapshot to file
+            
+        Raises:
+            - None
+        """
         self._snapshots_by_question[ snapshot.question ] = snapshot
         snapshot.write_current_state_to_file()
     
@@ -96,26 +182,85 @@ class SolutionSnapshotManager:
     #
     #     return question_embedding
     
-    def _question_exists( self, question ):
+    def _question_exists( self, question: str ) -> bool:
+        """
+        Check if exact question exists.
         
+        Requires:
+            - question is a string
+            
+        Ensures:
+            - Returns True if question in index
+            - Returns False otherwise
+            
+        Raises:
+            - None
+        """
         return question in self._snapshots_by_question
     
-    def _synonymous_question_exists( self, question ):
-
+    def _synonymous_question_exists( self, question: str ) -> bool:
+        """
+        Check if synonymous question exists.
+        
+        Requires:
+            - question is a string
+            
+        Ensures:
+            - Returns True if in synonymous questions
+            - Returns False otherwise
+            
+        Raises:
+            - None
+        """
         return question in self._snapshots_by_synonymous_questions
     
-    def _question_gist_exists( self, question_gist ):
+    def _question_gist_exists( self, question_gist: Optional[str] ) -> bool:
+        """
+        Check if question gist exists.
         
+        Requires:
+            - question_gist may be None or string
+            
+        Ensures:
+            - Returns True if gist exists in index
+            - Returns False if None or not found
+            
+        Raises:
+            - None
+        """
         if self.debug: print( f"question_gist is not None: {question_gist is not None} and question_gist in self._snapshots_by_question_gist: {question_gist in self._snapshots_by_question_gist} " )
         return question_gist is not None and question_gist in self._snapshots_by_question_gist
     
-    def get_gists( self ):
+    def get_gists( self ) -> list[str]:
+        """
+        Get all question gists.
         
-        return self._snapshots_by_question_gist.keys()
+        Requires:
+            - Gist index is populated
+            
+        Ensures:
+            - Returns list of all gist strings
+            
+        Raises:
+            - None
+        """
+        return list(self._snapshots_by_question_gist.keys())
     
-    # create a method to delete a snapshot by exact match with the question string
-    def delete_snapshot( self, question, delete_file=False ):
+    def delete_snapshot( self, question: str, delete_file: bool=False ) -> bool:
+        """
+        Delete a snapshot by question.
         
+        Requires:
+            - question is a string
+            
+        Ensures:
+            - Removes snapshot from index if found
+            - Optionally deletes file from filesystem
+            - Returns True if deleted, False if not found
+            
+        Raises:
+            - None
+        """
         # clean up the question string before querying
         question = ss.SolutionSnapshot.remove_non_alphanumerics( question )
         
@@ -133,8 +278,24 @@ class SolutionSnapshotManager:
             print( f"Snapshot with question [{question}] does not exist!" )
             return False
         
-    def _get_snapshots_by_question_similarity( self, question, question_gist=None, threshold_question=100.0, threshold_gist=100.0, limit=7, exclude_non_synonymous_questions=True ):
+    def _get_snapshots_by_question_similarity( self, question: str, question_gist: Optional[str]=None, threshold_question: float=100.0, threshold_gist: float=100.0, limit: int=7, exclude_non_synonymous_questions: bool=True ) -> list[tuple[float, Any]]:
+        """
+        Find similar snapshots using embeddings.
         
+        Requires:
+            - question is a non-empty string
+            - thresholds are between 0 and 100
+            - limit is positive integer
+            
+        Ensures:
+            - Returns list of (score, snapshot) tuples
+            - Sorted by similarity descending
+            - Limited to requested count
+            - Excludes blacklisted questions if requested
+            
+        Raises:
+            - None
+        """
         print( f"_get_snapshots_by_question_similarity( '{question}' )..." )
         
         # Generate the embedding for the question if it doesn't already exist
@@ -200,8 +361,22 @@ class SolutionSnapshotManager:
         
         return similar_snapshots[ :limit ]
     
-    def get_snapshots_by_code_similarity( self, exemplar_snapshot, threshold=85.0, limit=-1 ):
+    def get_snapshots_by_code_similarity( self, exemplar_snapshot: ss.SolutionSnapshot, threshold: float=85.0, limit: int=-1 ) -> list[tuple[float, Any]]:
+        """
+        Find snapshots with similar code.
         
+        Requires:
+            - exemplar_snapshot has code_embedding
+            - threshold is between 0 and 100
+            
+        Ensures:
+            - Returns list of (score, snapshot) tuples
+            - Sorted by similarity descending
+            - Limited to requested count (-1 for all)
+            
+        Raises:
+            - None
+        """
         # code_snapshot      = ss.SolutionSnapshot( code_embedding=source_snapshot.code_embedding )
         original_question = du.truncate_string( exemplar_snapshot.question, max_len=32 )
         similar_snapshots  = [ ]
@@ -239,8 +414,22 @@ class SolutionSnapshotManager:
         else:
             return similar_snapshots[ :limit ]
     
-    def get_snapshots_by_question( self, question, question_gist=None, threshold_question=100.0, threshold_gist=100.0, limit=7, debug=False ):
+    def get_snapshots_by_question( self, question: str, question_gist: Optional[str]=None, threshold_question: float=100.0, threshold_gist: float=100.0, limit: int=7, debug: bool=False ) -> list[tuple[float, Any]]:
+        """
+        Find snapshots matching a question.
         
+        Requires:
+            - question is a non-empty string
+            - thresholds are between 0 and 100
+            
+        Ensures:
+            - Returns list of (score, snapshot) tuples
+            - Checks exact match, synonyms, gists, then similarity
+            - Limited to requested count
+            
+        Raises:
+            - None
+        """
         question = ss.SolutionSnapshot.remove_non_alphanumerics( question )
         
         # escape single quotes in the question gist, instead of nuking all the valuable non-alphanumeric characters in a gist string
@@ -286,13 +475,34 @@ class SolutionSnapshotManager:
             
         return similar_snapshots
         
-    def __str__( self ):
+    def __str__( self ) -> str:
+        """
+        String representation of manager.
         
+        Requires:
+            - None
+            
+        Ensures:
+            - Returns formatted string with count and path
+            
+        Raises:
+            - None
+        """
         return f"[{len( self._snapshots_by_question )}] snapshots by question loaded from [{self.path}]"
 
-    # method to print the snapshots dictionary
-    def print_snapshots( self ):
+    def print_snapshots( self ) -> None:
+        """
+        Print all loaded snapshots.
         
+        Requires:
+            - Snapshots are loaded
+            
+        Ensures:
+            - Prints count and questions to console
+            
+        Raises:
+            - None
+        """
         du.print_banner( f"Total snapshots: [{len( self._snapshots_by_question )}]", prepend_nl=True )
         
         for question, snapshot in self._snapshots_by_question.items():

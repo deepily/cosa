@@ -1,5 +1,6 @@
 import sys
 import os
+from typing import Optional
 
 from huggingface_hub import snapshot_download, login
 
@@ -8,7 +9,7 @@ from huggingface_hub import snapshot_download, login
 # that takes a repo_id as an argument
 class HuggingFaceDownloader:
 
-    def __init__( self, token: str=None ) -> None:
+    def __init__( self, token: Optional[str]=None ) -> None:
         """
         Initialize a new HuggingFaceDownloader instance.
         

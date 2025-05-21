@@ -33,7 +33,9 @@ it uses these parameters to properly initialize the model, tokenizer, and
 training process specifically optimized for Phi-4-mini.
 """
 
-fine_tune_config = {
+from typing import Union, Callable
+
+fine_tune_config: dict[str, Union[float, int, str]] = {
     "sample_size": 0.01,
     "batch_size": 8,
     "gradient_accumulation_steps": 4,
@@ -42,7 +44,7 @@ fine_tune_config = {
     "device_map": "auto"
 }
 
-lora_config = {
+lora_config: dict[str, Union[int, float, str, list[str]]] = {
     "lora_alpha": 16,
     "lora_dropout": 0.05,
     "r": 64,
@@ -51,7 +53,7 @@ lora_config = {
     "target_modules": ["k_proj", "q_proj", "v_proj", "o_proj", "gate_proj", "down_proj", "up_proj"]
 }
 
-tokenizer_config = {
+tokenizer_config: dict[str, Union[str, dict[str, str]]] = {
     "pad_token": "unk_token",
     "pad_token_id": "converted_from_unk_token",  # Will be resolved by the trainer
     "padding_side": {
@@ -60,7 +62,7 @@ tokenizer_config = {
     }
 }
 
-model_config = {
+model_config: dict[str, Union[int, str, Callable[[str], str]]] = {
     "max_seq_length": 683,
     "prompt_template": """<s>[INST]{instruction}
 

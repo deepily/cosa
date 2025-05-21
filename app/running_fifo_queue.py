@@ -13,9 +13,34 @@ import cosa.utils.util_stopwatch as sw
 
 # import traceback
 import pprint
+from typing import Optional, Any
 
 class RunningFifoQueue( FifoQueue ):
-    def __init__( self, app, socketio, snapshot_mgr, jobs_todo_queue, jobs_done_queue, jobs_dead_queue, config_mgr=None ):
+    """
+    Queue for handling running jobs with agents and solution snapshots.
+    
+    Manages execution of jobs from todo queue to done/dead queues.
+    Handles both AgentBase instances and SolutionSnapshot instances.
+    """
+    def __init__( self, app: Any, socketio: Any, snapshot_mgr: Any, jobs_todo_queue: FifoQueue, jobs_done_queue: FifoQueue, jobs_dead_queue: FifoQueue, config_mgr: Optional[Any]=None ) -> None:
+        """
+        Initialize the running FIFO queue.
+        
+        Requires:
+            - app is a Flask application instance
+            - socketio is a SocketIO instance
+            - snapshot_mgr is a valid snapshot manager
+            - All queue parameters are FifoQueue instances
+            - config_mgr is None or a valid ConfigurationManager
+            
+        Ensures:
+            - Sets up queue management components
+            - Initializes auto_debug and inject_bugs from config
+            - Creates InputAndOutputTable instance
+            
+        Raises:
+            - None
+        """
         
         super().__init__()
         
@@ -30,8 +55,22 @@ class RunningFifoQueue( FifoQueue ):
         self.inject_bugs     = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
         self.io_tbl          = InputAndOutputTable()
     
-    def enter_running_loop( self ):
+    def enter_running_loop( self ) -> None:
+        """
+        Enter the main job execution loop.
         
+        Requires:
+            - All queue instances are initialized
+            - socketio is connected
+            
+        Ensures:
+            - Continuously processes jobs from todo queue
+            - Emits socket updates for queue states
+            - Never returns (infinite loop)
+            
+        Raises:
+            - Exceptions handled internally
+        """
         print( "Starting job run loop..." )
         while True:
             
@@ -67,8 +106,24 @@ class RunningFifoQueue( FifoQueue ):
                 # print( "No jobs to pop from todo Q " )
                 self.socketio.sleep( 1 )
     
-    def _handle_error_case( self, response, running_job, truncated_question ):
+    def _handle_error_case( self, response: dict, running_job: Any, truncated_question: str ) -> Any:
+        """
+        Handle error cases during job execution.
         
+        Requires:
+            - response is a dictionary with 'output' key
+            - running_job is a valid job instance
+            - truncated_question is a string
+            
+        Ensures:
+            - Moves job from running to dead queue
+            - Emits error audio message
+            - Updates socket connections
+            - Returns the job instance
+            
+        Raises:
+            - None (handles errors gracefully)
+        """
         du.print_banner( f"Error running code for [{truncated_question}]", prepend_nl=True )
         
         for line in response[ "output" ].split( "\n" ): print( line )
@@ -84,8 +139,25 @@ class RunningFifoQueue( FifoQueue ):
         
         return running_job
     
-    def _handle_base_agent( self, running_job, truncated_question, agent_timer ):
+    def _handle_base_agent( self, running_job: AgentBase, truncated_question: str, agent_timer: sw.Stopwatch ) -> Any:
+        """
+        Handle execution of AgentBase instances.
         
+        Requires:
+            - running_job is an AgentBase instance
+            - truncated_question is a string
+            - agent_timer is a running Stopwatch
+            
+        Ensures:
+            - Executes agent's do_all() method
+            - Handles serialization for eligible agents
+            - Updates queues and database
+            - Emits socket updates
+            - Returns the job (possibly converted to SolutionSnapshot)
+            
+        Raises:
+            - Catches and handles all exceptions internally
+        """
         msg = f"Running AgentBase for [{truncated_question}]..."
         
         code_response = {
@@ -154,8 +226,25 @@ class RunningFifoQueue( FifoQueue ):
         
         return running_job
     
-    def _handle_solution_snapshot( self, running_job, truncated_question, run_timer ):
+    def _handle_solution_snapshot( self, running_job: SolutionSnapshot, truncated_question: str, run_timer: sw.Stopwatch ) -> SolutionSnapshot:
+        """
+        Handle execution of SolutionSnapshot instances.
         
+        Requires:
+            - running_job is a SolutionSnapshot instance
+            - truncated_question is a string
+            - run_timer is a running Stopwatch
+            
+        Ensures:
+            - Executes stored code
+            - Formats and emits output
+            - Updates queues and database
+            - Writes snapshot to file
+            - Returns the updated snapshot
+            
+        Raises:
+            - None (handles errors gracefully)
+        """
         msg = f"Executing SolutionSnapshot code for [{truncated_question}]..."
         du.print_banner( msg=msg, prepend_nl=True )
         timer = sw.Stopwatch( msg=msg )

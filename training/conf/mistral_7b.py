@@ -33,7 +33,9 @@ and training parameters. These settings are optimized for the Mistral model's un
 characteristics and memory footprint.
 """
 
-fine_tune_config = {
+from typing import Union
+
+fine_tune_config: dict[str, Union[float, int, str]] = {
     "sample_size": 1.0,
     "batch_size": 4,
     "gradient_accumulation_steps": 6,
@@ -42,7 +44,7 @@ fine_tune_config = {
     "device_map": "auto"
 }
 
-lora_config = {
+lora_config: dict[str, Union[int, float, str, list[str]]] = {
     "lora_alpha": 16,
     "lora_dropout": 0.05,
     "r": 4,
@@ -51,7 +53,7 @@ lora_config = {
     "target_modules": ["k_proj", "q_proj", "v_proj", "o_proj", "gate_proj", "down_proj", "up_proj"]
 }
 
-tokenizer_config = {
+tokenizer_config: dict[str, Union[str, dict[str, str]]] = {
     "pad_token": "eos_token",
     "padding_side": {
         "training": "right",
@@ -59,7 +61,7 @@ tokenizer_config = {
     }
 }
 
-model_config = {
+model_config: dict[str, Union[int, str]] = {
     "max_seq_length": 779,
     "prompt_template": """### Instruction:
             Use the Task below and the Input given to write a Response that can solve the following Task:

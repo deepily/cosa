@@ -5,6 +5,7 @@ from cosa.app.configuration_manager import ConfigurationManager
 from cosa.utils.util_stopwatch import Stopwatch
 
 import lancedb
+from typing import Any
 
 
 # def singleton( cls ):
@@ -24,8 +25,29 @@ import lancedb
 #     return wrapper
 
 class QuestionEmbeddingsTable():
+    """
+    Manages question embeddings storage in LanceDB.
     
-    def __init__( self, debug=False, verbose=False, *args, **kwargs ):
+    Caches embeddings for questions to avoid regenerating them.
+    Supports embedding lookup and storage.
+    """
+    def __init__( self, debug: bool=False, verbose: bool=False, *args, **kwargs ) -> None:
+        """
+        Initialize the question embeddings table.
+        
+        Requires:
+            - GIB_CONFIG_MGR_CLI_ARGS environment variable is set or defaults available
+            - Database path is valid in configuration
+            
+        Ensures:
+            - Opens connection to LanceDB
+            - Opens question_embeddings_tbl
+            - Prints table row count
+            
+        Raises:
+            - FileNotFoundError if database path invalid
+            - lancedb errors propagated
+        """
         
         self.debug       = debug
         self.verbose     = verbose
@@ -39,15 +61,21 @@ class QuestionEmbeddingsTable():
         
         print( f"Opened question_embeddings_tbl w/ [{self._question_embeddings_tbl.count_rows()}] rows" )
         
-    def has( self, question ):
+    def has( self, question: str ) -> bool:
         """
-        checks if a question exists in the question embeddings table.
-
-        Parameters:
-            question (str): The question to check for.
-
-        Returns:
-            bool: True if the question exists, False otherwise.
+        Check if a question exists in the embeddings table.
+        
+        Requires:
+            - question is a non-empty string
+            - Table is initialized
+            
+        Ensures:
+            - Returns True if question exists in table
+            - Returns False if question not found
+            - Performs exact string match
+            
+        Raises:
+            - None
         """
         if self.debug: timer = Stopwatch( msg=f"has( '{question}' )" )
         du.print_banner( f"[{question}]" )
@@ -56,17 +84,22 @@ class QuestionEmbeddingsTable():
         
         return len( synonyms ) > 0
     
-    def get_embedding( self, question ):
+    def get_embedding( self, question: str ) -> list[float]:
         """
         Get the embedding for the given question string.
         
-        NOTE: If it's not found in the table, then it generates the embedding, but does not add it to the table.
-
-        Parameters:
-            question (str): The input question to get the embedding for.
-
-        Returns:
-            embedding: The embedding for the given question.
+        Requires:
+            - question is a non-empty string
+            - Table is initialized
+            
+        Ensures:
+            - Returns embedding from table if found
+            - Generates new embedding if not in table
+            - Does not add generated embedding to table
+            - Returns list of 1536 floats
+            
+        Raises:
+            - None (handles exceptions internally)
         """
         if self.debug: timer = Stopwatch( msg=f"get_embedding( '{question}' )", silent=True )
         try:
@@ -81,8 +114,22 @@ class QuestionEmbeddingsTable():
         else:
             return rows_returned[ 0 ][ "embedding"]
         
-    def add_embedding( self, question, embedding ):
+    def add_embedding( self, question: str, embedding: list[float] ) -> None:
+        """
+        Add a question and its embedding to the table.
         
+        Requires:
+            - question is a non-empty string
+            - embedding is a list of 1536 floats
+            - Table is initialized
+            
+        Ensures:
+            - Adds row to table with question and embedding
+            - Handles LanceDB errors gracefully
+            
+        Raises:
+            - None (catches and logs errors)
+        """
         new_row = [ { "question": question, "embedding": embedding } ]
         # Lance DB fails when a database is accessed via samba mount on OS X
         try:

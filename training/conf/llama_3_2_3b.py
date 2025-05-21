@@ -35,7 +35,9 @@ memory requirements, and architectural characteristics that differ from other mo
 the collection.
 """
 
-fine_tune_config = {
+from typing import Union, Callable
+
+fine_tune_config: dict[str, Union[float, int, str]] = {
     "sample_size": 1.0,
     "batch_size": 6,
     "gradient_accumulation_steps": 4,
@@ -44,7 +46,7 @@ fine_tune_config = {
     "device_map": "auto"
 }
 
-lora_config = {
+lora_config: dict[str, Union[int, float, str, list[str]]] = {
     "lora_alpha": 16,
     "lora_dropout": 0.05,
     "r": 64,
@@ -53,7 +55,7 @@ lora_config = {
     "target_modules": ["k_proj", "q_proj", "v_proj", "o_proj", "gate_proj", "down_proj", "up_proj"]
 }
 
-tokenizer_config = {
+tokenizer_config: dict[str, Union[str, int, dict[str, str]]] = {
     "pad_token": "<|finetune_right_pad_id|>",
     "pad_token_id": 128004,
     "padding_side": {
@@ -62,7 +64,7 @@ tokenizer_config = {
     }
 }
 
-model_config = {
+model_config: dict[str, Union[int, str, Callable[[str], str]]] = {
     "max_seq_length": 683,
     "prompt_template": """<s>[INST]{instruction}
 

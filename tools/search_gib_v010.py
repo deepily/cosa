@@ -5,16 +5,17 @@ Purpose: provide a simple vendor-neutral interface to the KagiSearch and/or othe
 """
 
 from cosa.tools.search_kagi import KagiSearch
-from cosa.agents.raw_output_formatter import RawOutputFormatter
+from cosa.agents.v010.raw_output_formatter import RawOutputFormatter
 
 import cosa.utils.util as du
-from typing import Optional, Union, Any, dict
+from typing import Optional, Union, Any
 
 class GibSearch:
     """
-    Vendor-neutral wrapper for web search functionality.
+    Vendor-neutral wrapper for web search functionality (v010).
     
     Provides a simple interface to KagiSearch and potentially other search providers.
+    Uses v010 version of RawOutputFormatter.
     """
     def __init__( self, query: Optional[str]=None, url: Optional[str]=None, debug: bool=False, verbose: bool=False ) -> None:
         """
@@ -96,7 +97,5 @@ if __name__ == '__main__':
     print( results )
     
     formatter = RawOutputFormatter( query, results, routing_command="agent router go to weather", debug=False, verbose=False )
-    output    = formatter.format_output()
+    output    = formatter.run_formatter()
     print( output )
-    
-    

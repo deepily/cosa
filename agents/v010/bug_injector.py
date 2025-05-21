@@ -1,0 +1,195 @@
+from typing import Any
+
+import cosa.utils.util as du
+import cosa.utils.util_xml as dux
+
+from cosa.agents.v010.agent_base import AgentBase
+from cosa.agents.v010.llm_client_factory import LlmClientFactory
+
+class BugInjector( AgentBase ):
+    """
+    Agent that intentionally injects bugs into code for testing purposes.
+    
+    This agent uses an LLM to intelligently modify working code by introducing
+    bugs that would realistically occur during development.
+    """
+    
+    def __init__( self, code: list[str], example: str="", debug: bool=True, verbose: bool=True ) -> None:
+        """
+        Initialize a bug injector with code to modify.
+        
+        Requires:
+            - code is a non-empty list of code lines
+            - routing command 'agent router go to bug injector' exists in config
+            
+        Ensures:
+            - Initializes with bug injector routing command
+            - Sets up prompt_response_dict with provided code and example
+            - Generates initial prompt for bug injection
+            
+        Raises:
+            - KeyError if bug injector config is missing
+        """
+        
+        super().__init__( df_path_key=None, debug=debug, verbose=verbose, routing_command="agent router go to bug injector" )
+        
+        self.prompt_response_dict   = {
+            "code"   : code,
+            "example": example
+        }
+        self.prompt                 = self._get_prompt()
+        
+    def _get_prompt( self ) -> str:
+        """
+        Generate prompt for bug injection with line numbers.
+        
+        Requires:
+            - self.prompt_response_dict contains 'code' list
+            - self.prompt_template is loaded from config
+            
+        Ensures:
+            - Returns formatted prompt with numbered code lines
+            - Code is properly formatted for LLM processing
+            
+        Raises:
+            - None
+        """
+        
+        code_with_line_numbers = du.get_source_code_with_line_numbers( self.prompt_response_dict[ "code" ].copy(), join_str="\n" )
+        
+        return self.prompt_template.format( code_with_line_numbers=code_with_line_numbers )
+    
+    def run_prompt( self, **kwargs ) -> dict[str, Any]:
+        """
+        Execute bug injection prompt and modify code.
+        
+        Requires:
+            - self.prompt is set with valid bug injection prompt
+            - LLM response contains 'line-number' and 'bug' XML tags
+            
+        Ensures:
+            - Returns updated prompt_response_dict with modified code
+            - Injects bug at specified line number if valid
+            - Prepends blank line to align with 1-based line numbers
+            - Prints debug info if debug=True
+            
+        Raises:
+            - None (invalid responses are handled gracefully)
+        """
+        
+        if self.debug: print( "BugInjector.run_prompt() called..." )
+        
+        factory = LlmClientFactory()
+        llm = factory.get_client( self.model_name, debug=self.debug, verbose=self.verbose )
+        response = llm.run( self.prompt )
+        
+        line_number = int( dux.get_value_by_xml_tag_name( response, "line-number", default_value="-1" ) )
+        bug         = dux.get_value_by_xml_tag_name( response, "bug", default_value="" )
+        
+        if line_number == -1:
+            du.print_banner( f"Invalid response from [{self.model_name}]", expletive=True )
+            print( response )
+        elif line_number > len( self.prompt_response_dict[ "code" ] ):
+            du.print_banner( f"Invalid response from [{self.model_name}]", expletive=True )
+            print( f"Line number [{line_number}] out of bounds, code[] length is [{len(self.prompt_response_dict[ 'code' ])}]" )
+            print( response )
+        elif line_number == 0:
+            du.print_banner( f"Invalid response from [{self.model_name}]", expletive=True )
+            print( f"Line number [{line_number}] is invalid, line numbers SHOULD start at 1" )
+            print( response )
+        else:
+            if self.debug:
+                du.print_banner( "BEFORE: untouched code", prepend_nl=True, end="\n" )
+                du.print_list( self.prompt_response_dict[ "code" ] )
+                
+            if self.debug: print( f"Bug generated for line_number: [{line_number}], bug: [{bug}]" )
+            # prepend a blank line to the code, so that the line numbers align with the line numbers in the prompt
+            self.prompt_response_dict[ "code" ] = [ "" ] + self.prompt_response_dict[ "code" ]
+            # todo: do i need to handle possibly mangled preceding white space? if so see: https://chat.openai.com/c/59098430-c164-482e-a82e-01d6c6769978
+            self.prompt_response_dict[ "code" ][ line_number ] = bug
+
+        if self.debug:
+            du.print_banner( "AFTER: updated code", prepend_nl=True, end="\n" )
+            du.print_list( self.prompt_response_dict[ "code" ] )
+            
+        return self.prompt_response_dict
+    
+    def restore_from_serialized_state( self, file_path: str ) -> None:
+        """
+        Restore bug injector state from JSON file.
+        
+        Requires:
+            - file_path points to valid JSON file
+            
+        Ensures:
+            - Raises NotImplementedError (not implemented)
+            
+        Raises:
+            - NotImplementedError always
+        """
+        
+        raise NotImplementedError( "BugInjector.restore_from_serialized_state() not implemented" )
+
+if __name__ == "__main__":
+    
+    # Test code examples to inject bugs into
+    test_cases = [
+        {
+            "name": "Simple function",
+            "code": [
+                "def greet(name):",
+                "    return f'Hello, {name}!'",
+                "",
+                "result = greet('World')",
+                "print(result)"
+            ],
+            "example": "result = greet('World')"
+        },
+        {
+            "name": "Math calculation",
+            "code": [
+                "def calculate_area(radius):",
+                "    import math",
+                "    area = math.pi * radius ** 2",
+                "    return area",
+                "",
+                "circle_area = calculate_area(5)",
+                "print(f'Area: {circle_area}')"
+            ],
+            "example": "circle_area = calculate_area(5)"
+        }
+    ]
+    
+    for test_case in test_cases:
+        print(f"\n=== Testing Bug Injection: {test_case['name']} ===")
+        
+        # Initialize bug injector
+        bug_injector = BugInjector(
+            code=test_case["code"].copy(),  # Use copy to preserve original
+            example=test_case["example"],
+            debug=True,
+            verbose=True
+        )
+        
+        # Show original code
+        print("\nOriginal code:")
+        bug_injector.print_code()
+        
+        # Run bug injection
+        print("\nInjecting bug...")
+        response_dict = bug_injector.run_prompt()
+        
+        # Show code with injected bug
+        print("\nCode with injected bug:")
+        bug_injector.print_code()
+        
+        # Try to run the buggy code
+        print("\nAttempting to run buggy code:")
+        code_response = bug_injector.run_code()
+        
+        if code_response["success"]:
+            print(f"Output: {code_response['output']}")
+        else:
+            print(f"Error (as expected): {code_response['output']}")
+        
+        print("-" * 50)

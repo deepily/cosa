@@ -1,6 +1,7 @@
 import json
 import re
 from collections import defaultdict
+from typing import Optional, Union, tuple, dict, Any
 
 import openai
 
@@ -47,10 +48,35 @@ modes_to_methods_dict = {
     # trans_mode_run_prompt        : "do_run_prompt",
 }
 class MultiModalMunger:
+    """
+    Process and munge multimodal transcriptions based on various modes.
+    
+    This class handles different types of transcription processing including
+    text, email, code, commands, and contact information. It supports both
+    string matching and AI-based matching for command recognition.
+    """
 
-    def __init__( self, raw_transcription, prefix="", prompt_key="generic", config_path="conf/modes-vox.json",
-                  use_string_matching=True, use_ai_matching=True, debug=False, verbose=False, last_response=None, config_mgr=None ):
-                  # cmd_llm_name=None, cmd_llm_in_memory=None, cmd_llm_tokenizer=None, cmd_prompt_template=None, cmd_llm_device=None, ):
+    def __init__( self, raw_transcription: str, prefix: str="", prompt_key: str="generic", config_path: str="conf/modes-vox.json",
+                  use_string_matching: bool=True, use_ai_matching: bool=True, debug: bool=False, verbose: bool=False, 
+                  last_response: Optional[dict[str, Any]]=None, config_mgr: Optional[ConfigurationManager]=None ) -> None:
+        """
+        Initialize the multimodal transcription munger.
+        
+        Requires:
+            - raw_transcription is a non-empty string
+            - prompt_key exists in prompt-dictionary.map if provided
+            - Various configuration files exist (translation-dictionary.map, etc.)
+            
+        Ensures:
+            - Loads configuration dictionaries from files
+            - Parses raw transcription into transcription and mode
+            - Sets up command strings and class dictionaries
+            - Initializes results field
+            
+        Raises:
+            - FileNotFoundError if configuration files missing
+            - KeyError if prompt_key not found in prompt dictionary
+        """
 
         self.debug                  = debug
         self.verbose                = verbose
@@ -100,7 +126,19 @@ class MultiModalMunger:
         self.mode          = parsed_fields[ 1 ]
         
         
-    def __str__( self ):
+    def __str__( self ) -> str:
+        """
+        Return string representation of the munger state.
+        
+        Requires:
+            - Object attributes are initialized
+            
+        Ensures:
+            - Returns formatted string with all major attributes
+            
+        Raises:
+            - None
+        """
 
         summary = """
                        Mode: [{}]
@@ -110,7 +148,20 @@ class MultiModalMunger:
                     Results: [{}]""".format( self.mode, self.prefix, self.raw_transcription, self.transcription, self.results )
         return summary
 
-    def get_jsons( self ):
+    def get_jsons( self ) -> str:
+        """
+        Get JSON representation of the munger state.
+        
+        Requires:
+            - All required attributes are initialized
+            
+        Ensures:
+            - Returns valid JSON string with munger state
+            - Includes mode, prefix, transcriptions, and results
+            
+        Raises:
+            - JSONEncodeError if attributes not serializable
+        """
         
         # instantiate dictionary and convert to string
         munger_dict = { "mode": self.mode, "prefix": self.prefix, "raw_transcription": self.raw_transcription, "transcription": self.transcription, "results": self.results }
@@ -118,7 +169,20 @@ class MultiModalMunger:
         
         return json_str
         
-    def _get_methods_to_modes_dict( self, modes_to_methods_dict ):
+    def _get_methods_to_modes_dict( self, modes_to_methods_dict: dict[str, str] ) -> dict[str, str]:
+        """
+        Create reverse mapping from methods to modes.
+        
+        Requires:
+            - modes_to_methods_dict is a valid dictionary
+            
+        Ensures:
+            - Returns dictionary mapping method names to mode names
+            - Each method maps to exactly one mode
+            
+        Raises:
+            - None
+        """
         
         methods_to_modes_dict = { }
         
@@ -126,7 +190,22 @@ class MultiModalMunger:
             methods_to_modes_dict[ method ] = mode
         
         return methods_to_modes_dict
-    def parse( self, raw_transcription ):
+    def parse( self, raw_transcription: str ) -> tuple[str, str]:
+        """
+        Parse raw transcription to determine mode and process accordingly.
+        
+        Requires:
+            - raw_transcription is a non-empty string
+            - Mode-to-method mappings are initialized
+            
+        Ensures:
+            - Returns tuple of (processed_transcription, mode)
+            - Handles voice command parsing when appropriate
+            - Applies mode-specific processing
+            
+        Raises:
+            - AttributeError if method not found for mode
+        """
         
         # ¡OJO! super special ad hoc prefix cleanup due to the use of 'multi'... please don't do this often!
         raw_transcription = self._adhoc_prefix_cleanup( raw_transcription )
@@ -213,7 +292,23 @@ class MultiModalMunger:
         
         return transcription, mode
         
-    def _handle_vox_command_parsing( self, raw_transcription ):
+    def _handle_vox_command_parsing( self, raw_transcription: str ) -> tuple[str, str]:
+        """
+        Handle voice command parsing with string and AI matching.
+        
+        Requires:
+            - raw_transcription is a string
+            - Command matching settings are configured
+            
+        Ensures:
+            - Returns tuple of (transcription, mode)
+            - Attempts string matching first if enabled
+            - Falls back to AI matching if enabled
+            - Sets self.results with command dictionary
+            
+        Raises:
+            - None
+        """
     
         transcription, mode = self.munge_vox_cmd_browser( raw_transcription, trans_mode_vox_cmd_browser )
 
@@ -235,7 +330,21 @@ class MultiModalMunger:
 
         return transcription, mode
     
-    def _adhoc_prefix_cleanup( self, raw_transcription ):
+    def _adhoc_prefix_cleanup( self, raw_transcription: str ) -> str:
+        """
+        Clean up common transcription errors in prefixes.
+        
+        Requires:
+            - raw_transcription is a string
+            
+        Ensures:
+            - Returns cleaned transcription
+            - Fixes multimodal variations
+            - Fixes toggle variations
+            
+        Raises:
+            - None
+        """
         
         # Find the first instance of "multi________" and replace it with "multimodal".
         multimodal_regex  = re.compile( "multi([ -]){0,1}mod[ae]l", re.IGNORECASE )
@@ -246,14 +355,41 @@ class MultiModalMunger:
         
         return raw_transcription
     
-    def _remove_protocols( self, words ):
+    def _remove_protocols( self, words: str ) -> str:
+        """
+        Remove URL protocols from text.
+        
+        Requires:
+            - words is a string
+            
+        Ensures:
+            - Returns text with http:// and https:// removed
+            - Only removes first occurrence
+            
+        Raises:
+            - None
+        """
         
         multimodal_regex = re.compile( "http([s]){0,1}://", re.IGNORECASE )
         words = multimodal_regex.sub( "", words, 1 )
         
         return words
     
-    def _remove_spaces_around_punctuation( self, prose ):
+    def _remove_spaces_around_punctuation( self, prose: str ) -> str:
+        """
+        Remove excessive spaces around punctuation marks.
+        
+        Requires:
+            - prose is a string
+            
+        Ensures:
+            - Returns text with normalized punctuation spacing
+            - Handles various punctuation marks
+            - Removes double punctuation
+            
+        Raises:
+            - None
+        """
     
         # Remove extra spaces.
         prose = prose.replace( " / ", "/" )
@@ -282,21 +418,56 @@ class MultiModalMunger:
         
         return prose
     
-    def _remove_dashes_from_single_letters_within_word( self, word ):
+    def _remove_dashes_from_single_letters_within_word( self, word: str ) -> str:
         """
-        Function to remove dashes between single letters in a word, while leaving hyphenated words unchanged.
+        Remove dashes between single letters in a word.
+        
+        Requires:
+            - word is a string
+            
+        Ensures:
+            - Returns word with dashes removed between single letters
+            - Preserves hyphens in compound words
+            
+        Raises:
+            - None
         """
         return re.sub(
             r'\b(\w)(-\w)+\b', lambda m: ''.join( [ char for char in m.group( 0 ) if char.isalpha() ] ), word
        )
     
-    def _remove_dashed_spellings( self, sentence ):
+    def _remove_dashed_spellings( self, sentence: str ) -> str:
         """
-        Function to remove dashes between single letters in a sentence, while leaving hyphenated words unchanged.
+        Remove dashes between single letters throughout a sentence.
+        
+        Requires:
+            - sentence is a string
+            
+        Ensures:
+            - Returns sentence with dashed spellings cleaned
+            - Applies to all words in the sentence
+            - Preserves hyphenated compound words
+            
+        Raises:
+            - None
         """
         return " ".join( [ self._remove_dashes_from_single_letters_within_word( word ) for word in sentence.split( " " ) ] )
     
-    def _collapse_spaces_around_punctuation( self, code ):
+    def _collapse_spaces_around_punctuation( self, code: str ) -> str:
+        """
+        Collapse spaces around punctuation in code.
+        
+        Requires:
+            - code is a string
+            
+        Ensures:
+            - Returns code with normalized spacing
+            - Handles code-specific punctuation patterns
+            - Preserves syntactically required spaces
+            
+        Raises:
+            - None
+        """
         
         code = code.replace( " _ ", "_" )
         code = code.replace( " ,", ", " )
@@ -311,12 +482,43 @@ class MultiModalMunger:
         
         return code
     
-    def munge_text_raw( self, raw_transcription, mode ):
+    def munge_text_raw( self, raw_transcription: str, mode: str ) -> tuple[str, str]:
+        """
+        Process raw text transcription minimally.
+        
+        Requires:
+            - raw_transcription is a string
+            - mode is a valid mode string
+            
+        Ensures:
+            - Returns tuple of (transcription, mode)
+            - Removes dashed spellings only
+            
+        Raises:
+            - None
+        """
         
         transcription = self._remove_dashed_spellings( raw_transcription )
         return transcription, mode
     
-    def munge_text_email( self, raw_transcription, mode ):
+    def munge_text_email( self, raw_transcription: str, mode: str ) -> tuple[str, str]:
+        """
+        Process text for email addresses.
+        
+        Requires:
+            - raw_transcription is a string
+            - mode is a valid mode string
+            - Domain and number dictionaries are loaded
+            
+        Ensures:
+            - Returns tuple of (email, mode)
+            - Converts to lowercase
+            - Handles domain names and numbers
+            - Removes spaces and extra punctuation
+            
+        Raises:
+            - None
+        """
     
         # Add special considerations for the erratic nature of email transcriptions when received raw from the whisper.
         # prose = raw_transcription.replace( ".", " dot " )
@@ -360,7 +562,23 @@ class MultiModalMunger:
         
         return email, mode
     
-    def munge_vox_cmd_browser( self, raw_transcription, mode ):
+    def munge_vox_cmd_browser( self, raw_transcription: str, mode: str ) -> tuple[str, str]:
+        """
+        Process voice commands for browser control.
+        
+        Requires:
+            - raw_transcription is a string
+            - mode is a valid mode string
+            
+        Ensures:
+            - Returns tuple of (command, mode)
+            - Handles URLs and domain names
+            - Removes unnecessary punctuation
+            - Normalizes spacing
+            
+        Raises:
+            - None
+        """
         
         command = raw_transcription.lower()
         command = self._remove_dashed_spellings( command )
@@ -386,7 +604,22 @@ class MultiModalMunger:
         
         return command, mode
     
-    def munge_vox_cmd_agent( self, raw_transcription, mode ):
+    def munge_vox_cmd_agent( self, raw_transcription: str, mode: str ) -> tuple[str, str]:
+        """
+        Process voice commands for agent control.
+        
+        Requires:
+            - raw_transcription is a string
+            - mode is a valid mode string
+            
+        Ensures:
+            - Returns tuple of (transcription, mode)
+            - Handles underscore replacements
+            - Removes dashed spellings
+            
+        Raises:
+            - None
+        """
         
         du.print_banner( "AGENT MODE for [{}]".format( raw_transcription ), end="\n" )
         print( "TODO: Implement munge_vox_cmd_agent()... For now this is just a simple passthrough..." )
@@ -397,7 +630,24 @@ class MultiModalMunger:
         
         return transcription, mode
     
-    def munge_text_punctuation( self, raw_transcription, mode ):
+    def munge_text_punctuation( self, raw_transcription: str, mode: str ) -> tuple[str, str]:
+        """
+        Process text with proper punctuation.
+        
+        Requires:
+            - raw_transcription is a string
+            - mode is a valid mode string
+            - Punctuation dictionary is loaded
+            
+        Ensures:
+            - Returns tuple of (prose, mode)
+            - Handles URL protocols
+            - Converts punctuation words to symbols
+            - Normalizes spacing
+            
+        Raises:
+            - None
+        """
     
         # print( "BEFORE raw_transcription:", raw_transcription )
         prose = raw_transcription.lower()
@@ -422,7 +672,24 @@ class MultiModalMunger:
         
         return prose, mode
     
-    def munge_text_contact( self, raw_transcription, mode, extra_words="" ):
+    def munge_text_contact( self, raw_transcription: str, mode: str, extra_words: str="" ) -> tuple[str, str]:
+        """
+        Process contact information requests.
+        
+        Requires:
+            - raw_transcription is a string
+            - mode is a valid mode string
+            - Contact info dictionary is loaded
+            
+        Ensures:
+            - Returns tuple of (raw_transcription, mode)
+            - Sets self.results with contact information
+            - Handles full address formatting
+            - Properly capitalizes names and addresses
+            
+        Raises:
+            - None
+        """
         
         # multimodal contact information ___________
         raw_transcription = raw_transcription.lower()
@@ -460,13 +727,44 @@ class MultiModalMunger:
         print( "    self.results:", self.results )
         
         return raw_transcription, mode
-    def munge_text_proofread( self, raw_transcription, mode ):
+    def munge_text_proofread( self, raw_transcription: str, mode: str ) -> tuple[str, str]:
+        """
+        Proofread text transcription.
+        
+        Requires:
+            - raw_transcription is a string
+            - mode is a valid mode string
+            
+        Ensures:
+            - Returns tuple of (transcription, mode)
+            - Currently delegates to punctuation processing
+            
+        Raises:
+            - None
+        """
     
         transcription, mode = self.munge_text_punctuation( raw_transcription, mode )
         
         return transcription, mode
     
-    def munge_python_punctuation( self, raw_transcription, mode ):
+    def munge_python_punctuation( self, raw_transcription: str, mode: str ) -> tuple[str, str]:
+        """
+        Process Python code transcription.
+        
+        Requires:
+            - raw_transcription is a string
+            - mode is a valid mode string
+            - Punctuation and number dictionaries loaded
+            
+        Ensures:
+            - Returns tuple of (code, mode)
+            - Handles Python-specific punctuation
+            - Processes numbers and digits
+            - Normalizes spacing for code
+            
+        Raises:
+            - None
+        """
     
         code = raw_transcription.lower()
         print( "BEFORE code:", code )
@@ -534,7 +832,22 @@ class MultiModalMunger:
     #
     #     return python, mode
     
-    def _extract_string_from_backticked_llm_output( self, raw_string, tag_name="python" ):
+    def _extract_string_from_backticked_llm_output( self, raw_string: str, tag_name: str="python" ) -> str:
+        """
+        Extract code from markdown-style backticks.
+        
+        Requires:
+            - raw_string is a string
+            - tag_name is a valid language identifier
+            
+        Ensures:
+            - Returns extracted code if found
+            - Returns raw_string if extraction fails
+            - Handles triple backtick markdown format
+            
+        Raises:
+            - None (catches all exceptions)
+        """
         
         try:
             return raw_string.split( "```" + tag_name )[ 1 ].split( "```" )[ 0 ].strip()
@@ -542,8 +855,24 @@ class MultiModalMunger:
             print( f"Error extracting string from ```{tag_name} ...CODE...```, returning raw_string" )
             return raw_string
     
-    def munge_sql_punctuation( self, raw_transcription, mode ):
+    def munge_sql_punctuation( self, raw_transcription: str, mode: str ) -> tuple[str, str]:
+        """
+        Apply SQL-specific punctuation transformations.
         
+        Requires:
+            - raw_transcription is a string containing SQL code
+            - mode indicates SQL-specific processing
+            - Punctuation and number dictionaries loaded
+            
+        Ensures:
+            - Returns tuple of (sql_code, mode)
+            - Converts spoken symbols to SQL syntax
+            - Processes numbers and digits
+            - Normalizes spaces and punctuation
+            
+        Raises:
+            - None (handles all input gracefully)
+        """
         code = raw_transcription.lower()
         print( "BEFORE sql:", code )
         
@@ -596,24 +925,86 @@ class MultiModalMunger:
     #
     #     return raw_transcription, mode
     
-    def is_text_proofread( self ):
+    def is_text_proofread( self ) -> bool:
+        """
+        Check if current mode is text proofreading.
         
+        Requires:
+            - self.mode is initialized
+            
+        Ensures:
+            - Returns True if mode is trans_mode_text_proofread
+            - Returns False otherwise
+            
+        Raises:
+            - None
+        """
         return self.mode == trans_mode_text_proofread
     
-    def is_ddg_search( self ):
+    def is_ddg_search( self ) -> bool:
+        """
+        Check if current mode is DuckDuckGo search.
         
+        Requires:
+            - self.mode is initialized
+            
+        Ensures:
+            - Returns True if mode is trans_mode_server_search
+            - Returns False otherwise
+            
+        Raises:
+            - None
+        """
         return self.mode == trans_mode_server_search
     
-    def is_run_prompt( self ):
+    def is_run_prompt( self ) -> bool:
+        """
+        Check if current mode is run prompt.
         
+        Requires:
+            - self.mode is initialized
+            
+        Ensures:
+            - Returns True if mode is trans_mode_run_prompt
+            - Returns False otherwise
+            
+        Raises:
+            - None
+        """
         return self.mode == trans_mode_run_prompt
     
-    def is_agent( self ):
+    def is_agent( self ) -> bool:
+        """
+        Check if current mode is voice command agent.
         
+        Requires:
+            - self.mode is initialized
+            
+        Ensures:
+            - Returns True if mode is trans_mode_vox_cmd_agent
+            - Returns False otherwise
+            
+        Raises:
+            - None
+        """
         return self.mode == trans_mode_vox_cmd_agent
     
-    def _is_match( self, transcription ):
+    def _is_match( self, transcription: str ) -> tuple[bool, dict]:
+        """
+        Check if transcription matches any known command.
         
+        Requires:
+            - transcription is a non-empty string
+            - self.command_strings is initialized
+            
+        Ensures:
+            - Returns tuple of (is_match, command_dict)
+            - Checks for exact and startswith matches
+            - Populates command_dict with match details
+            
+        Raises:
+            - None
+        """
         # set default values
         command_dict = self._get_command_dict( confidence=100.0 )
         
@@ -648,8 +1039,20 @@ class MultiModalMunger:
         
         return False, command_dict
     
-    def _get_command_dict( self, command="none", confidence=0.0, args=[ "" ], match_type="none" ):
+    def _get_command_dict( self, command: str="none", confidence: float=0.0, args: list[str]=[ "" ], match_type: str="none" ) -> dict:
+        """
+        Create a dictionary with command metadata.
         
+        Requires:
+            - All parameters have valid values
+            
+        Ensures:
+            - Returns dictionary with command metadata
+            - Contains match_type, command, confidence, args fields
+            
+        Raises:
+            - None
+        """
         command_dict = {
             "match_type": match_type,
                "command": command,
@@ -658,8 +1061,24 @@ class MultiModalMunger:
         }
         return command_dict
     
-    def _get_ai_command( self, transcription ):
+    def _get_ai_command( self, transcription: str ) -> dict:
+        """
+        Use LLM to determine command from transcription.
         
+        Requires:
+            - transcription is a non-empty string
+            - Config manager has necessary LLM settings
+            - Voice command prompt template exists
+            
+        Ensures:
+            - Returns command_dict with AI-determined command
+            - Uses LLM to parse transcription into command and args
+            - Extracts XML-formatted response
+            
+        Raises:
+            - FileNotFoundError if prompt template missing
+            - LLM errors propagated
+        """
         # Add runtime switch or configuration to allow for TGI service to be used also.
         command_dict    = self._get_command_dict( match_type="ai_matching", confidence=-1.0 )
         
@@ -681,8 +1100,23 @@ class MultiModalMunger:
         
         return command_dict
     
-    def extract_args( self, raw_text, model="NO_MODEL_SPECIFIED" ):
+    def extract_args( self, raw_text: str, model: str="NO_MODEL_SPECIFIED" ) -> list[str]:
+        """
+        Extract arguments from text using OpenAI completion.
         
+        Requires:
+            - raw_text is a string containing potential arguments
+            - model is a valid OpenAI model identifier
+            - OpenAI API key is available
+            
+        Ensures:
+            - Returns list of extracted arguments
+            - Uses deterministic temperature for consistent results
+            - Stops at newline for clean extraction
+            
+        Raises:
+            - OpenAI API errors propagated
+        """
         openai.api_key = du.get_api_key( "openai" )
         # openai.api_key = os.getenv( "FALSE_POSITIVE_API_KEY" )
         
@@ -712,8 +1146,22 @@ class MultiModalMunger:
         
         return [ response ]
         
-    def _get_command_strings( self ):
-    
+    def _get_command_strings( self ) -> list[str]:
+        """
+        Load command strings from configuration file.
+        
+        Requires:
+            - constants.js file exists at specified path
+            - File contains command definitions
+            
+        Ensures:
+            - Returns list of command strings sorted by length (longest first)
+            - Filters out non-command lines
+            - Removes quotes and formatting
+            
+        Raises:
+            - FileNotFoundError if constants.js missing
+        """
         command_strings = du.get_file_as_list( du.get_project_root() + "/src/conf/constants.js", lower_case=True, clean=True )
         vox_commands = [ ]
         
@@ -743,8 +1191,21 @@ class MultiModalMunger:
         
         return vox_commands
     
-    def _get_class_dictionary( self ):
+    def _get_class_dictionary( self ) -> dict:
+        """
+        Create dictionary mapping class IDs to command descriptions.
         
+        Requires:
+            - None
+            
+        Ensures:
+            - Returns defaultdict with command mappings
+            - Maps numeric strings to command descriptions
+            - Defaults to "unknown command" for unmapped keys
+            
+        Raises:
+            - None
+        """
         class_dictionary = defaultdict( lambda: "unknown command" )
         # class_dictionary = { }
         class_dictionary[ "0" ] =                    "go to current tab"

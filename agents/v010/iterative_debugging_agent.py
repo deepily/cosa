@@ -1,5 +1,6 @@
 import os
 import json
+from typing import Optional, Any
 
 import cosa.utils.util as du
 import cosa.utils.util_code_runner as ucr
@@ -9,8 +10,33 @@ from cosa.agents.v010.agent_base import AgentBase
 
 
 class IterativeDebuggingAgent( AgentBase ):
+    """
+    Agent that iteratively debugs code using multiple LLMs until a solution is found.
     
-    def __init__( self, error_message, path_to_code, example=None, returns=None, minimalist=True, debug=False, verbose=False ):
+    This agent attempts to fix code errors by using different language models in sequence,
+    testing the fixes until the code runs successfully or all models have been tried.
+    """
+    
+    def __init__( self, error_message: str, path_to_code: str, example: Optional[str]=None, returns: Optional[str]=None, minimalist: bool=True, debug: bool=False, verbose: bool=False ) -> None:
+        """
+        Initialize the iterative debugging agent.
+        
+        Requires:
+            - error_message is a non-empty string with the error to debug
+            - path_to_code is a valid relative path to the code file
+            - The code file exists at project_root + path_to_code
+            - Config has 'llm_model_keys_for_debugger' setting
+            
+        Ensures:
+            - Loads the available LLM models for debugging
+            - Formats the code with line numbers
+            - Sets up appropriate prompt based on minimalist mode
+            - Initializes XML response tags based on mode
+            
+        Raises:
+            - FileNotFoundError if the code file doesn't exist
+            - ConfigException if required config settings missing
+        """
         
         super().__init__( routing_command="agent router go to debugger", debug=debug, verbose=verbose )
         
@@ -34,20 +60,54 @@ class IterativeDebuggingAgent( AgentBase ):
         # this is already set in the parent class: agent base
         # self.do_not_serialize       = [ "config_mgr" ]
         
-    def _load_available_llm_specs( self ):
+    def _load_available_llm_specs( self ) -> list[dict[str, Any]]:
+        """
+        Load LLM specifications from configuration.
         
-        model_keys = self.config_mgr.get( "llm_model_keys_for_debugger", default=[ ], return_type="json" )
+        Requires:
+            - Config has 'llm_model_keys_for_debugger' as valid JSON
+            - Each key in model_keys exists in configuration as JSON
+            
+        Ensures:
+            - Returns list of LLM specification dictionaries
+            - Each spec dict contains model configuration details
+            - Prints loading status for each model
+            
+        Raises:
+            - ConfigException if required settings not found
+            - JSONDecodeError if invalid JSON in config
+        """
+        
+        model_keys = self.config_mgr.get( "llm_model_keys_for_debugger", return_type="json" )
         
         available_llms = []
         for key in model_keys:
             print( f"Loading debugger LLM: {key}... ", end="" )
-            llm_spec = self.config_mgr.get( key, default={ }, return_type="json" )
+            llm_spec = self.config_mgr.get( key )
             available_llms.append( llm_spec )
             print( llm_spec )
         
         return available_llms
     
-    def _get_prompt( self ):
+    def _get_prompt( self ) -> str:
+        """
+        Create debugging prompt based on mode.
+        
+        Requires:
+            - self.error_message is set
+            - self.formatted_code contains code with line numbers
+            - Config has 'agent_prompt_for_debugger_minimalist' if minimalist=True
+            
+        Ensures:
+            - Returns formatted prompt string
+            - If minimalist, loads minimalist template
+            - Otherwise uses existing prompt_template
+            - Sets self.prompt_template for non-minimalist first call
+            
+        Raises:
+            - FileNotFoundError if prompt template file missing
+            - ConfigException if required config not found
+        """
         
         if self.debug: print( f"IterativeDebuggingAgent._get_prompt() minimalist: {self.minimalist}", end="\n" )
         if self.minimalist:
@@ -58,7 +118,26 @@ class IterativeDebuggingAgent( AgentBase ):
         else:
             return self.prompt_template.format( error_message=self.error_message, formatted_code=self.formatted_code )
     
-    def run_prompts( self, debug=None ):
+    def run_prompts( self, debug: Optional[bool]=None ) -> dict[str, Any]:
+        """
+        Run debugging prompts through available LLMs until success.
+        
+        Requires:
+            - self.available_llms has at least one LLM spec
+            - Each LLM spec has required 'model' field
+            - self.prompt is set
+            
+        Ensures:
+            - Attempts debugging with each LLM in sequence
+            - Updates self.successfully_debugged on success
+            - Updates self.code only if debugging succeeds
+            - Returns final code_response_dict
+            - Serializes each attempt to log
+            
+        Raises:
+            - LLM-specific exceptions from run_prompt
+            - RuntimeError if code execution fails
+        """
         
         if debug is not None: self.debug = debug
         
@@ -72,21 +151,22 @@ class IterativeDebuggingAgent( AgentBase ):
             if self.successfully_debugged:
                 break
                 
-            model_name     = llm[ "model" ]
-            short_name     = llm[ "short_name" ]
-            temperature    = llm[ "temperature"    ] if "temperature"    in llm else 0.50
-            top_p          = llm[ "top_p"          ] if "top_p"          in llm else 0.25
-            top_k          = llm[ "top_k"          ] if "top_k"          in llm else 10
-            max_new_tokens = llm[ "max_new_tokens" ] if "max_new_tokens" in llm else 1024
-            stop_sequences = llm[ "stop_sequences" ] if "stop_sequences" in llm else []
+            # model_id       = llm[ "model_id"       ] if "model_id"       in llm else model_name.split("/")[-1]
+            # temperature    = llm[ "temperature"    ] if "temperature"    in llm else 0.50
+            # top_p          = llm[ "top_p"          ] if "top_p"          in llm else 0.25
+            # top_k          = llm[ "top_k"          ] if "top_k"          in llm else 10
+            # max_new_tokens = llm[ "max_new_tokens" ] if "max_new_tokens" in llm else 1024
+            # stop_sequences = llm[ "stop_sequences" ] if "stop_sequences" in llm else []
             
-            du.print_banner( f"{run_descriptor}: Executing debugging prompt using model [{model_name}] and short name [{short_name}]...", end="\n" )
+            du.print_banner( f"{run_descriptor}: Executing debugging prompt using model [{llm}]...", end="\n" )
             
-            prompt_response_dict = self.run_prompt( model_name=model_name, temperature=temperature, top_p=top_p, top_k=top_k, max_new_tokens=max_new_tokens, stop_sequences=stop_sequences )
+            # prompt_response_dict = self.run_prompt( model_name=model_name, temperature=temperature, top_p=top_p, top_k=top_k, max_new_tokens=max_new_tokens, stop_sequences=stop_sequences )
+            prompt_response_dict = self.run_prompt()
             
-            # Serialize the prompt response
-            topic = "code-debugging-minimalist" if self.minimalist else "code-debugging"
-            self.serialize_to_json( topic, du.get_current_datetime_raw(), run_descriptor=run_descriptor, short_name=short_name )
+            # TODO: debug and reinstate if/when needed in the future
+            #  Serialize the prompt response
+            # topic = "code-debugging-minimalist" if self.minimalist else "code-debugging"
+            # self.serialize_to_json( topic, du.get_current_datetime_raw(), run_descriptor=run_descriptor, model_id=model_id )
             
             du.print_banner( f"{run_descriptor}: Prompt response dictionary" )
             print( json.dumps( prompt_response_dict, indent=4 ) )
@@ -126,7 +206,25 @@ class IterativeDebuggingAgent( AgentBase ):
             
         return code_response_dict
     
-    def _patch_code_in_response_dict( self, prompt_response_dict ):
+    def _patch_code_in_response_dict( self, prompt_response_dict: dict[str, Any] ) -> None:
+        """
+        Patch a single line of code in the response dictionary.
+        
+        Requires:
+            - prompt_response_dict has 'line-number' as string int
+            - prompt_response_dict has 'one-line-of-code' field
+            - self.path_to_code is a valid file path
+            
+        Ensures:
+            - Updates self.prompt_response_dict with full code
+            - Replaces specified line with patched code
+            - Removes XML escapes from the patched line
+            - Updates 'code' field in self.prompt_response_dict
+            
+        Raises:
+            - KeyError if required fields missing from dict
+            - ValueError if line-number is not valid integer
+        """
         
         print( "Patching code in response dictionary..." )
         formatted_code = du.get_file_as_source_code_with_line_numbers( self.project_root + self.path_to_code )
@@ -147,11 +245,42 @@ class IterativeDebuggingAgent( AgentBase ):
         self.prompt_response_dict[ "code" ][ line_number ] = line_of_code
         if self.debug: self.print_code( msg="AFTER patching code in response dictionary" )
 
-    def was_successfully_debugged( self ):
+    def was_successfully_debugged( self ) -> bool:
+        """
+        Check if debugging attempt was successful.
+        
+        Requires:
+            - self.successfully_debugged is initialized
+            
+        Ensures:
+            - Returns True if code was successfully debugged
+            - Returns False otherwise
+            
+        Raises:
+            - None
+        """
         
         return self.successfully_debugged
     
-    def serialize_to_json( self, topic, now, run_descriptor="Run 1 of 1", short_name="phind34b" ):
+    def serialize_to_json( self, topic: str, now: Any, run_descriptor: str="Run 1 of 1", model_id: str="phi_4" ) -> None:
+        """
+        Serialize agent state to JSON file.
+        
+        Requires:
+            - topic is a non-empty string
+            - now has year, month, day, hour, minute, second attributes
+            - /io/log/ directory exists at project root
+            
+        Ensures:
+            - Saves agent state to JSON file
+            - Excludes fields in self.do_not_serialize
+            - Creates filename with timestamp and descriptor
+            - Sets file permissions to 0o666
+            
+        Raises:
+            - OSError if file cannot be written
+            - AttributeError if now lacks required attributes
+        """
 
         # Convert object's state to a dictionary
         state_dict = self.__dict__
@@ -159,10 +288,9 @@ class IterativeDebuggingAgent( AgentBase ):
         # Convert object's state to a dictionary, omitting specified fields
         state_dict = { key: value for key, value in self.__dict__.items() if key not in self.do_not_serialize }
 
-        # Constructing the filename, format: "topic-run-on-year-month-day-at-hour-minute-run-1-of-3-using-llm-short_name-step-N-of-M.json"
+        # Constructing the filename, format: "topic-run-on-year-month-day-at-hour-minute-run-1-of-3-using-llm-model_id-step-N-of-M.json"
         run_descriptor = run_descriptor.replace( " ", "-" ).lower()
-        short_name     = short_name.replace( " ", "-" ).lower()
-        file_path       = f"{du.get_project_root()}/io/log/{topic}-on-{now.year}-{now.month}-{now.day}-at-{now.hour}-{now.minute}-{now.second}-{run_descriptor}-using-llm-{short_name}.json"
+        file_path       = f"{du.get_project_root()}/io/log/{topic}-on-{now.year}-{now.month}-{now.day}-at-{now.hour}-{now.minute}-{now.second}-{run_descriptor}-using-llm-{model_id}.json"
 
         # Serialize and save to file
         with open( file_path, 'w' ) as file:
@@ -172,7 +300,25 @@ class IterativeDebuggingAgent( AgentBase ):
         print( f"Serialized to {file_path}" )
     
     @staticmethod
-    def restore_from_serialized_state( file_path ):
+    def restore_from_serialized_state( file_path: str ) -> 'IterativeDebuggingAgent':
+        """
+        Restore agent instance from serialized JSON file.
+        
+        Requires:
+            - file_path is a valid path to existing JSON file
+            - JSON contains required fields: error_message, path_to_code
+            - JSON structure matches IterativeDebuggingAgent state
+            
+        Ensures:
+            - Returns new IterativeDebuggingAgent instance
+            - Restores all attributes from JSON
+            - Skips reinitializing constructor parameters
+            
+        Raises:
+            - FileNotFoundError if file doesn't exist
+            - JSONDecodeError if invalid JSON
+            - KeyError if required fields missing
+        """
         
         print( f"Restoring from {file_path}..." )
         
@@ -195,7 +341,21 @@ class IterativeDebuggingAgent( AgentBase ):
         
         return restored_agent
     
-    def is_code_runnable( self ):
+    def is_code_runnable( self ) -> bool:
+        """
+        Check if there is code available to run.
+        
+        Requires:
+            - self.prompt_response_dict is initialized
+            
+        Ensures:
+            - Returns True if code field exists and is non-empty
+            - Returns False otherwise
+            - Prints diagnostic message if no code found
+            
+        Raises:
+            - None
+        """
         
         if self.prompt_response_dict is not None and len( self.prompt_response_dict[ "code" ] ) > 0:
             return True
@@ -205,39 +365,60 @@ class IterativeDebuggingAgent( AgentBase ):
         
 if __name__ == "__main__":
     
-    error_message = """
-    File "/Users/rruiz/Projects/projects-sshfs/genie-in-the-box/io/code.py", line 11
-    birthdays = df[(df.event_type == 'birthday') && (df.start_date <= week_from_today) && (df.end_date >= today)]
+    # Create a simple error scenario to test the debugging agent
+    import os
+    from cosa.app.configuration_manager import ConfigurationManager
+    
+    config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+    code_file_path = config_mgr.get("code_execution_file_path")
+    test_file_path = du.get_project_root() + code_file_path
+    
+    error_message = f"""
+    File "{test_file_path}", line 3
+        print("Hello World"
+             ^
+    SyntaxError: unexpected EOF while parsing
     """
-    #     error_message = """
-    #     Traceback (most recent call last):
-    #   File "/Users/rruiz/Projects/projects-sshfs/genie-in-the-box/io/code.py", line 20, in <module>
-    #     solution = get_concerts_this_week( df )
-    #   File "/Users/rruiz/Projects/projects-sshfs/genie-in-the-box/io/code.py", line 14, in get_concerts_this_week
-    #     mask = (df['event_type'] == 'concert') & (df['start_date'] >= start_date) & (df['start_date'] < end_date)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/ops/common.py", line 81, in new_method
-    #     return method(self, other)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/arraylike.py", line 60, in __ge__
-    #     return self._cmp_method(other, operator.ge)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/series.py", line 6096, in _cmp_method
-    #     res_values = ops.comparison_op(lvalues, rvalues, op)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/ops/array_ops.py", line 279, in comparison_op
-    #     res_values = op(lvalues, rvalues)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/ops/common.py", line 81, in new_method
-    #     return method(self, other)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/arraylike.py", line 60, in __ge__
-    #     return self._cmp_method(other, operator.ge)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/arrays/datetimelike.py", line 937, in _cmp_method
-    #     return invalid_comparison(self, other, op)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/ops/invalid.py", line 36, in invalid_comparison
-    #     raise TypeError(f"Invalid comparison between dtype={left.dtype} and {typ}")
-    # TypeError: Invalid comparison between dtype=datetime64[ns] and date"""
-
-    source_code_path = "/io/code.py"
-    example          = "solution = check_birthdays(df)"
-    debugging_agent  = IterativeDebuggingAgent( error_message, source_code_path, example=example, returns="DataFrame", minimalist=True, debug=True, verbose=False )
-    # # Deserialize from file
-    # # debugging_agent = IterativeDebuggingAgent.restore_from_serialized_state( du.get_project_root() + "/io/log/code-debugging-on-2024-2-28-at-14-28-run-1-of-3-using-llm-phind34b-step-1-of-1.json" )
-    debugging_agent.run_prompts()
-    # debugging_agent.run_code()
+    
+    # Create a test file with a deliberate syntax error
+    test_code = '''
+    def greeting():
+        print("Hello World"
+    '''
+    
+    # Write the test code to a temporary file
+    with open(test_file_path, 'w') as f:
+        f.write(test_code)
+    
+    print("=== Testing IterativeDebuggingAgent ===")
+    print(f"Error to debug: {error_message}")
+    print(f"File path: {test_file_path}")
+    
+    # Initialize the debugging agent
+    debugging_agent = IterativeDebuggingAgent(
+        error_message=error_message,
+        path_to_code=code_file_path,
+        example="greeting()",
+        returns="None", 
+        minimalist=True,
+        debug=True,
+        verbose=True
+    )
+    
+    # Run the debugging process
+    print("\n=== Running debugging process ===")
+    result = debugging_agent.run_prompts()
+    
+    # Check if debugging was successful
+    if debugging_agent.was_successfully_debugged():
+        print("\n✅ Debugging successful!")
+        print("Fixed code:")
+        debugging_agent.print_code()
+    else:
+        print("\n❌ Debugging failed")
+        print(f"Result: {result}")
+    
+    # Clean up
+    if os.path.exists(test_file_path):
+        os.remove(test_file_path)
     

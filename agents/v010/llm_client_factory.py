@@ -1,7 +1,7 @@
 import json
 import os
 import asyncio
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Optional, Union
 
 from pydantic_ai import Agent
 
@@ -41,6 +41,21 @@ class LlmClientFactory:
     _instance: Optional['LlmClientFactory'] = None
     
     def __new__( cls, debug: bool=False, verbose: bool=False ):
+        """
+        Create or return the singleton instance of LlmClientFactory.
+        
+        Requires:
+            - Class is LlmClientFactory or a subclass
+            
+        Ensures:
+            - Only one instance of the factory exists at runtime
+            - Returns existing instance if already created
+            - Creates new instance if first call
+            - Initializes _initialized flag on new instance
+            
+        Raises:
+            - None
+        """
         if cls._instance is None:
             cls._instance = super( LlmClientFactory, cls ).__new__( cls )
             # Initialize the instance
@@ -48,6 +63,21 @@ class LlmClientFactory:
         return cls._instance
     
     def __init__( self, debug: bool=False, verbose: bool=False ):
+        """
+        Initialize the singleton factory.
+        
+        Requires:
+            - self._initialized attribute exists
+            
+        Ensures:
+            - Initializes only once (subsequent calls are no-ops)
+            - Creates ConfigurationManager instance
+            - Sets debug and verbose flags
+            - Sets _initialized to True
+            
+        Raises:
+            - ConfigException if configuration manager initialization fails
+        """
         # Only initialize once
         if self._initialized:
             return
@@ -223,6 +253,19 @@ class LlmClientFactory:
         """
         
         def __init__( self, agent: Agent, debug: bool=False ):
+            """
+            Initialize the wrapper with an async Agent.
+            
+            Requires:
+                - agent is a valid pydantic_ai Agent instance
+                
+            Ensures:
+                - Stores agent reference
+                - Sets debug flag
+                
+            Raises:
+                - TypeError if agent is not a valid Agent instance
+            """
             self.agent = agent
             self.debug = debug
         

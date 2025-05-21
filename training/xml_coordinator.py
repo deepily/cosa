@@ -2,6 +2,7 @@ import os
 import random
 import pandas as pd
 from xmlschema import XMLSchema
+from typing import Optional, Any
 
 import cosa.utils.util as du
 import cosa.utils.util_xml as dux
@@ -23,7 +24,7 @@ class XmlCoordinator:
     - Generate training/testing data splits
     """
     
-    def __init__( self, path_prefix=du.get_project_root(), tgi_url="http://172.17.0.4:3000", debug=False, verbose=False, silent=False, init_prompt_templates=True ):
+    def __init__( self, path_prefix: str=du.get_project_root(), tgi_url: str="http://172.17.0.4:3000", debug: bool=False, verbose: bool=False, silent: bool=False, init_prompt_templates: bool=True ) -> None:
         self.debug                = debug
         self.verbose              = verbose
         self.silent               = silent
@@ -44,172 +45,198 @@ class XmlCoordinator:
             self._xml_schema      = self.response_validator._xml_schema
     
     # Public methods from XmlPromptGenerator
-    def get_interjections( self, requested_length=None ):
+    def get_interjections( self, requested_length: Optional[int]=None ) -> list:
         """
         Gets a list of interjections for more natural language generation.
         
-        Args:
-            requested_length (int, optional): Number of interjections to return
+        Requires:
+            - requested_length is None or positive integer
             
-        Returns:
-            list: List of interjection phrases
+        Ensures:
+            - Returns list of interjection phrases
+            - Length matches requested_length if specified
         """
         return self.prompt_generator.get_interjections( requested_length )
     
-    def get_salutations( self, requested_length=500 ):
+    def get_salutations( self, requested_length: int=500 ) -> list:
         """
         Gets randomized salutations with computer names.
         
-        Args:
-            requested_length (int, optional): Number of salutations to return
+        Requires:
+            - requested_length is positive integer
             
-        Returns:
-            list: List of formatted salutations
+        Ensures:
+            - Returns list of formatted salutations
+            - Length matches requested_length
         """
         return self.prompt_generator.get_salutations( requested_length )
     
-    def insert_interjection( self, text, interjections=None ):
+    def insert_interjection( self, text: str, interjections: Optional[list]=None ) -> tuple[str, str]:
         """
         Inserts a random interjection into the provided text.
         
-        Args:
-            text (str): The text to modify
-            interjections (list, optional): List of interjections to choose from
+        Requires:
+            - text is a non-empty string
+            - interjections is None or list of strings
             
-        Returns:
-            tuple: (inserted_interjection, modified_text)
+        Ensures:
+            - Returns tuple with inserted interjection and modified text
+            - Modified text contains the interjection
         """
         return self.prompt_generator.insert_interjection( text, interjections )
     
-    def prepend_salutation( self, text, salutations=None ):
+    def prepend_salutation( self, text: str, salutations: Optional[list]=None ) -> tuple[str, str]:
         """
         Prepends a random salutation to the given text.
         
-        Args:
-            text (str): The text to modify
-            salutations (list, optional): List of salutations to choose from
+        Requires:
+            - text is a non-empty string
+            - salutations is None or list of strings
             
-        Returns:
-            tuple: (chosen_salutation, modified_text)
+        Ensures:
+            - Returns tuple with chosen salutation and modified text
+            - Modified text starts with the salutation
         """
         return self.prompt_generator.prepend_salutation( text, salutations )
     
-    def get_prompt_template( self, name ):
+    def get_prompt_template( self, name: str ) -> str:
         """
         Returns a formatted prompt template for the specified command type.
         
-        Args:
-            name (str): The command type ('vox command' or 'agent router')
+        Requires:
+            - name is a valid command type string
             
-        Returns:
-            str: Formatted prompt template
+        Ensures:
+            - Returns formatted prompt template
+            - Template corresponds to specified command type
             
         Raises:
-            ValueError: If an unknown prompt template name is provided
+            - ValueError if unknown template name
         """
         return self.prompt_generator.get_prompt_template( name )
     
-    def serialize_prompt( self, prompt, prompt_path ):
+    def serialize_prompt( self, prompt: str, prompt_path: str ) -> None:
         """
         Writes a prompt to a file.
         
-        Args:
-            prompt (str): The prompt to serialize
-            prompt_path (str): Path to save the prompt
+        Requires:
+            - prompt is a non-empty string
+            - prompt_path is a valid file path
+            
+        Ensures:
+            - Prompt written to specified file
+            - File exists after operation
         """
         self.prompt_generator.serialize_prompt( prompt, prompt_path )
     
-    def serialize_prompts( self, prompt_path_prefix ):
+    def serialize_prompts( self, prompt_path_prefix: str ) -> None:
         """
         Writes all prompt templates to files.
         
-        Args:
-            prompt_path_prefix (str): Directory prefix for saving prompts
+        Requires:
+            - prompt_path_prefix is a valid directory path
+            
+        Ensures:
+            - All prompt templates written to files
+            - Files created in specified directory
         """
         self.prompt_generator.serialize_prompts( prompt_path_prefix )
     
     # Public methods from XmlResponseValidator
-    def is_valid_xml( self, xml_str ):
+    def is_valid_xml( self, xml_str: str ) -> bool:
         """
         Checks if XML is valid according to schema.
         
-        Args:
-            xml_str (str): XML string to validate
+        Requires:
+            - xml_str is a string
             
-        Returns:
-            bool: True if valid, False otherwise
+        Ensures:
+            - Returns True if valid XML
+            - Returns False otherwise
         """
         return self.response_validator.is_valid_xml( xml_str )
     
-    def contains_valid_xml_tag( self, xml_str, tag_name ):
+    def contains_valid_xml_tag( self, xml_str: str, tag_name: str ) -> bool:
         """
         Checks if XML contains a specific tag.
         
-        Args:
-            xml_str (str): XML string to check
-            tag_name (str): Tag name to look for
+        Requires:
+            - xml_str is a string
+            - tag_name is a non-empty string
             
-        Returns:
-            bool: True if tag exists, False otherwise
+        Ensures:
+            - Returns True if tag exists
+            - Returns False otherwise
         """
         return self.response_validator.contains_valid_xml_tag( xml_str, tag_name )
     
-    def is_response_exact_match( self, response, answer ):
+    def is_response_exact_match( self, response: str, answer: str ) -> bool:
         """
         Checks if response exactly matches expected answer.
         
-        Args:
-            response (str): Generated response
-            answer (str): Expected answer
+        Requires:
+            - response is a string
+            - answer is a string
             
-        Returns:
-            bool: True if exact match, False otherwise
+        Ensures:
+            - Returns True if exact match
+            - Returns False otherwise
         """
         return self.response_validator.is_response_exact_match( response, answer )
     
-    def contains_correct_response_values( self, response, answer ):
+    def contains_correct_response_values( self, response: str, answer: str ) -> bool:
         """
-        Check if the most common formatting error (```xml) is hiding a correct <response>...</response>
+        Check if the most common formatting error (```xml) is hiding a correct response.
         
-        Args:
-            response (str): Generated response
-            answer (str): Expected answer
+        Requires:
+            - response is a string
+            - answer is a string
             
-        Returns:
-            bool: True if the response contains correct values, False otherwise
+        Ensures:
+            - Returns True if response contains correct values
+            - Returns False otherwise
         """
         return self.response_validator.contains_correct_response_values( response, answer )
     
-    def tag_values_are_equal( self, response, answer, tag_name="command" ):
+    def tag_values_are_equal( self, response: str, answer: str, tag_name: str="command" ) -> bool:
         """
         Checks if a specific tag's value in response matches the value in answer.
         
-        Args:
-            response (str): Generated response
-            answer (str): Expected answer
-            tag_name (str, optional): Tag name to compare. Defaults to "command".
+        Requires:
+            - response is a string
+            - answer is a string
+            - tag_name is a non-empty string
             
-        Returns:
-            bool: True if tag values match, False otherwise
+        Ensures:
+            - Returns True if tag values match
+            - Returns False otherwise
         """
         return self.response_validator.tag_values_are_equal( response, answer, tag_name )
     
     # Shared methods for generating and validating prompts
-    def reset_call_counter( self ):
+    def reset_call_counter( self ) -> None:
         """
         Resets the internal call counter to zero.
+        
+        Requires:
+            - None
+            
+        Ensures:
+            - Call counter set to zero
         """
         self._call_counter = 0
     
-    def build_compound_vox_cmd_training_prompts( self, sample_size_per_command=2000 ):
+    def build_compound_vox_cmd_training_prompts( self, sample_size_per_command: int=2000 ) -> pd.DataFrame:
         """
         Builds training prompts for compound voice commands.
         
-        Args:
-            sample_size_per_command (int): Number of samples to generate per command
+        Requires:
+            - sample_size_per_command is positive integer
             
-        Returns:
-            pandas.DataFrame: DataFrame containing the generated training prompts
+        Ensures:
+            - Generates prompts for all compound commands
+            - Returns DataFrame with prompts
+            - DataFrame contains expected columns
         """
         instructions, inputs, outputs, prompts, gpt_messages, commands = self._get_6_empty_lists()
         
@@ -263,15 +290,17 @@ class XmlCoordinator:
         
         return compound_qna_df
     
-    def build_simple_vox_cmd_training_prompts( self, sample_size_per_command=400 ):
+    def build_simple_vox_cmd_training_prompts( self, sample_size_per_command: int=400 ) -> pd.DataFrame:
         """
         Builds training prompts for simple voice commands.
         
-        Args:
-            sample_size_per_command (int): Number of samples to generate per command
+        Requires:
+            - sample_size_per_command is positive integer
             
-        Returns:
-            pandas.DataFrame: DataFrame containing the generated training prompts
+        Ensures:
+            - Generates prompts for all simple commands
+            - Returns DataFrame with prompts
+            - DataFrame contains expected columns
         """
         instructions, inputs, outputs, prompts, gpt_messages, commands = self._get_6_empty_lists()
         
@@ -308,15 +337,17 @@ class XmlCoordinator:
         
         return simple_command_qna_df
     
-    def build_compound_agent_router_training_prompts( self, sample_size_per_command=2000 ):
+    def build_compound_agent_router_training_prompts( self, sample_size_per_command: int=2000 ) -> pd.DataFrame:
         """
         Builds training prompts for compound agent router commands.
         
-        Args:
-            sample_size_per_command (int): Number of samples to generate per command
+        Requires:
+            - sample_size_per_command is positive integer
             
-        Returns:
-            pandas.DataFrame: DataFrame containing the generated training prompts
+        Ensures:
+            - Generates prompts for all compound router commands
+            - Returns DataFrame with prompts
+            - DataFrame contains expected columns
         """
         instructions, inputs, outputs, prompts, gpt_messages, commands = self._get_6_empty_lists()
     
@@ -382,17 +413,18 @@ class XmlCoordinator:
         
         return compound_agent_router_qna_df
     
-    def build_compound_function_mapping_training_prompts( self, sample_size_per_command=2000, analyze_bigrams=False, max_questions=2 ):
+    def build_compound_function_mapping_training_prompts( self, sample_size_per_command: int=2000, analyze_bigrams: bool=False, max_questions: int=2 ) -> Optional[pd.DataFrame]:
         """
         Builds training prompts for function mapping.
         
-        Args:
-            sample_size_per_command (int): Number of samples to generate per command
-            analyze_bigrams (bool): Whether to analyze bigrams in questions
-            max_questions (int): Maximum number of questions to generate
+        Requires:
+            - sample_size_per_command is positive integer
+            - max_questions is positive integer
             
-        Returns:
-            pandas.DataFrame or None: DataFrame containing the generated training prompts, or None
+        Ensures:
+            - Processes function mapping commands
+            - Generates QnR pairs for .txt files
+            - Returns None in current implementation
         """
         instructions, inputs, outputs, prompts, gpt_messages, commands = self._get_6_empty_lists()
     
@@ -457,13 +489,17 @@ class XmlCoordinator:
 
         return None
     
-    def _analyze_bigrams( self, raw_lines, placeholder ):
+    def _analyze_bigrams( self, raw_lines: list, placeholder: str ) -> None:
         """
         Analyzes bigrams in raw lines.
         
-        Args:
-            raw_lines (list): List of raw lines
-            placeholder (str): Placeholder to analyze
+        Requires:
+            - raw_lines is list of strings
+            - placeholder is non-empty string
+            
+        Ensures:
+            - Prints bigram analysis
+            - Counts bigram occurrences
         """
         du.print_banner( f"Analyzing bigrams for placeholder [{placeholder}]...", prepend_nl=True )
         
@@ -491,16 +527,18 @@ class XmlCoordinator:
         for bigram, count in bigram_counter.most_common():
             print( f"{bigram}: {count}" )
     
-    def _build_function_mapping_questions( self, raw_lines, placeholders_and_values ):
+    def _build_function_mapping_questions( self, raw_lines: list, placeholders_and_values: dict ) -> list:
         """
         Builds function mapping questions.
         
-        Args:
-            raw_lines (list): List of raw lines
-            placeholders_and_values (dict): Dictionary of placeholders and values
+        Requires:
+            - raw_lines is list of strings
+            - placeholders_and_values is dictionary
             
-        Returns:
-            list: List of function mapping questions
+        Ensures:
+            - Substitutes placeholders with values
+            - Adds interjections and salutations
+            - Returns list of questions
         """
         du.print_banner( "Building function mapping questions...", prepend_nl=True)
         lines   = []
@@ -518,16 +556,18 @@ class XmlCoordinator:
         
         return lines
     
-    def _generate_function_mapping_response_objects( self, questions, max_questions=None ):
+    def _generate_function_mapping_response_objects( self, questions: list, max_questions: Optional[int]=None ) -> list:
         """
         Generates function mapping response objects.
         
-        Args:
-            questions (list): List of questions
-            max_questions (int, optional): Maximum number of questions to process
+        Requires:
+            - questions is list of strings
+            - max_questions is None or positive integer
             
-        Returns:
-            list: List of response objects
+        Ensures:
+            - Generates response objects for questions
+            - Returns list of response dictionaries
+            - Processes up to max_questions if specified
         """
         from cosa.utils.util_stopwatch import Stopwatch
         
@@ -562,15 +602,17 @@ class XmlCoordinator:
         
         return responses
     
-    def build_simple_agent_router_training_prompts( self, sample_size_per_command=400 ):
+    def build_simple_agent_router_training_prompts( self, sample_size_per_command: int=400 ) -> pd.DataFrame:
         """
         Builds training prompts for simple agent router commands.
         
-        Args:
-            sample_size_per_command (int): Number of samples to generate per command
+        Requires:
+            - sample_size_per_command is positive integer
             
-        Returns:
-            pandas.DataFrame: DataFrame containing the generated training prompts
+        Ensures:
+            - Generates prompts for all simple router commands
+            - Returns DataFrame with prompts
+            - DataFrame contains expected columns
         """
         instructions, inputs, outputs, prompts, gpt_messages, commands = self._get_6_empty_lists()
         
@@ -610,16 +652,18 @@ class XmlCoordinator:
         
         return simple_agent_router_qna_df
     
-    def build_all_training_prompts( self, sample_size_per_compound_command=2000, sample_size_per_simple_command=400 ):
+    def build_all_training_prompts( self, sample_size_per_compound_command: int=2000, sample_size_per_simple_command: int=400 ) -> pd.DataFrame:
         """
         Builds all training prompts by combining all command types.
         
-        Args:
-            sample_size_per_compound_command (int): Number of samples to generate per compound command
-            sample_size_per_simple_command (int): Number of samples to generate per simple command
+        Requires:
+            - sample_size_per_compound_command is positive integer
+            - sample_size_per_simple_command is positive integer
             
-        Returns:
-            pandas.DataFrame: Combined DataFrame containing all generated training prompts
+        Ensures:
+            - Combines all command types
+            - Calculates statistics
+            - Returns unified DataFrame
         """
         compound_vox_cmd_qna_df       = self.build_compound_vox_cmd_training_prompts( sample_size_per_command=sample_size_per_compound_command )
         simple_vox_cmd_qna_df         = self.build_simple_vox_cmd_training_prompts( sample_size_per_command=sample_size_per_simple_command )
@@ -667,21 +711,20 @@ class XmlCoordinator:
         
         return all_qna_df
     
-    def query_llm_tgi( self, prompt, model_name, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.9, silent=False ):
+    def query_llm_tgi( self, prompt: str, model_name: str, max_new_tokens: int=1024, temperature: float=0.25, top_k: int=10, top_p: float=0.9, silent: bool=False ) -> str:
         """
         Queries a TGI server with a prompt.
         
-        Args:
-            prompt (str): The prompt to send to the model
-            model_name (str): Name of the model to use
-            max_new_tokens (int): Maximum number of tokens to generate
-            temperature (float): Temperature for generation
-            top_k (int): Top-k sampling parameter
-            top_p (float): Top-p sampling parameter
-            silent (bool): Whether to suppress output
+        Requires:
+            - prompt is a non-empty string
+            - model_name is a valid model identifier
+            - max_new_tokens is positive integer
+            - temperature is between 0.0 and 1.0
             
-        Returns:
-            str: Generated response
+        Ensures:
+            - Queries TGI server with prompt
+            - Returns generated response
+            - Prints progress indicators
         """
         from huggingface_hub import InferenceClient
         from cosa.utils.util_stopwatch import Stopwatch
@@ -724,25 +767,19 @@ class XmlCoordinator:
         
         return response
     
-    def generate_responses( self, df, model=None, model_name=None, max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.9, device="cuda:0", debug=None, verbose=None, silent=False ):
+    def generate_responses( self, df: pd.DataFrame, model: Optional[Any]=None, model_name: Optional[str]=None, max_new_tokens: int=1024, temperature: float=0.25, top_k: int=10, top_p: float=0.9, device: str="cuda:0", debug: Optional[bool]=None, verbose: Optional[bool]=None, silent: bool=False ) -> pd.DataFrame:
         """
         Generates responses for a given DataFrame using various LLM backends.
         
-        Args:
-            df (pandas.DataFrame): DataFrame with prompts
-            model: Model to use
-            model_name (str): Name of the model to use
-            max_new_tokens (int): Maximum number of tokens to generate
-            temperature (float): Temperature for generation
-            top_k (int): Top-k sampling parameter
-            top_p (float): Top-p sampling parameter
-            device (str): Device to use for inference
-            debug (bool): Whether to enable debug output
-            verbose (bool): Whether to enable verbose output
-            silent (bool): Whether to suppress output
+        Requires:
+            - df contains 'prompt' column
+            - max_new_tokens is positive integer
+            - temperature is between 0.0 and 1.0
             
-        Returns:
-            pandas.DataFrame: DataFrame with generated responses
+        Ensures:
+            - Generates responses for all prompts
+            - Adds 'response' column to DataFrame
+            - Returns DataFrame with responses
         """
         from cosa.utils.util_stopwatch import Stopwatch
         import torch
@@ -775,44 +812,49 @@ class XmlCoordinator:
         
         return df
     
-    def validate_responses( self, df ):
+    def validate_responses( self, df: pd.DataFrame ) -> pd.DataFrame:
         """
         Validates responses in a dataframe using the response validator.
         
-        Args:
-            df (pandas.DataFrame): DataFrame with responses
+        Requires:
+            - df contains 'response' column
             
-        Returns:
-            pandas.DataFrame: DataFrame with validation columns
+        Ensures:
+            - Validates all responses
+            - Adds validation columns
+            - Returns DataFrame with validation results
         """
         return self.response_validator.validate_responses( df )
     
-    def print_validation_stats( self, df, title="Validation Stats" ):
+    def print_validation_stats( self, df: pd.DataFrame, title: str="Validation Stats" ) -> pd.DataFrame:
         """
         Prints validation statistics.
         
-        Args:
-            df (pandas.DataFrame): DataFrame with validation columns
-            title (str): Title for the validation stats
+        Requires:
+            - df contains validation columns
+            - title is a string
             
-        Returns:
-            pandas.DataFrame: Stats dataframe
+        Ensures:
+            - Prints validation statistics
+            - Returns stats DataFrame
         """
         return self.response_validator.print_validation_stats( df, title=title )
     
-    def get_train_test_validate_split( self, df, sample_size=1000, test_size=0.2, test_validate_size=0.5, stratify="command" ):
+    def get_train_test_validate_split( self, df: pd.DataFrame, sample_size: int=1000, test_size: float=0.2, test_validate_size: float=0.5, stratify: str="command" ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
         Splits a DataFrame into training, testing, and validation sets.
         
-        Args:
-            df (pandas.DataFrame): DataFrame to split
-            sample_size (int): Number of samples to use
-            test_size (float): Fraction of data to use for testing (0.0-1.0)
-            test_validate_size (float): Fraction of testing data to use for validation (0.0-1.0)
-            stratify (str): Column name to use for stratified sampling
+        Requires:
+            - df contains expected columns
+            - sample_size is positive integer
+            - test_size is between 0.0 and 1.0
+            - test_validate_size is between 0.0 and 1.0
+            - stratify column exists in df
             
-        Returns:
-            tuple: (train_df, test_df, validate_df)
+        Ensures:
+            - Creates stratified splits
+            - Returns three DataFrames
+            - Total samples match sample_size
         """
         from sklearn.model_selection import train_test_split
         
@@ -826,14 +868,18 @@ class XmlCoordinator:
         
         return train_df, test_df, validate_df
     
-    def write_ttv_split_to_jsonl( self, train_df, test_df, validate_df ):
+    def write_ttv_split_to_jsonl( self, train_df: pd.DataFrame, test_df: pd.DataFrame, validate_df: pd.DataFrame ) -> None:
         """
         Writes train/test/validate splits to JSONL files.
         
-        Args:
-            train_df (pandas.DataFrame): Training data
-            test_df (pandas.DataFrame): Testing data
-            validate_df (pandas.DataFrame): Validation data
+        Requires:
+            - All DataFrames contain expected columns
+            - Write permissions for output directory
+            
+        Ensures:
+            - Creates JSONL files for each split
+            - Creates GPT-specific files
+            - Sets appropriate file permissions
         """
         import os
         
@@ -867,42 +913,47 @@ class XmlCoordinator:
         validate_df.gpt_message.to_json( path, orient="records", lines=True )
         os.chmod( path, 0o666 )
     
-    def compare_validation_results( self, before_df, after_df, title="Validation Comparison" ):
+    def compare_validation_results( self, before_df: pd.DataFrame, after_df: pd.DataFrame, title: str="Validation Comparison" ) -> pd.DataFrame:
         """
         Compares validation results between two dataframes.
         
-        Args:
-            before_df (pandas.DataFrame): DataFrame with validation results before
-            after_df (pandas.DataFrame): DataFrame with validation results after
-            title (str): Title for the comparison
+        Requires:
+            - Both DataFrames contain validation columns
+            - title is a string
             
-        Returns:
-            pandas.DataFrame: Comparison dataframe
+        Ensures:
+            - Compares validation results
+            - Returns comparison DataFrame
         """
         return self.response_validator.compare_validation_results( before_df, after_df, title=title )
     
     # Helper methods
-    def _get_6_empty_lists( self ):
+    def _get_6_empty_lists( self ) -> tuple[list, list, list, list, list, list]:
         """
         Returns 6 empty lists for storing prompt generation data.
         
-        Returns:
-            tuple: (instructions, inputs, outputs, prompts, gpt_messages, commands)
+        Requires:
+            - None
+            
+        Ensures:
+            - Returns tuple of 6 empty lists
+            - Lists are for specific data types
         """
         return [], [], [], [], [], []
     
-    def _get_gpt_messages_dict( self, gpt_instruction, voice_command, compound_command, args ):
+    def _get_gpt_messages_dict( self, gpt_instruction: str, voice_command: str, compound_command: str, args: str ) -> dict:
         """
         Creates a GPT messages dictionary.
         
-        Args:
-            gpt_instruction (str): System instruction
-            voice_command (str): User's voice command
-            compound_command (str): Expected command response
-            args (str): Command arguments
+        Requires:
+            - gpt_instruction is a non-empty string
+            - voice_command is a non-empty string
+            - compound_command is a non-empty string
+            - args is a string
             
-        Returns:
-            dict: Formatted GPT messages dictionary
+        Ensures:
+            - Returns properly formatted dict
+            - Contains messages list with roles
         """
         return {
             "messages": [
@@ -912,14 +963,18 @@ class XmlCoordinator:
             ]
         }
     
-    def _do_conditional_print( self, counter, voice_command, interval=10 ):
+    def _do_conditional_print( self, counter: int, voice_command: str, interval: int=10 ) -> None:
         """
         Conditionally prints progress information.
         
-        Args:
-            counter (int): Current counter value
-            voice_command (str): Voice command to print
-            interval (int): Print interval
+        Requires:
+            - counter is positive integer
+            - voice_command is a string
+            - interval is positive integer
+            
+        Ensures:
+            - Prints progress at intervals
+            - Shows voice command or dots
         """
         if counter % interval == 0:
             if self.debug:
@@ -929,17 +984,19 @@ class XmlCoordinator:
                 if counter % ( interval * 100 ) == 0:
                     print()
     
-    def _prune_duplicates_and_sample( self, df, sample_size=1000, sample_size_per_command=-1 ):
+    def _prune_duplicates_and_sample( self, df: pd.DataFrame, sample_size: int=1000, sample_size_per_command: int=-1 ) -> pd.DataFrame:
         """
         Removes duplicates and samples from a DataFrame.
         
-        Args:
-            df (pandas.DataFrame): DataFrame to process
-            sample_size (int): Total sample size
-            sample_size_per_command (int): Sample size per command
+        Requires:
+            - df contains 'input' and 'command' columns
+            - sample_size is positive integer
+            - sample_size_per_command is integer
             
-        Returns:
-            pandas.DataFrame: Processed DataFrame
+        Ensures:
+            - Removes duplicate inputs
+            - Samples data per command
+            - Returns processed DataFrame
         """
         du.print_banner( "Pruning potential duplicates by 'input' values...", prepend_nl=True )
         
@@ -964,27 +1021,30 @@ class XmlCoordinator:
             
             return df.groupby( "command" ).sample( sample_size_per_command, random_state=42 )
     
-    def _get_receptionist_titles( self, requested_length=10 ):
+    def _get_receptionist_titles( self, requested_length: int=10 ) -> list:
         """
         Gets placeholder receptionist titles.
         
-        Args:
-            requested_length (int): Number of titles to return
+        Requires:
+            - requested_length is positive integer
             
-        Returns:
-            list: List of receptionist titles
+        Ensures:
+            - Returns list of titles
+            - Length matches requested_length
         """
         return self.prompt_generator._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-receptionist-titles.txt", requested_length=requested_length )
     
-    def _get_events_values( self, requested_length=100 ):
+    def _get_events_values( self, requested_length: int=100 ) -> list[dict]:
         """
         Gets placeholder calendar event values.
         
-        Args:
-            requested_length (int): Number of events to return
+        Requires:
+            - requested_length is positive integer
             
-        Returns:
-            list: List of event dictionaries
+        Ensures:
+            - Returns list of event dictionaries
+            - Each dict contains required keys
+            - Length matches requested_length
         """
         events      = self.prompt_generator._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-calendaring-events.txt", requested_length=None )
         locations   = self.prompt_generator._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-calendaring-locations.txt", requested_length=None )
@@ -1004,19 +1064,21 @@ class XmlCoordinator:
         return events_values
     
     def _get_response(
-        self, prompt, rows, model=None, model_name=None, timer=None, tokenizer=None,
-        max_new_tokens=1024, temperature=0.25, top_k=10, top_p=0.9, device="cuda:0", silent=False, debug=False, verbose=False
-    ):
+        self, prompt: str, rows: int, model: Optional[Any]=None, model_name: Optional[str]=None, timer: Optional[Any]=None, tokenizer: Optional[Any]=None,
+        max_new_tokens: int=1024, temperature: float=0.25, top_k: int=10, top_p: float=0.9, device: str="cuda:0", silent: bool=False, debug: bool=False, verbose: bool=False
+    ) -> str:
         """
         Gets a response to a specific prompt using the specified LLM backend.
         
-        Args:
-            prompt: The prompt to generate a response for
-            rows (int): Total number of rows being processed
-            Various other parameters controlling the generation and backend selection
+        Requires:
+            - prompt is a non-empty string
+            - rows is positive integer
+            - temperature is between 0.0 and 1.0
             
-        Returns:
-            str: Generated response
+        Ensures:
+            - Increments call counter
+            - Shows progress information
+            - Returns generated response
         """
         # import openai
         import torch

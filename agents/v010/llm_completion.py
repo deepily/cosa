@@ -37,7 +37,7 @@ class LlmCompletion:
         debug: bool = False,
         verbose: bool = False,
         **generation_args: Any
-    ):
+    ) -> None:
         """
         Initialize a completion API client.
         
@@ -139,13 +139,17 @@ class LlmCompletion:
         This is just a stub method that returns the prompt back for compatibility
         with the streaming interface. The actual streaming is handled by run_stream.
         
-        Args:
-            prompt: The text prompt to send to the LLM
-            data: The request data
-            headers: The request headers
+        Requires:
+            - prompt is a non-empty string
+            - data is a dict with request parameters
+            - headers is a dict with HTTP headers
             
-        Returns:
-            The original prompt (for compatibility)
+        Ensures:
+            - Returns the original prompt unchanged
+            - Used as a placeholder for the streaming API
+            
+        Raises:
+            - None
         """
         # This method exists for compatibility with the API used by LlmClient
         # The actual streaming implementation is in run_stream
@@ -158,9 +162,20 @@ class LlmCompletion:
         This method sends a streaming request to the completions API and yields
         chunks of the response as they arrive.
         
-        Args:
-            prompt: The text prompt to send to the LLM
-            **generation_args: Additional arguments for generation
+        Requires:
+            - prompt is a non-empty string
+            - self.base_url is a valid API endpoint
+            - self.model_name is a valid model identifier
+            
+        Ensures:
+            - Sends streaming request to completions API
+            - Yields text chunks as they arrive
+            - Handles JSON parsing of streamed data
+            - Processes Server-Sent Events format
+            
+        Raises:
+            - Exception if API returns non-200 status
+            - aiohttp exceptions for network errors
             
         Yields:
             Chunks of the response text
@@ -204,16 +219,23 @@ class LlmCompletion:
                             # Skip invalid JSON lines
                             continue
     
-    def run_stream(self, prompt: str, **generation_args: Any):
+    def run_stream(self, prompt: str, **generation_args: Any) -> 'CompletionStreamingContext':
         """
         Stream a completion response with a context manager interface.
         
         This method returns a context manager compatible with the async with statement,
         allowing for consistent streaming interface across different model types.
         
-        Args:
-            prompt: The text prompt to send to the LLM
-            **generation_args: Additional arguments for generation
+        Requires:
+            - prompt is a non-empty string
+            
+        Ensures:
+            - Returns CompletionStreamingContext instance
+            - Context manager handles async streaming
+            - Compatible with async with syntax
+            
+        Raises:
+            - None
             
         Returns:
             A context manager for streaming the response
@@ -230,40 +252,69 @@ class CompletionStreamingContext:
     compatible with the async with statement.
     """
     
-    def __init__(self, client, prompt, **generation_args):
+    def __init__(self, client: 'LlmCompletion', prompt: str, **generation_args: Any) -> None:
         """
         Initialize the streaming context.
         
-        Args:
-            client: The LlmCompletion client
-            prompt: The text prompt to send to the LLM
-            **generation_args: Additional arguments for generation
+        Requires:
+            - client is a valid LlmCompletion instance
+            - prompt is a non-empty string
+            
+        Ensures:
+            - Stores client reference
+            - Stores prompt and generation args
+            
+        Raises:
+            - None
         """
         self.client = client
         self.prompt = prompt
         self.generation_args = generation_args
         
-    async def __aenter__(self):
+    async def __aenter__(self) -> 'CompletionStreamingContext':
         """
         Enter the context manager.
         
-        Returns:
-            self
+        Requires:
+            - Context manager is properly initialized
+            
+        Ensures:
+            - Returns self for async with usage
+            
+        Raises:
+            - None
         """
         return self
         
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """
         Exit the context manager.
+        
+        Requires:
+            - Context manager is in use
+            
+        Ensures:
+            - Cleans up any resources (currently none)
+            
+        Raises:
+            - None
         """
         pass
         
-    async def stream_text(self, delta=False):
+    async def stream_text(self, delta: bool=False) -> AsyncGenerator[str, None]:
         """
         Stream the response text.
         
-        Args:
-            delta: Whether to yield deltas (incremental changes) or cumulative text
+        Requires:
+            - self.client has _stream_async method
+            - self.prompt is set
+            
+        Ensures:
+            - Yields text chunks from the streaming response
+            - Delta parameter is currently ignored (always yields deltas)
+            
+        Raises:
+            - Any exceptions from the underlying streaming method
             
         Yields:
             Chunks of the response text

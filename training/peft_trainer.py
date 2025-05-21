@@ -8,6 +8,7 @@ import subprocess
 import threading
 import requests
 import torch, os, multiprocessing
+from typing import Optional, Union, list, dict, tuple, Any, Iterable
 from peft import LoraConfig, prepare_model_for_kbit_training, PeftModel
 from torch.ao.quantization import quantize
 from torch.utils.benchmark import timer
@@ -40,31 +41,55 @@ set_seed( 42 )
 
 @staticmethod
 def is_root() -> bool:
+    """
+    Check if the current process is running as root.
+    
+    Requires:
+        - Running on a Unix-like system
+        
+    Ensures:
+        - Returns True if user ID is 0 (root)
+        - Returns False otherwise
+        
+    Raises:
+        - AttributeError on non-Unix systems
+    """
     return os.geteuid() == 0
 
 @staticmethod
 def invoked_with_sudo() -> bool:
+    """
+    Check if the process was invoked with sudo.
+    
+    Requires:
+        - Environment variables accessible
+        
+    Ensures:
+        - Returns True if SUDO_UID environment variable exists
+        - Returns False otherwise
+        
+    Raises:
+        - None
+    """
     return "SUDO_UID" in os.environ
 
 @staticmethod
-def print_gpu_memory():
+def print_gpu_memory() -> None:
     """
-    Prints the current GPU memory usage and allocation for all available GPUs.
+    Print current GPU memory usage and allocation for all available GPUs.
     
-    Preconditions:
-    - The function requires the torch library to be imported.
-    - At least one CUDA-capable GPU should be available.
-    
-    Postconditions:
-    - Current GPU memory usage statistics are printed to the console for each GPU.
-    - If no GPU is available, a message indicating that is printed.
-    
-    Parameters:
-    - None
-    
-    Notes:
-    - This function is useful for monitoring GPU memory usage during model training or inference.
-    - Reports total memory, allocated memory, and reserved memory for each GPU.
+    Requires:
+        - torch library is imported
+        - CUDA is available (optional)
+        
+    Ensures:
+        - Prints memory statistics for each GPU
+        - Shows total, allocated, reserved memory in GB
+        - Shows utilization percentage
+        - Prints message if no GPU available
+        
+    Raises:
+        - None (handles CUDA unavailability)
     """
     
     # Check if CUDA is available
@@ -104,31 +129,25 @@ def print_gpu_memory():
         print( f"  Utilization:      {round(allocated_memory/total_memory * 100, 1)}%" )
     
 @staticmethod
-def release_gpus( models, nuclear_kill_button=False ):
+def release_gpus( models: Iterable[Any], nuclear_kill_button: bool=False ) -> None:
     """
-    Releases GPU memory by moving models to CPU and clearing CUDA cache.
+    Release GPU memory by moving models to CPU and clearing CUDA cache.
     
-    Preconditions:
-    - models must be an iterable collection of model objects.
-    - Each model in models may or may not have a 'cpu' method.
-    
-    Postconditions:
-    - All models in the collection are moved to CPU if they have a 'cpu' method.
-    - All models are deleted from Python's memory.
-    - Python's garbage collector is run to reclaim memory.
-    - GPU memory cache is cleared using torch.cuda.empty_cache().
-    - If nuclear_kill_button is True, GPU processes are forcefully terminated and GPUs are reset.
-    
-    Parameters:
-    - models (Iterable): A collection of model objects to be released from GPU memory.
-    - nuclear_kill_button (bool, optional): If True, forcefully terminates GPU processes and resets GPUs. Defaults to False.
-    
-    Notes:
-    - This function handles models that might not have a 'cpu' method safely by checking
-      for the attribute's existence and callability before invoking it.
-    - This function is particularly useful after fine-tuning or inference to ensure 
-      GPU memory is properly released for subsequent operations.
-    - The nuclear_kill_button option should be used with caution as it forcefully terminates processes and resets GPUs.
+    Requires:
+        - models is an iterable collection of model objects
+        - Each model may or may not have a 'cpu' method
+        - If nuclear_kill_button, user has appropriate permissions
+        
+    Ensures:
+        - All models moved to CPU if possible
+        - Models deleted from memory
+        - Garbage collection performed
+        - CUDA cache cleared
+        - If nuclear_kill_button, GPU processes killed and GPUs reset
+        
+    Raises:
+        - SubprocessError if GPU reset fails
+        - Various exceptions if nuclear option fails
     """
     
     du.print_banner( "Releasing GPU memory... BEFORE", prepend_nl=True )
@@ -183,35 +202,30 @@ def release_gpus( models, nuclear_kill_button=False ):
     print_gpu_memory()
 
 class PeftTrainer:
+    """
+    Trainer for fine-tuning models using PEFT (Parameter-Efficient Fine-Tuning).
     
+    Supports various models with LoRA adapters for efficient fine-tuning.
+    """
     def __init__(
-            self, model_hf_id, model_name, test_train_path, lora_dir=None, debug=False, verbose=False
-    ):
+            self, model_hf_id: str, model_name: str, test_train_path: str, lora_dir: Optional[str]=None, debug: bool=False, verbose: bool=False
+    ) -> None:
         """
-        Initializes a new PEFT Trainer instance with the provided parameters.
+        Initialize a new PEFT Trainer instance.
         
-        Preconditions:
-        - `model_hf_id` is a valid model identifier in Hugging Face Hub format.
-        - `model_name` is a string representing one of the supported model names.
-        - `test_train_path` is a valid path where test/train data is located.
-        - `lora_dir` is either None or a valid directory path for storing LoRA adapter files.
-        - `debug` and `verbose` are boolean values to control logging verbosity.
-        
-        Postconditions:
-        - A new PeftTrainer instance is created with all necessary attributes initialized.
-        - The model name is validated against the list of supported models.
-        - Initial debug information is printed if debug mode is enabled.
-        
+        Requires:
+            - model_hf_id is a valid Hugging Face model identifier
+            - model_name is one of the supported models
+            - test_train_path is a valid directory path
+            - lora_dir is None or a valid directory path
+            
+        Ensures:
+            - Creates trainer instance with all attributes
+            - Validates model name against supported models
+            - Prints initialization info
+            
         Raises:
-        - ValueError: if `model_name` is not in the list of supported models.
-        
-        Parameters:
-        - model_hf_id (str): The Hugging Face model ID to use for fine-tuning.
-        - model_name (str): The name of the model (must be one of the supported models).
-        - test_train_path (str): Path to the directory containing test/train data.
-        - lora_dir (str, optional): Directory for saving LoRA adapter files. Defaults to None.
-        - debug (bool, optional): Enable debug mode with additional logging. Defaults to False.
-        - verbose (bool, optional): Enable verbose mode with more detailed output. Defaults to False.
+            - ValueError if model_name not supported
         """
         du.print_banner( f"Initializing PEFT Trainer for {model_name}", prepend_nl=True )
         print( f"Model ID: {model_hf_id}" )
@@ -242,21 +256,20 @@ class PeftTrainer:
         # Validate the model name
         self._validate_model_name()
     
-    def _validate_model_name( self ):
+    def _validate_model_name( self ) -> None:
         """
-        Validates the model name against a list of supported model names.
-    
-        Precondition:
-        - `self.model_name` is a string representing the name of the model to be validated.
-        - The `conf` module contains model configurations for the supported models.
-    
-        Postcondition:
-        - If `self.model_name` is supported, the method completes without error.
-        - If `self.model_name` is not supported, a ValueError is raised with a message 
-          indicating the unsupported model name and listing the supported model names.
-    
+        Validate the model name against supported models.
+        
+        Requires:
+            - self.model_name is set
+            - MODEL_CONFIG_MAP is available
+            
+        Ensures:
+            - Validates model name is in MODEL_CONFIG_MAP
+            - Completes without error if valid
+            
         Raises:
-        - ValueError: If `self.model_name` is not supported.
+            - ValueError if model_name not supported
         """
         # Import the model config map which has all supported models
         from cosa.training.conf import MODEL_CONFIG_MAP
@@ -272,54 +285,47 @@ class PeftTrainer:
         #     print(f"Warning: Model '{self.model_name}' not in self.supported_model_names. Updating supported_model_names.")
         #     self.supported_model_names = list(MODEL_CONFIG_MAP.keys())
     
-    def login_to_hf( self ):
+    def login_to_hf( self ) -> None:
         """
-        Authenticates with the Hugging Face API using API token from environment.
+        Authenticate with Hugging Face API.
         
-        Preconditions:
-        - The GENIE_IN_THE_BOX_ROOT environment variable is set to a valid project root path.
-        - A valid Hugging Face API token is accessible via the utility method du.get_api_key.
-        
-        Postconditions:
-        - The application is authenticated with the Hugging Face API.
-        - A login confirmation message is printed to the console.
-        
+        Requires:
+            - GENIE_IN_THE_BOX_ROOT environment variable set
+            - Valid HF token accessible via du.get_api_key
+            
+        Ensures:
+            - Authenticates with Hugging Face
+            - Prints confirmation message
+            
         Raises:
-        - If du.get_api_key fails to retrieve a valid token, it may raise KeyError or FileNotFoundError.
-        - If login fails, Hugging Face's login function may raise various exceptions.
+            - KeyError if token not found
+            - FileNotFoundError if token file missing
+            - HF login exceptions
         """
         hf_token = du.get_api_key( "huggingface", project_root=os.getenv( "GENIE_IN_THE_BOX_ROOT" ) )
         print( f"Logging in to Hugging Face with token [{hf_token}]... ", end="" )
         login( token=hf_token )
         print( "Done!" )
     
-    def get_training_prompt_stats( self, backend="cuda", device_map="auto", device="cuda:1", debug=False,
-                                   verbose=False
-                                   ):
+    def get_training_prompt_stats( self, backend: str="cuda", device_map: str="auto", device: str="cuda:1", debug: bool=False,
+                                   verbose: bool=False
+                                   ) -> tuple[dict[str, float], dict[str, float]]:
         """
-        Analyzes the token and word statistics of training prompts in the dataset.
+        Analyze token and word statistics of training prompts.
         
-        Preconditions:
-        - The model and tokenizer must be available or loadable.
-        - A valid training dataset must exist at the path "/{self.test_train_dir}/voice-commands-xml-train.jsonl".
-        - The dataset must contain 'instruction', 'input', and 'output' columns.
-        
-        Postconditions:
-        - Token and word statistics (min, max, mean) are calculated for the training dataset.
-        - Debug information is printed if debug mode is enabled.
-        - The calculated statistics are returned as a tuple of two dictionaries.
-        
-        Parameters:
-        - backend (str, optional): Backend to use for model loading. Defaults to "cuda".
-        - device_map (str, optional): Device mapping strategy for model. Defaults to "auto".
-        - device (str, optional): Specific device to use for tokenizer calculations. Defaults to "cuda:1".
-        - debug (bool, optional): Enable debug mode. Defaults to False.
-        - verbose (bool, optional): Enable verbose mode. Defaults to False.
-        
-        Returns:
-        - tuple: A tuple containing two dictionaries:
-          - token_stats: Dictionary with 'min', 'max', and 'mean' token counts
-          - word_stats: Dictionary with 'min', 'max', and 'mean' word counts
+        Requires:
+            - Model and tokenizer available or loadable
+            - Training dataset exists at expected path
+            - Dataset has 'instruction', 'input', 'output' columns
+            
+        Ensures:
+            - Calculates min, max, mean for tokens and words
+            - Returns statistics as two dictionaries
+            - Prints debug info if enabled
+            
+        Raises:
+            - FileNotFoundError if dataset missing
+            - KeyError if required columns missing
         """
         self._load_model_and_tokenizer( backend=backend, device_map=device_map, mode="training" )
         
@@ -370,36 +376,27 @@ class PeftTrainer:
         
         return token_stats, word_stats
     
-    def fine_tune( self, batch_size=8, gradient_accumulation_steps=1, logging_steps=0.05, eval_steps=0.20,
-    sample_size=1.0, device_map="auto", output_dir="./results"
-    ):
+    def fine_tune( self, batch_size: int=8, gradient_accumulation_steps: int=1, logging_steps: float=0.05, eval_steps: float=0.20,
+    sample_size: float=1.0, device_map: str="auto", output_dir: str="./results"
+    ) -> str:
         """
-        Fine-tunes the model using PEFT (Parameter-Efficient Fine-Tuning) techniques.
+        Fine-tune the model using PEFT techniques.
         
-        Preconditions:
-        - The model and tokenizer must be available or loadable.
-        - Valid test and train datasets must be accessible at the configured paths.
-        - Sufficient GPU memory must be available for the specified batch size and model.
-        Postconditions:
-        - The model is fine-tuned with the specified parameters.
-        - Training checkpoints are saved to the specified output directory.
-        - Training statistics and metrics are captured and displayed.
-        - The path to the last checkpoint directory is returned.
-        - The following instance attributes are updated:
-          - self.output_dir: Set to the output directory used for this fine-tuning run.
-          - self.checkpoint_dir: Set to the directory of the last saved checkpoint.
-        
-        Parameters:
-        - batch_size (int, optional): Batch size for training and evaluation. Defaults to 8.
-        - gradient_accumulation_steps (int, optional): Number of steps to accumulate gradients. Defaults to 1.
-        - logging_steps (float, optional): Fraction of total steps at which to log progress. Defaults to 0.05.
-        - eval_steps (float, optional): Fraction of total steps at which to evaluate the model. Defaults to 0.20.
-        - sample_size (float, optional): Fraction of the total data to use (1.0 = all data). Defaults to 1.0.
-        - device_map (str, optional): Device mapping strategy for the model. Defaults to "auto".
-        - output_dir (str, optional): Directory to save the fine-tuned model checkpoints. Defaults to "./results".
-        
-        Returns:
-        - str: Path to the directory containing the last saved checkpoint.
+        Requires:
+            - Model and tokenizer available or loadable
+            - Valid test/train datasets accessible
+            - Sufficient GPU memory for batch size and model
+            
+        Ensures:
+            - Model is fine-tuned with given parameters
+            - Checkpoints saved to output directory
+            - Training stats displayed
+            - Updates self.output_dir and self.checkpoint_dir
+            - Returns path to last checkpoint
+            
+        Raises:
+            - CUDA out of memory if insufficient GPU
+            - FileNotFoundError if datasets missing
         """
         du.print_banner( f"Fine-tuning model {self.model_name} with PEFT", prepend_nl=True )
         run_start = f"Run started @ {du.get_current_time( format='%H:%M' )}"
@@ -456,38 +453,37 @@ class PeftTrainer:
         
         return self.checkpoint_dir
     
-    def get_last_checkpoint_dir( self ):
+    def get_last_checkpoint_dir( self ) -> Optional[str]:
         """
-        Returns the path to the last checkpoint directory from the most recent fine-tuning run.
+        Get path to last checkpoint from recent fine-tuning.
         
-        Preconditions:
-        - A fine-tuning run has been completed, and self.checkpoint_dir has been set.
-        
-        Postconditions:
-        - The path to the last checkpoint directory is returned, or None if no fine-tuning has been performed.
-        
-        Returns:
-        - str or None: Path to the directory containing the last saved checkpoint, or None if no checkpoint is available.
+        Requires:
+            - Fine-tuning has been completed
+            - self.checkpoint_dir has been set
+            
+        Ensures:
+            - Returns checkpoint directory path
+            - Returns None if no fine-tuning done
+            
+        Raises:
+            - None
         """
         return self.checkpoint_dir
     
-    def _get_last_checkpoint_dir( self, output_dir ):
+    def _get_last_checkpoint_dir( self, output_dir: str ) -> Optional[str]:
         """
-        Determines the path to the most recent checkpoint directory within the given output directory.
+        Find the most recent checkpoint directory.
         
-        Preconditions:
-        - `output_dir` is a valid directory path that contains checkpoint subdirectories.
-        - Checkpoint directories follow the naming convention 'checkpoint-N' where N is the step number.
-        
-        Postconditions:
-        - The path to the last checkpoint directory (with the highest step number) is returned.
-        - If no checkpoint directories are found, None is returned.
-        
-        Parameters:
-        - output_dir (str): Path to the directory containing the checkpoint subdirectories.
-        
-        Returns:
-        - str or None: Path to the last checkpoint directory, or None if no checkpoints are found.
+        Requires:
+            - output_dir is valid directory path
+            - Checkpoints follow 'checkpoint-N' naming
+            
+        Ensures:
+            - Returns path to highest numbered checkpoint
+            - Returns None if no checkpoints found
+            
+        Raises:
+            - OSError if directory access fails
         """
         # List all subdirectories in the output directory
         subdirs = [ d for d in os.listdir( output_dir ) if os.path.isdir( os.path.join( output_dir, d ) ) ]
@@ -503,24 +499,22 @@ class PeftTrainer:
         
         return last_checkpoint_dir
     
-    def save_model( self ):
+    def save_model( self ) -> None:
         """
-        Saves the current model and tokenizer to disk with timestamped directory name.
+        Save current model and tokenizer with timestamp.
         
-        Preconditions:
-        - self.output_dir is set to a valid directory path.
-        - self.model and self.tokenizer are properly initialized.
-        
-        Postconditions:
-        - The model and tokenizer are saved to a timestamped subdirectory within self.output_dir.
-        - The original working directory is preserved (method changes directory temporarily but restores it).
-        
-        Notes:
-        - The model is saved with safe_serialization=False to avoid issues with distributed models.
-        - The target directory is named with pattern: {self.output_dir}/final-{date}-at-{time}
-        
-        Returns:
-        - None
+        Requires:
+            - self.output_dir is valid directory path
+            - self.model and self.tokenizer initialized
+            
+        Ensures:
+            - Saves to timestamped subdirectory
+            - Preserves original working directory
+            - Uses safe_serialization=False
+            - Directory named: final-{date}-at-{time}
+            
+        Raises:
+            - OSError if directory creation fails
         """
         date = du.get_current_date()
         time = du.get_current_time( format='%H-%M', include_timezone=False )
@@ -546,61 +540,45 @@ class PeftTrainer:
         # change back to the original working directory
         os.chdir( cwd )
     
-    def _load_adapter( self, adapter_path ):
+    def _load_adapter( self, adapter_path: str ) -> None:
         """
-        Loads a PEFT adapter from the specified path and applies it to the current model.
+        Load PEFT adapter and apply to model.
         
-        Preconditions:
-        - self.model must be initialized with a base model.
-        - adapter_path must be a valid path to a saved PEFT adapter.
-        
-        Postconditions:
-        - The adapter is loaded and applied to the model.
-        - self.model is updated to be a PeftModel instance with the adapter applied.
-        
-        Parameters:
-        - adapter_path (str): Path to the directory containing the saved adapter.
-        
-        Returns:
-        - None
+        Requires:
+            - self.model is initialized
+            - adapter_path is valid path to adapter
+            
+        Ensures:
+            - Adapter loaded and applied
+            - self.model becomes PeftModel instance
+            
+        Raises:
+            - FileNotFoundError if adapter missing
         """
         print( f"Loading adapter from {adapter_path}" )
         self.model = PeftModel.from_pretrained( self.model, adapter_path )
         print( f"Loading adapter from {adapter_path}... Done!" )
     
-    def run_validation( self, banner_prefix="",
-            model=None, switch="", path_prefix="/var/model/genie-in-the-box",
-            device_map={ "": 0 }, validation_sample_size=1000, debug=None, verbose=None
-    ):
+    def run_validation( self, banner_prefix: str="",
+            model: Optional[Any]=None, switch: str="", path_prefix: str="/var/model/genie-in-the-box",
+            device_map: dict={ "": 0 }, validation_sample_size: int=1000, debug: Optional[bool]=None, verbose: Optional[bool]=None
+    ) -> pd.DataFrame:
         """
-        Runs validation against a model server.
+        Run validation against model server.
         
-        Preconditions:
-        - A validation dataset must be available at f"{self.test_train_dir}/voice-commands-xml-validate.jsonl".
-        - A model instance must be provided via the model parameter.
-        - The tokenizer must be available or can be loaded.
-        
-        Postconditions:
-        - Validation is performed on a sample of the validation dataset.
-        - Validation results are computed and displayed.
-        - The processed DataFrame with validation results is returned.
-        
-        Parameters:
-        - banner_prefix (str, optional): Prefix for banner display. Defaults to "".
-        - model (object, optional): Model server instance to use for inference. Must support the generation interface. Defaults to None.
-        - switch (str, optional): Switch parameter for the prompt generator. Defaults to "".
-        - path_prefix (str, optional): Path prefix for the XML generator. Defaults to "/var/model/genie-in-the-box".
-        - device_map (dict, optional): Device mapping for the model. Defaults to {"": 0}.
-        - validation_sample_size (int, optional): Number of samples to use for validation. Defaults to 1000.
-        - debug (bool, optional): Enable debug mode. If None, uses the class default. Defaults to None.
-        - verbose (bool, optional): Enable verbose mode. If None, uses the class default. Defaults to None.
-        
-        Returns:
-        - pandas.DataFrame: DataFrame containing the validation results, including original prompts,
-                          generated responses, and validation metrics.
-                          
+        Requires:
+            - Validation dataset at expected path
+            - Model instance provided
+            - Tokenizer available
+            
+        Ensures:
+            - Performs validation on sample set
+            - Computes and displays results
+            - Returns DataFrame with metrics
+            
         Raises:
-        - ValueError: If model is None.
+            - ValueError if model is None
+            - FileNotFoundError if dataset missing
         """
         # set debug and verbose to the class defaults if not provided
         if debug is not None: self.debug = debug
@@ -643,27 +621,21 @@ class PeftTrainer:
         
         return df
     
-    def load_and_merge_adapter( self, checkpoint_dir=None, device_map={ "": 0 } ):
+    def load_and_merge_adapter( self, checkpoint_dir: Optional[str]=None, device_map: dict={ "": 0 } ) -> None:
         """
-        Loads a PEFT adapter and merges it with the base model.
+        Load PEFT adapter and merge with base model.
         
-        Preconditions:
-        - The model must be available or loadable.
-        - If checkpoint_dir is provided, it must be a valid path to a saved PEFT adapter.
-        - If checkpoint_dir is not provided, self.checkpoint_dir must be set to a valid adapter path.
-        
-        Postconditions:
-        - The model is loaded if not already loaded.
-        - The adapter is loaded and merged with the base model.
-        - self.model is updated to contain the merged model.
-        
-        Parameters:
-        - checkpoint_dir (str, optional): Path to the adapter checkpoint directory. If None, 
-          uses self.checkpoint_dir. Defaults to None.
-        - device_map (dict, optional): Device mapping for the model. Defaults to {"": 0}.
-        
+        Requires:
+            - Model available or loadable
+            - Valid adapter path provided or in self.checkpoint_dir
+            
+        Ensures:
+            - Model loaded if needed
+            - Adapter loaded and merged
+            - self.model contains merged model
+            
         Raises:
-        - ValueError: If no adapter path is provided and self.checkpoint_dir is not set.
+            - ValueError if no adapter path available
         """
         du.print_banner( f"Load and merge adapter {checkpoint_dir}" )
         self._load_model_and_tokenizer( device_map=device_map, mode="inference" )
@@ -681,19 +653,18 @@ class PeftTrainer:
         self.model = self.model.merge_and_unload()
         print( "Done!" )
     
-    def save_merged_adapter( self, lora_dir=None ):
+    def save_merged_adapter( self, lora_dir: Optional[str]=None ) -> str:
         """
-        Saves the merged model and tokenizer to a timestamped directory.
+        Save merged model and tokenizer with timestamp.
         
-        Preconditions:
-        - The model must have been loaded and merged with an adapter via load_and_merge_adapter.
-        - If lora_dir is provided, it must be a valid directory path.
-        - If lora_dir is not provided, self.lora_dir must be set to a valid directory path.
-        
-        Postconditions:
-        - The merged model and tokenizer are saved to a timestamped subdirectory.
-        - self.merged_adapter_dir is updated to the path of the saved merged adapter.
-        - The path to the saved merged adapter is returned.
+        Requires:
+            - Model loaded and merged with adapter
+            - Valid directory path in lora_dir or self.lora_dir
+            
+        Ensures:
+            - Saves to timestamped subdirectory
+            - Updates self.merged_adapter_dir
+            - Returns path to saved adapter
         
         Parameters:
         - lora_dir (str, optional): Base directory where the merged adapter will be saved. 
@@ -733,30 +704,24 @@ class PeftTrainer:
         
         return self.merged_adapter_dir
     
-    def quantize_merged_adapter( self, merged_adapter_dir=None ):
+    def quantize_merged_adapter( self, merged_adapter_dir: Optional[str]=None ) -> str:
         """
-        Quantizes the merged model to reduce its size and memory footprint.
+        Quantize merged model to reduce size and memory.
         
-        Preconditions:
-        - If merged_adapter_dir is provided, it must be a valid path to a saved merged model.
-        - If merged_adapter_dir is not provided, self.merged_adapter_dir must be set to a valid path.
-        - The Quantizer class must be properly implemented to handle the model quantization.
-        
-        Postconditions:
-        - The merged model is quantized using the Quantizer.
-        - The quantized model is saved to disk.
-        - self.quantized_model_dir is updated with the path to the quantized model.
-        - The path to the quantized model is returned.
-        
-        Parameters:
-        - merged_adapter_dir (str, optional): Path to the merged adapter directory. 
-          If None, uses self.merged_adapter_dir. Defaults to None.
-        
-        Returns:
-        - str: Path to the directory containing the quantized model.
-        
+        Requires:
+            - Valid merged adapter path provided or in self.merged_adapter_dir
+            - Quantizer class properly implemented
+            - GPU available for quantization
+            
+        Ensures:
+            - Quantizes model using Quantizer
+            - Saves quantized model to disk
+            - Updates self.quantized_model_dir
+            - Returns path to quantized model
+            
         Raises:
-        - ValueError: If merged_adapter_dir is not provided and self.merged_adapter_dir is not set.
+            - ValueError if no adapter path available
+            - RuntimeError if no GPU or quantization fails
         """
         # sanity check
         if merged_adapter_dir is not None:
@@ -802,29 +767,24 @@ class PeftTrainer:
                 print( f"ERROR: {error_msg}" )
             raise RuntimeError( error_msg ) from e
     
-    def _load_model_and_tokenizer( self, device_map="auto", mode=None ):
+    def _load_model_and_tokenizer( self, device_map: Union[str, dict]="auto", mode: Optional[str]=None ) -> None:
         """
-        Loads the model and tokenizer for either training or inference.
+        Load model and tokenizer for training or inference.
         
-        Preconditions:
-        - The HF_HOME environment variable must be set.
-        - The model_hf_id must be valid and the model must be available locally 
-          (in the cache directory specified by HF_HOME).
-        - The mode parameter must be either "training" or "inference".
-        
-        Postconditions:
-        - The model is loaded with appropriate settings for the specified mode.
-        - The tokenizer is loaded and configured properly for the model type and mode.
-        - If the model and tokenizer were already loaded, this method does nothing.
-        - The working directory remains unchanged, even though it temporarily changes during execution.
-        
-        Parameters:
-        - device_map (str or dict, optional): Device mapping strategy for the model. Defaults to "auto".
-        - mode (str, optional): Mode of operation, must be either "training" or "inference". Defaults to None.
-        
+        Requires:
+            - HF_HOME environment variable set
+            - Model available locally in HF cache
+            - mode is "training" or "inference"
+            
+        Ensures:
+            - Loads model with mode-specific settings
+            - Configures tokenizer for model type
+            - Preserves working directory
+            - No-op if already loaded
+            
         Raises:
-        - ValueError: If HF_HOME is not set in the environment variables.
-        - ValueError: If mode is not specified or not one of "training" or "inference".
+            - ValueError if HF_HOME not set
+            - ValueError if invalid mode
         """
         # Quick sanity checks
         if "HF_HOME" not in os.environ:
@@ -901,22 +861,20 @@ class PeftTrainer:
             os.chdir( original_cwd )
             # print( f"New working directory: {os.getcwd()}" )
     
-    def _get_peft_config( self ):
+    def _get_peft_config( self ) -> LoraConfig:
         """
-        Creates a PEFT configuration tailored to the specific model being fine-tuned.
+        Create PEFT configuration for the model.
         
-        Preconditions:
-        - self.model_name must be one of the supported model names.
-        
-        Postconditions:
-        - A LoraConfig object is returned with parameters appropriate for the model.
-        
-        Returns:
-        - LoraConfig: Configuration object for PEFT (Parameter-Efficient Fine-Tuning).
-        
-        Notes:
-        - Configuration is loaded dynamically from model-specific configuration files
-        - Each model has its own LoRA parameters defined in training/conf/{model_name}.py
+        Requires:
+            - self.model_name is a supported model
+            - Model config available
+            
+        Ensures:
+            - Returns LoraConfig with model-specific parameters
+            - Loads from model configuration files
+            
+        Raises:
+            - KeyError if config missing required fields
         """
         # Load the model-specific configuration
         model_config = load_model_config( self.model_name )
@@ -931,34 +889,24 @@ class PeftTrainer:
             target_modules=lora_params[ "target_modules" ]
         )
     
-    def _get_training_args( self, output_dir="./results", batch_size=8, gradient_accumulation_steps=1,
-                            logging_steps=0.05, eval_steps=0.5
-                            ):
+    def _get_training_args( self, output_dir: str="./results", batch_size: int=8, gradient_accumulation_steps: int=1,
+                            logging_steps: float=0.05, eval_steps: float=0.5
+                            ) -> Any:
         """
-        Creates a configuration object with training arguments for the SFT trainer.
+        Create training configuration for SFT trainer.
         
-        Preconditions:
-        - output_dir must be a valid directory path.
-        - batch_size, gradient_accumulation_steps, logging_steps, and eval_steps must be valid values.
-        
-        Postconditions:
-        - An SFTConfig object is returned with appropriate training parameters.
-        - The output directory is created with a timestamped name.
-        
-        Parameters:
-        - output_dir (str, optional): Base directory for training outputs. Defaults to "./results".
-        - batch_size (int, optional): Batch size for training and evaluation. Defaults to 8.
-        - gradient_accumulation_steps (int, optional): Number of steps to accumulate gradients. Defaults to 1.
-        - logging_steps (float, optional): Fraction of total steps at which to log progress. Defaults to 0.05.
-        - eval_steps (float, optional): Fraction of total steps at which to evaluate the model. Defaults to 0.5.
-        
-        Returns:
-        - SFTConfig: Configuration object for Supervised Fine-Tuning.
-        
-        Notes:
-        - Precision is automatically set to bf16 if supported, otherwise fp16.
-        - Gradient checkpointing is disabled for speed (reduces memory by 40% but is 2x slower).
-        - The max sequence length is model-specific, determined by _get_max_seq_length().
+        Requires:
+            - output_dir is valid path
+            - All numeric parameters have valid values
+            
+        Ensures:
+            - Returns SFTConfig with training parameters
+            - Creates timestamped output directory
+            - Sets precision based on GPU support
+            - Max sequence length from model config
+            
+        Raises:
+            - None
         """
         return SFTConfig(
             # set logging dir
@@ -988,48 +936,42 @@ class PeftTrainer:
             max_seq_length=self._get_max_seq_length()
         )
     
-    def _get_max_seq_length( self ):
+    def _get_max_seq_length( self ) -> int:
         """
-        Determines the maximum sequence length for training based on the model.
+        Get maximum sequence length for the model.
         
-        Preconditions:
-        - self.model_name must be one of the supported model names.
-        
-        Postconditions:
-        - Returns an appropriate maximum sequence length for the specific model type.
-        
-        Returns:
-        - int: The maximum sequence length loaded from the model configuration
-        
+        Requires:
+            - self.model_name is a supported model
+            - Model config available
+            
+        Ensures:
+            - Returns max sequence length from config
+            
         Raises:
-        - ValueError: If self.model_name is not one of the supported models.
+            - ValueError if model not supported
         """
         # Load the model-specific configuration
         model_config = load_model_config( self.model_name )
         return model_config[ "model" ][ "max_seq_length" ]
     
-    def _get_test_train_data( self, sample_size=1.0 ):
+    def _get_test_train_data( self, sample_size: float=1.0 ) -> dict[str, Dataset]:
         """
-        Loads and prepares the training and testing datasets.
+        Load and prepare training and testing datasets.
         
-        Preconditions:
-        - self.model_name must be one of the supported model names.
-        - self.test_train_dir must be a valid directory containing the required dataset files.
-        - The dataset files must be in JSONL format.
-        
-        Postconditions:
-        - Training and testing datasets are loaded and prepared for fine-tuning.
-        - If sample_size < 1.0, only a fraction of the data is used.
-        - Data is formatted according to the model requirements.
-        
-        Parameters:
-        - sample_size (float, optional): Fraction of the data to use (1.0 = all data). Defaults to 1.0.
-        
-        Returns:
-        - dict: Dictionary containing 'train' and 'test' datasets, each as a Dataset object.
-        
+        Requires:
+            - self.model_name is supported
+            - Dataset files exist in test_train_dir
+            - Files are in JSONL format
+            
+        Ensures:
+            - Loads train and test datasets
+            - Samples data if requested
+            - Formats according to model needs
+            - Returns dict with 'train' and 'test' keys
+            
         Raises:
-        - ValueError: If self.model_name is not one of the supported models (via _validate_model_name).
+            - ValueError if model not supported
+            - FileNotFoundError if datasets missing
         """
         if self.model_name in [ "Mistral-7B-Instruct-v0.2", "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct",
             "Phi-4-mini-instruct" ]:
@@ -1045,29 +987,25 @@ class PeftTrainer:
         
         return { 'train': train_dataset, 'test': test_dataset }
     
-    def _get_dataset( self, path, sample_size=1.0, extract_gpt_message=False ):
+    def _get_dataset( self, path: str, sample_size: float=1.0, extract_gpt_message: bool=False ) -> Dataset:
         """
-        Loads and processes a dataset from a JSONL file.
+        Load and process dataset from JSONL file.
         
-        Preconditions:
-        - path must be a valid file path to a JSONL file.
-        - sample_size must be a float between 0.0 and 1.0.
-        - If extract_gpt_message is True, each JSON object must have a "gpt_message" field.
-        
-        Postconditions:
-        - The data is loaded from the file and parsed from JSON.
-        - If sample_size < 1.0, only the specified fraction of data is used.
-        - If extract_gpt_message is True, only the "gpt_message" field is extracted from each JSON object.
-        - A Dataset object is returned containing the processed data.
-        
-        Parameters:
-        - path (str): Path to the JSONL dataset file.
-        - sample_size (float, optional): Fraction of the data to use (1.0 = all data). Defaults to 1.0.
-        - extract_gpt_message (bool, optional): If True, extract only the "gpt_message" field from each JSON object. 
-                                               Defaults to False.
-        
-        Returns:
-        - Dataset: Hugging Face Dataset object containing the processed data.
+        Requires:
+            - path is valid JSONL file
+            - sample_size between 0.0 and 1.0
+            - If extract_gpt_message, entries have "gpt_message"
+            
+        Ensures:
+            - Loads and parses JSON data
+            - Samples if sample_size < 1.0
+            - Extracts gpt_message if requested
+            - Returns Dataset object
+            
+        Raises:
+            - FileNotFoundError if file missing
+            - JSONDecodeError if invalid JSON
+            - KeyError if gpt_message missing
         """
         rows = du.get_file_as_list( path )
         # retain a sample of the data set expressed as a percentage
@@ -1083,30 +1021,22 @@ class PeftTrainer:
         
         return Dataset.from_list( rows )
     
-    def _format_prompt( self, row ):
+    def _format_prompt( self, row: dict ) -> str:
         """
-        Formats a training example into a prompt suitable for the specific model.
+        Format training example into model-specific prompt.
         
-        Preconditions:
-        - row must be a dictionary-like object containing "instruction", "input", and "output" keys.
-        - self.model_name must be one of the supported model names.
-        
-        Postconditions:
-        - A formatted prompt string is returned in the appropriate format for the model type.
-        
-        Parameters:
-        - row (dict): A dictionary containing "instruction", "input", and "output" fields.
-        
-        Returns:
-        - str: A formatted prompt string suitable for the specified model type.
-        
+        Requires:
+            - row has "instruction", "input", "output" keys
+            - self.model_name is supported
+            - Model config available
+            
+        Ensures:
+            - Returns formatted prompt string
+            - Uses model-specific template from config
+            
         Raises:
-        - ValueError: If self.model_name is not one of the supported models.
-        - KeyError: If row is missing any of the required fields.
-        
-        Notes:
-        - The prompt format is loaded from the model-specific configuration file
-        - Different models require different prompt formats that are defined in their config files
+            - ValueError if model not supported
+            - KeyError if row missing required fields
         """
         # Load the model-specific configuration
         model_config = load_model_config( self.model_name )
@@ -1177,21 +1107,18 @@ class PeftTrainer:
             last_tag=last_tag
         )
     
-    def _print_trainable_parameters( self ):
+    def _print_trainable_parameters( self ) -> None:
         """
         Prints the number of trainable parameters in the model.
         
-        Preconditions:
-        - self.model must be initialized and loaded.
-        - The model must have named parameters that can be iterated over.
+        Requires:
+            - Model loaded and initialized
+            - Model has named parameters
         
-        Postconditions:
-        - The count of trainable parameters, total parameters, and their ratio is printed to the console.
-        
-        Notes:
-        - This is useful for verifying that parameter-efficient fine-tuning is correctly set up, 
-          as only a small percentage of parameters should be trainable in PEFT methods.
-        - No return value, the results are printed directly to the console.
+        Ensures:
+            - Trainable parameter count printed
+            - Total parameter count printed
+            - Percentage calculated and printed
         """
         trainable_params = 0
         all_param = 0
@@ -1203,22 +1130,19 @@ class PeftTrainer:
             f"trainable params: {trainable_params:,} || all params: {all_param:,} || trainable%: {100 * trainable_params / all_param:.2f}"
         )
     
-    def _print_stats_pre( self ):
+    def _print_stats_pre( self ) -> None:
         """
         Captures and prints GPU memory statistics before training.
         
-        Preconditions:
-        - CUDA must be available.
-        - The GPU must be accessible through torch.cuda.
+        Requires:
+            - CUDA available
+            - GPU accessible through torch.cuda
         
-        Postconditions:
-        - GPU device information and memory usage is captured and printed.
-        - self.start_gpu_memory is set to the current reserved memory (used as baseline).
-        - self.max_memory is set to the total available GPU memory.
-        
-        Notes:
-        - This method is called before training to establish baseline memory usage.
-        - Memory values are converted to GB and rounded to 3 decimal places.
+        Ensures:
+            - GPU device properties retrieved
+            - Baseline memory usage recorded
+            - Max memory available captured
+            - Stats printed to console
         """
         gpu_stats = torch.cuda.get_device_properties( 0 )
         self.start_gpu_memory = round( torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3 )
@@ -1226,25 +1150,21 @@ class PeftTrainer:
         print( f"GPU = {gpu_stats.name}. Max memory = {self.max_memory} GB." )
         print( f"{self.start_gpu_memory} GB of memory reserved." )
     
-    def _print_stats_post( self ):
+    def _print_stats_post( self ) -> None:
         """
         Captures and prints GPU memory statistics after training.
         
-        Preconditions:
-        - CUDA must be available.
-        - The GPU must be accessible through torch.cuda.
-        - _print_stats_pre must have been called before this method.
-        - self.start_gpu_memory and self.max_memory must be initialized.
+        Requires:
+            - CUDA available
+            - GPU accessible through torch.cuda
+            - _print_stats_pre called first
+            - start_gpu_memory/max_memory initialized
         
-        Postconditions:
-        - GPU memory usage statistics are calculated and printed.
-        - Peak memory usage and memory usage specifically for training are displayed.
-        - Memory usage is shown both in absolute values (GB) and as percentages of total memory.
-        
-        Notes:
-        - This method is called after training to measure peak memory usage.
-        - Training-specific memory usage is calculated as the difference from the baseline.
-        - Memory values are converted to GB and rounded to 3 decimal places.
+        Ensures:
+            - Peak memory usage calculated
+            - Training memory delta computed
+            - Memory percentages calculated
+            - Stats printed to console
         """
         used_memory = round( torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3 )
         used_memory_for_trainer = round( used_memory - self.start_gpu_memory, 3 )
@@ -1258,27 +1178,18 @@ class PeftTrainer:
         # Note: Attempted to access self.trainer.metrics but SFTTrainer has no metrics attribute
         # AttributeError: 'SFTTrainer' object has no attribute 'metrics'
     
-    def set_hf_env_vars( self, hf_home="/var/model/models", hf_hub_etag_timeout="60", hf_hub_download_timeout="60" ):
+    def set_hf_env_vars( self, hf_home: str="/var/model/models", hf_hub_etag_timeout: str="60", hf_hub_download_timeout: str="60" ) -> None:
         """
         Sets environment variables for the Hugging Face model hub.
         
-        Preconditions:
-        - None specific, this method can be called at any time.
+        Requires:
+            - None (can be called anytime)
         
-        Postconditions:
-        - The HF_HOME, HF_HUB_ETAG_TIMEOUT, and HF_HUB_DOWNLOAD_TIMEOUT environment variables 
-          are set to the specified values.
-        - The environment variable values are printed to the console.
-        
-        Parameters:
-        - hf_home (str, optional): Path to the Hugging Face cache directory. Defaults to "/var/model/models".
-        - hf_hub_etag_timeout (str, optional): Timeout in seconds for etag requests. Defaults to "60".
-        - hf_hub_download_timeout (str, optional): Timeout in seconds for downloads. Defaults to "60".
-        
-        Notes:
-        - Setting HF_HOME is critical for proper functioning of model loading and caching.
-        - The timeouts help prevent hanging if there are network issues during model downloads.
-        - These environment variables are used by the Hugging Face Transformers library.
+        Ensures:
+            - HF_HOME environment variable set
+            - HF_HUB_ETAG_TIMEOUT variable set
+            - HF_HUB_DOWNLOAD_TIMEOUT variable set
+            - All values printed to console
         """
         os.environ[ "HF_HOME" ] = hf_home
         os.environ[ "HF_HUB_ETAG_TIMEOUT" ] = hf_hub_etag_timeout
@@ -1289,26 +1200,17 @@ class PeftTrainer:
         print( os.environ[ "HF_HUB_ETAG_TIMEOUT" ] )
         print( os.environ[ "HF_HUB_DOWNLOAD_TIMEOUT" ] )
     
-    def set_gib_env_vars( self, wandb_disable_service="True", gib_root="/var/model/genie-in-the-box" ):
+    def set_gib_env_vars( self, wandb_disable_service: str="True", gib_root: str="/var/model/genie-in-the-box" ) -> None:
         """
         Sets environment variables for the Genie in the Box application.
         
-        Preconditions:
-        - None specific, this method can be called at any time.
+        Requires:
+            - None (can be called anytime)
         
-        Postconditions:
-        - The GENIE_IN_THE_BOX_ROOT, GIB_CONFIG_MGR_CLI_ARGS, and WANDB_DISABLE_SERVICE 
-          environment variables are set to the specified values.
-        
-        Parameters:
-        - wandb_disable_service (str, optional): Whether to disable Weights & Biases logging service. 
-                                                Defaults to "True".
-        - gib_root (str, optional): Root directory of the Genie in the Box application. 
-                                   Defaults to "/var/model/genie-in-the-box".
-        
-        Notes:
-        - GIB_CONFIG_MGR_CLI_ARGS contains configuration paths for the application.
-        - Setting WANDB_DISABLE_SERVICE to "True" prevents Weights & Biases from attempting to log training data.
+        Ensures:
+            - GENIE_IN_THE_BOX_ROOT variable set
+            - GIB_CONFIG_MGR_CLI_ARGS variable set
+            - WANDB_DISABLE_SERVICE variable set
         """
         os.environ[ "GENIE_IN_THE_BOX_ROOT" ] = gib_root
         os.environ[
@@ -1316,36 +1218,27 @@ class PeftTrainer:
         os.environ[ "WANDB_DISABLE_SERVICE" ] = wandb_disable_service
     
     def _start_vllm_server( self,
-        model_path_or_hf_id, port=3000, max_model_len=2048, gpu_memory_utilization=0.75, timeout=180
-    ):
+        model_path_or_hf_id: str, port: int=3000, max_model_len: int=2048, gpu_memory_utilization: float=0.75, timeout: int=180
+    ) -> subprocess.Popen:
         """
         Starts a vLLM server for the quantized model and waits for it to be available.
         
-        Preconditions:
-        - model_path_or_hf_id must be a valid directory containing a model or hf model id.
-        - DEEPILY_PROJECTS_DIR environment variable must be set to the projects directory.
-        - vLLM must be installed in the virtual environment at $DEEPILY_PROJECTS_DIR/vllm-pip/.venv.
+        Requires:
+            - Valid model path or HF model ID
+            - DEEPILY_PROJECTS_DIR environment set
+            - vLLM installed in virtual environment
+            - GPU resources available
         
-        Postconditions:
-        - A vLLM server is started in a separate process.
-        - The function waits until the server is available or until the timeout is reached.
-        - Returns the process object for the vLLM server.
-        - If multiple GPUs are available, vLLM will be configured to use all of them.
-        
-        Parameters:
-        - model_path_or_hf_id (str): Path to the directory containing a model.
-        - port (int, optional): Port on which to run the vLLM server. Defaults to 3000.
-        - max_model_len (int, optional): Maximum sequence length for the model. Defaults to 2048.
-        - gpu_memory_utilization (float, optional): Fraction of GPU memory to use. Defaults to 0.75.
-        - timeout (int, optional): Maximum time to wait for the server to start (seconds). Defaults to 180.
-        
-        Returns:
-        - subprocess.Popen: Process object for the vLLM server.
+        Ensures:
+            - vLLM server started in subprocess
+            - Server configured for available GPUs
+            - Waits for server availability
+            - Returns process object
         
         Raises:
-        - ValueError: If DEEPILY_PROJECTS_DIR is not set.
-        - TimeoutError: If the server does not start within the timeout period.
-        - RuntimeError: If the vLLM server process exits unexpectedly.
+            - ValueError if DEEPILY_PROJECTS_DIR not set
+            - TimeoutError if server start times out
+            - RuntimeError if server exits unexpectedly
         """
         # Check if DEEPILY_PROJECTS_DIR is set
         projects_dir = os.environ.get( "DEEPILY_PROJECTS_DIR" )
@@ -1387,7 +1280,7 @@ class PeftTrainer:
         server_error = None
         
         # Define function to monitor process status
-        def check_process_status( process, log ):
+        def check_process_status( process: subprocess.Popen, log: list ) -> bool:
             """Monitor subprocess status and capture any error if it exits prematurely"""
             nonlocal server_error
             return_code = process.poll()
@@ -1409,7 +1302,7 @@ class PeftTrainer:
         )
         
         # Start a thread to read and print server output
-        def print_server_output( process, log ):
+        def print_server_output( process: subprocess.Popen, log: list ) -> None:
             for line in process.stdout:
                 log.append( line.strip() )
                 if self.debug and self.verbose:
@@ -1476,23 +1369,18 @@ class PeftTrainer:
         log_tail = "\n".join( server_log[ -20: ] ) if server_log else "No log output captured"
         raise TimeoutError( f"vLLM server did not start within {timeout} seconds.\nLast log entries:\n{log_tail}" )
     
-    def _stop_vllm_server( self, process ):
+    def _stop_vllm_server( self, process: subprocess.Popen ) -> bool:
         """
         Stops the vLLM server process (spawned with start_new_session=True).
         
-        Preconditions:
-        - process must be a valid subprocess.Popen object representing the vLLM server process.
-        - Process should have been created with start_new_session=True.
+        Requires:
+            - Valid subprocess.Popen object
+            - Process created with start_new_session=True
         
-        Postconditions:
-        - The vLLM server process is terminated.
-        - Any child processes in the same process group are also terminated.
-        
-        Parameters:
-        - process (subprocess.Popen): The process object for the vLLM server.
-        
-        Returns:
-        - bool: True if the server was successfully stopped, False otherwise.
+        Ensures:
+            - Server process terminated
+            - Child processes also terminated
+            - Returns True on success, False otherwise
         """
         if not process:
             return False
@@ -1530,9 +1418,9 @@ class PeftTrainer:
         return True
     
     def run_pipeline( self,
-        pre_training_stats=False, post_training_stats=False, post_quantization_stats=False, nuclear_kill_button=False,
-        validation_sample_size=100
-    ):
+        pre_training_stats: bool=False, post_training_stats: bool=False, post_quantization_stats: bool=False, nuclear_kill_button: bool=False,
+        validation_sample_size: int=100
+    ) -> None:
         """
         Executes the full training pipeline from fine-tuning to quantization.
         
@@ -1666,9 +1554,9 @@ class PeftTrainer:
         print( f"Quantized model: {quantized_model_dir}" )
         du.print_simple_file_list( quantized_model_dir )
     
-    def run_pipeline_adhoc( self, pre_training_stats=False, post_training_stats=False, post_quantization_stats=False, nuclear_kill_button=False,
-        validation_sample_size=100
-    ):
+    def run_pipeline_adhoc( self, pre_training_stats: bool=False, post_training_stats: bool=False, post_quantization_stats: bool=False, nuclear_kill_button: bool=False,
+        validation_sample_size: int=100
+    ) -> None:
         """
         Executes a customized version of the training pipeline for debugging and testing purposes.
         
@@ -1824,28 +1712,21 @@ class PeftTrainer:
         du.print_simple_file_list( quantized_model_dir )
 
 
-def check_env():
+def check_env() -> str:
     """
     Verifies that required environment variables are set for proper application functioning.
 
-    Preconditions:
-    - None, this function checks the environment variables itself.
+    Requires:
+        - None (checks environment state)
 
-    Postconditions:
-    - If all required environment variables are set, the GENIE_IN_THE_BOX_ROOT path is returned.
-    - If any required variables are missing, the function prints an error message and exits the program.
-
-    Required Environment Variables:
-    - NCCL_P2P_DISABLE: Should be set to "1" to disable peer-to-peer CUDA operations.
-    - NCCL_IB_DISABLE: Should be set to "1" to disable InfiniBand communications.
-    - GENIE_IN_THE_BOX_ROOT: Should point to the root directory of the application.
-    - GIB_CONFIG_MGR_CLI_ARGS: Should contain configuration arguments for the application.
-
-    Returns:
-    - str: The value of GENIE_IN_THE_BOX_ROOT if all checks pass.
+    Ensures:
+        - All required variables validated
+        - Missing variables reported
+        - Returns GENIE_IN_THE_BOX_ROOT path
+        - Exits if variables missing
 
     Raises:
-    - SystemExit: If any required environment variables are missing.
+        - SystemExit if variables missing
     """
     required_vars = [
         ( "HF_HOME", "/some/foo/path" ),
@@ -1870,24 +1751,20 @@ def check_env():
     return os.getenv( "GENIE_IN_THE_BOX_ROOT" )
 
 
-@staticmethod
-def check_privileges(debug=False):
+def check_privileges(debug: bool=False) -> None:
     """
     Checks if the script is running with root privileges or with sudo.
     
-    Preconditions:
-    - None
+    Requires:
+        - None (checks process state)
     
-    Postconditions:
-    - If running with root privileges, prints a confirmation message
-    - If running with sudo, prints a confirmation message
-    - If not running with elevated privileges, exits the program
-    
-    Returns:
-    - None
+    Ensures:
+        - Root/sudo status checked
+        - Confirmation messages printed
+        - Exits if not elevated
     
     Raises:
-    - SystemExit: If the script is not running with elevated privileges
+        - SystemExit if not elevated
     """
     print( "Checking credentials..." )
     if is_root():
@@ -1907,28 +1784,21 @@ def check_privileges(debug=False):
         sys.exit( 1 )
 
 
-def parse_arguments():
+def parse_arguments() -> argparse.Namespace:
     """
     Parses command line arguments for the PEFT trainer application.
 
-    Preconditions:
-    - The script must be run with proper command line arguments.
+    Requires:
+        - Script run with command line arguments
 
-    Postconditions:
-    - Returns a Namespace object containing the parsed arguments.
-
-    Required Arguments:
-    - model: The Hugging Face model ID.
-    - model_name: The name of the model (must be a supported model).
-    - test_train_path: Path to the directory containing test/train data.
-    - lora_dir: Directory for storing LoRA adapter files.
-
-    Optional Arguments:
-    - --debug: Flag to enable debug mode.
-    - --verbose: Flag to enable verbose mode.
+    Ensures:
+        - Arguments parsed and validated
+        - Returns Namespace with arguments
+        - Required args present
+        - Optional args have defaults
 
     Returns:
-    - argparse.Namespace: Object containing the parsed command line arguments.
+        - argparse.Namespace: Parsed arguments
     """
     
     parser = argparse.ArgumentParser( description="PEFT trainer for language models" )

@@ -1,4 +1,4 @@
-from typing import Optional, Dict
+from typing import Optional
 
 from pydantic_ai.models.openai import OpenAIModel  # New import
 
@@ -28,7 +28,7 @@ class TokenCounter:
         - Add validation for token count limits per model
     """
     
-    def __init__( self, model_tokenizer_map: Optional[ Dict[ str, str ] ] = None ):
+    def __init__( self, model_tokenizer_map: Optional[dict[str, str]] = None ) -> None:
         """
         Initialize the token counter with a mapping from model names to tokenizer identifiers.
 

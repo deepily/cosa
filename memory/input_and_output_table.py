@@ -6,29 +6,33 @@ from cosa.app.configuration_manager import ConfigurationManager
 from cosa.utils.util_stopwatch import Stopwatch
 
 import lancedb
-
-
-# def singleton( cls ):
-#
-#     instances = { }
-#
-#     def wrapper( *args, **kwargs ):
-#
-#         if cls not in instances:
-#             print( "Instantiating QueryAndResponseTable() singleton...", end="\n\n" )
-#             instances[ cls ] = cls( *args, **kwargs )
-#         else:
-#             print( "Reusing QueryAndResponseTable() singleton..." )
-#
-#         return instances[ cls ]
-#
-#     return wrapper
-
+from typing import Optional, Any
 
 # @singleton
 class InputAndOutputTable():
+    """
+    Manages input/output data storage in LanceDB.
     
-    def __init__( self, debug=False, verbose=False ):
+    Handles storage and retrieval of conversation history, including
+    embeddings for semantic search.
+    """
+    def __init__( self, debug: bool=False, verbose: bool=False ) -> None:
+        """
+        Initialize the input/output table.
+        
+        Requires:
+            - GIB_CONFIG_MGR_CLI_ARGS environment variable is set or defaults available
+            - Database path is valid in configuration
+            
+        Ensures:
+            - Opens connection to LanceDB
+            - Opens or creates input_and_output_tbl
+            - Initializes question embeddings table
+            
+        Raises:
+            - FileNotFoundError if database path invalid
+            - lancedb errors propagated
+        """
         
         self.debug       = debug
         self.verbose     = verbose
@@ -46,9 +50,24 @@ class InputAndOutputTable():
         #     du.print_banner( "Table:" )
         #     print( self._input_and_output_tbl.select( [ "date", "time", "input", "output_final" ] ).head( 10 ) )
         
-    def insert_io_row( self, date=du.get_current_date(), time=du.get_current_time( include_timezone=False ),
-        input_type="", input="", input_embedding=[], output_raw="", output_final="", output_final_embedding=[], solution_path_wo_root=None
-    ):
+    def insert_io_row( self, date: str=du.get_current_date(), time: str=du.get_current_time( include_timezone=False ),
+        input_type: str="", input: str="", input_embedding: list[float]=[], output_raw: str="", output_final: str="", output_final_embedding: list[float]=[], solution_path_wo_root: Optional[str]=None
+    ) -> None:
+        """
+        Insert a new row into the input/output table.
+        
+        Requires:
+            - All string parameters are non-None
+            - Embeddings are lists of floats or empty
+            
+        Ensures:
+            - Row is added to table with provided data
+            - Missing embeddings are generated if not provided
+            - Table row count is incremented
+            
+        Raises:
+            - None (handles errors gracefully)
+        """
         
         # ¡OJO! The embeddings are optional. If not provided, they will be generated.
         # In this case the only embedding that we are caching is the one that corresponds to the query/input, otherwise known
@@ -70,8 +89,23 @@ class InputAndOutputTable():
         self._input_and_output_tbl.add( new_row )
         timer.print( "Done! I/O table now has {self._input_and_output_tbl.count_rows()} rows", use_millis=True, end="\n" )
         
-    def get_knn_by_input( self, search_terms, k=10 ):
+    def get_knn_by_input( self, search_terms: str, k: int=10 ) -> list[dict]:
+        """
+        Get k-nearest neighbors by input embedding.
         
+        Requires:
+            - search_terms is a non-empty string
+            - k is a positive integer
+            - Embeddings table is initialized
+            
+        Ensures:
+            - Returns list of k most similar inputs
+            - Uses dot product similarity metric
+            - Results include input and output_final fields
+            
+        Raises:
+            - None
+        """
         timer = Stopwatch( msg="get_knn_by_input() called..." )
         
         # First, convert the search_terms string into an embedding. The embedding table caches all question embeddings
@@ -92,8 +126,23 @@ class InputAndOutputTable():
         
         return knn
     
-    def get_all_io( self, max_rows=1000 ):
+    def get_all_io( self, max_rows: int=1000 ) -> list[dict]:
+        """
+        Get all input/output pairs up to max_rows.
         
+        Requires:
+            - max_rows is a positive integer
+            - Table is initialized
+            
+        Ensures:
+            - Returns list of dictionaries with IO data
+            - Limited to max_rows results
+            - Includes date, time, input_type, input, output_final
+            - Warns if results truncated
+            
+        Raises:
+            - None
+        """
         timer = Stopwatch( msg=f"get_all_io( max_rows={max_rows} ) called..." )
         
         results = self._input_and_output_tbl.search().select( [ "date", "time", "input_type", "input", "output_final" ] ).limit( max_rows ).to_list()
@@ -105,8 +154,23 @@ class InputAndOutputTable():
         
         return results
     
-    def get_io_stats_by_input_type( self, max_rows=1000 ):
+    def get_io_stats_by_input_type( self, max_rows: int=1000 ) -> dict[str, int]:
+        """
+        Get statistics grouped by input_type.
         
+        Requires:
+            - max_rows is a positive integer
+            - Table is initialized
+            
+        Ensures:
+            - Returns dictionary mapping input_type to count
+            - Uses pandas for grouping operations
+            - Limited to max_rows for processing
+            - Warns if results truncated
+            
+        Raises:
+            - None
+        """
         timer = Stopwatch( msg=f"get_io_stats_by_input_type( max_rows={max_rows} ) called..." )
         
         stats_df = self._input_and_output_tbl.search().select( [ "input_type" ] ).limit( max_rows ).to_pandas()
@@ -122,9 +186,23 @@ class InputAndOutputTable():
         
         return stats_dict
     
-    # Method to bitch all input an output where input_type starts with "go to agent"
-    def get_all_qnr( self, max_rows=1000 ):
+    def get_all_qnr( self, max_rows: int=50 ) -> list[dict]:
+        """
+        Get all questions and responses for agent router commands.
         
+        Requires:
+            - max_rows is a positive integer
+            - Table is initialized
+            
+        Ensures:
+            - Returns list of agent router interactions
+            - Filters by input_type starting with 'agent router go to'
+            - Limited to max_rows results
+            - Warns if results truncated
+            
+        Raises:
+            - None
+        """
         timer = Stopwatch( msg=f"get_all_qnr( max_rows={max_rows} ) called..." )
         
         where_clause = "input_type LIKE 'agent router go to %'"
@@ -139,8 +217,22 @@ class InputAndOutputTable():
         
         return results
     
-    def init_tbl( self ):
+    def init_tbl( self ) -> None:
+        """
+        Initialize the input/output table schema.
         
+        Requires:
+            - Database connection is established
+            
+        Ensures:
+            - Creates table with proper schema
+            - Sets up all required fields and types
+            - Creates FTS indexes for search
+            - Overwrites existing table if present
+            
+        Raises:
+            - lancedb errors propagated
+        """
         du.print_banner( "Tables:" )
         print( self.db.table_names() )
         
