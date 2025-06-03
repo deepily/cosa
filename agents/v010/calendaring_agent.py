@@ -1,5 +1,5 @@
 import json
-from typing import tuple, Any
+from typing import Any
 
 from cosa.agents.v010.agent_base import AgentBase
 

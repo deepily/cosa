@@ -1080,12 +1080,6 @@ class XmlCoordinator:
             - Shows progress information
             - Returns generated response
         """
-        # import openai
-        import torch
-        # from huggingface_hub import InferenceClient
-        # import cosa.app.util_llm_client as du_llm_client
-        # from cosa.agents.v000.llm_v0 import Llm_v0
-        
         self._call_counter += 1
         
         print( f"Processing call [{self._call_counter:03d}] out of [{rows}] = [{round( self._call_counter / rows * 100.0, 1 )}%]... ", end="" )
@@ -1108,54 +1102,4 @@ class XmlCoordinator:
                 print( f"ETA: Error '{e}'" )
                 
         return self.llm_client.run( prompt )
-        
-        # # Handle different LLM backends
-        # if switch == "tgi":
-        #     client = InferenceClient( self.tgi_url )
-        #     token_list = []
-        #     ellipsis_count = 0
-        #
-        #     if debug and verbose:
-        #         for line in prompt.split( "\n" ):
-        #             print( line )
-        #
-        #     for token in client.text_generation(
-        #         prompt, max_new_tokens=max_new_tokens, stream=True, temperature=temperature, top_k=top_k, top_p=top_p, stop_sequences=[ "</response>" ]
-        #     ):
-        #         if debug:
-        #             print( token, end="" )
-        #         else:
-        #             if not silent: print( ".", end="" )
-        #             ellipsis_count += 1
-        #             if ellipsis_count == 120:
-        #                 ellipsis_count = 0
-        #                 print()
-        #
-        #         token_list.append( token )
-        #
-        #     response = "".join( token_list ).strip()
-        #     return response
-        #
-        # elif switch == "deepily":
-        #     llm = Llm_v0( model=model, debug=debug, verbose=verbose )
-        #     results = llm.query_llm( prompt=prompt, temperature=temperature, top_p=top_p, top_k=top_k )
-        #     return results
-        #
-        # elif switch == "openai":
-        #     openai.api_key = du.get_api_key( "openai", project_root=du.get_project_root() )
-        #     response = openai.chat.completions.create(
-        #         model=Llm_v0.extract_model_name( model_name ),
-        #         messages=prompt[ "messages" ],
-        #         temperature=temperature,
-        #         max_tokens=max_new_tokens,
-        #         top_p=top_p,
-        #         frequency_penalty=0.0,
-        #         presence_penalty=0.0
-        #     )
-        #     return response.choices[ 0 ].message.content.strip()
-        #
-        # elif switch == "huggingface" or switch == "in_memory":
-        #     return du_llm_client.query_llm_in_memory( model, tokenizer, prompt, device=device, model_name=model_name, max_new_tokens=max_new_tokens, silent=silent, debug=debug, verbose=verbose )
-        #
-        # else:
-        #     raise Exception( f"Unknown switch [{switch}]" )
+    

@@ -1,12 +1,10 @@
-from cosa.agents.math_refactoring_agent import MathRefactoringAgent
-from cosa.agents.receptionist_agent import ReceptionistAgent
-from cosa.agents.weather_agent import WeatherAgent
+# from cosa.agents.v010.math_refactoring_agent import MathRefactoringAgent
+from cosa.agents.v010.receptionist_agent import ReceptionistAgent
+from cosa.agents.v010.weather_agent import WeatherAgent
 from cosa.app.fifo_queue import FifoQueue
-from cosa.agents.agent_base import AgentBase
-# from lib.agents.agent_function_mapping   import FunctionMappingAgent
+from cosa.agents.v010.agent_base import AgentBase
 from cosa.memory.input_and_output_table import InputAndOutputTable
 from cosa.memory.solution_snapshot import SolutionSnapshot
-# from app                                 import emit_audio
 
 import cosa.utils.util as du
 import cosa.utils.util_stopwatch as sw
@@ -187,8 +185,8 @@ class RunningFifoQueue( FifoQueue ):
             # TODO: this needs to not be so ad hoc as it appears right now!
             serialize_snapshot = (
                 not isinstance( running_job, ReceptionistAgent ) and 
-                not isinstance( running_job, WeatherAgent ) and
-                not isinstance( running_job, MathRefactoringAgent )
+                not isinstance( running_job, WeatherAgent ) # and
+                # not isinstance( running_job, MathRefactoringAgent )
             )
             if serialize_snapshot:
                 

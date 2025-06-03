@@ -11,7 +11,7 @@ from cosa.agents.v010.todo_list_agent import TodoListAgent
 from cosa.agents.v010.calendaring_agent import CalendaringAgent
 from cosa.agents.v010.math_agent import MathAgent
 from cosa.agents.v010.llm_client_factory import LlmClientFactory
-from cosa.tools.search_gib import GibSearch
+from cosa.tools.search_gib_v010 import GibSearch
 
 # from app       import emit_audio
 from cosa.utils import util     as du
@@ -61,7 +61,7 @@ class TodoFifoQueue( FifoQueue ):
         self.inject_bugs  = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
         
         # Initialize LLM client factory for v010 compatibility
-        self.llm_factory = LlmClientFactory( config_mgr=config_mgr, debug=debug, verbose=verbose )
+        self.llm_factory = LlmClientFactory( debug=debug, verbose=verbose )
         
         # Salutations to be stripped by a brute force method until the router parses them off for us
         self.salutations = [ "computer", "little", "buddy", "pal", "ai", "jarvis", "alexa", "siri", "hal", "einstein",

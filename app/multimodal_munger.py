@@ -1,16 +1,15 @@
 import json
 import re
 from collections import defaultdict
-from typing import Optional, Union, tuple, dict, Any
+from typing import Optional, Union, Any
 
 import openai
 
 import cosa.utils.util_stopwatch as sw
 import cosa.utils.util as du
 import cosa.utils.util_xml as du_xml
-# import cosa.app.util_llm_client  as llm_client
 
-from cosa.agents.llm_v0 import Llm_v0
+from cosa.agents.v010.llm_client_factory import LlmClientFactory
 
 from cosa.app.configuration_manager import ConfigurationManager
 
@@ -1087,11 +1086,12 @@ class MultiModalMunger:
         prompt          = prompt_template.format( voice_command=transcription )
         
         model         = self.config_mgr.get( "router_and_vox_command_model" )
-        # url           = self.config_mgr.get( "router_and_/vox_command_url" )
+        # url           = self.config_mgr.get( "router_and_vox_command_url" )
         is_completion = self.config_mgr.get( "router_and_vox_command_is_completion", return_type="boolean", default=False )
         
-        llm      = Llm_v0( model=model, is_completion=is_completion, debug=self.debug, verbose=self.verbose )
-        response = llm.query_llm( prompt=prompt )
+        factory  = LlmClientFactory( debug=self.debug, verbose=self.verbose )
+        llm      = factory.get_client( model, debug=self.debug, verbose=self.verbose )
+        response = llm.run( prompt )
         
         print( f"LLM response: [{response}]" )
         # Parse results

@@ -6,8 +6,6 @@ from typing import Any, Optional, Union
 from pydantic_ai import Agent
 
 import cosa.utils.util as du
-from app import config_mgr
-# from app import config_mgr
 # from cosa.utils.util_stopwatch import Stopwatch
 
 from cosa.agents.v010.llm_client import LlmClient

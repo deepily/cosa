@@ -1,7 +1,6 @@
 import json
 
-from cosa.agents.agent_base import AgentBase
-# from lib.agents.llm import Llm
+from cosa.agents.v010.agent_base import AgentBase
 
 
 class CalendaringAgent( AgentBase ):

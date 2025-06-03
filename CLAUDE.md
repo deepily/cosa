@@ -13,6 +13,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Run single test: `pytest tests/test_file.py::test_function -v`
 - Run lint: `flake8 .`
 - Format code: `black .`
+- Run COSA modules from the cosa directory:
+  ```bash
+  # First, add the parent src directory to PYTHONPATH
+  export PYTHONPATH="/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src:$PYTHONPATH"
+  # Then you can run modules like:
+  python -m cosa.agents.foo_bar
+  ```
 
 ## Code Style
 - **Imports**: Group by stdlib, third-party, local packages

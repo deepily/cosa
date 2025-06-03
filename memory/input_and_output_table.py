@@ -102,6 +102,7 @@ class InputAndOutputTable():
             - Returns list of k most similar inputs
             - Uses dot product similarity metric
             - Results include input and output_final fields
+            - Returns empty list if embeddings are unavailable
             
         Raises:
             - None
@@ -110,6 +111,13 @@ class InputAndOutputTable():
         
         # First, convert the search_terms string into an embedding. The embedding table caches all question embeddings
         search_terms_embedding = self._question_embeddings_tbl.get_embedding( search_terms )
+        
+        # Check if we got a valid embedding (not empty)
+        if not search_terms_embedding:
+            du.print_banner( "SKIPPING KNN SEARCH - NO EMBEDDINGS" )
+            print( "Cannot perform similarity search without embeddings" )
+            print( "Returning empty results" )
+            return []
         
         knn = self._input_and_output_tbl.search(
             search_terms_embedding, vector_column_name="input_embedding"

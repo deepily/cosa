@@ -1,5 +1,5 @@
 import os
-from typing import Optional, dict, list, tuple, Any
+from typing import Optional, Any
 
 import cosa.utils.util as du
 from cosa.memory import solution_snapshot as ss
