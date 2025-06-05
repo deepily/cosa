@@ -31,14 +31,68 @@ Usage:
     response = client.run("What is the capital of France?")
 """
 
+# Existing components
 from .llm_client import LlmClient
 from .llm_client_factory import LlmClientFactory
 from .token_counter import TokenCounter
 from .llm_completion import LlmCompletion
 
+# New base abstractions for refactored architecture
+from .base_llm_client import BaseLlmClient
+from .llm_data_types import (
+    MessageRole,
+    LlmMessage,
+    LlmRequest,
+    LlmResponse,
+    LlmStreamChunk
+)
+from .llm_exceptions import (
+    LlmError,
+    LlmConfigError,
+    LlmAPIError,
+    LlmTimeoutError,
+    LlmAuthenticationError,
+    LlmRateLimitError,
+    LlmModelError,
+    LlmStreamingError,
+    LlmValidationError
+)
+from .model_registry import (
+    LlmProvider,
+    ModelConfig,
+    ModelRegistry
+)
+
 __all__ = [
+    # Existing components
     'LlmClient',
     'LlmClientFactory',
     'TokenCounter',
     'LlmCompletion',
+    
+    # New base abstractions
+    'BaseLlmClient',
+    
+    # Data types
+    'MessageRole',
+    'LlmMessage', 
+    'LlmRequest',
+    'LlmResponse',
+    'LlmStreamChunk',
+    
+    # Exceptions
+    'LlmError',
+    'LlmConfigError',
+    'LlmAPIError',
+    'LlmTimeoutError',
+    'LlmAuthenticationError',
+    'LlmRateLimitError',
+    'LlmModelError',
+    'LlmStreamingError',
+    'LlmValidationError',
+    
+    # Registry
+    'LlmProvider',
+    'ModelConfig',
+    'ModelRegistry'
 ]

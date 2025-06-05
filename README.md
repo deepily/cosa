@@ -88,6 +88,26 @@ For detailed instructions on using the PEFT trainer, including all available opt
 
 Please refer to [CLAUDE.md](./CLAUDE.md) for detailed code style and development guidelines.
 
+## Research and Development
+
+For current research and planning documents, see the [RND directory](./rnd/), which includes:
+
+### Architecture and Refactoring
+- [LLM Client Architecture Refactoring Plan](./rnd/2025.06.04-llm-client-architecture-refactoring-plan.md): Comprehensive plan for improving the v010 LLM client architecture
+- [LLM Refactoring Analysis](./rnd/2025-04-14_llm_refactoring_analysis.md): Analysis of LLM component refactoring needs
+- [Agent Migration v000 to v010 Plan](./rnd/2025-05-13_agent_migration_v000_to_v010_plan.md): Migration strategy for agent architecture
+
+### Implementation Plans
+- [Screen Reader Agent Implementation Plan](./rnd/2025-04-14_screen_reader_agent_implementation_plan.md): Plan for screen reader accessibility agent
+- [Agent Factory Testing Plan](./rnd/2025-05-15_agent_factory_testing_plan.md): Testing strategy for agent factory components
+- [CI Testing Implementation Plan](./rnd/2025-05-19_ci_testing_implementation_plan.md): Continuous integration testing setup
+
+### Analysis and Strategy
+- [LLM Prompt Format Analysis](./rnd/2025-04-16_llm_prompt_format_analysis.md): Analysis of prompt formatting approaches
+- [Prompt Templating Strategies](./rnd/2025-04-16_prompt_templating_strategies.md): Strategies for prompt template management
+- [Python Package Distribution Plan](./rnd/2025-05-16_python_package_distribution_plan.md): Plan for package distribution strategy
+- [Versioning and CI/CD Strategy](./rnd/2025-05-28_versioning_and_cicd_strategy.md): Version management and deployment strategy
+
 ## Recent and Upcoming Work
 
 ### Current Version
