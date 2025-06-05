@@ -278,3 +278,27 @@ class FifoQueue:
             return True
         else:
             return False
+    
+    def _emit_audio( self, msg: str, client_id: str = None ) -> None:
+        """
+        Helper method to emit audio through the callback.
+        
+        Requires:
+            - Subclass has self.emit_audio_callback attribute
+            
+        Ensures:
+            - Calls emit_audio_callback if available
+            - Handles exceptions gracefully
+            
+        Args:
+            msg: The message to convert to audio
+            client_id: The client to send to (None means broadcast to all)
+            
+        Raises:
+            - None (exceptions handled internally)
+        """
+        if hasattr( self, 'emit_audio_callback' ) and self.emit_audio_callback:
+            try:
+                self.emit_audio_callback( msg, client_id )
+            except Exception as e:
+                print( f"[ERROR] emit_audio_callback failed: {e}" )

@@ -20,7 +20,7 @@ class RunningFifoQueue( FifoQueue ):
     Manages execution of jobs from todo queue to done/dead queues.
     Handles both AgentBase instances and SolutionSnapshot instances.
     """
-    def __init__( self, app: Any, socketio: Any, snapshot_mgr: Any, jobs_todo_queue: FifoQueue, jobs_done_queue: FifoQueue, jobs_dead_queue: FifoQueue, config_mgr: Optional[Any]=None ) -> None:
+    def __init__( self, app: Any, socketio: Any, snapshot_mgr: Any, jobs_todo_queue: FifoQueue, jobs_done_queue: FifoQueue, jobs_dead_queue: FifoQueue, config_mgr: Optional[Any]=None, emit_audio_callback: Optional[Any]=None ) -> None:
         """
         Initialize the running FIFO queue.
         
@@ -30,6 +30,7 @@ class RunningFifoQueue( FifoQueue ):
             - snapshot_mgr is a valid snapshot manager
             - All queue parameters are FifoQueue instances
             - config_mgr is None or a valid ConfigurationManager
+            - emit_audio_callback is None or a callable function
             
         Ensures:
             - Sets up queue management components
@@ -42,16 +43,17 @@ class RunningFifoQueue( FifoQueue ):
         
         super().__init__()
         
-        self.app             = app
-        self.socketio        = socketio
-        self.snapshot_mgr    = snapshot_mgr
-        self.jobs_todo_queue = jobs_todo_queue
-        self.jobs_done_queue = jobs_done_queue
-        self.jobs_dead_queue = jobs_dead_queue
+        self.app                 = app
+        self.socketio            = socketio
+        self.snapshot_mgr        = snapshot_mgr
+        self.jobs_todo_queue     = jobs_todo_queue
+        self.jobs_done_queue     = jobs_done_queue
+        self.jobs_dead_queue     = jobs_dead_queue
+        self.emit_audio_callback = emit_audio_callback
         
-        self.auto_debug      = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
-        self.inject_bugs     = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
-        self.io_tbl          = InputAndOutputTable()
+        self.auto_debug          = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
+        self.inject_bugs         = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
+        self.io_tbl              = InputAndOutputTable()
     
     def enter_running_loop( self ) -> None:
         """

@@ -27,7 +27,7 @@ class TodoFifoQueue( FifoQueue ):
     Handles question parsing, agent routing, and snapshot management for
     conversational AI tasks.
     """
-    def __init__( self, socketio: Any, snapshot_mgr: Any, app: Any, config_mgr: Optional[Any]=None, debug: bool=False, verbose: bool=False, silent: bool=False ) -> None:
+    def __init__( self, socketio: Any, snapshot_mgr: Any, app: Any, config_mgr: Optional[Any]=None, emit_audio_callback: Optional[Any]=None, debug: bool=False, verbose: bool=False, silent: bool=False ) -> None:
         """
         Initialize the todo FIFO queue.
         
@@ -36,6 +36,7 @@ class TodoFifoQueue( FifoQueue ):
             - snapshot_mgr is a valid snapshot manager or None for testing
             - app is a Flask application instance or None for testing
             - config_mgr is None or a valid ConfigurationManager
+            - emit_audio_callback is None or a callable function
             
         Ensures:
             - Sets up queue management components
@@ -47,15 +48,16 @@ class TodoFifoQueue( FifoQueue ):
         """
         
         super().__init__()
-        self.debug        = debug
-        self.verbose      = verbose
-        self.silent       = silent
+        self.debug               = debug
+        self.verbose             = verbose
+        self.silent              = silent
         
-        self.socketio     = socketio
-        self.snapshot_mgr = snapshot_mgr
-        self.app          = app
-        self.push_counter = 0
-        self.config_mgr   = config_mgr
+        self.socketio            = socketio
+        self.snapshot_mgr        = snapshot_mgr
+        self.app                 = app
+        self.push_counter        = 0
+        self.config_mgr          = config_mgr
+        self.emit_audio_callback = emit_audio_callback
         
         self.auto_debug   = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
         self.inject_bugs  = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
@@ -139,12 +141,13 @@ class TodoFifoQueue( FifoQueue ):
         
         return gist
     
-    def push_job( self, question: str ) -> str:
+    def push_job( self, question: str, client_id: str ) -> str:
         """
         Push a new job onto the queue based on the question.
         
         Requires:
             - question is a non-empty string
+            - client_id is a non-empty string
             - Queue and snapshot manager are initialized
             
         Ensures:
@@ -152,6 +155,7 @@ class TodoFifoQueue( FifoQueue ):
             - Searches for similar snapshots if applicable
             - Routes to appropriate agent or snapshot
             - Returns status message
+            - Associates client_id with the job
             
         Raises:
             - None (exceptions handled internally)
@@ -226,11 +230,10 @@ class TodoFifoQueue( FifoQueue ):
                     "question": question
                 }
                 self.push_blocking_object( blocking_object )
-                msg = f"Is that the same as: {best_snapshot.question_gist}?"
+                msg = f"Is that the same as: {best_snapshot.question}?"
                 du.print_banner( msg )
                 print( "Blocking object pushed onto queue, waiting for response..." )
-                from app import emit_audio
-                emit_audio( msg )
+                self._emit_audio( msg, client_id )
                 return msg
             
             # This is an exact match, so queue it up
@@ -263,8 +266,7 @@ class TodoFifoQueue( FifoQueue ):
                 
                 msg = du.print_banner( f"TO DO: train and implement 'agent router go to search and summary' command {command}" )
                 print( msg )
-                from app import emit_audio
-                emit_audio( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} I'm gonna ask our research librarian about that" )
+                self._emit_audio( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} I'm gonna ask our research librarian about that", None )
                 search = GibSearch( query=question_gist )
                 search.search_and_summarize_the_web()
                 msg = search.get_results( scope="summary" )

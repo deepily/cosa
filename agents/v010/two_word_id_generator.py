@@ -62,7 +62,6 @@ def singleton( cls: type ) -> Callable[..., Any]:
     
     return get_instance
 
-
 # The TwoWordIDGenerator class with a singleton decorator
 @singleton
 class TwoWordIdGenerator:
