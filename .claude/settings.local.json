@@ -11,7 +11,8 @@
       "Bash(python:*)",
       "WebFetchTool(domain:huggingface.co)",
       "Bash(rg:*)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(export:*)"
     ],
     "deny": []
   }

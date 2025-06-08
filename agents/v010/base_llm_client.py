@@ -2,6 +2,98 @@ from abc import ABC, abstractmethod
 from typing import Optional, Any
 import asyncio
 
+import cosa.utils.util as du
+
+
+class LlmClientInterface( ABC ):
+    """
+    Common interface for all LLM client implementations.
+    
+    This interface ensures all clients provide a consistent run() method
+    that can be used interchangeably regardless of whether they use
+    chat or completion APIs.
+    
+    Requires:
+        - Subclasses must implement run() and run_async() methods
+        
+    Ensures:
+        - Consistent interface across ChatClient and CompletionClient
+        - Both sync and async support
+        - Stream support in both modes
+    """
+    
+    @abstractmethod
+    async def run_async( self, prompt: str, stream: bool = False, **kwargs: Any ) -> str:
+        """
+        Async method to send a prompt and get response.
+        
+        Requires:
+            - prompt is a non-empty string
+            - stream is a boolean value
+            
+        Ensures:
+            - returns string response from the model
+            - handles streaming if requested
+            
+        Raises:
+            - LlmError for client-specific errors
+            - LlmAPIError for API communication errors
+        """
+        pass
+    
+    @abstractmethod
+    def run( self, prompt: str, stream: bool = False, **kwargs: Any ) -> str:
+        """
+        Synchronous method to send a prompt and get response.
+        
+        Requires:
+            - prompt is a non-empty string
+            - stream is a boolean value
+            
+        Ensures:
+            - returns string response from the model
+            - handles streaming if requested
+            - works in both sync and async contexts
+            
+        Raises:
+            - LlmError for client-specific errors
+            - LlmAPIError for API communication errors
+        """
+        pass
+    
+    def _format_duration( self, seconds: float ) -> str:
+        """Format a duration in seconds to a readable string."""
+        return f"{int( seconds * 1000 )}ms"
+    
+    def _print_metadata( self, prompt_tokens: int, completion_tokens: int, duration: Optional[ float ], client_type: str = "LLM" ):
+        """
+        Print performance metadata about an LLM request.
+        
+        Requires:
+            - prompt_tokens: Number of tokens in the prompt
+            - completion_tokens: Number of tokens in the completion
+            - duration: Time taken for the request (optional)
+            - client_type: Type of client for display (e.g., "Chat", "Completion")
+            
+        Ensures:
+            - Prints formatted performance metrics
+            - Calculates tokens per second
+            - Handles missing duration gracefully
+        """
+        total_tokens = prompt_tokens + completion_tokens
+        tps = completion_tokens / duration if ( duration and duration > 0 ) else float( 'inf' )
+        duration_str = self._format_duration( duration ) if duration is not None else "N/A"
+        
+        du.print_banner( f"📊 {client_type} Summary", prepend_nl=True )
+        print( f"🧠 Model              : {self.model_name}" )
+        print( f"⏱️ Duration           : {duration_str}" )
+        print( f"🔢 Prompt tokens      : {prompt_tokens}" )
+        print( f"💬 Completion tokens  : {completion_tokens}" )
+        print( f"🧮 Total tokens       : {total_tokens}" )
+        print( f"⚡ Tokens/sec         : {tps:.2f}" )
+        print( "=" * 40 )
+
+
 class BaseLlmClient( ABC ):
     """
     Abstract base class for all LLM clients.
