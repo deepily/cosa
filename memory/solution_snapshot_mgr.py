@@ -500,31 +500,45 @@ class SolutionSnapshotManager:
             
         print()
 
-if __name__ == "__main__":
+def quick_smoke_test():
+    """Quick smoke test to validate SolutionSnapshotManager functionality."""
+    du.print_banner( "SolutionSnapshotManager Smoke Test", prepend_nl=True )
     
     path_to_snapshots = du.get_project_root() + "/src/conf/long-term-memory/solutions/"
-    snapshot_mgr = SolutionSnapshotManager( path_to_snapshots, debug=False )
-    # print( snapshot_mgr )
     
-    # exemplar_snapshot = snapshot_mgr.get_snapshots_by_question( "What concerts do I have this week?" )[ 0 ][ 1 ]
-    #
-    # similar_snapshots = snapshot_mgr.get_snapshots_by_code_similarity( exemplar_snapshot, threshold=90.0 )
+    try:
+        snapshot_mgr = SolutionSnapshotManager( path_to_snapshots, debug=False )
+        print( f"✓ SolutionSnapshotManager loaded from: {path_to_snapshots}" )
+        print( f"✓ Loaded snapshots count: {len( snapshot_mgr._snapshots_by_question )}" )
+        
+        # Test question similarity search
+        test_questions = [
+            "what day is today?",
+            "What's today's date?",
+            "what time is it?"
+        ]
+        
+        for question in test_questions:
+            print( f"\nTesting question: '{question}'" )
+            try:
+                similar_snapshots = snapshot_mgr.get_snapshots_by_question( question )
+                if len( similar_snapshots ) > 0:
+                    print( f"✓ Found {len( similar_snapshots )} similar snapshot(s)" )
+                    # Show first match details
+                    first_match = similar_snapshots[ 0 ][ 1 ]
+                    print( f"  Best match ID: {first_match.id_hash}" )
+                else:
+                    print( "  No similar snapshots found" )
+            except Exception as e:
+                print( f"✗ Error searching for question: {e}" )
+        
+    except Exception as e:
+        print( f"✗ Error initializing SolutionSnapshotManager: {e}" )
     
-    # questions = [
-    #     "what day comes after tomorrow?",
-    #     "what day is today?",
-    #     "Why is the sky blue?",
-    #     "What's today's date?",
-    #     "What is today's date?"
-    # ]
-    # for question in questions:
-    #
-    #     du.print_banner( f"Question: [{question}]", prepend_nl=True )
-    #     similar_snapshots = snapshot_mgr.get_snapshots_by_question( question )
-    #
-    #     if len( similar_snapshots ) > 0:
-    #             lines_of_code = similar_snapshots[ 0 ][ 1 ].code
-    #             for line in lines_of_code:
-    #                 print( line )
+    print( "\n✓ SolutionSnapshotManager smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()
         
         

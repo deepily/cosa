@@ -471,11 +471,35 @@ class TodoFifoQueue( FifoQueue ):
         return command, args
     
 # Add me
-if __name__ == "__main__":
+def quick_smoke_test():
+    """Quick smoke test to validate TodoFifoQueue functionality."""
+    import cosa.utils.util as du
     
-    queue = TodoFifoQueue( None, None, None )
-    input_string = "Good morning, my dearest receptionist. How are you feeling today?"
-    # input_string = "Greetings little buddy! What's your name?"
-    salutations, question = queue.parse_salutations( input_string )
-    print( salutations )
-    print( question )
+    du.print_banner( "TodoFifoQueue Smoke Test", prepend_nl=True )
+    
+    # Test salutation parsing functionality
+    test_cases = [
+        "Good morning, my dearest receptionist. How are you feeling today?",
+        "Greetings little buddy! What's your name?",
+        "Hello there! Can you help me with my schedule?",
+        "What's the weather like today?"  # No salutation case
+    ]
+    
+    try:
+        queue = TodoFifoQueue( None, None, None )
+        print( "✓ TodoFifoQueue instantiated successfully" )
+        
+        for i, input_string in enumerate( test_cases, 1 ):
+            print( f"\nTest {i}: '{input_string}'" )
+            salutations, question = queue.parse_salutations( input_string )
+            print( f"  Salutations: '{salutations}'" )
+            print( f"  Question: '{question}'" )
+        
+    except Exception as e:
+        print( f"✗ Error testing TodoFifoQueue: {e}" )
+    
+    print( "\n✓ TodoFifoQueue smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

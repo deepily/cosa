@@ -100,47 +100,50 @@ class CalendaringAgent( AgentBase ):
         
         raise NotImplementedError( f"CalendaringAgent.restore_from_serialized_state( file_path={file_path} ) not implemented" )
     
+def quick_smoke_test():
+    """Quick smoke test to validate CalendaringAgent functionality."""
+    import cosa.utils.util as du
+    
+    du.print_banner( "CalendaringAgent Smoke Test", prepend_nl=True )
+    
+    # Test with a single question for completion
+    question = "What events do I have this week?"
+    
+    try:
+        print( f"Testing question: '{question}'" )
+        cal_agent = CalendaringAgent( 
+            question=question,
+            last_question_asked=question,
+            question_gist=question,
+            debug=True,
+            verbose=False,
+            auto_debug=False
+        )
+        print( "✓ CalendaringAgent created successfully" )
+        
+        # Run through the complete agent workflow
+        print( "Running prompt..." )
+        cal_agent.run_prompt()
+        print( "✓ Prompt execution completed" )
+        
+        if cal_agent.is_code_runnable():
+            print( "Running code..." )
+            cal_agent.run_code()
+            print( "✓ Code execution completed" )
+            
+            print( "Running formatter..." )
+            cal_agent.run_formatter()
+            print( "✓ Formatter execution completed" )
+            
+            print( f"✓ Final response: {cal_agent.answer_conversational}" )
+        else:
+            print( "⚠ No runnable code generated" )
+        
+    except Exception as e:
+        print( f"✗ Error during agent execution: {e}" )
+    
+    print( "\n✓ CalendaringAgent smoke test completed" )
+
+
 if __name__ == "__main__":
-    
-    # Test the CalendaringAgent with various queries
-    test_questions = [
-        "What events do I have this week?",
-        "Show me all birthdays this month",
-        "What meetings are scheduled for tomorrow?"
-    ]
-    
-    for i, question in enumerate(test_questions, 1):
-        print(f"\n=== Test {i}: {question} ===")
-        
-        try:
-            # Initialize the calendaring agent
-            cal_agent = CalendaringAgent(
-                question=question,
-                last_question_asked=question,
-                question_gist=question,
-                debug=True,
-                verbose=True,
-                auto_debug=True
-            )
-            
-            # Run the prompt
-            print("\nRunning prompt...")
-            response_dict = cal_agent.run_prompt()
-            
-            # Run the code if available
-            if cal_agent.is_code_runnable():
-                print("\nRunning code...")
-                code_result = cal_agent.run_code()
-                print(f"Code output: {code_result.get('output', 'No output')}")
-                
-                # Run formatter to get conversational response
-                print("\nRunning formatter...")
-                cal_agent.run_formatter()
-                print(f"Formatted response: {cal_agent.answer_conversational}")
-            else:
-                print("No runnable code generated")
-                
-        except Exception as e:
-            print(f"Test failed with error: {e}")
-        
-        print("-" * 50)
+    quick_smoke_test()

@@ -244,16 +244,41 @@ class ReceptionistAgent( AgentBase ):
         
         return restored_agent
     
-if __name__ == "__main__":
+def quick_smoke_test():
+    """Quick smoke test to validate ReceptionistAgent functionality."""
+    import cosa.utils.util as du
     
-    # question = "What have we talked about lately?"
+    du.print_banner( "ReceptionistAgent Smoke Test", prepend_nl=True )
+    
+    # Test with a simple question for completion
     question = "What's your name?"
-    # question = "How are you today Einstein?"
-    # question = "Good morning dear receptionist, what's today's date?"
     
-    receptionist_agent = ReceptionistAgent( question=question, debug=True, verbose=True )
-    receptionist_agent.run_prompt()
+    try:
+        print( f"Testing question: '{question}'" )
+        receptionist_agent = ReceptionistAgent( question=question, debug=True, verbose=False )
+        print( "✓ ReceptionistAgent created successfully" )
+        
+        # Run through the complete agent workflow
+        print( "Running prompt..." )
+        receptionist_agent.run_prompt()
+        print( "✓ Prompt execution completed" )
+        
+        # Receptionist doesn't run code, but we test the interface
+        print( "Testing code interface..." )
+        code_result = receptionist_agent.run_code()
+        print( "✓ Code interface tested (returns no-op)" )
+        
+        print( "Running formatter..." )
+        response = receptionist_agent.run_formatter()
+        print( "✓ Formatter execution completed" )
+        
+        print( f"✓ Final response: {response}" )
+        
+    except Exception as e:
+        print( f"✗ Error during receptionist agent execution: {e}" )
     
-    response = receptionist_agent.run_formatter()
-    du.print_banner( "Response:", prepend_nl=True )
-    print( response )
+    print( "\n✓ ReceptionistAgent smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

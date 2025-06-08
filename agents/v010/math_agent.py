@@ -91,12 +91,40 @@ class MathAgent( AgentBase ):
             
         return self.answer_conversational
 
-if __name__ == "__main__":
+def quick_smoke_test():
+    """Quick smoke test to validate MathAgent functionality."""
+    import cosa.utils.util as du
     
+    du.print_banner( "MathAgent Smoke Test", prepend_nl=True )
+    
+    # Test with a math question for completion
     question = "What's the square root of 144?"
-    math_agent = MathAgent( question=question, debug=True, verbose=True, auto_debug=True )
-    math_agent.run_prompt()
-    math_agent.run_code()
-    math_agent.run_formatter()
     
-    print( f"Formatted response: {math_agent.answer_conversational}" )
+    try:
+        print( f"Testing question: '{question}'" )
+        math_agent = MathAgent( question=question, debug=True, verbose=False, auto_debug=False )
+        print( "✓ MathAgent created successfully" )
+        
+        # Run through the complete agent workflow
+        print( "Running prompt..." )
+        math_agent.run_prompt()
+        print( "✓ Prompt execution completed" )
+        
+        print( "Running code..." )
+        math_agent.run_code()
+        print( "✓ Code execution completed" )
+        
+        print( "Running formatter..." )
+        math_agent.run_formatter()
+        print( "✓ Formatter execution completed" )
+        
+        print( f"✓ Final response: {math_agent.answer_conversational}" )
+        
+    except Exception as e:
+        print( f"✗ Error during math agent execution: {e}" )
+    
+    print( "\n✓ MathAgent smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

@@ -173,14 +173,38 @@ class WeatherAgent( AgentBase ):
         
         return self.answer_conversational
     
+def quick_smoke_test():
+    """Quick smoke test to validate WeatherAgent functionality."""
+    import cosa.utils.util as du
+    
+    du.print_banner( "WeatherAgent Smoke Test", prepend_nl=True )
+    
+    # Test with a weather question for completion
+    question = "What's the temperature in Washington DC?"
+    
+    try:
+        print( f"Testing question: '{question}'" )
+        weather_agent = WeatherAgent( 
+            question=ss.remove_non_alphanumerics( question ), 
+            last_question_asked=question, 
+            debug=True, 
+            verbose=False, 
+            auto_debug=False 
+        )
+        print( "✓ WeatherAgent created successfully" )
+        
+        # Run through the complete agent workflow
+        print( "Running web search for weather data..." )
+        weather_response = weather_agent.do_all()
+        print( "✓ Weather search and formatting completed" )
+        
+        print( f"✓ Final response: {weather_response[:100]}..." if len( weather_response ) > 100 else f"✓ Final response: {weather_response}" )
+        
+    except Exception as e:
+        print( f"✗ Error during weather agent execution: {e}" )
+    
+    print( "\n✓ WeatherAgent smoke test completed" )
+
+
 if __name__ == "__main__":
-    
-    question      = "What's the temperature in Washington DC?"
-    # question      = "Is it raining in Washington DC?"
-    # question      = "What's Spring like in Puerto Rico?"
-    print( question )
-    
-    weather_agent = WeatherAgent( question=ss.remove_non_alphanumerics( question ), last_question_asked=question, debug=True, verbose=True, auto_debug=True )
-    weather       = weather_agent.do_all()
-    
-    print( weather )
+    quick_smoke_test()

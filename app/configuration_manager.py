@@ -864,11 +864,11 @@ class ConfigurationManager():
         
         self.splainer = splainer
     
-if __name__ == "__main__":
-    
+def quick_smoke_test():
+    """Quick smoke test to validate ConfigurationManager functionality."""
     import cosa.utils.util_stopwatch as sw
     
-    du.print_banner( "Testing ConfigurationManager Initialization Methods", prepend_nl=True, chunk="🧪 " )
+    du.print_banner( "ConfigurationManager Smoke Test", prepend_nl=True )
     
     # Reset singleton before each test to ensure clean testing
     ConfigurationManager.reset_for_testing()
@@ -879,7 +879,7 @@ if __name__ == "__main__":
         config_mgr = ConfigurationManager( _reset_singleton=True )
         print( "❌ ERROR: Zero-argument constructor succeeded but should have failed" )
     except ValueError as e:
-        print( f"✅ Expected error: {str(e)}" )
+        print( f"✅ Expected error: {str( e )}" )
     timer.print( "Test complete", use_millis=True )
     
     # Test 2: Environment variable constructor
@@ -888,7 +888,7 @@ if __name__ == "__main__":
         config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS", _reset_singleton=True )
         print( f"✅ Successfully initialized with env_var_name" )
     except ValueError as e:
-        print( f"❌ Error: {str(e)}" )
+        print( f"❌ Error: {str( e )}" )
     timer.print( "Test complete", use_millis=True )
     
     # Test 3: Explicit paths constructor
@@ -899,29 +899,29 @@ if __name__ == "__main__":
         config_block_id = "default"
         
         config_mgr = ConfigurationManager(
-            config_path     = config_path,
-            splainer_path   = splainer_path, 
-            config_block_id = config_block_id,
-            silent          = True,
-            _reset_singleton = True
+            config_path=config_path,
+            splainer_path=splainer_path, 
+            config_block_id=config_block_id,
+            silent=True,
+            _reset_singleton=True
         )
         print( f"✅ Successfully initialized with explicit paths" )
     except ValueError as e:
-        print( f"❌ Error: {str(e)}" )
+        print( f"❌ Error: {str( e )}" )
     timer.print( "Test complete", use_millis=True )
     
     # Test 4: Conflicting parameters (should fail)
     timer = sw.Stopwatch( msg="Testing conflicting parameters...", silent=False )
     try:
         config_mgr = ConfigurationManager(
-            env_var_name  = "GIB_CONFIG_MGR_CLI_ARGS",
-            config_path   = "/some/path",
-            splainer_path = "/some/path",
-            _reset_singleton = True
+            env_var_name="GIB_CONFIG_MGR_CLI_ARGS",
+            config_path="/some/path",
+            splainer_path="/some/path",
+            _reset_singleton=True
         )
         print( "❌ ERROR: Conflicting parameters succeeded but should have failed" )
     except ValueError as e:
-        print( f"✅ Expected error: {str(e)}" )
+        print( f"✅ Expected error: {str( e )}" )
     timer.print( "Test complete", use_millis=True )
     
     # Test 5: Incomplete explicit paths (should fail)
@@ -929,12 +929,16 @@ if __name__ == "__main__":
     try:
         # Only provide config_path without splainer_path
         config_mgr = ConfigurationManager(
-            config_path = "/some/path", 
-            _reset_singleton = True
+            config_path="/some/path", 
+            _reset_singleton=True
         )
         print( "❌ ERROR: Incomplete paths succeeded but should have failed" )
     except ValueError as e:
-        print( f"✅ Expected error: {str(e)}" )
+        print( f"✅ Expected error: {str( e )}" )
     timer.print( "Test complete", use_millis=True )
     
     du.print_banner( "All tests completed", prepend_nl=True, chunk="✨ " )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

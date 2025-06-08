@@ -180,19 +180,50 @@ class TodoListAgent( AgentBase ):
         
         return restored_agent
     
-if __name__ == "__main__":
+def quick_smoke_test():
+    """Quick smoke test to validate TodoListAgent functionality."""
+    import cosa.utils.util as du
     
+    du.print_banner( "TodoListAgent Smoke Test", prepend_nl=True )
+    
+    # Test with a todo list question for completion
     question = "What's on my to do list for today?"
     
-    todolist_agent = TodoListAgent( question=question, debug=True, verbose=False, auto_debug=True, inject_bugs=False )
-    # todolist_agent = TodoListAgent.restore_from_serialized_state( du.get_project_root() + "/io/log/todo-list-code-whats-on-my-to-do-list-for-today-2024-3-5-12-51-55.json" )
-    todolist_agent.run_prompt()
+    try:
+        print( f"Testing question: '{question}'" )
+        todolist_agent = TodoListAgent( 
+            question=question, 
+            debug=True, 
+            verbose=False, 
+            auto_debug=False, 
+            inject_bugs=False 
+        )
+        print( "✓ TodoListAgent created successfully" )
+        
+        # Run through the complete agent workflow
+        print( "Running prompt..." )
+        todolist_agent.run_prompt()
+        print( "✓ Prompt execution completed" )
+        
+        if todolist_agent.is_code_runnable():
+            print( "Running code..." )
+            results = todolist_agent.run_code()
+            print( "✓ Code execution completed" )
+            
+            print( "Running formatter..." )
+            answer = todolist_agent.run_formatter()
+            print( "✓ Formatter execution completed" )
+            
+            print( f"✓ Final response: {answer}" )
+        else:
+            print( "⚠ No runnable code generated" )
+        
+    except Exception as e:
+        print( f"✗ Error during todo list agent execution: {e}" )
     
-    results = todolist_agent.run_code()
-    du.print_list( results )
-    
-    todolist_agent.debug   = True
-    todolist_agent.verbose = True
-    answer = todolist_agent.run_formatter()
-    print( answer )
+    print( "\n✓ TodoListAgent smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()
     

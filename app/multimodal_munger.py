@@ -1220,123 +1220,46 @@ class MultiModalMunger:
     
         return class_dictionary
     
-if __name__ == "__main__":
+def quick_smoke_test():
+    """Quick smoke test to validate MultiModalMunger functionality."""
+    import cosa.utils.util as du
+    
+    du.print_banner( "MultiModalMunger Smoke Test", prepend_nl=True )
+    
+    # Test different types of multimodal input
+    test_cases = [
+        {
+            "transcription": "Head to NPR.org in a new tab",
+            "prefix": "",
+            "description": "Browser navigation command"
+        },
+        {
+            "transcription": "multimodal python punctuation console dot log open parentheses one plus one equals two closed parentheses",
+            "prefix": "",
+            "description": "Python code dictation"
+        },
+        {
+            "transcription": "multimodal text email r-i-c-a-r-d-o dot example at gmail.com",
+            "prefix": "",
+            "description": "Email address dictation"
+        }
+    ]
+    
+    for i, test_case in enumerate( test_cases, 1 ):
+        print( f"\nTest {i}: {test_case['description']}" )
+        print( f"Input: '{test_case['transcription']}'" )
+        
+        try:
+            munger = MultiModalMunger( test_case["transcription"], prefix=test_case["prefix"], debug=False )
+            result = munger.get_json()
+            print( f"✓ Successfully processed: {result.get('mode', 'unknown mode')}" )
+        except Exception as e:
+            print( f"✗ Error processing: {e}" )
+    
+    print( "\n✓ MultiModalMunger smoke test completed" )
 
-    prefix = ""
-    # transcription = "DOM fully loaded and parsed, Checking permissions.... Done!"
-    # transcription = "multi-mode text raw Less then, Robert at somewhere.com greater than. DOM fully loaded and parsed comma Checking permissions.... Done exclamation point."
-    # transcription = "multi-mode text proofread Less then, Robert at somewhere.com greater than. DOM fully loaded and parsed comma Checking permissions.... Done exclamation point."
-    # transcription = "Multi-mode text punctuation Less then, Robert at somewhere.com greater than. DOM fully loaded and parsed comma Checking permissions.... Done exclamation point."
-    # transcription = "multi-modal text email r-i-c-a-r-d-o dot f-e-l-i-p-e dot r-u-i-z at gmail.com"
-    # transcription = "multi model text email r-i-c-a-r-d-o dot f-e-l-i-p-e dot r-u-i-z six two at sign gmail. com."
-    # transcription = "multi-mode text punctuation Here's my email address. r-i-c-a-r-d-o.f-e-l-i-p-e-.r-u-i-z at gmail.com."
-    # transcription = "blah blah blah"
-    # transcription = "multimodal text proofread i go to market yesterday comma Tonight i go to the dance, comma, and im very happy that exclamation point."
-    
-    # transcription = "multimodal python punctuation Deaf, Munch, Underscore Python, Underscore Punctuation, Open Parenthesis, Space, Self, Comma, Raw Underscore transcription, Comma, Space, Mode, Space, Close Parenthesis, Colon, newline newline foo equals six divided by four newline newline bar equals brackets"
-    
-    # transcription = "multimodal contact information name"
-    # transcription = "multimodal contact information address"
-    # transcription = "City, State, Zip."
-    # prefix        = "multimodal contact information"
-    # prefix = ""
-    
-    # transcription = "full"
-    # transcription = "multimodal ai fetch this information: Large, language models."
-    
-    # transcription = "Take Me To https://NPR.org!"
-    # transcription = "fetch https://NPR.org for me in another tab!"
-    # transcription = "Zoom, In!"
-    # transcription = "Go ZoomInG!"
-    # transcription = "Open a new tab and go to blahblah"
-    # transcription = "search for fabulous blue dinner plates this tab"
-    # transcription = "I'm looking for the best cobalt blue China set in another tab."
-    # transcription = "Look up the best cobalt blue China set in another tab."
-    # transcription = "In a new tab, search for this that and the other."
-    # transcription = "Get search results for Google Scholar blah blah blah."
-    # transcription = "Head to stage.magnificentrainbow.com in a new tab"
-    transcription = "Head to stagemagnificentrainbowcom in a new tab"
-    # transcription = "search new tab"
-    # transcription = "search current tab for blah blah blah"
-    # transcription = "multimodal python punctuation console.log. open parenthesis quote foober. close quote. close parenthesis. semicolon."
-    transcription = "multimodal python punctuation console dot log open parentheses one plus one equals two closed parentheses"
-    
-    # prefix        = "multimodal browser"
-    prefix        = ""
-    # prefix          = "multimodal python punctuation"
-    # munger = MultiModalMunger( transcription, prefix=prefix, debug=False )
-    # print( munger.get_json() )
-    # print( munger.extract_args( transcription, model=munger.domain_name_model ) )
-    
-    # print( "munger.use_exact_matching [{}]".format( munger.use_exact_matching ) )
-    # print( "munger.use_ai_matching    [{}]".format( munger.use_ai_matching ) )
-    # print( "munger.is_ddg_search()", munger.is_ddg_search() )
-    # print( "munger.is_run_prompt()", munger.is_run_prompt(), end="\n\n" )
-    # print( munger, end="\n\n" )
-    # print( munger.get_json(), end="\n\n" )
-    # exact_matches = munger._get_exact_matching_strings()
-    #
-    # for match in exact_matches: print( match )
-    
-    # transcription = "http://npr.org"
-    
-    # multimodal_regex = re.compile( "http([s]){0,1}://", re.IGNORECASE )
-    # transcription = multimodal_regex.sub( "", transcription, 1 )
-    # transcription = transcription.replace( ("https://")|("http://"), "" )
-    # print( transcription )
-    
-    
-    # raw_prompt = """
-    # Your task is to generate a short summary of a product review from an ecommerce site.
-    # Summarize the review below, delimited by triple backticks, in at most 30 words.
-    # Review: ```Got this panda plush toy for my daughter's birthday,
-    # who loves it and takes it everywhere. It's soft and
-    # super cute, and its face has a friendly look. It's
-    # a bit small for what I paid though. I think there
-    # might be other options that are bigger for the same price. It arrived a day
-    # earlier than expected, so I got to play with it myself before I gave it to her. ```
-    # """
-    # preamble = raw_prompt.split( "```" )[ 0 ].strip()
-    # content = raw_prompt.split( "```" )[ 1 ].strip()
-    # print( "preamble [{}]".format( preamble ) )
-    # print( "  review [{}]".format( content ) )
-    
-    # regex = re.compile( "[.]$", re.IGNORECASE )
-    # foo = regex.sub( "", "foo.", 1 )
-    # print( foo )
-    #
-    # bar = "1 2 3 4"
-    # regex = re.compile( "((?P<before>[0-9])([ ]{0,1})(?P<after>[0-9]))", re.IGNORECASE )
-    # # bar = regex.sub( "multimodal", bar, 1 )
-    # bar = regex.sub( "\g<before>\g<after>", bar )
-    # print( bar )
-    #
-    # foo = " 1 2 3ab4 5 6 7 "
-    # regex = re.compile( '(?<=[0-9]) (?=[0-9])' )
-    # foo = regex.sub( "", foo )
-    # print( "[{}]".format( foo ) )
-    #
-    # blah = "a-b-c-d-e-f-g-h-i-j-k-l -- -members-only- -- n-o-p-q-r-s-t-u-v-w-x-y-z"
-    # regex = re.compile( "(?<=[a-z])([-])(?=[a-z])", re.IGNORECASE )
-    # blah = regex.sub( "", blah )
-    # print( blah )
-    
-    
-    
-    # print( "munger.get_json()", munger.get_json() )
-    # print( "type( munger.get_json() )", type( munger.get_json() ) )
-    # print( munger.get_json()[ "transcription" ] )
-    # print( munger.is_text_proofread() )
-    
-    # munger = MultiModalMunger( transcription, prefix=prefix, debug=False )
-    # print( munger.get_json() )
-    
-    # genie_client = gc.GenieClient( debug=True )
-    # timer = sw.Stopwatch()
-    # preamble = "You are an expert proofreader. Correct grammar. Correct tense. Correct spelling. Correct contractions. Correct punctuation. Correct capitalization. Correct word choice. Correct sentence structure. Correct paragraph structure. Correct paragraph length. Correct paragraph flow. Correct paragraph topic. Correct paragraph tone. Correct paragraph style. Correct paragraph voice. Correct paragraph mood. Correct paragraph theme."
-    # transcription = "Yesterday I go to work, Tonight I go dancing friends. Tomorrow I go to work again."
-    # response = genie_client.ask_chat_gpt_text( transcription, preamble=preamble )
-    # print( response )
-    # timer.print( "Proofread", use_millis=True )
+
+if __name__ == "__main__":
+    quick_smoke_test()
     
     

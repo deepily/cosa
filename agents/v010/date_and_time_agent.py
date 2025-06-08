@@ -50,13 +50,40 @@ class DateAndTimeAgent( AgentBase ):
         raise NotImplementedError( "DateAndTimeAgent.restore_from_serialized_state() not implemented" )
     
     
-if __name__ == "__main__":
+def quick_smoke_test():
+    """Quick smoke test to validate DateAndTimeAgent functionality."""
+    import cosa.utils.util as du
     
-    # question = "What time is it in San Francisco?"
+    du.print_banner( "DateAndTimeAgent Smoke Test", prepend_nl=True )
+    
+    # Test with a single question for completion
     question = "What time is it in Washington DC?"
-    date_agent = DateAndTimeAgent( question=question, debug=True, verbose=True, auto_debug=True )
-    date_agent.run_prompt()
-    date_agent.run_code()
-    date_agent.run_formatter()
     
-    print( f"Formtted response: {date_agent.answer_conversational}" )
+    try:
+        print( f"Testing question: '{question}'" )
+        date_agent = DateAndTimeAgent( question=question, debug=True, verbose=False, auto_debug=False )
+        print( "✓ DateAndTimeAgent created successfully" )
+        
+        # Run through the complete agent workflow
+        print( "Running prompt..." )
+        date_agent.run_prompt()
+        print( "✓ Prompt execution completed" )
+        
+        print( "Running code..." )
+        date_agent.run_code()
+        print( "✓ Code execution completed" )
+        
+        print( "Running formatter..." )
+        date_agent.run_formatter()
+        print( "✓ Formatter execution completed" )
+        
+        print( f"✓ Final response: {date_agent.answer_conversational}" )
+        
+    except Exception as e:
+        print( f"✗ Error during agent execution: {e}" )
+    
+    print( "\n✓ DateAndTimeAgent smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

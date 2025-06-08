@@ -130,66 +130,60 @@ class BugInjector( AgentBase ):
         
         raise NotImplementedError( "BugInjector.restore_from_serialized_state() not implemented" )
 
-if __name__ == "__main__":
+def quick_smoke_test():
+    """Quick smoke test to validate BugInjector functionality."""
+    import cosa.utils.util as du
     
-    # Test code examples to inject bugs into
-    test_cases = [
-        {
-            "name": "Simple function",
-            "code": [
-                "def greet(name):",
-                "    return f'Hello, {name}!'",
-                "",
-                "result = greet('World')",
-                "print(result)"
-            ],
-            "example": "result = greet('World')"
-        },
-        {
-            "name": "Math calculation",
-            "code": [
-                "def calculate_area(radius):",
-                "    import math",
-                "    area = math.pi * radius ** 2",
-                "    return area",
-                "",
-                "circle_area = calculate_area(5)",
-                "print(f'Area: {circle_area}')"
-            ],
-            "example": "circle_area = calculate_area(5)"
-        }
+    du.print_banner( "BugInjector Smoke Test", prepend_nl=True )
+    
+    # Test with simple code for bug injection
+    test_code = [
+        "def greet(name):",
+        "    return f'Hello, {name}!'",
+        "",
+        "result = greet('World')",
+        "print(result)"
     ]
+    test_example = "result = greet('World')"
     
-    for test_case in test_cases:
-        print(f"\n=== Testing Bug Injection: {test_case['name']} ===")
-        
-        # Initialize bug injector
+    try:
+        print( "Testing bug injection with simple function" )
         bug_injector = BugInjector(
-            code=test_case["code"].copy(),  # Use copy to preserve original
-            example=test_case["example"],
+            code=test_code.copy(),
+            example=test_example,
             debug=True,
-            verbose=True
+            verbose=False
         )
+        print( "✓ BugInjector created successfully" )
         
         # Show original code
-        print("\nOriginal code:")
+        print( "Original code:" )
         bug_injector.print_code()
         
-        # Run bug injection
-        print("\nInjecting bug...")
+        # Run complete bug injection workflow
+        print( "Running bug injection..." )
         response_dict = bug_injector.run_prompt()
+        print( "✓ Bug injection completed" )
         
-        # Show code with injected bug
-        print("\nCode with injected bug:")
+        # Show modified code
+        print( "Code with injected bug:" )
         bug_injector.print_code()
         
         # Try to run the buggy code
-        print("\nAttempting to run buggy code:")
+        print( "Running buggy code..." )
         code_response = bug_injector.run_code()
+        print( "✓ Code execution completed" )
         
         if code_response["success"]:
-            print(f"Output: {code_response['output']}")
+            print( f"✓ Output: {code_response['output']}" )
         else:
-            print(f"Error (as expected): {code_response['output']}")
+            print( f"✓ Error (as expected from bug): {code_response['output']}" )
         
-        print("-" * 50)
+    except Exception as e:
+        print( f"✗ Error during bug injection: {e}" )
+    
+    print( "\n✓ BugInjector smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

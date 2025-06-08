@@ -383,7 +383,17 @@ def test_assemble_and_run_solution( debug: bool=False, verbose: bool=False) -> N
     results      = assemble_and_run_solution( solution_code, example_code, solution_code_returns="dataframe", path_to_df=path_to_df, debug=debug, verbose=verbose )
     
         
-if __name__ == "__main__":
+def quick_smoke_test():
+    """Quick smoke test to validate code runner functionality."""
+    import cosa.utils.util as du
     
+    du.print_banner( "Code Runner Smoke Test", prepend_nl=True )
+    
+    print( "Testing assemble_and_run_solution with sample birthday checking code..." )
     test_assemble_and_run_solution( debug=True, verbose=True )
-    # pass
+    
+    print( "\n✓ Code runner smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

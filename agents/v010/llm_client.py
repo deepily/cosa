@@ -372,37 +372,60 @@ class LlmClient:
         print( "=" * 40 )
 
 
-if __name__ == "__main__":
+def quick_smoke_test():
+    """Quick smoke test to validate LlmClient functionality."""
+    du.print_banner( "LlmClient Smoke Test", prepend_nl=True )
     
-    # prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/vox-command-template-completion-mistral-8b.txt" )
-    prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agent-router-template-completion.txt" )
-    # prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agents/date-and-time.txt" )
-    # prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agents/date-and-time-reasoner.txt" )
+    # Test different client initialization methods
+    test_cases = [
+        {
+            "name": "Local completion model",
+            "config": {
+                "base_url": "http://192.168.1.21:3000/v1/completions",
+                "model_name": "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-4-bits-sym.gptq/2025-02-12-at-02-27",
+                "completion_mode": True
+            }
+        },
+        {
+            "name": "Groq API model",
+            "config": {
+                "model_name": LlmClient.GROQ_LLAMA_3_3_70B
+            }
+        }
+    ]
     
-    voice_command = "can I please talk to a human?"
-    # question = "What time is it?"
-    prompt = prompt_template.format( voice_command=voice_command )
-    # prompt = prompt_template.format( question=question )
+    # Simple test prompt
+    test_prompt = "What is 2 + 2?"
     
-    model_name = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-4-bits-sym.gptq/2025-02-12-at-02-27"
-    # model_name = "/mnt/DATA01/include/www.deepily.ai/projects/models/OpenCodeReasoning-Nemotron-14B-autoround-4-bits-sym.gptq/2025-05-12-at-21-15"
-    # model_name = "kaitchup/Phi-4-AutoRound-GPTQ-4bit"
-    base_url   = "http://192.168.1.21:3000/v1/completions"
-    # base_url   = "http://192.168.1.21:3001/v1/completions"
-    client = LlmClient( base_url=base_url, model_name=model_name, completion_mode=True, debug=True, verbose=True )
+    for i, test_case in enumerate( test_cases, 1 ):
+        print( f"\nTest {i}: {test_case['name']}" )
+        
+        try:
+            # Create client with test configuration
+            client = LlmClient( debug=False, verbose=False, **test_case["config"] )
+            print( f"✓ LlmClient created successfully for {test_case['name']}" )
+            
+            # For smoke test, we'll just validate client creation to avoid API costs
+            # In a full test, you could uncomment the line below:
+            # response = client.run( test_prompt, stream=False, max_tokens=50 )
+            # print( f"✓ Response received: {response[:50]}..." )
+            print( f"✓ Client is ready for LLM requests" )
+            
+        except Exception as e:
+            print( f"✗ Error with {test_case['name']}: {str( e )}" )
+    
+    # Test prompt template loading
+    print( f"\nTesting prompt template loading:" )
+    try:
+        template_path = du.get_project_root() + "/src/conf/prompts/agent-router-template-completion.txt"
+        prompt_template = du.get_file_as_string( template_path )
+        formatted_prompt = prompt_template.format( voice_command="test command" )
+        print( f"✓ Prompt template loaded and formatted successfully" )
+    except Exception as e:
+        print( f"⚠ Warning: Could not load prompt template: {e}" )
+    
+    print( "\n✓ LlmClient smoke test completed" )
 
-    # model_name = LlmClient.GROQ_LLAMA3_1_8B
-    # client = LlmClient( model_name=model_name )
-    
-    # response = client.run( prompt, stream=True, **{ "temperature": 0.25, "max_tokens": 7500 } )
-    response = client.run( prompt, stream=False, **{ "temperature": 1.0, "max_tokens": 1000, "stop": [ "foo" ] } )
-    du.print_banner( "Response", prepend_nl=True )
-    print( response )
-    
-    # model_name = "kaitchup/Phi-4-AutoRound-GPTQ-4bit"
-    # base_url   = "http://192.168.1.21:3001/v1"
-    # client = LlmClient( base_url=base_url, model_name=model_name )
-    # prompt = "how many 'R's are there in the word strawberry?"
-    # # prompt = "what's the square root of 144? Please think out loud about how you going to answer this question before you actually do, and show your thinking before you do"
-    # response = client.run( prompt, stream=True )
-    # print( f"Response: {response}" )
+
+if __name__ == "__main__":
+    quick_smoke_test()
