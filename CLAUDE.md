@@ -21,6 +21,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   python -m cosa.agents.foo_bar
   ```
 
+## Memories
+- Don't forget to add the following path to the Python path environment variable so that you can call Cosa objects from within the Cosa Directory: `Bash(export PYTHONPATH="/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src:$PYTHONPATH"`
+
 ## Code Style
 - **Imports**: Group by stdlib, third-party, local packages
 - **Indentation**: 4 spaces (not tabs)
@@ -109,6 +112,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Use `print_banner()` from `utils.py` for formatted messages
 - Track state with constants (STATE_INITIALIZED, STATE_RUNNING, etc.)
 
+## Testing Standards
+- **Smoke Testing**: All modules should include a `quick_smoke_test()` function
+  - Tests complete workflow execution, not just object creation
+  - Uses `du.print_banner()` for consistent formatting
+  - Includes try/catch blocks with ✓/✗ status indicators
+  - Professional output with clear progress messages
+  - When creating new modules, always ask the user if they want a smoke test included
+
 ## Recent Changes
+- **Standardized Smoke Testing (December 2025)**: All 21 core modules refactored with consistent `quick_smoke_test()` patterns
 - Refactoring to use external LLM services instead of in-memory models
 - Implementing router for directing requests to appropriate LLM endpoints

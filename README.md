@@ -94,6 +94,7 @@ For current research and planning documents, see the [RND directory](./rnd/), wh
 
 ### Architecture and Refactoring
 - [LLM Client Architecture Refactoring Plan](./rnd/2025.06.04-llm-client-architecture-refactoring-plan.md): Comprehensive plan for improving the v010 LLM client architecture
+- [LLM Client Refactoring Progress](./rnd/2025.06.04-llm-client-refactoring-progress.md): Progress tracker for the LLM client refactoring project
 - [LLM Refactoring Analysis](./rnd/2025-04-14_llm_refactoring_analysis.md): Analysis of LLM component refactoring needs
 - [Agent Migration v000 to v010 Plan](./rnd/2025-05-13_agent_migration_v000_to_v010_plan.md): Migration strategy for agent architecture
 
@@ -114,6 +115,12 @@ For current research and planning documents, see the [RND directory](./rnd/), wh
 - **Version 0.0.2**: We are currently working on version 0.0.2, which includes refactoring and cleanup efforts.
 
 ### Recently Completed
+- **Standardized Smoke Testing (December 2025)**: Comprehensive refactoring of all modules to use consistent `quick_smoke_test()` patterns
+  - All 21 core modules now include standardized smoke tests
+  - Tests validate complete workflow execution, not just object creation
+  - Consistent error handling and status reporting across all components
+  - Professional formatting with clear ✓/✗ indicators
+
 - **Modular LLM Client Architecture (v1)**: MVP implementation of a vendor-agnostic LLM client system
   - Support for multiple providers (OpenAI, Groq, Anthropic/Claude, Google/Gemini)
   - Integration with Deepily's edge servers for local model inference
