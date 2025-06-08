@@ -15,8 +15,8 @@ import cosa.utils.util_xml as dux
 from cosa.agents.v010.runnable_code import RunnableCode
 from cosa.agents.v010.raw_output_formatter import RawOutputFormatter
 
-import openai
 import numpy as np
+import cosa.utils.util_embeddings as due
 
 class SolutionSnapshot( RunnableCode ):
     """
@@ -78,91 +78,6 @@ class SolutionSnapshot( RunnableCode ):
         """
         return input.replace( "'", "" )
     
-    @staticmethod
-    def generate_embedding( text: str ) -> list[float]:
-        """
-        Generate OpenAI embedding for text.
-        
-        Requires:
-            - text is a non-empty string
-            - OpenAI API key is available
-            - 'embedding model name' is configured
-            
-        Ensures:
-            - Returns a list of 1536 floats on success
-            - Returns empty list on API errors
-            - Logs detailed error information for troubleshooting
-            
-        Note:
-            - Continues execution even if embedding generation fails
-        """
-        timer = sw.Stopwatch( msg=f"Generating embedding for [{du.truncate_string( text )}]...", silent=True )
-        
-        try:
-            # Get configuration manager
-            from cosa.app.configuration_manager import ConfigurationManager
-            config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
-            
-            # Get embedding model name from config - NO FALLBACK
-            embedding_model = config_mgr.get( "embedding model name" )
-            
-            if not embedding_model:
-                du.print_banner( "CONFIGURATION ERROR - MISSING EMBEDDING MODEL", prepend_nl=True )
-                print( "The 'embedding model name' key is not configured." )
-                print( "" )
-                print( "TO FIX THIS ERROR:" )
-                print( f"1. Add 'embedding model name' to your configuration file" )
-                print( f"2. Common values: 'text-embedding-ada-002', 'text-embedding-3-small', 'text-embedding-3-large'" )
-                print( f"3. Check the configuration file specified in your config block" )
-                du.print_banner( "CANNOT GENERATE EMBEDDINGS", prepend_nl=True )
-                return []
-            
-            openai.api_key = du.get_api_key( "openai" )
-            
-            response = openai.embeddings.create(
-                input=text,
-                model=embedding_model
-            )
-            timer.print( "Done!", use_millis=True )
-            
-            return response.data[ 0 ].embedding
-            
-        except openai.NotFoundError as e:
-            # Get model name for error message
-            try:
-                from cosa.app.configuration_manager import ConfigurationManager
-                config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
-                embedding_model = config_mgr.get( "embedding model name" )
-            except:
-                embedding_model = "[UNKNOWN - CONFIG ERROR]"
-                
-            du.print_banner( "EMBEDDING API ERROR - 404 NOT FOUND", prepend_nl=True )
-            print( "The OpenAI embedding service returned a 404 error." )
-            print( "This usually means one of the following:" )
-            print( "1. Your OpenAI API key is invalid or expired" )
-            print( f"2. The embedding model '{embedding_model}' is not accessible" )
-            print( "3. Your account doesn't have access to the embeddings API" )
-            print( "" )
-            print( "TO FIX THIS ERROR:" )
-            print( f"1. Check your API key in: {du.get_project_root()}/src/conf/keys/openai" )
-            print( "2. Verify your OpenAI account has embedding API access" )
-            print( "3. Test your API key at: https://platform.openai.com/account/api-keys" )
-            print( f"4. Verify embedding model name in config: '{embedding_model}'" )
-            print( "" )
-            print( f"Error details: {e}" )
-            du.print_banner( "CONTINUING WITHOUT EMBEDDINGS", prepend_nl=True )
-            
-            # Return empty embedding to allow execution to continue
-            return []
-            
-        except Exception as e:
-            du.print_banner( f"EMBEDDING API ERROR - {type(e).__name__}", prepend_nl=True )
-            print( f"Failed to generate embedding: {e}" )
-            print( "Continuing without embeddings..." )
-            du.print_banner( "CONTINUING WITHOUT EMBEDDINGS", prepend_nl=True )
-            
-            # Return empty embedding to allow execution to continue
-            return []
     
     @staticmethod
     def generate_id_hash( push_counter: int, run_date: str ) -> str:
@@ -307,35 +222,35 @@ class SolutionSnapshot( RunnableCode ):
         
         # If the question embedding is empty, generate it
         if question != "" and not question_embedding:
-            self.question_embedding = self.generate_embedding( question )
+            self.question_embedding = due.generate_embedding( question, debug=self.debug )
             dirty = True
         else:
             self.question_embedding = question_embedding
             
         # If the gist embedding is empty, generate it
         if question_gist != "" and not question_gist_embedding:
-            self.question_gist_embedding = self.generate_embedding( question_gist )
+            self.question_gist_embedding = due.generate_embedding( question_gist, debug=self.debug )
             dirty = True
         else:
             self.question_gist_embedding = question_gist_embedding
         
         # If the code embedding is empty, generate it
         if code and not code_embedding:
-            self.code_embedding = self.generate_embedding( " ".join( code ) )
+            self.code_embedding = due.generate_embedding( " ".join( code ), debug=self.debug )
             dirty = True
         else:
             self.code_embedding = code_embedding
     
         # If the solution embedding is empty, generate it
         if solution_summary and not solution_embedding:
-            self.solution_embedding = self.generate_embedding( solution_summary )
+            self.solution_embedding = due.generate_embedding( solution_summary, debug=self.debug )
             dirty = True
         else:
             self.solution_embedding = solution_embedding
 
         # If the thoughts embedding is empty, generate it
         if thoughts and not thoughts_embedding:
-            self.thoughts_embedding = self.generate_embedding( thoughts )
+            self.thoughts_embedding = due.generate_embedding( thoughts, debug=self.debug )
             dirty = True
         else:
             self.thoughts_embedding = thoughts_embedding
@@ -488,7 +403,7 @@ class SolutionSnapshot( RunnableCode ):
             - None
         """
         self.solution_summary = solution_summary
-        self.solution_embedding = self.generate_embedding( solution_summary )
+        self.solution_embedding = due.generate_embedding( solution_summary, debug=self.debug )
         self.updated_date = self.get_timestamp()
 
     def set_code( self, code: list[str] ) -> None:
@@ -508,7 +423,7 @@ class SolutionSnapshot( RunnableCode ):
         """
         # ¡OJO! code is a list of strings, not a string!
         self.code           = code
-        self.code_embedding = self.generate_embedding( " ".join( code ) )
+        self.code_embedding = due.generate_embedding( " ".join( code ), debug=self.debug )
         self.updated_date   = self.get_timestamp()
     
     def get_question_similarity( self, other_snapshot: 'SolutionSnapshot' ) -> float:
@@ -809,25 +724,37 @@ class SolutionSnapshot( RunnableCode ):
         """
         return self.answer_conversational is not None
     
-# Add main method
+def quick_smoke_test():
+    """Quick smoke test to validate SolutionSnapshot functionality."""
+    du.print_banner( "SolutionSnapshot Smoke Test", prepend_nl=True )
+    
+    # Test embedding generation
+    print( "Testing embedding generation..." )
+    embedding = due.generate_embedding( "what time is it" )
+    if embedding:
+        print( f"✓ Generated embedding with {len( embedding )} dimensions" )
+    else:
+        print( "✗ Failed to generate embedding" )
+    
+    # Test basic snapshot creation
+    print( "\nTesting snapshot creation..." )
+    today = SolutionSnapshot( question="what day is today" )
+    print( f"✓ Created snapshot with ID: {today.id_hash}" )
+    
+    # Test similarity scoring between snapshots
+    print( "\nTesting similarity scoring..." )
+    tomorrow = SolutionSnapshot( question="what day is tomorrow" )
+    blah = SolutionSnapshot( question="i feel so blah today" )
+    
+    snapshots = [ today, tomorrow, blah ]
+    
+    for snapshot in snapshots:
+        if today.question_embedding and snapshot.question_embedding:
+            score = today.get_question_similarity( snapshot )
+            print( f"Score: [{score:.1f}] for '{snapshot.question}' vs '{today.question}'" )
+    
+    print( "\n✓ SolutionSnapshot smoke test completed" )
+
+
 if __name__ == "__main__":
-    
-    embedding = SolutionSnapshot.generate_embedding( "what time is it" )
-    print( embedding )
-    # today = SolutionSnapshot( question="what day is today" )
-    # # tomorrow = SolutionSnapshot( question="what day is tomorrow" )
-    # # blah = SolutionSnapshot( question="i feel so blah today" )
-    # # color = SolutionSnapshot( question="what color is the sky" )
-    # # date = SolutionSnapshot( question="what is today's date" )
-    #
-    # # snapshots = [ today, tomorrow, blah, color, date ]
-    # snapshots = [ today ]
-    #
-    # for snapshot in snapshots:
-    #     score = today.get_question_similarity( snapshot )
-    #     print( f"Score: [{score}] for [{snapshot.question}] == [{today.question}]" )
-    #     snapshot.write_to_file()
-    
-    # foo = SolutionSnapshot.from_json_file( du.get_project_root() + "/src/conf/long-term-memory/solutions/what-day-is-today-0.json" )
-    # print( foo.to_json() )
-    # pass
+    quick_smoke_test()

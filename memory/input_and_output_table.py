@@ -1,4 +1,5 @@
 import cosa.utils.util as du
+import cosa.utils.util_embeddings as due
 
 from cosa.memory.question_embeddings_table import QuestionEmbeddingsTable
 from cosa.memory.solution_snapshot import SolutionSnapshot as ss
@@ -83,7 +84,7 @@ class InputAndOutputTable():
             "input_embedding"                  : input_embedding if input_embedding else self._question_embeddings_tbl.get_embedding( input ),
             "output_raw"                       : output_raw,
             "output_final"                     : output_final,
-            "output_final_embedding"           : output_final_embedding if output_final_embedding else ss.generate_embedding( output_final ),
+            "output_final_embedding"           : output_final_embedding if output_final_embedding else due.generate_embedding( output_final, debug=self.debug ),
             "solution_path_wo_root"            : solution_path_wo_root
         } ]
         self._input_and_output_tbl.add( new_row )
@@ -293,7 +294,7 @@ class InputAndOutputTable():
 if __name__ == '__main__':
     
     # import numpy as np
-    # foo = ss.generate_embedding( "what time is it" )
+    # foo = due.generate_embedding( "what time is it" )
     # print( "Sum of foo", np.sum( foo ) )
     # print( "dot product of foo and foo", np.dot( foo, foo ) * 100 )
     #

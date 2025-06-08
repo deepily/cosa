@@ -1,4 +1,5 @@
 import cosa.utils.util as du
+import cosa.utils.util_embeddings as due
 
 from cosa.memory.solution_snapshot import SolutionSnapshot as ss
 from cosa.app.configuration_manager import ConfigurationManager
@@ -79,7 +80,9 @@ class QuestionEmbeddingsTable():
         """
         if self.debug: timer = Stopwatch( msg=f"has( '{question}' )" )
         du.print_banner( f"[{question}]" )
-        synonyms = self._question_embeddings_tbl.search().where( f"question = '{question}'" ).limit( 1 ).select( [ "question" ] ).to_list()
+        # Escape single quotes by doubling them to prevent SQL parsing errors
+        escaped_question = question.replace( "'", "''" )
+        synonyms = self._question_embeddings_tbl.search().where( f"question = '{escaped_question}'" ).limit( 1 ).select( [ "question" ] ).to_list()
         if self.debug: timer.print( "Done!", use_millis=True )
         
         return len( synonyms ) > 0
@@ -103,14 +106,16 @@ class QuestionEmbeddingsTable():
         """
         if self.debug: timer = Stopwatch( msg=f"get_embedding( '{question}' )", silent=True )
         try:
-            rows_returned = self._question_embeddings_tbl.search().where( f"question = '{question}'" ).limit( 1 ).select( [ "embedding" ] ).to_list()
+            # Escape single quotes by doubling them to prevent SQL parsing errors
+            escaped_question = question.replace( "'", "''" )
+            rows_returned = self._question_embeddings_tbl.search().where( f"question = '{escaped_question}'" ).limit( 1 ).select( [ "embedding" ] ).to_list()
         except Exception as e:
             du.print_stack_trace( e, explanation="search() failed", caller="QuestionEmbeddingsTable.get_embedding()" )
             rows_returned = []
         if self.debug: timer.print( f"Done! w/ {len( rows_returned )} rows returned", use_millis=True )
         
         if not rows_returned:
-            return ss.generate_embedding( question )
+            return due.generate_embedding( question, debug=self.debug )
         else:
             return rows_returned[ 0 ][ "embedding"]
         
@@ -182,7 +187,7 @@ class QuestionEmbeddingsTable():
     #
     #     print( f"BEFORE: Table.count_rows: {self.question_embeddings_tbl.count_rows()}" )
     #     question = "and you may ask yourself well how did I get here"
-    #     embedding = ss.generate_embedding( question )
+    #     embedding = due.generate_embedding( question )
     #     print( f"'{question}': embedding length: {len( embedding )}" )
     #     new_row = [ { "question": question, "embedding": embedding } ]
     #     self.question_embeddings_tbl.add( new_row )
