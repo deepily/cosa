@@ -101,8 +101,8 @@ class MultiModalMunger:
         # self.cmd_llm_device         = cmd_llm_device
         # self.cmd_prompt_template    = cmd_prompt_template
         
-        print( "prompt_key:", prompt_key )
         if self.debug and self.verbose:
+            print( "prompt_key:", prompt_key )
             print( "prompt:", self.prompt )
         
         self.modes_to_methods_dict  = modes_to_methods_dict
@@ -1093,7 +1093,7 @@ class MultiModalMunger:
         llm      = factory.get_client( model, debug=self.debug, verbose=self.verbose )
         response = llm.run( prompt )
         
-        print( f"LLM response: [{response}]" )
+        if self.debug: print( f"LLM response: [{response}]" )
         # Parse results
         command_dict[ "command" ] =   du_xml.get_value_by_xml_tag_name( response, "command" )
         command_dict[ "args"    ] = [ du_xml.get_value_by_xml_tag_name( response, "args" ) ]

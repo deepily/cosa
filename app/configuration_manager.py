@@ -40,7 +40,8 @@ def singleton( cls: type ) -> Callable[..., Any]:
             print( "Instantiating ConfigurationManager() singleton...", end="\n\n" )
             instances[ cls ] = cls( *args, **kwargs )
         else:
-            print( "Reusing ConfigurationManager() singleton..." )
+            if instances[ cls ].get( "app_debug", default=False, return_type="boolean" ):
+                print( "Reusing ConfigurationManager() singleton..." )
             
         return instances[ cls ]
     

@@ -463,7 +463,7 @@ class TodoFifoQueue( FifoQueue ):
         llm_spec_key = self.config_mgr.get( "llm spec key for agent router" )
         llm_client = self.llm_factory.get_client( llm_spec_key, debug=self.debug, verbose=self.verbose )
         response = llm_client.run( prompt )
-        print( f"LLM response: [{response}]" )
+        if self.debug: print( f"LLM response: [{response}]" )
         # Parse results
         command = dux.get_value_by_xml_tag_name( response, "command" )
         args    = dux.get_value_by_xml_tag_name( response, "args" )

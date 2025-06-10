@@ -135,7 +135,7 @@ class CompletionClient( LlmClientInterface ):
                     if counter % 128 == 0: print()
                     print( ".", end="", flush=True )
                 output.append( chunk )
-        
+            print()
         return "".join( output )
     
     async def run_async( self, prompt: str, stream: bool = False, **kwargs: Any ) -> str:
@@ -185,7 +185,7 @@ class CompletionClient( LlmClientInterface ):
             return cleaned_response
         
         # Streaming mode
-        print( f"🔄 Streaming from completion model: {self.model_name}\n" )
+        if self.debug: print( f"🔄 Streaming from completion model: {self.model_name}\n" )
         start_time = time.perf_counter()
         
         output = await self._stream_async( prompt, **updated_gen_args )

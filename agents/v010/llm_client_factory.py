@@ -160,7 +160,7 @@ class LlmClientFactory:
                 else:
                     base_url = f"http://{host_port}/v1"
                 
-                print( f"Creating {'Completion' if completion_mode else 'Chat'} client for {model_name} with base URL {base_url}" )
+                if self.debug: print( f"Creating {'Completion' if completion_mode else 'Chat'} client for {model_name} with base URL {base_url}" )
                 
                 if completion_mode:
                     return CompletionClient(
