@@ -222,35 +222,35 @@ class SolutionSnapshot( RunnableCode ):
         
         # If the question embedding is empty, generate it
         if question != "" and not question_embedding:
-            self.question_embedding = due.generate_embedding( question, debug=self.debug )
+            self.question_embedding = due.generate_embedding( question, normalize_for_cache=True, debug=self.debug )
             dirty = True
         else:
             self.question_embedding = question_embedding
             
         # If the gist embedding is empty, generate it
         if question_gist != "" and not question_gist_embedding:
-            self.question_gist_embedding = due.generate_embedding( question_gist, debug=self.debug )
+            self.question_gist_embedding = due.generate_embedding( question_gist, normalize_for_cache=True, debug=self.debug )
             dirty = True
         else:
             self.question_gist_embedding = question_gist_embedding
         
         # If the code embedding is empty, generate it
         if code and not code_embedding:
-            self.code_embedding = due.generate_embedding( " ".join( code ), debug=self.debug )
+            self.code_embedding = due.generate_embedding( " ".join( code ), normalize_for_cache=False, debug=self.debug )
             dirty = True
         else:
             self.code_embedding = code_embedding
     
         # If the solution embedding is empty, generate it
         if solution_summary and not solution_embedding:
-            self.solution_embedding = due.generate_embedding( solution_summary, debug=self.debug )
+            self.solution_embedding = due.generate_embedding( solution_summary, normalize_for_cache=True, debug=self.debug )
             dirty = True
         else:
             self.solution_embedding = solution_embedding
 
         # If the thoughts embedding is empty, generate it
         if thoughts and not thoughts_embedding:
-            self.thoughts_embedding = due.generate_embedding( thoughts, debug=self.debug )
+            self.thoughts_embedding = due.generate_embedding( thoughts, normalize_for_cache=True, debug=self.debug )
             dirty = True
         else:
             self.thoughts_embedding = thoughts_embedding
@@ -403,7 +403,7 @@ class SolutionSnapshot( RunnableCode ):
             - None
         """
         self.solution_summary = solution_summary
-        self.solution_embedding = due.generate_embedding( solution_summary, debug=self.debug )
+        self.solution_embedding = due.generate_embedding( solution_summary, normalize_for_cache=True, debug=self.debug )
         self.updated_date = self.get_timestamp()
 
     def set_code( self, code: list[str] ) -> None:
@@ -423,7 +423,7 @@ class SolutionSnapshot( RunnableCode ):
         """
         # ¡OJO! code is a list of strings, not a string!
         self.code           = code
-        self.code_embedding = due.generate_embedding( " ".join( code ), debug=self.debug )
+        self.code_embedding = due.generate_embedding( " ".join( code ), normalize_for_cache=False, debug=self.debug )
         self.updated_date   = self.get_timestamp()
     
     def get_question_similarity( self, other_snapshot: 'SolutionSnapshot' ) -> float:
@@ -730,7 +730,7 @@ def quick_smoke_test():
     
     # Test embedding generation
     print( "Testing embedding generation..." )
-    embedding = due.generate_embedding( "what time is it" )
+    embedding = due.generate_embedding( "what time is it", normalize_for_cache=True )
     if embedding:
         print( f"✓ Generated embedding with {len( embedding )} dimensions" )
     else:

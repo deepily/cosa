@@ -115,7 +115,7 @@ class QuestionEmbeddingsTable():
         if self.debug: timer.print( f"Done! w/ {len( rows_returned )} rows returned", use_millis=True )
         
         if not rows_returned:
-            return due.generate_embedding( question, debug=self.debug )
+            return due.generate_embedding( question, normalize_for_cache=True, debug=self.debug )
         else:
             return rows_returned[ 0 ][ "embedding"]
         

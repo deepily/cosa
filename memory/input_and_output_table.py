@@ -84,7 +84,7 @@ class InputAndOutputTable():
             "input_embedding"                  : input_embedding if input_embedding else self._question_embeddings_tbl.get_embedding( input ),
             "output_raw"                       : output_raw,
             "output_final"                     : output_final,
-            "output_final_embedding"           : output_final_embedding if output_final_embedding else due.generate_embedding( output_final, debug=self.debug ),
+            "output_final_embedding"           : output_final_embedding if output_final_embedding else due.generate_embedding( output_final, normalize_for_cache=True, debug=self.debug ),
             "solution_path_wo_root"            : solution_path_wo_root
         } ]
         self._input_and_output_tbl.add( new_row )

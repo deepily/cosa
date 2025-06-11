@@ -290,7 +290,7 @@ class SolutionSnapshotManager:
         
         # Generate the embedding for the question if it doesn't already exist
         if not self._question_embeddings_tbl.has( question ):
-            question_embedding = due.generate_embedding( question, debug=self.debug )
+            question_embedding = due.generate_embedding( question, normalize_for_cache=True, debug=self.debug )
             self._question_embeddings_tbl.add_embedding( question, question_embedding )
         else:
             print( f"Embedding for question [{question}] already exists!" )
@@ -299,7 +299,7 @@ class SolutionSnapshotManager:
         # generate the embedding for the question gist if it doesn't already exist
         question_gist_embedding = [ ]
         if question_gist is not None and not self._question_embeddings_tbl.has( question_gist ):
-            question_gist_embedding = due.generate_embedding( question_gist, debug=self.debug )
+            question_gist_embedding = due.generate_embedding( question_gist, normalize_for_cache=True, debug=self.debug )
             self._question_embeddings_tbl.add_embedding( question_gist, question_gist_embedding )
         else:
             print( f"Embedding for question gist [{question_gist}] already exists!" )
