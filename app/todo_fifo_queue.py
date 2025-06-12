@@ -11,6 +11,7 @@ from cosa.agents.v010.todo_list_agent import TodoListAgent
 from cosa.agents.v010.calendaring_agent import CalendaringAgent
 from cosa.agents.v010.math_agent import MathAgent
 from cosa.agents.v010.llm_client_factory import LlmClientFactory
+from cosa.agents.v010.gister import Gister
 from cosa.tools.search_gib_v010 import GibSearch
 
 # from app       import emit_audio
@@ -65,6 +66,9 @@ class TodoFifoQueue( FifoQueue ):
         # Initialize LLM client factory for v010 compatibility
         self.llm_factory = LlmClientFactory( debug=debug, verbose=verbose )
         
+        # Initialize Gister for extracting question gists
+        self.gister = Gister( debug=debug, verbose=verbose )
+        
         # Salutations to be stripped by a brute force method until the router parses them off for us
         self.salutations = [ "computer", "little", "buddy", "pal", "ai", "jarvis", "alexa", "siri", "hal", "einstein",
             "jeeves", "alfred", "watson", "samwise", "sam", "hawkeye", "oye", "hey", "there", "you", "yo",
@@ -113,33 +117,6 @@ class TodoFifoQueue( FifoQueue ):
         remaining_string = ' '.join( words[ index: ] )
         
         return ' '.join( prefix_holder ), remaining_string
-    
-    def get_gist( self, question: str ) -> str:
-        """
-        Extract the gist of a question using LLM.
-        
-        Requires:
-            - question is a non-empty string
-            - Gist prompt template exists
-            
-        Ensures:
-            - Returns a concise gist of the question
-            - Uses LLM to extract main intent
-            - Returns empty string if extraction fails
-            
-        Raises:
-            - FileNotFoundError if prompt template missing
-        """
-        prompt_template_path = self.config_mgr.get( "prompt template for gist generation" )
-        prompt_template = du.get_file_as_string( du.get_project_root() + prompt_template_path )
-        prompt = prompt_template.format( question=question )
-        
-        llm_spec_key = self.config_mgr.get( "llm spec key for gist generation" )
-        llm_client = self.llm_factory.get_client( llm_spec_key, debug=self.debug, verbose=self.verbose )
-        results = llm_client.run( prompt )
-        gist = dux.get_value_by_xml_tag_name( results, "gist", default_value="" ).strip()
-        
-        return gist
     
     def push_job( self, question: str, client_id: str ) -> str:
         """
@@ -196,7 +173,7 @@ class TodoFifoQueue( FifoQueue ):
             self.pop_blocking_object()
             
             salutations, question = self.parse_salutations( question )
-            question_gist = self.get_gist( question )
+            question_gist = self.gister.get_gist( question )
             # DEMO KLUDGE: if the question doesn't start with "refactor", then we're going to search for similar snapshots
             if not question.lower().strip().startswith( "refactor " ):
                 

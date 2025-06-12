@@ -1,5 +1,5 @@
 import cosa.utils.util as du
-import cosa.utils.util_embeddings as due
+from cosa.memory.embedding_manager import EmbeddingManager
 
 from cosa.memory.question_embeddings_table import QuestionEmbeddingsTable
 from cosa.memory.solution_snapshot import SolutionSnapshot as ss
@@ -35,9 +35,10 @@ class InputAndOutputTable():
             - lancedb errors propagated
         """
         
-        self.debug       = debug
-        self.verbose     = verbose
-        self._config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        self.debug          = debug
+        self.verbose        = verbose
+        self._config_mgr    = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        self._embedding_mgr = EmbeddingManager( debug=debug, verbose=verbose )
         
         self.db = lancedb.connect( du.get_project_root() + self._config_mgr.get( "database_path_wo_root" ) )
         self._input_and_output_tbl    = self.db.open_table( "input_and_output_tbl" )
@@ -84,7 +85,7 @@ class InputAndOutputTable():
             "input_embedding"                  : input_embedding if input_embedding else self._question_embeddings_tbl.get_embedding( input ),
             "output_raw"                       : output_raw,
             "output_final"                     : output_final,
-            "output_final_embedding"           : output_final_embedding if output_final_embedding else due.generate_embedding( output_final, normalize_for_cache=True, debug=self.debug ),
+            "output_final_embedding"           : output_final_embedding if output_final_embedding else self._embedding_mgr.generate_embedding( output_final, normalize_for_cache=True, debug=self.debug ),
             "solution_path_wo_root"            : solution_path_wo_root
         } ]
         self._input_and_output_tbl.add( new_row )
@@ -294,7 +295,8 @@ class InputAndOutputTable():
 if __name__ == '__main__':
     
     # import numpy as np
-    # foo = due.generate_embedding( "what time is it" )
+    # embedding_mgr = EmbeddingManager( debug=True )
+    # foo = embedding_mgr.generate_embedding( "what time is it", debug=True )
     # print( "Sum of foo", np.sum( foo ) )
     # print( "dot product of foo and foo", np.dot( foo, foo ) * 100 )
     #

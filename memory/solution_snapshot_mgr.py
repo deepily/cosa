@@ -2,7 +2,7 @@ import os
 from typing import Optional, Any
 
 import cosa.utils.util as du
-import cosa.utils.util_embeddings as due
+from cosa.memory.embedding_manager import EmbeddingManager
 from cosa.memory import solution_snapshot as ss
 # from lib.memory.question_embeddings_dict import QuestionEmbeddingsDict
 from cosa.memory.question_embeddings_table import QuestionEmbeddingsTable
@@ -35,6 +35,7 @@ class SolutionSnapshotManager:
         self.debug                              = debug
         self.verbose                            = verbose
         self.path                               = path
+        self._embedding_mgr                     = EmbeddingManager( debug=debug, verbose=verbose )
        
         self._snapshots_by_question             = None
         self._snapshots_by_synonymous_questions = None
@@ -290,7 +291,7 @@ class SolutionSnapshotManager:
         
         # Generate the embedding for the question if it doesn't already exist
         if not self._question_embeddings_tbl.has( question ):
-            question_embedding = due.generate_embedding( question, normalize_for_cache=True, debug=self.debug )
+            question_embedding = self._embedding_mgr.generate_embedding( question, normalize_for_cache=True, debug=self.debug )
             self._question_embeddings_tbl.add_embedding( question, question_embedding )
         else:
             print( f"Embedding for question [{question}] already exists!" )
@@ -299,7 +300,7 @@ class SolutionSnapshotManager:
         # generate the embedding for the question gist if it doesn't already exist
         question_gist_embedding = [ ]
         if question_gist is not None and not self._question_embeddings_tbl.has( question_gist ):
-            question_gist_embedding = due.generate_embedding( question_gist, normalize_for_cache=True, debug=self.debug )
+            question_gist_embedding = self._embedding_mgr.generate_embedding( question_gist, normalize_for_cache=True, debug=self.debug )
             self._question_embeddings_tbl.add_embedding( question_gist, question_gist_embedding )
         else:
             print( f"Embedding for question gist [{question_gist}] already exists!" )

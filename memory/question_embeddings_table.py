@@ -1,7 +1,6 @@
 import cosa.utils.util as du
-import cosa.utils.util_embeddings as due
+from cosa.memory.embedding_manager import EmbeddingManager
 
-from cosa.memory.solution_snapshot import SolutionSnapshot as ss
 from cosa.app.configuration_manager import ConfigurationManager
 from cosa.utils.util_stopwatch import Stopwatch
 
@@ -50,9 +49,10 @@ class QuestionEmbeddingsTable():
             - lancedb errors propagated
         """
         
-        self.debug       = debug
-        self.verbose     = verbose
-        self._config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        self.debug          = debug
+        self.verbose        = verbose
+        self._config_mgr    = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        self._embedding_mgr = EmbeddingManager( debug=debug, verbose=verbose )
         
         uri = du.get_project_root() + self._config_mgr.get( "database_path_wo_root" )
         
@@ -115,7 +115,7 @@ class QuestionEmbeddingsTable():
         if self.debug: timer.print( f"Done! w/ {len( rows_returned )} rows returned", use_millis=True )
         
         if not rows_returned:
-            return due.generate_embedding( question, normalize_for_cache=True, debug=self.debug )
+            return self._embedding_mgr.generate_embedding( question, normalize_for_cache=True, debug=self.debug )
         else:
             return rows_returned[ 0 ][ "embedding"]
         
@@ -187,7 +187,8 @@ class QuestionEmbeddingsTable():
     #
     #     print( f"BEFORE: Table.count_rows: {self.question_embeddings_tbl.count_rows()}" )
     #     question = "and you may ask yourself well how did I get here"
-    #     embedding = due.generate_embedding( question )
+    #     embedding_mgr = EmbeddingManager( debug=True )
+    #     embedding = embedding_mgr.generate_embedding( question, debug=True )
     #     print( f"'{question}': embedding length: {len( embedding )}" )
     #     new_row = [ { "question": question, "embedding": embedding } ]
     #     self.question_embeddings_tbl.add( new_row )
