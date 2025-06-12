@@ -24,6 +24,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Memories
 - Don't forget to add the following path to the Python path environment variable so that you can call Cosa objects from within the Cosa Directory: `Bash(export PYTHONPATH="/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src:$PYTHONPATH"`
 - The configuration manager always needs an environment variable when it's instantiated, like this `self.config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )`
+- Every time that you add, modify or delete a new key value pair to the configuration manager contained `gib-app.ini` I want you to make sure that there is an explainer value provided for the same key value in `gib-app-splainer.ini`
 
 ## Code Style
 - **Imports**: Group by stdlib, third-party, local packages
@@ -89,7 +90,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   config = {
       "model_name"     : "gpt-4",
       "temperature"    : 0.7,
-      "max_tokens"     : 1024,
+      "max_tokens"    : 1024,
       "top_p"          : 1.0
   }
   
