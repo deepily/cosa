@@ -8,11 +8,12 @@ output, producing concise, normalized summaries ideal for embedding generation.
 import cosa.utils.util as du
 from cosa.agents.v010.gister import Gister
 from cosa.memory.normalizer import Normalizer
+from threading import Lock
 
 
 class GistNormalizer:
     """
-    Extracts the gist from text and normalizes it for consistent processing.
+    Singleton class for extracting and normalizing the gist of voice transcriptions.
     
     This class is particularly useful for voice transcriptions that contain
     verbose explanations, disfluencies, and spoken language patterns.
@@ -25,7 +26,29 @@ class GistNormalizer:
         - Returns normalized gist of input text
         - Handles voice transcription artifacts
         - Produces consistent output for embeddings
+        - Maintains singleton instance
     """
+    
+    _instance = None
+    _lock = Lock()
+    
+    def __new__( cls, debug=False, verbose=False ):
+        """
+        Create or return singleton instance.
+        
+        Requires:
+            - Nothing
+            
+        Ensures:
+            - Returns the single instance of GistNormalizer
+            - Initializes components only once
+        """
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__( cls )
+                    cls._instance._initialized = False
+        return cls._instance
     
     def __init__( self, debug=False, verbose=False ):
         """
@@ -39,6 +62,9 @@ class GistNormalizer:
             - Initializes Gister and Normalizer instances
             - Sets debug and verbose flags
         """
+        if self._initialized:
+            return
+            
         self.debug   = debug
         self.verbose = verbose
         
@@ -49,6 +75,8 @@ class GistNormalizer:
         self.normalizer = Normalizer()  # Singleton, gets config from ConfigurationManager
         
         if self.verbose: du.print_banner( "GistNormalizer initialized" )
+        
+        self._initialized = True
     
     def get_normalized_gist( self, text ):
         """
