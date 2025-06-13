@@ -9,6 +9,7 @@ import cosa.utils.util as du
 import cosa.utils.util_stopwatch as sw
 from cosa.app.configuration_manager import ConfigurationManager
 from cosa.memory.embedding_cache_table import EmbeddingCacheTable
+from cosa.memory.gist_normalizer import GistNormalizer
 
 # Module-level singleton for embedding manager
 _embedding_manager: Optional[ 'EmbeddingManager' ] = None
@@ -48,6 +49,9 @@ class EmbeddingManager:
         
         # Initialize embedding cache table
         self._embedding_cache_table = EmbeddingCacheTable( debug=debug, verbose=verbose )
+        
+        # Initialize GistNormalizer for advanced text normalization
+        self._gist_normalizer = GistNormalizer( debug=debug, verbose=verbose )
         
         # Load dictionaries once during initialization
         self._load_reverse_mappings()
@@ -97,21 +101,27 @@ class EmbeddingManager:
             self._reverse_numbers = {}
             self._reverse_domains = {}
     
-    def normalize_text_for_cache( self, text: str ) -> str:
+    def normalize_text_for_cache( self, text: str, expand_symbols_to_words: bool = None ) -> str:
         """
-        Normalize text by expanding numbers/symbols to alphabetic equivalents.
+        Normalize text by extracting gist and optionally expanding numbers/symbols to words.
         
-        Uses pre-loaded reverse mappings to ensure consistent cache keys.
-        "555-1234" and "five five five one two three four" get same cache key.
+        Uses GistNormalizer for gist extraction and normalization, then optionally applies
+        symbol-to-word expansion based on configuration.
         
         Requires:
             - text is a string
-            - Reverse mappings are loaded
+            - Reverse mappings are loaded (if expansion enabled)
             
         Ensures:
-            - Returns lowercase text with symbols/numbers expanded to words
-            - Preserves word order
+            - Returns normalized text with gist extracted
+            - Optionally expands symbols/numbers to words
             - Consistent cache keys for equivalent content
+            
+        Args:
+            text: The text to normalize
+            expand_symbols_to_words: If True, expand symbols/numbers to words.
+                                   If None, use value from configuration.
+                                   If False, skip symbol expansion.
             
         Raises:
             - None (handles errors gracefully)
@@ -119,30 +129,38 @@ class EmbeddingManager:
         if self.debug: timer = sw.Stopwatch( msg=f"Normalizing text: '{du.truncate_string( text )}'" )
         
         try:
-            # Start with lowercase
-            normalized = text.lower()
+            # Use GistNormalizer for advanced normalization
+            # This will extract the gist and normalize using spaCy
+            normalized = self._gist_normalizer.get_normalized_gist( text )
             
-            # ¡OJO! TODO: Strip Common punctuation, characters here?
+            # Check if we should expand symbols to words
+            if expand_symbols_to_words is None:
+                # Get from configuration, default to False
+                expand_symbols_to_words = self._config_mgr.get( "expand symbols to words", default=False, return_type="boolean" )
+                if self.debug: print( f"Got expand_symbols_to_words from config: {expand_symbols_to_words}" )
             
-            # Apply reverse mappings to expand symbols/numbers to words
-            # Use sorted() to ensure consistent ordering for deterministic results
-            for symbol, word in sorted( self._reverse_punctuation.items() ):
-                # Skip space character to avoid replacing all spaces with the word "space"
-                if symbol == " ":
-                    continue
-                if symbol in normalized:
-                    normalized = normalized.replace( symbol, f" {word} " )
-            
-            for number, word in sorted( self._reverse_numbers.items() ):
-                if number in normalized:
-                    normalized = normalized.replace( number, f" {word} " )
-            
-            for domain, word in sorted( self._reverse_domains.items() ):
-                if domain in normalized:
-                    normalized = normalized.replace( domain, f" {word} " )
-            
-            # Clean up extra whitespace
-            normalized = " ".join( normalized.split() )
+            if expand_symbols_to_words:
+                if self.debug: print( "Expanding symbols and numbers to words..." )
+                
+                # Apply reverse mappings to expand symbols/numbers to words
+                # Use sorted() to ensure consistent ordering for deterministic results
+                for symbol, word in sorted( self._reverse_punctuation.items() ):
+                    # Skip space character to avoid replacing all spaces with the word "space"
+                    if symbol == " ":
+                        continue
+                    if symbol in normalized:
+                        normalized = normalized.replace( symbol, f" {word} " )
+                
+                for number, word in sorted( self._reverse_numbers.items() ):
+                    if number in normalized:
+                        normalized = normalized.replace( number, f" {word} " )
+                
+                for domain, word in sorted( self._reverse_domains.items() ):
+                    if domain in normalized:
+                        normalized = normalized.replace( domain, f" {word} " )
+                
+                # Clean up extra whitespace
+                normalized = " ".join( normalized.split() )
             
             if self.debug:
                 timer.print( "Done!", use_millis=True )
@@ -458,6 +476,79 @@ def quick_smoke_test():
         
         if len( embeddings ) == len( similar_texts ):
             print( f"  ✓ All similar text embeddings processed" )
+        
+        # Test 5: Voice transcription normalization pipeline
+        print( f"\nTest 5: Voice Transcription → Gist → Normalize → Embed Pipeline..." )
+        
+        # Test with symbol expansion OFF (default from config)
+        print( f"\n  Test 5a: Symbol expansion OFF (default):" )
+        test_cases_no_expansion = [
+            ( "What's the time at 3:30 PM?", "time", "3:30" ),
+            ( "Email me at user@example.com", "email", "@" ),
+            ( "The total is $99.99", "total", "$99.99" )
+        ]
+        
+        for text, keyword, symbol in test_cases_no_expansion:
+            normalized = embedding_manager.normalize_text_for_cache( text )
+            print( f"    '{text}' → '{normalized}'" )
+            if keyword in normalized and symbol in normalized:
+                print( f"      ✓ Symbol '{symbol}' preserved, not expanded" )
+            else:
+                print( f"      ⚠ Expected symbol '{symbol}' or keyword '{keyword}' not found" )
+        
+        # Test with symbol expansion ON (override)
+        print( f"\n  Test 5b: Symbol expansion ON (override):" )
+        for text, keyword, symbol in test_cases_no_expansion:
+            normalized = embedding_manager.normalize_text_for_cache( text, expand_symbols_to_words=True )
+            print( f"    '{text}' → '{normalized}'" )
+            if keyword in normalized and symbol not in normalized:
+                print( f"      ✓ Symbol '{symbol}' expanded to words" )
+            else:
+                print( f"      ⚠ Symbol expansion may not have worked as expected" )
+        
+        # Test voice transcriptions
+        print( f"\n  Test 5c: Voice transcription normalization:" )
+        voice_transcription_cases = [
+            {
+                "name": "Simple question with fillers",
+                "text": "Um, so like, I was wondering if you could, you know, help me understand how to, uh, calculate the compound interest on my savings account?",
+                "expected_keywords": ["calculate", "compound", "interest", "savings"]
+            },
+            {
+                "name": "Meeting request with corrections", 
+                "text": "So basically what I'm trying to say is, well, actually, let me start over. The thing is, I need to schedule a meeting, no wait, not a meeting, more like a conference call, for next Tuesday at 2 PM, or actually, can we make it 3 PM instead?",
+                "expected_keywords": ["schedule", "conference", "call", "tuesday", "3"]
+            },
+            {
+                "name": "Technical problem with disfluencies",
+                "text": "Uh, I'm having this problem with my code where it's like, throwing an error, and I think it's because, um, the database connection is, you know, timing out or something?",
+                "expected_keywords": ["problem", "code", "error", "database", "connection"]
+            },
+            {
+                "name": "Short direct question",
+                "text": "What time is it?",
+                "expected_keywords": ["what", "time"]
+            }
+        ]
+        
+        for case in voice_transcription_cases:
+            print( f"\n  {case['name']}:" )
+            print( f"    Original ({len(case['text'])} chars): {case['text'][:80]}..." if len(case['text']) > 80 else f"    Original ({len(case['text'])} chars): {case['text']}" )
+            
+            # Test without symbol expansion (default)
+            normalized = embedding_manager.normalize_text_for_cache( case[ 'text' ] )
+            print( f"    Normalized ({len(normalized)} chars): {normalized[:80]}..." if len(normalized) > 80 else f"    Normalized ({len(normalized)} chars): {normalized}" )
+            
+            # Calculate reduction
+            reduction = ( 1 - len( normalized ) / len( case[ 'text' ] ) ) * 100
+            print( f"    Reduction: {reduction:.1f}%" )
+            
+            # Check if expected keywords are present
+            keywords_found = sum( 1 for keyword in case[ 'expected_keywords' ] if keyword in normalized.lower() )
+            if keywords_found >= len( case[ 'expected_keywords' ] ) / 2:  # At least half the keywords
+                print( f"    ✓ Normalization preserved key concepts ({keywords_found}/{len(case['expected_keywords'])} keywords found)" )
+            else:
+                print( f"    ⚠ Some key concepts may be missing ({keywords_found}/{len(case['expected_keywords'])} keywords found)" )
         
     except Exception as e:
         print( f"✗ Error during smoke test: {e}" )
