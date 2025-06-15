@@ -10,9 +10,7 @@ import cosa.utils.util_stopwatch as sw
 from cosa.app.configuration_manager import ConfigurationManager
 from cosa.memory.embedding_cache_table import EmbeddingCacheTable
 from cosa.memory.gist_normalizer import GistNormalizer
-
-# Module-level singleton for embedding manager
-_embedding_manager: Optional[ 'EmbeddingManager' ] = None
+from threading import Lock
 
 
 class EmbeddingManager:
@@ -22,6 +20,27 @@ class EmbeddingManager:
     Singleton class that loads dictionary mappings once and provides
     efficient embedding generation with cache support.
     """
+    
+    _instance = None
+    _lock = Lock()
+    
+    def __new__( cls, debug=False, verbose=False ):
+        """
+        Create or return singleton instance.
+        
+        Requires:
+            - Nothing
+            
+        Ensures:
+            - Returns the single instance of EmbeddingManager
+            - Initializes components only once
+        """
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__( cls )
+                    cls._instance._initialized = False
+        return cls._instance
     
     def __init__( self, debug: bool=False, verbose: bool=False ) -> None:
         """
@@ -39,6 +58,9 @@ class EmbeddingManager:
         Raises:
             - FileNotFoundError if dictionary files missing
         """
+        if self._initialized:
+            return
+            
         self.debug   = debug
         self.verbose = verbose
         
@@ -57,6 +79,8 @@ class EmbeddingManager:
         self._load_reverse_mappings()
         
         if debug: print( "✓ EmbeddingManager initialized successfully" )
+        
+        self._initialized = True
     
     def _load_reverse_mappings( self ) -> None:
         """
@@ -336,13 +360,7 @@ def get_embedding_manager( debug: bool=False, verbose: bool=False ) -> Embedding
     Raises:
         - None
     """
-    global _embedding_manager
-    
-    if _embedding_manager is None:
-        if debug: print( "Creating singleton EmbeddingManager instance..." )
-        _embedding_manager = EmbeddingManager( debug=debug, verbose=verbose )
-    
-    return _embedding_manager
+    return EmbeddingManager( debug=debug, verbose=verbose )
 
 
 def generate_embedding( text: str, normalize_for_cache: bool=True, debug: bool=False ) -> list[ float ]:
