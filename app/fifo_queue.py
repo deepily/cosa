@@ -279,6 +279,35 @@ class FifoQueue:
         else:
             return False
     
+    def get_html_list( self, descending: bool = False ) -> list[str]:
+        """
+        Generate HTML list from queue items.
+        
+        Requires:
+            - Each item in queue_list has get_html() method
+            
+        Ensures:
+            - Returns list of HTML strings from queue items
+            - Reverses order if descending=True
+            
+        Args:
+            descending: Whether to reverse the list order
+            
+        Returns:
+            list[str]: HTML representations of queue items
+            
+        Raises:
+            - AttributeError if items don't have get_html() method
+        """
+        html_list = []
+        for job in self.queue_list:
+            html_list.append( job.get_html() )
+        
+        if descending:
+            html_list.reverse()
+        
+        return html_list
+    
     def _emit_audio( self, msg: str, client_id: str = None ) -> None:
         """
         Helper method to emit audio through the callback.
