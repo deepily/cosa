@@ -14,7 +14,7 @@ from cosa.agents.v010.raw_output_formatter import RawOutputFormatter
 
 from cosa.agents.v010.llm_client_factory import LlmClientFactory
 from cosa.agents.v010.runnable_code import RunnableCode
-from cosa.app.configuration_manager import ConfigurationManager
+from cosa.config.configuration_manager import ConfigurationManager
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.agents.v010.two_word_id_generator import TwoWordIdGenerator
 

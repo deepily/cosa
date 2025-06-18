@@ -1,7 +1,7 @@
 from cosa.utils import util     as du
 from cosa.utils import util_xml as dux
 
-from cosa.app.configuration_manager import ConfigurationManager
+from cosa.config.configuration_manager import ConfigurationManager
 
 from cosa.agents.v000.llm_v0 import Llm_v0
 

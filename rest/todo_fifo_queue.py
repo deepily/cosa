@@ -2,7 +2,7 @@ import random
 from typing import Any, Optional
 
 from cosa.agents.v010.confirmation_dialog import ConfirmationDialogue
-from cosa.app.fifo_queue import FifoQueue
+from cosa.rest.fifo_queue import FifoQueue
 
 from cosa.agents.v010.date_and_time_agent import DateAndTimeAgent
 from cosa.agents.v010.receptionist_agent import ReceptionistAgent
@@ -28,12 +28,12 @@ class TodoFifoQueue( FifoQueue ):
     Handles question parsing, agent routing, and snapshot management for
     conversational AI tasks.
     """
-    def __init__( self, socketio: Any, snapshot_mgr: Any, app: Any, config_mgr: Optional[Any]=None, emit_audio_callback: Optional[Any]=None, debug: bool=False, verbose: bool=False, silent: bool=False ) -> None:
+    def __init__( self, websocket_mgr: Any, snapshot_mgr: Any, app: Any, config_mgr: Optional[Any]=None, emit_audio_callback: Optional[Any]=None, debug: bool=False, verbose: bool=False, silent: bool=False ) -> None:
         """
         Initialize the todo FIFO queue.
         
         Requires:
-            - socketio is a valid SocketIO instance or None for testing
+            - websocket_mgr is a valid WebSocketManager instance or None for testing
             - snapshot_mgr is a valid snapshot manager or None for testing
             - app is a Flask application instance or None for testing
             - config_mgr is None or a valid ConfigurationManager
@@ -48,12 +48,11 @@ class TodoFifoQueue( FifoQueue ):
             - None
         """
         
-        super().__init__()
+        super().__init__( websocket_mgr=websocket_mgr, queue_name="todo", emit_enabled=True )
         self.debug               = debug
         self.verbose             = verbose
         self.silent              = silent
         
-        self.socketio            = socketio
         self.snapshot_mgr        = snapshot_mgr
         self.app                 = app
         self.push_counter        = 0
@@ -118,13 +117,13 @@ class TodoFifoQueue( FifoQueue ):
         
         return ' '.join( prefix_holder ), remaining_string
     
-    def push_job( self, question: str, client_id: str ) -> str:
+    def push_job( self, question: str, websocket_id: str ) -> str:
         """
         Push a new job onto the queue based on the question.
         
         Requires:
             - question is a non-empty string
-            - client_id is a non-empty string
+            - websocket_id is a non-empty string
             - Queue and snapshot manager are initialized
             
         Ensures:
@@ -132,7 +131,7 @@ class TodoFifoQueue( FifoQueue ):
             - Searches for similar snapshots if applicable
             - Routes to appropriate agent or snapshot
             - Returns status message
-            - Associates client_id with the job
+            - Associates websocket_id with the job
             
         Raises:
             - None (exceptions handled internally)
@@ -210,7 +209,7 @@ class TodoFifoQueue( FifoQueue ):
                 msg = f"Is that the same as: {best_snapshot.question}?"
                 du.print_banner( msg )
                 print( "Blocking object pushed onto queue, waiting for response..." )
-                self._emit_audio( msg, client_id )
+                self._emit_audio( msg, websocket_id )
                 return msg
             
             # This is an exact match, so queue it up
@@ -302,7 +301,7 @@ class TodoFifoQueue( FifoQueue ):
                 msg = search.get_results( scope="summary" )
                 
             if ding_for_new_job:
-                self.socketio.emit( 'notification_sound_update', { 'soundFile': '/static/gentle-gong.mp3' } )
+                self.websocket_mgr.emit( 'notification_sound_update', { 'soundFile': '/static/gentle-gong.mp3' } )
             if agent is not None:
                 self.push( agent )
             
@@ -313,7 +312,7 @@ class TodoFifoQueue( FifoQueue ):
             
             # agent = FunctionMappingAgent( question=question, push_counter=self.push_counter, debug=True, verbose=True )
             # self.push( agent )
-            # self.socketio.emit( 'todo_update', { 'value': self.size() } )
+            # Auto-emission via parent class handles todo_update
             #
             # return f'No similar snapshots found, adding NEW FunctionMappingAgent to TODO queue. Queue size [{self.size()}]'
 
@@ -409,8 +408,7 @@ class TodoFifoQueue( FifoQueue ):
         else:
             print( "No jobs ahead of this one in the todo Q" )
         
-        self.push( job )
-        self.socketio.emit( 'todo_update', { 'value': self.size() } )
+        self.push( job )  # Auto-emits 'todo_update' via parent class
         
         return f'Job added to queue. Queue size [{self.size()}]'
     

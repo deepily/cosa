@@ -288,7 +288,7 @@ def assemble_and_run_solution( solution_code: list[str], example_code: str, path
         response_dict = bug_injector.run_prompt()
         solution_code = response_dict[ "code" ]
         
-    from cosa.app.configuration_manager import ConfigurationManager
+    from cosa.config.configuration_manager import ConfigurationManager
     
     # Get the code execution file path, with a fallback for test environments
     try:

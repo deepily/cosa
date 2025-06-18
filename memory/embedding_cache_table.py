@@ -8,7 +8,7 @@ OpenAI API calls by storing frequently requested embeddings.
 import lancedb
 from typing import Optional
 import cosa.utils.util as du
-from cosa.app.configuration_manager import ConfigurationManager
+from cosa.config.configuration_manager import ConfigurationManager
 from cosa.utils.util_stopwatch import Stopwatch
 
 

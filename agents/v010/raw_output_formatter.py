@@ -1,7 +1,7 @@
 from cosa.utils import util     as du
 from cosa.utils import util_xml as dux
 
-from cosa.app.configuration_manager      import ConfigurationManager
+from cosa.config.configuration_manager   import ConfigurationManager
 from cosa.agents.v010.llm_client_factory import LlmClientFactory
 
 class RawOutputFormatter:

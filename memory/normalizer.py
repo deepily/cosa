@@ -3,7 +3,7 @@ import re
 from threading import Lock
 
 import cosa.utils.util as du
-from cosa.app.configuration_manager import ConfigurationManager
+from cosa.config.configuration_manager import ConfigurationManager
 
 
 class Normalizer:

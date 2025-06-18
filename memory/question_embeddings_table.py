@@ -1,7 +1,7 @@
 import cosa.utils.util as du
 from cosa.memory.embedding_manager import EmbeddingManager
 
-from cosa.app.configuration_manager import ConfigurationManager
+from cosa.config.configuration_manager import ConfigurationManager
 from cosa.utils.util_stopwatch import Stopwatch
 
 import lancedb

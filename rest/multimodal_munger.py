@@ -11,7 +11,7 @@ import cosa.utils.util_xml as du_xml
 
 from cosa.agents.v010.llm_client_factory import LlmClientFactory
 
-from cosa.app.configuration_manager import ConfigurationManager
+from cosa.config.configuration_manager import ConfigurationManager
 
 # Currently, all transcription mode descriptors are three words long.
 # This will become important or more important in the future?

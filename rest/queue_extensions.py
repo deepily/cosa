@@ -54,7 +54,7 @@ class UserJobTracker:
 user_job_tracker = UserJobTracker()
 
 
-def push_job_with_user(todo_queue, question: str, client_id: str, user_id: str) -> str:
+def push_job_with_user(todo_queue, question: str, websocket_id: str, user_id: str) -> str:
     """
     Push a job to the queue and track the user association.
     
@@ -63,7 +63,7 @@ def push_job_with_user(todo_queue, question: str, client_id: str, user_id: str) 
     Args:
         todo_queue: The TodoFifoQueue instance
         question: The question to process
-        client_id: The client session ID
+        websocket_id: The websocket session ID
         user_id: The authenticated user ID
         
     Returns:
@@ -71,7 +71,7 @@ def push_job_with_user(todo_queue, question: str, client_id: str, user_id: str) 
     """
     # Call the original push_job method
     # Note: In production, push_job should be modified to accept user_id
-    result = todo_queue.push_job(question, client_id)
+    result = todo_queue.push_job(question, websocket_id)
     
     # Extract job ID from the queue (last pushed item)
     if todo_queue.size() > 0:

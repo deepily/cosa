@@ -11,12 +11,14 @@ class FifoQueue:
     stored in both a list (for ordering) and dictionary (for O(1) lookup).
     """
     
-    def __init__( self ) -> None:
+    def __init__( self, websocket_mgr: Optional[Any] = None, queue_name: Optional[str] = None, emit_enabled: bool = True ) -> None:
         """
-        Initialize an empty FIFO queue.
+        Initialize an empty FIFO queue with optional auto-emission capabilities.
         
         Requires:
-            - None
+            - websocket_mgr is a valid WebSocketManager instance or None
+            - queue_name is a valid string for emission events or None
+            - emit_enabled is a boolean to control auto-emission
             
         Ensures:
             - Creates empty queue_list and queue_dict
@@ -24,6 +26,7 @@ class FifoQueue:
             - Sets accepting_jobs to True
             - Sets focus_mode to True
             - Sets blocking_object to None
+            - Configures auto-emission if websocket_mgr and queue_name provided
             
         Raises:
             - None
@@ -39,6 +42,11 @@ class FifoQueue:
         self._focus_mode      = True
         # used to track if this queue contains a blocking object
         self._blocking_object = None
+        
+        # Auto-emission configuration for client-server state synchronization
+        self.websocket_mgr   = websocket_mgr
+        self.queue_name      = queue_name
+        self.emit_enabled    = emit_enabled
         
     def pop_blocking_object( self ) -> Optional[Any]:
         """
@@ -129,6 +137,7 @@ class FifoQueue:
         self.queue_list.append( item )
         self.queue_dict[ item.id_hash ] = item
         self.push_counter += 1
+        self._emit_queue_update()
     
     def get_push_counter( self ) -> int:
         """
@@ -163,7 +172,9 @@ class FifoQueue:
         if not self.is_empty():
             # Remove from ID_hash first
             del self.queue_dict[ self.queue_list[ 0 ].id_hash ]
-            return self.queue_list.pop( 0 )
+            result = self.queue_list.pop( 0 )
+            self._emit_queue_update()
+            return result
     
     def head( self ) -> Optional[Any]:
         """
@@ -224,6 +235,7 @@ class FifoQueue:
         
         if size_after < size_before:
             print( f"Deleted {size_before - size_after} items from queue" )
+            self._emit_queue_update()
         else:
             print( "ERROR: Could not delete by id_hash" )
         
@@ -308,7 +320,7 @@ class FifoQueue:
         
         return html_list
     
-    def _emit_audio( self, msg: str, client_id: str = None ) -> None:
+    def _emit_audio( self, msg: str, websocket_id: str = None ) -> None:
         """
         Helper method to emit audio through the callback.
         
@@ -321,13 +333,41 @@ class FifoQueue:
             
         Args:
             msg: The message to convert to audio
-            client_id: The client to send to (None means broadcast to all)
+            websocket_id: The websocket to send to (None means broadcast to all)
             
         Raises:
             - None (exceptions handled internally)
         """
         if hasattr( self, 'emit_audio_callback' ) and self.emit_audio_callback:
             try:
-                self.emit_audio_callback( msg, client_id )
+                self.emit_audio_callback( msg, websocket_id )
             except Exception as e:
                 print( f"[ERROR] emit_audio_callback failed: {e}" )
+    
+    def _emit_queue_update( self ) -> None:
+        """
+        Automatically emit queue state update via WebSocket.
+        
+        This method enables automatic client-server state synchronization
+        by emitting queue size updates whenever the queue changes.
+        
+        Requires:
+            - websocket_mgr, queue_name, and emit_enabled are configured
+            
+        Ensures:
+            - Emits "<queue_name>_update" event with current queue size
+            - Handles exceptions gracefully
+            - Only emits if all requirements are met
+            
+        Raises:
+            - None (exceptions handled internally)
+        """
+        if self.emit_enabled and self.websocket_mgr and self.queue_name:
+            try:
+                event_name = f"{self.queue_name}_update"
+                data = { 'value': self.size() }
+                self.websocket_mgr.emit( event_name, data )
+                if hasattr( self, 'debug' ) and self.debug:
+                    print( f"[QUEUE] Auto-emitted {event_name}: {data}" )
+            except Exception as e:
+                print( f"[ERROR] _emit_queue_update failed: {e}" )

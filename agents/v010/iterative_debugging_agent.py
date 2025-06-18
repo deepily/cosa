@@ -367,7 +367,7 @@ def quick_smoke_test():
     """Quick smoke test to validate IterativeDebuggingAgent functionality."""
     import cosa.utils.util as du
     import os
-    from cosa.app.configuration_manager import ConfigurationManager
+    from cosa.config.configuration_manager import ConfigurationManager
     
     du.print_banner( "IterativeDebuggingAgent Smoke Test", prepend_nl=True )
     

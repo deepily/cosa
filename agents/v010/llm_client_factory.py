@@ -12,7 +12,7 @@ from cosa.agents.v010.llm_client import LlmClient
 from cosa.agents.v010.chat_client import ChatClient
 from cosa.agents.v010.completion_client import CompletionClient
 from cosa.agents.v010.base_llm_client import LlmClientInterface
-from cosa.app.configuration_manager import ConfigurationManager
+from cosa.config.configuration_manager import ConfigurationManager
 
 class LlmClientFactory:
     """

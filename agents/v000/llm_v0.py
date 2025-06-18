@@ -9,7 +9,7 @@ import google.generativeai      as genai
 from langchain.chains.qa_with_sources.stuff_prompt import template
 from openai import OpenAI
 
-from cosa.app.configuration_manager import ConfigurationManager
+from cosa.config.configuration_manager import ConfigurationManager
 from cosa.utils.util                import print_banner
 from cosa.utils.util_stopwatch      import Stopwatch
 from cosa.agents.v000.llm_completion import get_completion

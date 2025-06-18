@@ -7,7 +7,7 @@ import openai
 from typing import Optional
 import cosa.utils.util as du
 import cosa.utils.util_stopwatch as sw
-from cosa.app.configuration_manager import ConfigurationManager
+from cosa.config.configuration_manager import ConfigurationManager
 from cosa.memory.embedding_cache_table import EmbeddingCacheTable
 from cosa.memory.gist_normalizer import GistNormalizer
 from threading import Lock

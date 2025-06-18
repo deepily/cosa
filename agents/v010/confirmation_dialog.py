@@ -5,7 +5,7 @@ import cosa.utils.util_xml as dux
 
 from cosa.agents.v010.llm_client_factory import LlmClientFactory
 from cosa.agents.v010.llm_client import LlmClient
-from cosa.app.configuration_manager import ConfigurationManager
+from cosa.config.configuration_manager import ConfigurationManager
 
 class ConfirmationDialogue:
     """

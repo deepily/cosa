@@ -11,7 +11,7 @@ from pydantic_ai import Agent
 # from pydantic_ai.models.openai import OpenAIModel
 # from pydantic_ai.providers.openai import OpenAIProvider
 
-from cosa.app.configuration_manager import ConfigurationManager
+from cosa.config.configuration_manager import ConfigurationManager
 
 
 class LlmClient:
