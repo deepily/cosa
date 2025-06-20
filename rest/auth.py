@@ -2,6 +2,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Dict, Optional
 import os
+from .user_id_generator import get_user_info, email_to_system_id
 
 # For now, we'll mock the Firebase Admin SDK
 # In production, you would use: import firebase_admin
@@ -48,35 +49,59 @@ async def verify_firebase_token(token: str) -> Dict:
         # MOCK: In production, this would be:
         # decoded_token = auth.verify_id_token(token)
         
-        # For mocking, we'll decode a simple format: "mock_token_userId"
+        # For mocking, we'll decode email-based format: "mock_token_email_user@example.com"
         if not token.startswith("mock_token_"):
             raise ValueError("Invalid mock token format")
+        
+        # Check if it's the new email-based format
+        if token.startswith("mock_token_email_"):
+            email = token.replace("mock_token_email_", "")
+            if not email or '@' not in email:
+                raise ValueError("Invalid email in token")
+            # Convert email to system ID internally
+            system_id = email_to_system_id(email)
+        else:
+            # Legacy format for backward compatibility
+            system_id = token.replace("mock_token_", "")
+            if not system_id:
+                raise ValueError("No system ID in token")
+        
+        # Look up user by system ID using centralized user database
+        user_data = get_user_info( system_id )
+        if not user_data:
+            # Generate default user info for unknown system IDs (for testing)
+            user_data = {
+                "uid": system_id,
+                "email": f"{system_id}@generated.local",
+                "name": system_id.split('_')[0].capitalize(),
+                "email_verified": False
+            }
+            print( f"[AUTH] Generated user info for unknown system ID: {system_id}" )
+        else:
+            # Add uid field for Firebase compatibility
+            user_data["uid"] = system_id
             
-        user_id = token.replace("mock_token_", "")
-        if not user_id:
-            raise ValueError("No user ID in token")
-            
-        # Return mock decoded token
+        # Return mock decoded token with real user structure
         decoded_token = {
-            "uid": user_id,
-            "email": f"{user_id}@example.com",
-            "email_verified": True,
-            "name": f"User {user_id}",
+            "uid": user_data["uid"],
+            "email": user_data["email"],
+            "email_verified": user_data["email_verified"],
+            "name": user_data["name"],
             "picture": None,
             "iss": "https://securetoken.google.com/mock-project",
             "aud": "mock-project",
             "auth_time": 1234567890,
-            "user_id": user_id,
-            "sub": user_id,
+            "user_id": user_data["uid"],  # Legacy field for compatibility
+            "sub": user_data["uid"],
             "iat": 1234567890,
             "exp": 9999999999,  # Far future
             "firebase": {
-                "identities": {"email": [f"{user_id}@example.com"]},
+                "identities": {"email": [user_data["email"]]},
                 "sign_in_provider": "password"
             }
         }
         
-        print(f"[AUTH] Token verified for user: [{user_id}]")
+        print(f"[AUTH] Token verified for user: [{user_data['name']}] ({user_data['uid']})")
         return decoded_token
         
     except Exception as e:

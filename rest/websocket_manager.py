@@ -197,3 +197,95 @@ class WebSocketManager:
                 loop.run_until_complete( self.emit_to_user( user_id, event, data ) )
         except RuntimeError:
             asyncio.run( self.emit_to_user( user_id, event, data ) )
+    
+    def is_user_connected( self, user_id: str ) -> bool:
+        """
+        Check if a specific user has any active WebSocket connections.
+        
+        Args:
+            user_id: The user ID to check
+            
+        Returns:
+            bool: True if user has at least one active connection
+        """
+        if user_id not in self.user_sessions:
+            return False
+        
+        # Check if any of the user's sessions are still active
+        active_sessions = [
+            session_id for session_id in self.user_sessions[user_id]
+            if session_id in self.active_connections
+        ]
+        
+        return len( active_sessions ) > 0
+    
+    def get_user_connection_count( self, user_id: str ) -> int:
+        """
+        Get the number of active connections for a specific user.
+        
+        Args:
+            user_id: The user ID to check
+            
+        Returns:
+            int: Number of active connections for this user
+        """
+        if user_id not in self.user_sessions:
+            return 0
+        
+        active_sessions = [
+            session_id for session_id in self.user_sessions[user_id]
+            if session_id in self.active_connections
+        ]
+        
+        return len( active_sessions )
+    
+    async def emit_to_user( self, user_id: str, event: str, data: dict ) -> bool:
+        """
+        Emit an event to all sessions belonging to a specific user.
+        
+        Args:
+            user_id: The user ID to send to
+            event: The event type
+            data: The data to send
+            
+        Returns:
+            bool: True if message was sent to at least one connection, False if user not available
+        """
+        if user_id not in self.user_sessions:
+            return False
+            
+        message = {
+            "type": event,
+            "timestamp": datetime.now().isoformat(),
+            **data
+        }
+        
+        sent_count = 0
+        disconnected = []
+        
+        for session_id in self.user_sessions[user_id]:
+            if session_id in self.active_connections:
+                try:
+                    websocket = self.active_connections[session_id]
+                    await websocket.send_json( message )
+                    sent_count += 1
+                except:
+                    disconnected.append( session_id )
+        
+        # Clean up disconnected sessions
+        for session_id in disconnected:
+            self.disconnect( session_id )
+        
+        return sent_count > 0
+    
+    async def emit_to_all( self, event: str, data: dict ):
+        """
+        Emit an event to all connected WebSocket clients.
+        
+        Alias for async_emit to match expected API naming.
+        
+        Args:
+            event: The event type
+            data: The data to send
+        """
+        await self.async_emit( event, data )
