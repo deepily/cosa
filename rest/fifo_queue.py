@@ -212,7 +212,7 @@ class FifoQueue:
         
         return self.queue_dict[ id_hash ]
     
-    def delete_by_id_hash( self, id_hash: str ) -> None:
+    def delete_by_id_hash( self, id_hash: str ) -> bool:
         """
         Delete an item by its ID hash.
         
@@ -220,24 +220,36 @@ class FifoQueue:
             - id_hash is a string
             
         Ensures:
-            - Item is removed from queue_dict
+            - Item is removed from queue_dict if found
             - queue_list is rebuilt from remaining items
             - Prints status message about deletion
+            - Returns True if deletion successful, False otherwise
             
-        Raises:
-            - KeyError if id_hash not found
+        Returns:
+            - bool: True if item was found and deleted, False if not found
         """
-        
-        del self.queue_dict[ id_hash ]
-        size_before = self.size()
-        self.queue_list = list( self.queue_dict.values() )
-        size_after = self.size()
-        
-        if size_after < size_before:
-            print( f"Deleted {size_before - size_after} items from queue" )
-            self._emit_queue_update()
-        else:
-            print( "ERROR: Could not delete by id_hash" )
+        try:
+            # Check if item exists before attempting deletion
+            if id_hash not in self.queue_dict:
+                print( f"ERROR: Could not delete by id_hash - item {id_hash} not found" )
+                return False
+            
+            size_before = self.size()
+            del self.queue_dict[ id_hash ]
+            self.queue_list = list( self.queue_dict.values() )
+            size_after = self.size()
+            
+            if size_after < size_before:
+                print( f"Deleted {size_before - size_after} items from queue" )
+                self._emit_queue_update()
+                return True
+            else:
+                print( "ERROR: Could not delete by id_hash - size didn't change" )
+                return False
+                
+        except Exception as e:
+            print( f"ERROR: Exception during delete_by_id_hash: {e}" )
+            return False
         
     def is_empty( self ) -> bool:
         """

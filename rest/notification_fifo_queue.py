@@ -95,6 +95,49 @@ class NotificationFifoQueue( FifoQueue ):
         if self.debug:
             print( f"NotificationFifoQueue initialized with io_tbl logging" )
     
+    def push( self, notification: NotificationItem ) -> None:
+        """
+        Override parent's push to emit enhanced notification data.
+        Prevents double emission while including full notification details.
+        
+        Requires:
+            - notification is a valid NotificationItem instance
+            
+        Ensures:
+            - Adds notification to queue
+            - Emits single WebSocket event with full notification data
+            - Increments push counter
+            
+        Raises:
+            - None
+        """
+        # Add to queue data structures
+        self.queue_list.append( notification )
+        self.queue_dict[ notification.id_hash ] = notification
+        self.push_counter += 1
+        
+        # Emit enhanced notification_update
+        if self.websocket_mgr and self.emit_enabled:
+            event_data = {
+                'queue_name': 'notification',
+                'value': self.size(),
+                'notification': notification.to_dict()
+            }
+            
+            if notification.user_id:
+                # Targeted notification - send only to specific user
+                self.websocket_mgr.emit_to_user_sync( notification.user_id, 'notification_update', event_data )
+                if self.debug:
+                    print( f"Emitted notification to user: {notification.user_id}" )
+            else:
+                # Broadcast notification - send to all connected clients
+                self.websocket_mgr.emit( 'notification_update', event_data )
+                if self.debug:
+                    print( f"Broadcast notification to all users" )
+        
+        if self.debug:
+            print( f"Pushed notification {notification.id_hash} with enhanced WebSocket emission" )
+    
     def push_notification( self, message: str, type: str = "task", priority: str = "medium", 
                          source: str = "claude_code", user_id: Optional[str] = None ) -> NotificationItem:
         """
@@ -132,19 +175,32 @@ class NotificationFifoQueue( FifoQueue ):
                     break
                 insert_idx = idx + 1
             
-            # Insert at calculated position
+            # Manual insertion for priority placement
             self.queue_list.insert( insert_idx, notification )
             self.queue_dict[ notification.id_hash ] = notification
+            self.push_counter += 1
+            
+            # Emit enhanced notification_update (same as push method)
+            if self.websocket_mgr and self.emit_enabled:
+                event_data = {
+                    'queue_name': 'notification',
+                    'value': self.size(),
+                    'notification': notification.to_dict()
+                }
+                
+                if notification.user_id:
+                    # Targeted notification - send only to specific user
+                    self.websocket_mgr.emit_to_user_sync( notification.user_id, 'notification_update', event_data )
+                    if self.debug:
+                        print( f"Emitted priority notification to user: {notification.user_id}" )
+                else:
+                    # Broadcast notification - send to all connected clients
+                    self.websocket_mgr.emit( 'notification_update', event_data )
+                    if self.debug:
+                        print( f"Broadcast priority notification to all users" )
         else:
-            # Normal priority goes to end (use parent's push method)
+            # Normal priority goes to end (use our overridden push method)
             self.push( notification )
-            # Return early since push() already called _emit_queue_update()
-            self._log_to_io_tbl( notification )
-            return notification
-        
-        # Increment counter and emit update for manual insertion
-        self.push_counter += 1
-        self._emit_queue_update()
         
         # Log to io_tbl for persistence and analytics
         self._log_to_io_tbl( notification )
