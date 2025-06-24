@@ -36,10 +36,35 @@ class NotificationItem:
         self.priority    = priority
         self.source      = source
         self.user_id     = user_id
-        self.timestamp   = datetime.now().isoformat()
+        self.timestamp   = self._get_local_timestamp()
         self.played      = False
         self.play_count  = 0
         self.last_played = None
+        
+    def _get_local_timestamp( self ) -> str:
+        """Get timezone-aware timestamp using configured timezone from ConfigurationManager"""
+        try:
+            # Import here to avoid circular imports
+            import fastapi_app.main as main_module
+            config_mgr = main_module.config_mgr
+            app_debug = main_module.app_debug
+            
+            # Get timezone from config, default to America/New_York (East Coast)  
+            timezone_name = config_mgr.get( "app_timezone", default="America/New_York" )
+            
+            if app_debug: print( f"[TIMEZONE-DEBUG] NotificationItem using timezone: {timezone_name}" )
+            
+            # Use existing util function for timezone-aware datetime, then convert to ISO format
+            tz_date = du.get_current_datetime_raw( tz_name=timezone_name )
+            result = tz_date.isoformat()
+            
+            if app_debug: print( f"[TIMEZONE-DEBUG] NotificationItem timestamp: {result}" )
+            
+            return result
+        except Exception as e:
+            # Fallback to UTC if configuration or timezone is invalid
+            print( f"[TIMEZONE] Warning: NotificationItem falling back to UTC: {e}" )
+            return datetime.now().isoformat()
         
     def to_dict( self ) -> Dict[str, Any]:
         """Convert notification to dictionary for JSON serialization."""
@@ -235,7 +260,7 @@ class NotificationFifoQueue( FifoQueue ):
         # Update playback tracking
         notification.played      = True
         notification.play_count += 1
-        notification.last_played = datetime.now().isoformat()
+        notification.last_played = notification._get_local_timestamp()
         
         # Log playback event to io_tbl
         self._log_playback_to_io_tbl( notification )
