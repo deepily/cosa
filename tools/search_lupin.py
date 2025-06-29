@@ -10,7 +10,7 @@ from cosa.agents.v000.raw_output_formatter import RawOutputFormatter
 import cosa.utils.util as du
 from typing import Optional, Union, Any
 
-class GibSearch:
+class LupinSearch:
     """
     Vendor-neutral wrapper for web search functionality.
     
@@ -18,7 +18,7 @@ class GibSearch:
     """
     def __init__( self, query: Optional[str]=None, url: Optional[str]=None, debug: bool=False, verbose: bool=False ) -> None:
         """
-        Initialize the GibSearch wrapper.
+        Initialize the LupinSearch wrapper.
         
         Requires:
             - Either query or url should be provided (not both)
