@@ -4,7 +4,7 @@ import re
 from typing import Optional
 
 import cosa.utils.util as du
-from cosa.app.configuration_manager import ConfigurationManager
+from cosa.config.configuration_manager import ConfigurationManager
 
 
 class PromptFormatter:
@@ -52,7 +52,7 @@ class PromptFormatter:
         """
         self.debug      = debug
         self.verbose    = verbose
-        self.config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        self.config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         
         # Initialize template directory
         if template_dir:
@@ -393,31 +393,52 @@ class PromptFormatter:
         return created_paths
 
 
+def quick_smoke_test():
+    """Quick smoke test to validate PromptFormatter functionality."""
+    import cosa.utils.util as du
+    
+    du.print_banner( "PromptFormatter Smoke Test", prepend_nl=True )
+    
+    try:
+        print( "Creating PromptFormatter instance..." )
+        formatter = PromptFormatter( debug=True, verbose=False )
+        print( "✓ PromptFormatter created successfully" )
+        
+        # Test template creation
+        print( "Creating example templates..." )
+        created_templates = formatter.create_template_examples()
+        print( f"✓ Created {len( created_templates )} templates" )
+        
+        # Test formatting for different model types
+        test_models = [
+            "deepily/ministral_8b_2410_ft_lora",
+            "kaitchup/phi_4_14b", 
+            "openai:gpt-4"
+        ]
+        
+        instructions = "You are a helpful AI assistant."
+        input_text = "What is the capital of France?"
+        output = "The capital of France is Paris."
+        
+        print( "Testing prompt formatting for different models..." )
+        for model in test_models:
+            print( f"Testing model: {model}" )
+            
+            # Test format detection
+            format_type = formatter.get_prompt_format( model )
+            print( f"  ✓ Format detected: {format_type}" )
+            
+            # Test prompt formatting
+            formatted = formatter.format_prompt( model, instructions, input_text, output )
+            print( f"  ✓ Prompt formatted successfully ({len( formatted )} chars)" )
+        
+        print( "✓ All formatting tests passed" )
+        
+    except Exception as e:
+        print( f"✗ Error during prompt formatter test: {e}" )
+    
+    print( "\n✓ PromptFormatter smoke test completed" )
+
+
 if __name__ == "__main__":
-    
-    # Example usage
-    formatter = PromptFormatter( debug=True )
-    
-    # Create example templates
-    formatter.create_template_examples()
-    
-    # Example formatting for different models
-    models = [
-        "deepily/ministral_8b_2410_ft_lora",
-        "kaitchup/phi_4_14b",
-        "groq_llama_3_1_8b",
-        "openai:gpt-4"
-    ]
-    
-    instructions = "You are a helpful AI assistant."
-    input_text = "What is the capital of France?"
-    output = "The capital of France is Paris."
-    
-    for model in models:
-        
-        format_type = formatter.get_prompt_format( model )
-        formatted   = formatter.format_prompt( model, instructions, input_text, output )
-        
-        du.print_banner( f"Model: {model} (Format: {format_type})" )
-        print( formatted )
-        print()
+    quick_smoke_test()

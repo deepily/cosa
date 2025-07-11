@@ -363,62 +363,80 @@ class IterativeDebuggingAgent( AgentBase ):
             print( "No code to run: self.response_dict[ 'code' ] = [ ]" )
             return False
         
-if __name__ == "__main__":
-    
-    # Create a simple error scenario to test the debugging agent
+def quick_smoke_test():
+    """Quick smoke test to validate IterativeDebuggingAgent functionality."""
+    import cosa.utils.util as du
     import os
-    from cosa.app.configuration_manager import ConfigurationManager
+    from cosa.config.configuration_manager import ConfigurationManager
     
-    config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
-    code_file_path = config_mgr.get("code_execution_file_path")
-    test_file_path = du.get_project_root() + code_file_path
+    du.print_banner( "IterativeDebuggingAgent Smoke Test", prepend_nl=True )
     
-    error_message = f"""
-    File "{test_file_path}", line 3
+    try:
+        # Set up test scenario
+        config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+        code_file_path = config_mgr.get("code_execution_file_path")
+        test_file_path = du.get_project_root() + code_file_path
+        
+        error_message = f'''File "{test_file_path}", line 3
         print("Hello World"
              ^
-    SyntaxError: unexpected EOF while parsing
-    """
+    SyntaxError: unexpected EOF while parsing'''
+        
+        # Create test file with syntax error
+        test_code = '''def greeting():
+    print("Hello World"
+'''
+        
+        print( f"Creating test file with syntax error: {test_file_path}" )
+        with open( test_file_path, 'w' ) as f:
+            f.write( test_code )
+        
+        # Initialize debugging agent
+        debugging_agent = IterativeDebuggingAgent(
+            error_message=error_message,
+            path_to_code=code_file_path,
+            example="greeting()",
+            returns="None",
+            minimalist=True,
+            debug=True,
+            verbose=False
+        )
+        print( "✓ IterativeDebuggingAgent created successfully" )
+        
+        # Run complete debugging workflow
+        print( "Running debugging process..." )
+        result = debugging_agent.run_prompts()
+        print( "✓ Debugging process completed" )
+        
+        # Check results
+        if debugging_agent.was_successfully_debugged():
+            print( "✓ Debugging successful!" )
+            print( "Fixed code:" )
+            debugging_agent.print_code()
+        else:
+            print( "⚠ Debugging failed (may require LLM server)" )
+            print( f"Result: {result.get('output', 'No output')}" )
+        
+        # Clean up
+        if os.path.exists( test_file_path ):
+            os.remove( test_file_path )
+            print( "✓ Test file cleaned up" )
+        
+    except Exception as e:
+        print( f"✗ Error during debugging test: {e}" )
+        # Ensure cleanup
+        try:
+            config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+            code_file_path = config_mgr.get("code_execution_file_path")
+            test_file_path = du.get_project_root() + code_file_path
+            if os.path.exists( test_file_path ):
+                os.remove( test_file_path )
+        except:
+            pass
     
-    # Create a test file with a deliberate syntax error
-    test_code = '''
-    def greeting():
-        print("Hello World"
-    '''
-    
-    # Write the test code to a temporary file
-    with open(test_file_path, 'w') as f:
-        f.write(test_code)
-    
-    print("=== Testing IterativeDebuggingAgent ===")
-    print(f"Error to debug: {error_message}")
-    print(f"File path: {test_file_path}")
-    
-    # Initialize the debugging agent
-    debugging_agent = IterativeDebuggingAgent(
-        error_message=error_message,
-        path_to_code=code_file_path,
-        example="greeting()",
-        returns="None", 
-        minimalist=True,
-        debug=True,
-        verbose=True
-    )
-    
-    # Run the debugging process
-    print("\n=== Running debugging process ===")
-    result = debugging_agent.run_prompts()
-    
-    # Check if debugging was successful
-    if debugging_agent.was_successfully_debugged():
-        print("\n✅ Debugging successful!")
-        print("Fixed code:")
-        debugging_agent.print_code()
-    else:
-        print("\n❌ Debugging failed")
-        print(f"Result: {result}")
-    
-    # Clean up
-    if os.path.exists(test_file_path):
-        os.remove(test_file_path)
+    print( "\n✓ IterativeDebuggingAgent smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()
     

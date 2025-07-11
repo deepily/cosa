@@ -1,7 +1,8 @@
 import os
-from typing import Optional, dict, list, tuple, Any
+from typing import Optional, Any
 
 import cosa.utils.util as du
+from cosa.memory.embedding_manager import EmbeddingManager
 from cosa.memory import solution_snapshot as ss
 # from lib.memory.question_embeddings_dict import QuestionEmbeddingsDict
 from cosa.memory.question_embeddings_table import QuestionEmbeddingsTable
@@ -34,6 +35,7 @@ class SolutionSnapshotManager:
         self.debug                              = debug
         self.verbose                            = verbose
         self.path                               = path
+        self._embedding_mgr                     = EmbeddingManager( debug=debug, verbose=verbose )
        
         self._snapshots_by_question             = None
         self._snapshots_by_synonymous_questions = None
@@ -171,17 +173,6 @@ class SolutionSnapshotManager:
         self._snapshots_by_question[ snapshot.question ] = snapshot
         snapshot.write_current_state_to_file()
     
-    # ¡OJO! Doesn't appear to be called by anything
-    # get the questions embedding if it exists otherwise generate it and add it to the dictionary
-    # def get_question_embedding( self, question ):
-    #
-    #     if self.question_embeddings_tbl.has( question ):
-    #         return self.question_embeddings_tbl[ question ]
-    #     else:
-    #         question_embedding = ss.SolutionSnapshot.generate_embedding( question )
-    #
-    #     return question_embedding
-    
     def _question_exists( self, question: str ) -> bool:
         """
         Check if exact question exists.
@@ -300,7 +291,7 @@ class SolutionSnapshotManager:
         
         # Generate the embedding for the question if it doesn't already exist
         if not self._question_embeddings_tbl.has( question ):
-            question_embedding = ss.SolutionSnapshot.generate_embedding( question )
+            question_embedding = self._embedding_mgr.generate_embedding( question, normalize_for_cache=True, debug=self.debug )
             self._question_embeddings_tbl.add_embedding( question, question_embedding )
         else:
             print( f"Embedding for question [{question}] already exists!" )
@@ -309,7 +300,7 @@ class SolutionSnapshotManager:
         # generate the embedding for the question gist if it doesn't already exist
         question_gist_embedding = [ ]
         if question_gist is not None and not self._question_embeddings_tbl.has( question_gist ):
-            question_gist_embedding = ss.SolutionSnapshot.generate_embedding( question_gist )
+            question_gist_embedding = self._embedding_mgr.generate_embedding( question_gist, normalize_for_cache=True, debug=self.debug )
             self._question_embeddings_tbl.add_embedding( question_gist, question_gist_embedding )
         else:
             print( f"Embedding for question gist [{question_gist}] already exists!" )
@@ -510,31 +501,45 @@ class SolutionSnapshotManager:
             
         print()
 
-if __name__ == "__main__":
+def quick_smoke_test():
+    """Quick smoke test to validate SolutionSnapshotManager functionality."""
+    du.print_banner( "SolutionSnapshotManager Smoke Test", prepend_nl=True )
     
     path_to_snapshots = du.get_project_root() + "/src/conf/long-term-memory/solutions/"
-    snapshot_mgr = SolutionSnapshotManager( path_to_snapshots, debug=False )
-    # print( snapshot_mgr )
     
-    # exemplar_snapshot = snapshot_mgr.get_snapshots_by_question( "What concerts do I have this week?" )[ 0 ][ 1 ]
-    #
-    # similar_snapshots = snapshot_mgr.get_snapshots_by_code_similarity( exemplar_snapshot, threshold=90.0 )
+    try:
+        snapshot_mgr = SolutionSnapshotManager( path_to_snapshots, debug=False )
+        print( f"✓ SolutionSnapshotManager loaded from: {path_to_snapshots}" )
+        print( f"✓ Loaded snapshots count: {len( snapshot_mgr._snapshots_by_question )}" )
+        
+        # Test question similarity search
+        test_questions = [
+            "what day is today?",
+            "What's today's date?",
+            "what time is it?"
+        ]
+        
+        for question in test_questions:
+            print( f"\nTesting question: '{question}'" )
+            try:
+                similar_snapshots = snapshot_mgr.get_snapshots_by_question( question )
+                if len( similar_snapshots ) > 0:
+                    print( f"✓ Found {len( similar_snapshots )} similar snapshot(s)" )
+                    # Show first match details
+                    first_match = similar_snapshots[ 0 ][ 1 ]
+                    print( f"  Best match ID: {first_match.id_hash}" )
+                else:
+                    print( "  No similar snapshots found" )
+            except Exception as e:
+                print( f"✗ Error searching for question: {e}" )
+        
+    except Exception as e:
+        print( f"✗ Error initializing SolutionSnapshotManager: {e}" )
     
-    # questions = [
-    #     "what day comes after tomorrow?",
-    #     "what day is today?",
-    #     "Why is the sky blue?",
-    #     "What's today's date?",
-    #     "What is today's date?"
-    # ]
-    # for question in questions:
-    #
-    #     du.print_banner( f"Question: [{question}]", prepend_nl=True )
-    #     similar_snapshots = snapshot_mgr.get_snapshots_by_question( question )
-    #
-    #     if len( similar_snapshots ) > 0:
-    #             lines_of_code = similar_snapshots[ 0 ][ 1 ].code
-    #             for line in lines_of_code:
-    #                 print( line )
+    print( "\n✓ SolutionSnapshotManager smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()
         
         

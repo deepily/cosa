@@ -323,22 +323,40 @@ class CompletionStreamingContext:
             yield chunk
 
 
-if __name__ == "__main__":
+def quick_smoke_test():
+    """Quick smoke test to validate LlmCompletion functionality."""
+    import cosa.utils.util as du
     
-    # url = "http://192.168.1.21:3000/v1/completions"
+    du.print_banner( "LlmCompletion Smoke Test", prepend_nl=True )
     
-    # template_path = du.get_project_root() + "/src/conf/prompts/vox-command-template-completion-mistral-8b.txt"
-    template_path = du.get_project_root() + "/src/conf/prompts/agent-router-template-completion.txt"
-    # template_path = du.get_project_root() + "/src/conf/prompts/vox-command-template-completion.txt"
-    prompt_template = du.get_file_as_string( template_path )
+    try:
+        # Load a prompt template for testing
+        template_path = du.get_project_root() + "/src/conf/prompts/agent-router-template-completion.txt"
+        prompt_template = du.get_file_as_string( template_path )
+        voice_command = "can I please talk to a human?"
+        prompt = prompt_template.format( voice_command=voice_command )
+        
+        print( "Testing LlmCompletion with agent router prompt" )
+        llm_completion = LlmCompletion( debug=True, verbose=False )
+        print( "✓ LlmCompletion created successfully" )
+        
+        # Run complete LLM completion workflow
+        print( "Running completion..." )
+        response = llm_completion.run( prompt )
+        print( "✓ Completion execution completed" )
+        
+        print( f"✓ Response received: {response[:100]}..." if len( response ) > 100 else f"✓ Response: {response}" )
+        
+        # Test streaming context manager creation
+        print( "Testing streaming context creation..." )
+        stream_context = llm_completion.run_stream( prompt )
+        print( "✓ Streaming context created successfully" )
+        
+    except Exception as e:
+        print( f"✗ Error during completion test: {e}" )
     
-    # voice_command = "I want you to open a new tab and do a Google scholar search on agentic behaviors"
-    # voice_command = "ask perplexity for best homemade corn tortilla recipes"
-    voice_command = "can I please talk to a human?"
+    print( "\n✓ LlmCompletion smoke test completed" )
 
-    prompt = prompt_template.format( voice_command=voice_command )
-    print( prompt )
-    
-    llm_completion = LlmCompletion()
-    response = llm_completion.run( prompt )
-    print( response )
+
+if __name__ == "__main__":
+    quick_smoke_test()

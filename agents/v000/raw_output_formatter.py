@@ -1,9 +1,9 @@
 from cosa.utils import util     as du
 from cosa.utils import util_xml as dux
 
-from cosa.app.configuration_manager import ConfigurationManager
+from cosa.config.configuration_manager import ConfigurationManager
 
-from cosa.agents.llm_v0 import Llm_v0
+from cosa.agents.v000.llm_v0 import Llm_v0
 
 class RawOutputFormatter:
     
@@ -23,7 +23,7 @@ class RawOutputFormatter:
             self.code = ""
         self.raw_output  = raw_output.replace( "<?xml version='1.0' encoding='utf-8'?>", "" )
         
-        self.config_mgr  = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS", debug=self.debug, verbose=self.verbose, silent=True )
+        self.config_mgr  = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS", debug=self.debug, verbose=self.verbose, silent=True )
 
         self.formatter_prompt_paths = {
             "agent router go to date and time": self.config_mgr.get( "formatter_prompt_for_date_and_time" ),

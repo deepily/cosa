@@ -1,4 +1,5 @@
 from cosa.agents.agent_base import AgentBase
+
 class DateAndTimeAgent( AgentBase ):
     def __init__( self, question="", question_gist="", last_question_asked="", push_counter=-1, routing_command="agent router go to date and time", debug=False, verbose=False, auto_debug=False, inject_bugs=False ):
         

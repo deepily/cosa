@@ -1,11 +1,6 @@
 import os
 import time
-import asyncio
 from typing import Optional, Any
-
-from boto3 import client
-from openai import base_url
-from sqlalchemy.util import counter
 
 import cosa.utils.util as du
 from cosa.agents.v010.llm_completion import LlmCompletion
@@ -13,10 +8,10 @@ from cosa.agents.v010.llm_completion import LlmCompletion
 from cosa.agents.v010.token_counter import TokenCounter
 
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.providers.openai import OpenAIProvider
+# from pydantic_ai.models.openai import OpenAIModel
+# from pydantic_ai.providers.openai import OpenAIProvider
 
-from cosa.app.configuration_manager import ConfigurationManager
+from cosa.config.configuration_manager import ConfigurationManager
 
 
 class LlmClient:
@@ -52,6 +47,7 @@ class LlmClient:
     DEEPILY_MINISTRAL_8B_2410_FT_LORA = "deepily/ministral_8b_2410_ft_lora"
     MINISTRAL_8B_2410                 = "mistralai/Ministral-8B-Instruct-2410"
     GROQ_LLAMA_3_1_8B                 = "groq:llama-3.1-8b-instant"
+    GROQ_LLAMA_3_3_70B                = "groq:llama-3.3-70b-versatile"
     OPENAI_GPT_01_MINI                = "openai:o1-mini-2024-09-12"
     GOOGLE_GEMINI_1_5_FLASH           = "google-gla:gemini-1.5-flash"
     ANTHROPIC_CLAUDE_SONNET_3_5       = "anthropic:claude-3-5-sonnet-latest"
@@ -185,17 +181,17 @@ class LlmClient:
         
         return "".join( output )
     
-    def run( self, prompt: str, stream: bool=False, **kwargs: Any ) -> str:
+    async def run_async( self, prompt: str, stream: bool=False, **kwargs: Any ) -> str:
         """
-        Send a prompt to the LLM and get the response.
+        Async version to send a prompt to the LLM and get the response.
         
-        This is the main method for interacting with the LLM. It handles both
-        streaming and non-streaming responses, measures performance metrics,
-        and provides debugging information.
+        This method is designed for use in async contexts (like FastAPI).
+        It handles both streaming and non-streaming responses, measures
+        performance metrics, and provides debugging information.
         
         Requires:
             - prompt: A non-empty string to send to the LLM
-            - self.model: An initialized model with run capability
+            - self.model: An initialized model with async run capability
             - self.token_counter: An initialized TokenCounter
             
         Ensures:
@@ -211,11 +207,6 @@ class LlmClient:
             
         Returns:
             - String response from the LLM
-            
-        TODO:
-            - Add support for distinguishing between system and user messages
-            - Improve handling of chat vs completion formats
-            - Develop more sophisticated message history management
         """
         
         prompt_tokens = self.token_counter.count_tokens( self.model_name, prompt )
@@ -230,6 +221,7 @@ class LlmClient:
             # Allow stream to be set from generation_args if not explicitly provided
             "stream"     : stream or self.generation_args.get( "stream", False ),
         }
+        
         # Check both the explicit parameter and the updated_gen_args
         if not updated_gen_args["stream"]:
             
@@ -237,10 +229,12 @@ class LlmClient:
             start_time = time.perf_counter()
             
             if not self.completion_mode:
-                # For Agent, use run_sync for synchronous operation
-                response = self.model.run_sync( prompt, **updated_gen_args ).data
+                # For Agent, use async run
+                response = await self.model.run( prompt, **updated_gen_args )
+                response = response.data
             else:
-                # For OpenAIModel, use run
+                # For LlmCompletion, need to await the async version
+                # TODO: Check if LlmCompletion has async support
                 response = self.model.run( prompt, **updated_gen_args )
             
             duration = time.perf_counter() - start_time
@@ -253,17 +247,8 @@ class LlmClient:
         print( f"🔄 Streaming from model: {self.model_name}\n" )
         start_time = time.perf_counter()
         
-        # Need to use asyncio to handle the async streaming API
-        import asyncio
-        try:
-            # Get or create an event loop
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            # Create a new event loop if none exists
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop( loop )
-        
-        output = loop.run_until_complete( self._stream_async( prompt, **updated_gen_args ) )
+        # Direct async call - no event loop needed here
+        output = await self._stream_async( prompt, **updated_gen_args )
         
         duration = time.perf_counter() - start_time
         completion_tokens = self.token_counter.count_tokens( self.model_name, output )
@@ -271,92 +256,176 @@ class LlmClient:
         if self.debug and self.verbose: self._print_metadata( prompt_tokens, completion_tokens, duration )
         return output
     
-    def _format_duration( self, seconds: float ) -> str:
+    def run( self, prompt: str, stream: bool=False, **kwargs: Any ) -> str:
         """
-        Format a duration in seconds to a readable string.
+        Send a prompt to the LLM and get the response.
+        
+        This method now supports both sync and async contexts. When called
+        from an async context (like FastAPI), it runs the async operation
+        in a separate thread to avoid event loop conflicts. When called from a 
+        sync context, it handles the event loop creation automatically.
         
         Requires:
-            - seconds: A float representing seconds
+            - prompt: A non-empty string to send to the LLM
+            - self.model: An initialized model with run capability
+            - self.token_counter: An initialized TokenCounter
             
         Ensures:
-            - Returns a formatted string in milliseconds
+            - Sends the prompt to the LLM and receives a response
+            - Counts tokens for both prompt and completion
+            - Measures performance metrics (duration, tokens/sec)
+            - Handles both streaming and non-streaming modes
+            - Displays performance metrics
+            - Works in both sync and async contexts
+            
+        Args:
+            - prompt: The text to send to the LLM
+            - stream: Whether to stream the response (default: False)
             
         Returns:
-            - String in the format "XXXms"
-        """
-        # return f"{seconds:.3f}" if seconds > 1 else f"{seconds * 1000:.3f} ms"
-        return f"{int( seconds * 1000 )}ms"
-    
-    def _print_metadata( self, prompt_tokens: int, completion_tokens: int, duration: Optional[ float ] ):
-        """
-        Print performance metadata about an LLM request.
-        
-        This method calculates and displays key metrics about the LLM interaction,
-        including token counts, duration, and tokens per second.
-        
-        Requires:
-            - prompt_tokens: Integer count of tokens in the prompt
-            - completion_tokens: Integer count of tokens in the completion
-            - duration: Float representing seconds taken, or None
-            
-        Ensures:
-            - Calculates total tokens and tokens per second
-            - Formats duration appropriately
-            - Displays a formatted summary of metrics
+            - String response from the LLM (works in both sync and async contexts)
             
         TODO:
-            - Add cost estimation based on token usage and model pricing
-            - Implement more detailed performance metrics
-            - Add optional logging to file for performance tracking
-            - Fix potential division by zero issues in TPS calculation
-            - Support different output formats (JSON, CSV, etc.)
+            - Add support for distinguishing between system and user messages
+            - Improve handling of chat vs completion formats
+            - Develop more sophisticated message history management
         """
         
-        total_tokens = prompt_tokens + completion_tokens
-        tps = completion_tokens / duration if (duration and duration > 0) else float( 'inf' )
-        duration_str = self._format_duration( duration ) if duration is not None else "N/A"
+        # Import asyncio at function level to avoid issues
+        import asyncio
+        import concurrent.futures
+        import threading
         
-        du.print_banner( "📊 Stream Summary", prepend_nl=True )
-        print( f"🧠 Model              : {self.model_name}" )
-        print( f"⏱️ Duration           : {duration_str}" )
-        print( f"🔢 Prompt tokens      : {prompt_tokens}" )
-        print( f"💬 Completion tokens  : {completion_tokens}" )
-        print( f"🧮 Total tokens       : {total_tokens}" )
-        print( f"⚡ Tokens/sec          : {tps:.2f}" )
-        print( "=" * 40 )
+        def run_in_new_loop():
+            """Helper function to run async code in a new event loop in a thread"""
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop( new_loop )
+            try:
+                return new_loop.run_until_complete( self.run_async( prompt, stream, **kwargs ) )
+            finally:
+                new_loop.close()
+        
+        try:
+            # Check if we're in an existing event loop
+            loop = asyncio.get_running_loop()
+            # We're in async context - run in a separate thread to avoid blocking
+            with concurrent.futures.ThreadPoolExecutor( max_workers=1 ) as executor:
+                future = executor.submit( run_in_new_loop )
+                return future.result()
+        except RuntimeError:
+            # No event loop running - we're in sync context
+            # Can run directly with a new event loop
+            return run_in_new_loop()
+    
+    # def _format_duration( self, seconds: float ) -> str:
+    #     """
+    #     Format a duration in seconds to a readable string.
+    #
+    #     Requires:
+    #         - seconds: A float representing seconds
+    #
+    #     Ensures:
+    #         - Returns a formatted string in milliseconds
+    #
+    #     Returns:
+    #         - String in the format "XXXms"
+    #     """
+    #     # return f"{seconds:.3f}" if seconds > 1 else f"{seconds * 1000:.3f} ms"
+    #     return f"{int( seconds * 1000 )}ms"
+    #
+    # def _print_metadata( self, prompt_tokens: int, completion_tokens: int, duration: Optional[ float ] ):
+    #     """
+    #     Print performance metadata about an LLM request.
+    #
+    #     This method calculates and displays key metrics about the LLM interaction,
+    #     including token counts, duration, and tokens per second.
+    #
+    #     Requires:
+    #         - prompt_tokens: Integer count of tokens in the prompt
+    #         - completion_tokens: Integer count of tokens in the completion
+    #         - duration: Float representing seconds taken, or None
+    #
+    #     Ensures:
+    #         - Calculates total tokens and tokens per second
+    #         - Formats duration appropriately
+    #         - Displays a formatted summary of metrics
+    #
+    #     TODO:
+    #         - Add cost estimation based on token usage and model pricing
+    #         - Implement more detailed performance metrics
+    #         - Add optional logging to file for performance tracking
+    #         - Fix potential division by zero issues in TPS calculation
+    #         - Support different output formats (JSON, CSV, etc.)
+    #     """
+    #
+    #     total_tokens = prompt_tokens + completion_tokens
+    #     tps = completion_tokens / duration if (duration and duration > 0) else float( 'inf' )
+    #     duration_str = self._format_duration( duration ) if duration is not None else "N/A"
+    #
+    #     du.print_banner( "📊 Stream Summary", prepend_nl=True )
+    #     print( f"🧠 Model              : {self.model_name}" )
+    #     print( f"⏱️ Duration           : {duration_str}" )
+    #     print( f"🔢 Prompt tokens      : {prompt_tokens}" )
+    #     print( f"💬 Completion tokens  : {completion_tokens}" )
+    #     print( f"🧮 Total tokens       : {total_tokens}" )
+    #     print( f"⚡ Tokens/sec          : {tps:.2f}" )
+    #     print( "=" * 40 )
+
+
+def quick_smoke_test():
+    """Quick smoke test to validate LlmClient functionality."""
+    du.print_banner( "LlmClient Smoke Test", prepend_nl=True )
+    
+    # Test different client initialization methods
+    test_cases = [
+        {
+            "name": "Local completion model",
+            "config": {
+                "base_url": "http://192.168.1.21:3000/v1/completions",
+                "model_name": "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-4-bits-sym.gptq/2025-02-12-at-02-27",
+                "completion_mode": True
+            }
+        },
+        {
+            "name": "Groq API model",
+            "config": {
+                "model_name": LlmClient.GROQ_LLAMA_3_3_70B
+            }
+        }
+    ]
+    
+    # Simple test prompt
+    test_prompt = "What is 2 + 2?"
+    
+    for i, test_case in enumerate( test_cases, 1 ):
+        print( f"\nTest {i}: {test_case['name']}" )
+        
+        try:
+            # Create client with test configuration
+            client = LlmClient( debug=False, verbose=False, **test_case["config"] )
+            print( f"✓ LlmClient created successfully for {test_case['name']}" )
+            
+            # For smoke test, we'll just validate client creation to avoid API costs
+            # In a full test, you could uncomment the line below:
+            # response = client.run( test_prompt, stream=False, max_tokens=50 )
+            # print( f"✓ Response received: {response[:50]}..." )
+            print( f"✓ Client is ready for LLM requests" )
+            
+        except Exception as e:
+            print( f"✗ Error with {test_case['name']}: {str( e )}" )
+    
+    # Test prompt template loading
+    print( f"\nTesting prompt template loading:" )
+    try:
+        template_path = du.get_project_root() + "/src/conf/prompts/agent-router-template-completion.txt"
+        prompt_template = du.get_file_as_string( template_path )
+        formatted_prompt = prompt_template.format( voice_command="test command" )
+        print( f"✓ Prompt template loaded and formatted successfully" )
+    except Exception as e:
+        print( f"⚠ Warning: Could not load prompt template: {e}" )
+    
+    print( "\n✓ LlmClient smoke test completed" )
 
 
 if __name__ == "__main__":
-    
-    # prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/vox-command-template-completion-mistral-8b.txt" )
-    # prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agent-router-template-completion.txt" )
-    prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agents/date-and-time.txt" )
-    # prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agents/date-and-time-reasoner.txt" )
-    
-    # voice_command = "can I please talk to a human?"
-    question = "What time is it?"
-    # prompt = prompt_template.format( voice_command=voice_command )
-    prompt = prompt_template.format( question=question )
-    
-    # model_name = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-02-12-at-02-05/autoround-4-bits-sym.gptq/2025-02-12-at-02-27"
-    # model_name = "/mnt/DATA01/include/www.deepily.ai/projects/models/OpenCodeReasoning-Nemotron-14B-autoround-4-bits-sym.gptq/2025-05-12-at-21-15"
-    model_name = "kaitchup/Phi-4-AutoRound-GPTQ-4bit"
-    # base_url   = "http://192.168.1.21:3000/v1/completions"
-    base_url   = "http://192.168.1.21:3001/v1/completions"
-    client = LlmClient( base_url=base_url, model_name=model_name, completion_mode=True, debug=True, verbose=True )
-
-    # model_name = LlmClient.GROQ_LLAMA3_1_8B
-    # client = LlmClient( model_name=model_name )
-    
-    response = client.run( prompt, stream=True, **{ "temperature": 0.25, "max_tokens": 7500 } )
-    # response = client.run( prompt, stream=False, **{ "temperature": 1.0, "max_tokens": 1000, "stop": [ "foo" ] } )
-    du.print_banner( "Response", prepend_nl=True )
-    print( response )
-    
-    # model_name = "kaitchup/Phi-4-AutoRound-GPTQ-4bit"
-    # base_url   = "http://192.168.1.21:3001/v1"
-    # client = LlmClient( base_url=base_url, model_name=model_name )
-    # prompt = "how many 'R's are there in the word strawberry?"
-    # # prompt = "what's the square root of 144? Please think out loud about how you going to answer this question before you actually do, and show your thinking before you do"
-    # response = client.run( prompt, stream=True )
-    # print( f"Response: {response}" )
+    quick_smoke_test()

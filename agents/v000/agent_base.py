@@ -12,7 +12,7 @@ import cosa.memory.solution_snapshot as ss
 from cosa.agents.llm_v0 import Llm_v0
 from cosa.agents.raw_output_formatter import RawOutputFormatter
 from cosa.agents.runnable_code import RunnableCode
-from cosa.app.configuration_manager import ConfigurationManager
+from cosa.config.configuration_manager import ConfigurationManager
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.agents.two_word_id_generator import TwoWordIdGenerator
 
@@ -52,7 +52,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.question_gist         = question_gist
         self.answer_conversational = None
         
-        self.config_mgr            = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        self.config_mgr            = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         
         self.df                    = None
         self.do_not_serialize      = { "df", "config_mgr", "two_word_id", "execution_state" }

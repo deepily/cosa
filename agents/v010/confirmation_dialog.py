@@ -5,7 +5,7 @@ import cosa.utils.util_xml as dux
 
 from cosa.agents.v010.llm_client_factory import LlmClientFactory
 from cosa.agents.v010.llm_client import LlmClient
-from cosa.app.configuration_manager import ConfigurationManager
+from cosa.config.configuration_manager import ConfigurationManager
 
 class ConfirmationDialogue:
     """
@@ -15,7 +15,7 @@ class ConfirmationDialogue:
     a lightweight utility for confirmation dialogs rather than a full agent.
     
     Configuration:
-        - "prompt_template_for_confirmation_dialog": Path to the prompt template file (required)
+        - "prompt template for confirmation dialog": Path to the prompt template file (required)
         - "llm_spec_key_for_confirmation_dialog": LLM model specification (required when model_name not provided)
         
     Requires:
@@ -36,7 +36,7 @@ class ConfirmationDialogue:
         
         Requires:
             - Either model_name or 'llm_spec_key_for_confirmation_dialog' in config
-            - 'prompt_template_for_confirmation_dialog' exists in config
+            - 'prompt template for confirmation dialog' exists in config
             
         Ensures:
             - Sets up config_mgr if not provided
@@ -48,13 +48,10 @@ class ConfirmationDialogue:
             - FileNotFoundError if template file missing
         """
         
-        self.config_mgr = config_mgr or ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        self.config_mgr = config_mgr or ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         
         # Use provided model_name, or get from config
-        if model_name is None:
-            model_name = self.config_mgr.get( 
-                "llm_spec_key_for_confirmation_dialog"
-            )
+        if model_name is None: model_name = self.config_mgr.get( "llm spec key for confirmation dialog" )
         
         self.model_name = model_name
         self.debug = debug
@@ -62,9 +59,7 @@ class ConfirmationDialogue:
         self.prompt = None
         
         # Get prompt template path from config
-        prompt_template_path = self.config_mgr.get( 
-            "prompt_template_for_confirmation_dialog"
-        )
+        prompt_template_path = self.config_mgr.get( "prompt template for confirmation dialog" )
         self.prompt_template = du.get_file_as_string( du.get_project_root() + prompt_template_path )
     
     def confirmed( self, utterance: str, default: Optional[bool]=None ) -> bool:
@@ -104,43 +99,37 @@ class ConfirmationDialogue:
         else:
             raise ValueError( f"Ambiguous response '{response}' has no default value provided. Ask the user for clarification." )
         
+def quick_smoke_test():
+    """Quick smoke test to validate ConfirmationDialogue functionality."""
+    import cosa.utils.util as du
+    
+    du.print_banner( "ConfirmationDialogue Smoke Test", prepend_nl=True )
+    
+    # Test a clear yes/no case for completion
+    test_utterance = "Yes, please proceed."
+    
+    try:
+        print( f"Testing utterance: '{test_utterance}'" )
+        confirmation_dialogue = ConfirmationDialogue(
+            model_name=LlmClient.GROQ_LLAMA_3_1_8B,
+            debug=True,
+            verbose=False
+        )
+        print( "✓ ConfirmationDialogue created successfully" )
+        
+        # Run complete confirmation workflow
+        print( "Running confirmation..." )
+        result = confirmation_dialogue.confirmed( test_utterance, default=None )
+        print( "✓ Confirmation execution completed" )
+        
+        result_text = "Yes" if result else "No"
+        print( f"✓ Confirmation result: {result_text}" )
+        
+    except Exception as e:
+        print( f"✗ Error during confirmation: {e}" )
+    
+    print( "\n✓ ConfirmationDialogue smoke test completed" )
+
+
 if __name__ == "__main__":
-    
-    # Test various utterances with the confirmation dialogue
-    test_utterances = [
-        ("Yes, please proceed.", True),
-        ("No, I don't think so.", False),
-        ("I'm not sure if this is a good idea.", None),  # Ambiguous
-        ("Absolutely!", True),
-        ("Not a chance!", False),
-        ("You bet it is!", True),
-        ("Maybe... I don't know.", None),  # Ambiguous
-        ("Definitely not.", False),
-        ("Sure thing!", True)
-    ]
-    
-    print("=== Testing ConfirmationDialogue ===")
-    
-    # Create a single instance for testing
-    confirmation_dialogue = ConfirmationDialogue(
-        model_name=LlmClient.GROQ_LLAMA_3_1_8B,  # Using LlmClient constant
-        debug=True,
-        verbose=True
-    )
-    
-    for utterance, expected in test_utterances:
-        print(f"\nUtterance: '{utterance}'")
-        action_confirmed = confirmation_dialogue.confirmed(utterance, default=None)
-        
-        # For ambiguous cases, we expect default (None)
-        if expected is None:
-            expected_text = "Ambiguous (default)"
-        else:
-            expected_text = "Yes" if expected else "No"
-            
-        result_text = "Yes" if action_confirmed else ("No" if action_confirmed is False else "Ambiguous")
-        
-        print(f"Expected: {expected_text}")
-        print(f"Got: {result_text}")
-        print(f"Match: {'✅' if action_confirmed == expected else '❌'}")
-        print("-" * 30)
+    quick_smoke_test()

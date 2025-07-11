@@ -290,7 +290,7 @@ class PeftTrainer:
         Authenticate with Hugging Face API.
         
         Requires:
-            - GENIE_IN_THE_BOX_ROOT environment variable set
+            - LUPIN_ROOT environment variable set
             - Valid HF token accessible via du.get_api_key
             
         Ensures:
@@ -302,7 +302,7 @@ class PeftTrainer:
             - FileNotFoundError if token file missing
             - HF login exceptions
         """
-        hf_token = du.get_api_key( "huggingface", project_root=os.getenv( "GENIE_IN_THE_BOX_ROOT" ) )
+        hf_token = du.get_api_key( "huggingface", project_root=os.getenv( "LUPIN_ROOT" ) )
         print( f"Logging in to Hugging Face with token [{hf_token}]... ", end="" )
         login( token=hf_token )
         print( "Done!" )
@@ -560,7 +560,7 @@ class PeftTrainer:
         print( f"Loading adapter from {adapter_path}... Done!" )
     
     def run_validation( self, banner_prefix: str="",
-            model: Optional[Any]=None, switch: str="", path_prefix: str="/var/model/genie-in-the-box",
+            model: Optional[Any]=None, switch: str="", path_prefix: str="/var/model/lupin",
             device_map: dict={ "": 0 }, validation_sample_size: int=1000, debug: Optional[bool]=None, verbose: Optional[bool]=None
     ) -> pd.DataFrame:
         """
@@ -1200,7 +1200,7 @@ class PeftTrainer:
         print( os.environ[ "HF_HUB_ETAG_TIMEOUT" ] )
         print( os.environ[ "HF_HUB_DOWNLOAD_TIMEOUT" ] )
     
-    def set_gib_env_vars( self, wandb_disable_service: str="True", gib_root: str="/var/model/genie-in-the-box" ) -> None:
+    def set_lupin_env_vars( self, wandb_disable_service: str="True", lupin_root: str="/var/model/lupin" ) -> None:
         """
         Sets environment variables for the Genie in the Box application.
         
@@ -1208,13 +1208,13 @@ class PeftTrainer:
             - None (can be called anytime)
         
         Ensures:
-            - GENIE_IN_THE_BOX_ROOT variable set
-            - GIB_CONFIG_MGR_CLI_ARGS variable set
+            - LUPIN_ROOT variable set
+            - LUPIN_CONFIG_MGR_CLI_ARGS variable set
             - WANDB_DISABLE_SERVICE variable set
         """
-        os.environ[ "GENIE_IN_THE_BOX_ROOT" ] = gib_root
+        os.environ[ "LUPIN_ROOT" ] = lupin_root
         os.environ[
-            "GIB_CONFIG_MGR_CLI_ARGS" ] = "config_path=/src/conf/gib-app.ini splainer_path=/src/conf/gib-app-splainer.ini config_block_id=Genie+in+the+Box:+Development"
+            "LUPIN_CONFIG_MGR_CLI_ARGS" ] = "config_path=/src/conf/lupin-app.ini splainer_path=/src/conf/lupin-app-splainer.ini config_block_id=Lupin:+Development"
         os.environ[ "WANDB_DISABLE_SERVICE" ] = wandb_disable_service
     
     def _start_vllm_server( self,
@@ -1467,7 +1467,7 @@ class PeftTrainer:
                 self.run_validation(
                     banner_prefix="PRE-training:", 
                     model=self.model_hf_id,
-                    path_prefix=gib_root, 
+                    path_prefix=lupin_root,
                     switch="deepily", 
                     device_map="auto",  # Allow using multiple GPUs
                     validation_sample_size=validation_sample_size, 
@@ -1512,7 +1512,7 @@ class PeftTrainer:
                 # create a custom model name using as an ID the mount point for the recently quantized model directory
                 model = llm_v010.get_model( merged_adapter_dir )
                 self.run_validation(
-                    banner_prefix="POST-training:", model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0",
+                    banner_prefix="POST-training:", model=model, path_prefix=lupin_root, switch="deepily", device_map="cuda:0",
                     validation_sample_size=validation_sample_size, debug=self.debug, verbose=self.verbose
                 )
             finally:
@@ -1535,7 +1535,7 @@ class PeftTrainer:
                 # create a custom model name using as an ID the mount point for the recently quantized model directory
                 model = llm_v010.get_model( quantized_model_dir )
                 self.run_validation(
-                    banner_prefix="POST-quantization:", model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0",
+                    banner_prefix="POST-quantization:", model=model, path_prefix=lupin_root, switch="deepily", device_map="cuda:0",
                     validation_sample_size=validation_sample_size, debug=self.debug, verbose=self.verbose
                 )
             finally:
@@ -1609,7 +1609,7 @@ class PeftTrainer:
         #         self.run_validation(
         #             banner_prefix="PRE-training:", 
         #             model=model, 
-        #             path_prefix=gib_root, 
+        #             path_prefix=lupin_root,
         #             switch="deepily", 
         #             device_map="auto",  # Allow using multiple GPUs
         #             validation_sample_size=validation_sample_size, 
@@ -1661,7 +1661,7 @@ class PeftTrainer:
         #         model = llm_v010.get_model( merged_adapter_dir )
         #         # TODO: add runtime configuration for sample size
         #         self.run_validation(
-        #             model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0", validation_sample_size=100, debug=False,
+        #             model=model, path_prefix=lupin_root, switch="deepily", device_map="cuda:0", validation_sample_size=100, debug=False,
         #             verbose=False
         #         )
         #     finally:
@@ -1692,7 +1692,7 @@ class PeftTrainer:
                 model = llm_v010.get_model( quantized_model_dir )
                 # TODO: add runtime configuration for sample size
                 self.run_validation(
-                    model=model, path_prefix=gib_root, switch="deepily", device_map="cuda:0",
+                    model=model, path_prefix=lupin_root, switch="deepily", device_map="cuda:0",
                     validation_sample_size=validation_sample_size, debug=False,
                     verbose=False
                 )
@@ -1722,7 +1722,7 @@ def check_env() -> str:
     Ensures:
         - All required variables validated
         - Missing variables reported
-        - Returns GENIE_IN_THE_BOX_ROOT path
+        - Returns LUPIN_ROOT path
         - Exits if variables missing
 
     Raises:
@@ -1732,8 +1732,8 @@ def check_env() -> str:
         ( "HF_HOME", "/some/foo/path" ),
         ( "NCCL_P2P_DISABLE", "1" ),
         ( "NCCL_IB_DISABLE", "1" ),
-        ( "GENIE_IN_THE_BOX_ROOT", "/some/foo/path" ),
-        ( "GIB_CONFIG_MGR_CLI_ARGS", "" ),
+        ( "LUPIN_ROOT", "/some/foo/path" ),
+        ( "LUPIN_CONFIG_MGR_CLI_ARGS", "" ),
         ( "DEEPILY_PROJECTS_DIR", "/mnt/DATA01/include/www.deepily.ai/projects" )
     ]
     
@@ -1748,7 +1748,7 @@ def check_env() -> str:
         print( "Exiting due to missing environment variables" )
         sys.exit( 1 )
     
-    return os.getenv( "GENIE_IN_THE_BOX_ROOT" )
+    return os.getenv( "LUPIN_ROOT" )
 
 
 def check_privileges(debug: bool=False) -> None:
@@ -1779,7 +1779,7 @@ def check_privileges(debug: bool=False) -> None:
         print( "allocations w/o having to wake you up at midnight to present your credentials just so we can finish the last 1/3 of the run." )
         print()
         print( "You'll need to insert the following [bits] *between* 'sudo' and the Python interpreter:" )
-        print( 'sudo [--preserve-env=HF_HOME,NCCL_P2P_DISABLE,NCCL_IB_DISABLE,GENIE_IN_THE_BOX_ROOT,GIB_CONFIG_MGR_CLI_ARGS,DEEPILY_PROJECTS_DIR env "PATH=$PATH"] python -m cosa.training.peft_trainer ...' )
+        print( 'sudo [--preserve-env=HF_HOME,NCCL_P2P_DISABLE,NCCL_IB_DISABLE,LUPIN_ROOT,LUPIN_CONFIG_MGR_CLI_ARGS,DEEPILY_PROJECTS_DIR env "PATH=$PATH"] python -m cosa.training.peft_trainer ...' )
         print()
         sys.exit( 1 )
 
@@ -1824,7 +1824,7 @@ def parse_arguments() -> argparse.Namespace:
 if __name__ == "__main__":
     
     # Check for required environment variables
-    gib_root = check_env()
+    lupin_root = check_env()
     
     # Validate command line arguments
     args = parse_arguments()

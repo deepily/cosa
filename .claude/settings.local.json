@@ -10,7 +10,15 @@
       "Bash(mv:*)",
       "Bash(python:*)",
       "WebFetchTool(domain:huggingface.co)",
-      "Bash(rg:*)"
+      "Bash(rg:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(export:*)",
+      "Bash(export PYTHONPATH=\"/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src:$PYTHONPATH\")",
+      "Bash(python -m cosa.memory.embedding_manager)",
+      "Bash(timeout 60 python:*)",
+      "Bash(timeout 120 python:*)",
+      "Bash(timeout:*)",
+      "WebFetch(domain:lancedb.github.io)"
     ],
     "deny": []
   }

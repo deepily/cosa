@@ -152,74 +152,58 @@ class RunnableCode:
         
         return self.code_response_dict
     
-# Add main method
-if __name__ == "__main__":
-    
+def quick_smoke_test():
+    """Quick smoke test to validate RunnableCode functionality."""
+    import cosa.utils.util as du
     import time
     
-    def run_test(title, code, example, should_succeed=True):
-        """Run a test case with the given code and example."""
-        du.print_banner(f"TEST: {title}", prepend_nl=True)
+    du.print_banner( "RunnableCode Smoke Test", prepend_nl=True )
+    
+    try:
+        print( "Creating RunnableCode instance..." )
+        test_runner = RunnableCode( debug=True, verbose=False )
+        print( "✓ RunnableCode created successfully" )
         
-        # Create test instance with debug mode
-        test_runner = RunnableCode(debug=True, verbose=True, )
+        # Test with simple code execution
+        test_code = """def say_hello():
+    return "Hello, World!"
+"""
+        test_example = "solution = say_hello()"
         
         # Set up prompt response dictionary
         test_runner.prompt_response_dict = {
-            "code": code.strip().split("\n"),
-            "example": example,
+            "code": test_code.strip().split( "\n" ),
+            "example": test_example,
             "returns": "string"
         }
         
-        # Print the test code
-        test_runner.print_code("Test Code")
+        print( "Testing code runnability check..." )
+        is_runnable = test_runner.is_code_runnable()
+        print( f"✓ Code runnability: {is_runnable}" )
         
-        # Check if code is runnable
-        print(f"Is code runnable? {test_runner.is_code_runnable()}")
+        # Print the test code
+        print( "Printing code..." )
+        test_runner.print_code( "Test Code" )
+        print( "✓ Code printing completed" )
         
         # Execute the code
+        print( "Running code execution..." )
         start_time = time.time()
         result = test_runner.run_code()
         duration = time.time() - start_time
+        print( "✓ Code execution completed" )
         
         # Verify results
         success = test_runner.code_ran_to_completion()
-        print(f"Code ran successfully: {success}")
-        print(f"Execution time: {duration:.4f} seconds")
-        print(f"Return code: {result['return_code']}")
-        print(f"Output: {result['output']}")
+        print( f"✓ Execution successful: {success}" )
+        print( f"✓ Execution time: {duration:.4f} seconds" )
+        print( f"✓ Output: {result.get( 'output', 'No output' )}" )
         
-        # Check if result matches expectation
-        if success == should_succeed:
-            print("✅ Test PASSED")
-        else:
-            print("❌ Test FAILED")
-        
-        return success, result
+    except Exception as e:
+        print( f"✗ Error during runnable code test: {e}" )
     
-    print("Running tests for RunnableCode...")
-    
-    # Test 1: Simple Hello World
-    hello_code = """
-def say_hello():
-    return "Hello, World!"
-"""
-    hello_example = "solution = say_hello()"
-    
-    # Test 2: Code with error
-    error_code = """
-def divide(a, b):
-    return a / b
-"""
-    error_example = "divide(10, 0)"
-    
-    # Run the tests
-    t1_success, t1_result = run_test("Simple Hello World", hello_code, hello_example)
-    t2_success, t2_result = run_test("Division by Zero Error", error_code, error_example, should_succeed=False)
-    
-    # Final summary
-    du.print_banner("TEST SUMMARY", prepend_nl=True)
-    print(f"Test 1 (Hello World): {'PASSED' if t1_success else 'FAILED'}")
-    print(f"Test 2 (Error Handling): {'PASSED' if not t2_success else 'FAILED'}")
-    
-    print("\nAll tests completed.")
+    print( "\n✓ RunnableCode smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

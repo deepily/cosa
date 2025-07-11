@@ -62,7 +62,6 @@ def singleton( cls: type ) -> Callable[..., Any]:
     
     return get_instance
 
-
 # The TwoWordIDGenerator class with a singleton decorator
 @singleton
 class TwoWordIdGenerator:
@@ -141,7 +140,9 @@ class TwoWordIdGenerator:
                 self.generated_ids.add( combination )
                 return combination
 
-if __name__ == "__main__":
+def quick_smoke_test():
+    """Quick smoke test to validate TwoWordIdGenerator functionality."""
+    du.print_banner( "TwoWordIdGenerator Smoke Test", prepend_nl=True )
     
     # Example usage
     generator = TwoWordIdGenerator()
@@ -151,3 +152,11 @@ if __name__ == "__main__":
     # Creating another "instance" will return the same generator
     another_generator = TwoWordIdGenerator()
     print( f"Same instance? {generator is another_generator}" )
+    
+    # Generate a few more to show uniqueness
+    print( f"Second ID: {generator.get_id()}" )
+    print( f"Third ID: {generator.get_id()}" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

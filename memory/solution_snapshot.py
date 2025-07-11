@@ -15,8 +15,8 @@ import cosa.utils.util_xml as dux
 from cosa.agents.v010.runnable_code import RunnableCode
 from cosa.agents.v010.raw_output_formatter import RawOutputFormatter
 
-import openai
 import numpy as np
+from cosa.memory.embedding_manager import EmbeddingManager
 
 class SolutionSnapshot( RunnableCode ):
     """
@@ -78,32 +78,6 @@ class SolutionSnapshot( RunnableCode ):
         """
         return input.replace( "'", "" )
     
-    @staticmethod
-    def generate_embedding( text: str ) -> list[float]:
-        """
-        Generate OpenAI embedding for text.
-        
-        Requires:
-            - text is a non-empty string
-            - OpenAI API key is available
-            
-        Ensures:
-            - Returns list of 1536 floats
-            - Uses text-embedding-ada-002 model
-            
-        Raises:
-            - OpenAI API errors propagated
-        """
-        timer = sw.Stopwatch( msg=f"Generating embedding for [{du.truncate_string( text )}]...", silent=True )
-        openai.api_key = du.get_api_key( "openai" )
-        
-        response = openai.embeddings.create(
-            input=text,
-            model="text-embedding-ada-002"
-        )
-        timer.print( "Done!", use_millis=True )
-        
-        return response.data[ 0 ].embedding
     
     @staticmethod
     def generate_id_hash( push_counter: int, run_date: str ) -> str:
@@ -194,6 +168,9 @@ class SolutionSnapshot( RunnableCode ):
         
         super().__init__( debug=debug, verbose=verbose )
         
+        # Initialize embedding manager
+        self._embedding_mgr = EmbeddingManager( debug=debug, verbose=verbose )
+        
         # track updates to internal state as the object is instantiated
         dirty                      = False
         
@@ -248,35 +225,35 @@ class SolutionSnapshot( RunnableCode ):
         
         # If the question embedding is empty, generate it
         if question != "" and not question_embedding:
-            self.question_embedding = self.generate_embedding( question )
+            self.question_embedding = self._embedding_mgr.generate_embedding( question, normalize_for_cache=True, debug=self.debug )
             dirty = True
         else:
             self.question_embedding = question_embedding
             
         # If the gist embedding is empty, generate it
         if question_gist != "" and not question_gist_embedding:
-            self.question_gist_embedding = self.generate_embedding( question_gist )
+            self.question_gist_embedding = self._embedding_mgr.generate_embedding( question_gist, normalize_for_cache=True, debug=self.debug )
             dirty = True
         else:
             self.question_gist_embedding = question_gist_embedding
         
         # If the code embedding is empty, generate it
         if code and not code_embedding:
-            self.code_embedding = self.generate_embedding( " ".join( code ) )
+            self.code_embedding = self._embedding_mgr.generate_embedding( " ".join( code ), normalize_for_cache=False, debug=self.debug )
             dirty = True
         else:
             self.code_embedding = code_embedding
     
         # If the solution embedding is empty, generate it
         if solution_summary and not solution_embedding:
-            self.solution_embedding = self.generate_embedding( solution_summary )
+            self.solution_embedding = self._embedding_mgr.generate_embedding( solution_summary, normalize_for_cache=True, debug=self.debug )
             dirty = True
         else:
             self.solution_embedding = solution_embedding
 
         # If the thoughts embedding is empty, generate it
         if thoughts and not thoughts_embedding:
-            self.thoughts_embedding = self.generate_embedding( thoughts )
+            self.thoughts_embedding = self._embedding_mgr.generate_embedding( thoughts, normalize_for_cache=True, debug=self.debug )
             dirty = True
         else:
             self.thoughts_embedding = thoughts_embedding
@@ -429,7 +406,7 @@ class SolutionSnapshot( RunnableCode ):
             - None
         """
         self.solution_summary = solution_summary
-        self.solution_embedding = self.generate_embedding( solution_summary )
+        self.solution_embedding = self._embedding_mgr.generate_embedding( solution_summary, normalize_for_cache=True, debug=self.debug )
         self.updated_date = self.get_timestamp()
 
     def set_code( self, code: list[str] ) -> None:
@@ -449,7 +426,7 @@ class SolutionSnapshot( RunnableCode ):
         """
         # ¡OJO! code is a list of strings, not a string!
         self.code           = code
-        self.code_embedding = self.generate_embedding( " ".join( code ) )
+        self.code_embedding = self._embedding_mgr.generate_embedding( " ".join( code ), normalize_for_cache=False, debug=self.debug )
         self.updated_date   = self.get_timestamp()
     
     def get_question_similarity( self, other_snapshot: 'SolutionSnapshot' ) -> float:
@@ -544,7 +521,7 @@ class SolutionSnapshot( RunnableCode ):
         """
         # TODO: decide what we're going to exclude from serialization, and why or why not!
         # Right now I'm just doing this for the sake of expediency as I'm playing with class inheritance for agents
-        fields_to_exclude = [ "prompt_response", "prompt_response_dict", "code_response_dict", "phind_tgi_url", "config_mgr" ]
+        fields_to_exclude = [ "prompt_response", "prompt_response_dict", "code_response_dict", "phind_tgi_url", "config_mgr", "_embedding_mgr" ]
         data = { field: value for field, value in self.__dict__.items() if field not in fields_to_exclude }
         return json.dumps( data )
         
@@ -709,7 +686,7 @@ class SolutionSnapshot( RunnableCode ):
         
         return self.code_response_dict
     
-    def format_output( self ) -> str:
+    def run_formatter( self ) -> str:
         """
         Format raw output for conversational response.
         
@@ -726,7 +703,7 @@ class SolutionSnapshot( RunnableCode ):
         """
         # du.print_banner( f"Formatting output for {self.routing_command}" )
         formatter                  = RawOutputFormatter( self.last_question_asked, self.answer, self.routing_command, debug=self.debug, verbose=self.verbose )
-        self.answer_conversational = formatter.format_output()
+        self.answer_conversational = formatter.run_formatter()
         
         if self.debug and self.verbose: print( f" PRE self.answer_conversational: [{self.answer_conversational}]" )
         self.answer_conversational = dux.get_value_by_xml_tag_name( self.answer_conversational, "rephrased-answer", default_value=self.answer_conversational )
@@ -750,25 +727,38 @@ class SolutionSnapshot( RunnableCode ):
         """
         return self.answer_conversational is not None
     
-# Add main method
+def quick_smoke_test():
+    """Quick smoke test to validate SolutionSnapshot functionality."""
+    du.print_banner( "SolutionSnapshot Smoke Test", prepend_nl=True )
+    
+    # Test embedding generation
+    print( "Testing embedding generation..." )
+    embedding_mgr = EmbeddingManager( debug=True )
+    embedding = embedding_mgr.generate_embedding( "what time is it", normalize_for_cache=True, debug=True )
+    if embedding:
+        print( f"✓ Generated embedding with {len( embedding )} dimensions" )
+    else:
+        print( "✗ Failed to generate embedding" )
+    
+    # Test basic snapshot creation
+    print( "\nTesting snapshot creation..." )
+    today = SolutionSnapshot( question="what day is today" )
+    print( f"✓ Created snapshot with ID: {today.id_hash}" )
+    
+    # Test similarity scoring between snapshots
+    print( "\nTesting similarity scoring..." )
+    tomorrow = SolutionSnapshot( question="what day is tomorrow" )
+    blah = SolutionSnapshot( question="i feel so blah today" )
+    
+    snapshots = [ today, tomorrow, blah ]
+    
+    for snapshot in snapshots:
+        if today.question_embedding and snapshot.question_embedding:
+            score = today.get_question_similarity( snapshot )
+            print( f"Score: [{score:.1f}] for '{snapshot.question}' vs '{today.question}'" )
+    
+    print( "\n✓ SolutionSnapshot smoke test completed" )
+
+
 if __name__ == "__main__":
-    
-    embedding = SolutionSnapshot.generate_embedding( "what time is it" )
-    print( embedding )
-    # today = SolutionSnapshot( question="what day is today" )
-    # # tomorrow = SolutionSnapshot( question="what day is tomorrow" )
-    # # blah = SolutionSnapshot( question="i feel so blah today" )
-    # # color = SolutionSnapshot( question="what color is the sky" )
-    # # date = SolutionSnapshot( question="what is today's date" )
-    #
-    # # snapshots = [ today, tomorrow, blah, color, date ]
-    # snapshots = [ today ]
-    #
-    # for snapshot in snapshots:
-    #     score = today.get_question_similarity( snapshot )
-    #     print( f"Score: [{score}] for [{snapshot.question}] == [{today.question}]" )
-    #     snapshot.write_to_file()
-    
-    # foo = SolutionSnapshot.from_json_file( du.get_project_root() + "/src/conf/long-term-memory/solutions/what-day-is-today-0.json" )
-    # print( foo.to_json() )
-    # pass
+    quick_smoke_test()

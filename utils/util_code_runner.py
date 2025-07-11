@@ -3,7 +3,7 @@ import subprocess
 from subprocess import PIPE, run
 from typing import Any, Optional
 
-debug = os.getenv( "GIB_CODE_EXEC_DEBUG", "False" ) == "True"
+debug = os.getenv( "LUPIN_CODE_EXEC_DEBUG", "False" ) == "True"
 import cosa.utils.util as du
 
 @staticmethod
@@ -288,11 +288,11 @@ def assemble_and_run_solution( solution_code: list[str], example_code: str, path
         response_dict = bug_injector.run_prompt()
         solution_code = response_dict[ "code" ]
         
-    from cosa.app.configuration_manager import ConfigurationManager
+    from cosa.config.configuration_manager import ConfigurationManager
     
     # Get the code execution file path, with a fallback for test environments
     try:
-        config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         code_file_path = config_mgr.get( "code_execution_file_path" )
     except ValueError as e:
         # We're likely in a test environment without the environment variable set
@@ -383,7 +383,17 @@ def test_assemble_and_run_solution( debug: bool=False, verbose: bool=False) -> N
     results      = assemble_and_run_solution( solution_code, example_code, solution_code_returns="dataframe", path_to_df=path_to_df, debug=debug, verbose=verbose )
     
         
-if __name__ == "__main__":
+def quick_smoke_test():
+    """Quick smoke test to validate code runner functionality."""
+    import cosa.utils.util as du
     
+    du.print_banner( "Code Runner Smoke Test", prepend_nl=True )
+    
+    print( "Testing assemble_and_run_solution with sample birthday checking code..." )
     test_assemble_and_run_solution( debug=True, verbose=True )
-    # pass
+    
+    print( "\n✓ Code runner smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

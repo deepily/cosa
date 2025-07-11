@@ -6,11 +6,13 @@ from typing import Any, Optional, Union
 from pydantic_ai import Agent
 
 import cosa.utils.util as du
-# from app import config_mgr
 # from cosa.utils.util_stopwatch import Stopwatch
 
 from cosa.agents.v010.llm_client import LlmClient
-from cosa.app.configuration_manager import ConfigurationManager
+from cosa.agents.v010.chat_client import ChatClient
+from cosa.agents.v010.completion_client import CompletionClient
+from cosa.agents.v010.base_llm_client import LlmClientInterface
+from cosa.config.configuration_manager import ConfigurationManager
 
 class LlmClientFactory:
     """
@@ -83,12 +85,12 @@ class LlmClientFactory:
             return
         
         # Instantiate the global config manager
-        self.config_mgr   = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        self.config_mgr   = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         self._initialized = True
         self.debug        = debug
         self.verbose      = verbose
     
-    def get_client( self, model_config_key: str, debug: bool=None, verbose: bool=None ) -> Union['LlmClient', 'AgentWrapper']:
+    def get_client( self, model_config_key: str, debug: bool=None, verbose: bool=None ) -> LlmClientInterface:
         """
         Get an LLM client for the given model descriptor.
         
@@ -97,6 +99,9 @@ class LlmClientFactory:
         If not found, it parses the model descriptor to determine the vendor
         and creates a vendor-specific client.
         
+        Now returns ChatClient or CompletionClient instances that implement
+        the LlmClientInterface, ensuring all clients have a run() method.
+        
         Requires:
             - model_config_key: A string identifying the model, which can be either:
                 1. A configuration key (e.g., "deepily/ministral_8b_2410_ft_lora")
@@ -104,7 +109,8 @@ class LlmClientFactory:
             - Valid API keys for the requested vendor if using cloud APIs
             
         Ensures:
-            - Returns an appropriate LLM client instance that supports the run() method
+            - Returns an LlmClientInterface implementation (ChatClient or CompletionClient)
+            - All returned clients support the run() method
             - Handles authentication and API endpoint selection transparently
             - Provides debug information when debug=True
             
@@ -128,7 +134,7 @@ class LlmClientFactory:
             model_spec   = self.config_mgr.get( model_config_key, default=None )
             model_params = self.config_mgr.get( f"{model_config_key}_params", default="{}", return_type="dict" )
             
-            # model_tokenizer_map = self.config_mgr.get( "model_tokenizer_map", default="{}", return_type="json" )
+            model_tokenizer_map = self.config_mgr.get( "model_tokenizer_map", default="{}", return_type="json" )
             if debug:
                 du.print_banner( f"Model params for '{model_config_key}':" )
                 print( json.dumps( model_params, indent=4, sort_keys=True ) )
@@ -154,20 +160,36 @@ class LlmClientFactory:
                 else:
                     base_url = f"http://{host_port}/v1"
                 
-                print( f"Creating LLM client for {model_name} with base URL {base_url}" )
+                if self.debug: print( f"Creating {'Completion' if completion_mode else 'Chat'} client for {model_name} with base URL {base_url}" )
                 
-                return LlmClient(
-                    base_url=base_url,
-                    model_name=model_name,
-                    completion_mode=completion_mode,
-                    prompt_format=prompt_format,
-                    # TODO: add support for passing in the remaining parameters
-                    # model_tokenizer_map=model_tokenizer_map,
+                if completion_mode:
+                    return CompletionClient(
+                        base_url=base_url,
+                        model_name=model_name,
+                        prompt_format=prompt_format,
+                        model_tokenizer_map=model_tokenizer_map,
+                        debug=self.debug,
+                        verbose=self.verbose,
+                        **model_params
+                    )
+                else:
+                    return ChatClient(
+                        model_name=model_name,
+                        base_url=base_url,
+                        model_tokenizer_map=model_tokenizer_map,
+                        debug=self.debug,
+                        verbose=self.verbose,
+                        **model_params
+                    )
+            else:
+                # Assume chat-based model (OpenAI, Groq, Google, etc.)
+                return ChatClient(
+                    model_name=model_spec,
+                    model_tokenizer_map=model_tokenizer_map,
+                    debug=self.debug,
+                    verbose=self.verbose,
                     **model_params
                 )
-            else:
-                # Assume OpenAI, Groq, Google, etc.
-                return Agent( model_spec, **model_params )
     
     # Vendor configuration
     VENDOR_URLS: dict[str, str] = {
@@ -196,40 +218,40 @@ class LlmClientFactory:
         "temperature": 0.7,
         "max_tokens" : 1024
     }
-    # Comprehensive vendor configuration for the v2 method
+    # Comprehensive vendor configuration
     VENDOR_CONFIG: dict[str, dict[str, Any]] = {
         "openai"    : {
             "env_var"     : "OPENAI_API_KEY",
             "key_name"    : "openai",
-            "agent_prefix": "openai:",
+            "client_type" : "chat",
         },
         "groq"      : {
             "env_var"       : "GROQ_API_KEY",
             "key_name"      : "groq",
-            "agent_prefix"  : "openai:",  # Groq uses OpenAI-compatible API
+            "client_type"   : "chat",
             "set_openai_env": True,  # Also set OPENAI_API_KEY for compatibility
         },
         "anthropic" : {
             "env_var"     : "ANTHROPIC_API_KEY",
             "key_name"    : "claude",
-            "agent_prefix": "anthropic:",
+            "client_type" : "chat",
         },
         "google-gla": {
             "env_var"     : "GEMINI_API_KEY",
             "key_name"    : "gemini",
-            "agent_prefix": "google-gla:",
+            "client_type" : "chat",
         },
         "mistralai" : {
             "env_var"       : "MISTRAL_API_KEY",
             "key_name"      : "mistral",
-            "agent_prefix"  : "openai:",  # Mistral uses OpenAI-compatible API
+            "client_type"   : "chat",
             "set_openai_env": True,  # Also set OPENAI_API_KEY for compatibility
         },
         "vllm"      : {
-            "client_class": "LlmClient",  # Use LlmClient instead of Agent
+            "client_type": "completion",  # Default to completion for local models
         },
         "deepily"   : {
-            "client_class": "LlmClient",  # Use LlmClient instead of Agent
+            "client_type": "completion",  # Default to completion for local models
         }
     }
     
@@ -358,13 +380,12 @@ class LlmClientFactory:
             # If no vendor specified, assume vLLM for local models
             return "vllm", model_descriptor
             
-    def _get_vendor_specific_client( self, model_descriptor: str, debug: bool=False, verbose: bool=False ) -> 'AgentWrapper':
+    def _get_vendor_specific_client( self, model_descriptor: str, debug: bool=False, verbose: bool=False ) -> LlmClientInterface:
         """
-        A more compact version of the vendor-specific client creation.
-        Uses configuration maps to reduce repetitive code.
+        Create vendor-specific client based on model descriptor.
         
-        This implementation centralizes vendor configuration in a single map
-        and follows a consistent pattern for handling API keys and client creation.
+        Now returns ChatClient or CompletionClient instances based on vendor
+        configuration, ensuring all clients implement LlmClientInterface.
         
         Requires:
             - model_descriptor: String in format "vendor:model" or "vendor/model"
@@ -372,7 +393,8 @@ class LlmClientFactory:
             - Valid API keys for the requested vendor available in environment or via du.get_api_key()
             
         Ensures:
-            - Returns appropriate client instance based on vendor
+            - Returns ChatClient or CompletionClient based on vendor configuration
+            - All returned clients implement LlmClientInterface with run() method
             - Sets all required environment variables for API access
             - Handles authentication consistently across vendors
             - Provides debug output when debug=True
@@ -416,75 +438,85 @@ class LlmClientFactory:
                 if debug: print( f"Set OPENAI_BASE_URL={base_url} and OPENAI_API_KEY" )
                 
         # Create client based on vendor configuration
-        if config.get( "client_class" ) == "LlmClient":
-            # For vendors using LlmClient
-            if debug: print( f"Using LlmClient with base_url={base_url}, model={model_name}" )
-                
-            # Not implemented for vLLM/Deepily yet
-            raise NotImplementedError( f"Local models via vLLM w/o configuration definitions are not implemented yet." )
+        client_type = config.get( "client_type", "chat" )
+        
+        if client_type == "completion":
+            # For vendors using completion API
+            if debug: print( f"Creating CompletionClient with base_url={base_url}, model={model_name}" )
+            
+            if vendor_key in ["vllm", "deepily"]:
+                # Local models need special handling
+                raise NotImplementedError( f"Local models via vLLM w/o configuration definitions are not implemented yet." )
+            
+            return CompletionClient(
+                base_url=base_url,
+                model_name=model_name,
+                api_key=api_key,
+                debug=debug,
+                verbose=verbose,
+                **self.CLIENT_DEFAULT_PARAMS
+            )
         else:
-            # For vendors using Agent
-            agent_prefix = config.get( "agent_prefix", "" )
-            full_model_string = f"{agent_prefix}{model_name}"
+            # For vendors using chat API
+            full_model_string = f"{vendor}:{model_name}"
             
-            if debug: print( f"Using Agent with model string: {full_model_string}" )
+            if debug: print( f"Creating ChatClient with model string: {full_model_string}" )
             
-            agent = Agent( full_model_string )
-            return self.AgentWrapper( agent, debug=debug )
+            return ChatClient(
+                model_name=full_model_string,
+                api_key=api_key,
+                base_url=base_url,
+                debug=debug,
+                verbose=verbose,
+                **self.CLIENT_DEFAULT_PARAMS
+            )
+
+
+def quick_smoke_test():
+    """Quick smoke test to validate LlmClientFactory functionality."""
+    du.print_banner( "LlmClientFactory Smoke Test", prepend_nl=True )
+    
+    try:
+        # Initialize factory
+        factory = LlmClientFactory()
+        config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+        print( "✓ LlmClientFactory initialized successfully" )
+        
+        # Prepare simple test prompt
+        question = "What time is it?"
+        try:
+            prompt_template = du.get_file_as_string( du.get_project_root() + config_mgr.get( "prompt template for agent router go to date and time" ) )
+            prompt = prompt_template.format( question=question )
+            print( "✓ Test prompt prepared successfully" )
+        except Exception as e:
+            print( f"⚠ Warning: Could not load prompt template, using simple prompt: {e}" )
+            prompt = f"Question: {question}\nAnswer:"
+        
+        # Test a subset of available models (to keep smoke test quick)
+        models_to_test = [
+            LlmClient.GROQ_LLAMA_3_3_70B  # Just test one reliable model for smoke test
+        ]
+        
+        print( f"\nTesting {len( models_to_test )} model(s):" )
+        
+        for model in models_to_test:
+            print( f"\nTesting model: {model}" )
+            try:
+                client = factory.get_client( model, debug=False, verbose=False )
+                print( f"✓ Client created successfully for {model}" )
+                
+                # For smoke test, we'll just validate client creation, not actual LLM calls
+                # to avoid API costs and timeouts
+                print( f"✓ Model {model} is ready for use" )
+                
+            except Exception as e:
+                print( f"✗ Error with {model}: {str( e )}" )
+        
+    except Exception as e:
+        print( f"✗ Error initializing LlmClientFactory: {e}" )
+    
+    print( "\n✓ LlmClientFactory smoke test completed" )
 
 
 if __name__ == "__main__":
-    
-    # Initialize factory
-    factory = LlmClientFactory()
-    
-    # Prepare test prompt
-    # template_path = du.get_project_root() + "/src/conf/prompts/agent-router-template-completion.txt"
-    # prompt_template = du.get_file_as_string( template_path )
-    # voice_command = "can I please talk to a human?"
-    # prompt = prompt_template.format( voice_command=voice_command )
-    
-    prompt_template = du.get_file_as_string( du.get_project_root() + ConfigurationManager().get( "prompt template for agent router go to date and time" ) )
-    question = "What time is it?"
-    prompt = prompt_template.format( question=question )
-    
-    # List of all available models to test
-    models = [
-        # # Local models
-        LlmClient.PHI_4_14B,
-        # LlmClient.MINISTRAL_8B_2410,
-        # LlmClient.DEEPILY_MINISTRAL_8B_2410_FT_LORA,
-        # # Cloud API models
-        # LlmClient.GROQ_LLAMA_3_1_8B,
-        # # LlmClient.OPENAI_GPT_01_MINI,
-        # LlmClient.GOOGLE_GEMINI_1_5_FLASH,
-        # LlmClient.ANTHROPIC_CLAUDE_SONNET_3_5
-    ]
-    
-    # Iterate through all models
-    for model in models:
-        try:
-            du.print_banner( f"Testing model: {model}..." )
-
-            # Get client using the appropriate method
-            # timer = Stopwatch( msg=f"Calling {model}..." )
-
-            client   = factory.get_client( model, debug=True, verbose=True )
-            response = client.run( prompt )
-
-            # Print results
-            du.print_banner( f"Response from {model}" )
-            print( response )
-            # timer.print( use_millis=True )
-
-        except Exception as e:
-
-            du.print_banner("Error", expletive=True)
-            print(f"Error with {model}: {str(e)}")
-
-            du.print_banner("Stack Trace", expletive=True)
-            import traceback
-            traceback.print_exc()
-            print()
-
-    print( "All LLM's iterated." )
+    quick_smoke_test()

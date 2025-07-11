@@ -557,17 +557,17 @@ def get_project_root() -> str:
         
     Notes:
         If running in a Docker container, returns the container's root path.
-        Otherwise, uses the GENIE_IN_THE_BOX_ROOT environment variable.
+        Otherwise, uses the LUPIN_ROOT environment variable.
     """
     if debug:
-        print(f"GENIE_IN_THE_BOX_ROOT [{os.getenv('GENIE_IN_THE_BOX_ROOT')}]")
-        print(f"          os.getcwd() [{os.getcwd()}]")
+        print(f" LUPIN_ROOT [{os.getenv('LUPIN_ROOT')}]")
+        print(f"os.getcwd() [{os.getcwd()}]")
         
-    if "GENIE_IN_THE_BOX_ROOT" in os.environ:
-        return os.environ["GENIE_IN_THE_BOX_ROOT"]
+    if "LUPIN_ROOT" in os.environ:
+        return os.environ["LUPIN_ROOT"]
     else:
-        path = "/var/genie-in-the-box"
-        print(f"WARNING: GENIE_IN_THE_BOX_ROOT not found in environment variables. Returning default path '{path}'")
+        path = "/var/lupin"
+        print(f"WARNING: LUPIN_ROOT not found in environment variables. Returning default path '{path}'")
         return path
 
 def get_api_key( key_name: str, project_root: str = None ) -> Optional[str]:
@@ -908,58 +908,33 @@ def get_name_value_pairs_v2( arg_list: list[str], decode_spaces: bool = True ) -
 
     return name_value_pairs
 
-if __name__ == "__main__":
+def quick_smoke_test():
+    """Quick smoke test to validate utility functions."""
+    print_banner( "Utility Functions Smoke Test", prepend_nl=True )
     
-    print( os.getcwd() )
+    print( f"Current working directory: {os.getcwd()}" )
     init_dict = get_name_value_pairs( sys.argv )
+    print( f"Command line args: {init_dict}" )
     
-    # print( get_current_datetime() )
-    # print( get_local_inference_url_for_this_context())
-    # print( get_api_key( "eleven11" ) )
-    print( get_api_key( "openai" ) )
-    # print( get_api_key( "openai", project_root="/Users/rruiz/Projects/projects-sshfs/genie-in-the-box" ) )
+    # Test API key retrieval
+    print( "\nTesting API key functions:" )
+    openai_key = get_api_key( "openai" )
+    print( f"OpenAI API key: {openai_key[:10] if openai_key else 'NOT FOUND'}..." )
     
-    print( get_current_date( return_prose=True ) )
-    print( get_current_time( format="%H:00" ) )
+    # Test date/time functions
+    print( "\nTesting date/time functions:" )
+    print( f"Current date (prose): {get_current_date( return_prose=True )}" )
+    print( f"Current time (H:00): {get_current_time( format='%H:00' )}" )
     
-    print( "yesterday:", get_current_datetime_raw( days_offset=-1 ) )
-    print( "    today:", get_current_datetime_raw( days_offset=0 ) )
-    print( " tomorrow:", get_current_datetime_raw( days_offset=1 ) )
+    print( f"Yesterday: {get_current_datetime_raw( days_offset=-1 )}" )
+    print( f"    Today: {get_current_datetime_raw( days_offset=0 )}" )
+    print( f" Tomorrow: {get_current_datetime_raw( days_offset=1 )}" )
     
-    # line = get_file_as_source_code_with_line_numbers( get_project_root() + "/io/code.py" )
-    # print( line )
+    # Test project root
+    print( f"\nProject root: {get_project_root()}" )
     
-    # generate_domain_names( 10, debug=True )
-    
-    # search_terms = get_file_as_list( get_project_root() + "/src/conf/search-terms.txt", lower_case=True, clean=True, randomize=True )
-    # #
-    # for search_term in search_terms: print( search_term )
-    # search_terms = get_search_terms( 120 )
-    # print( len( search_terms ) )
-    
-    # raw = "r-i-c-o dot f-e-l-i-p dot j-o-n-e-s at gmail.com"
-    # dashes_regex = re.compile( "[a-z]-+", re.IGNORECASE )
-    # # x = dashes_regex.sub( "[a-z]", raw )
-    # x = dashes_regex.match( raw )
-    # print( x )
-    # raw_txt = [ "multimodel text email", "MulTi mOdel text email", "MulTi-mOdel text email", "MulTi-mOdal text email" ]
-    #
-    # multimodal_regex = re.compile( "multi([ -]){0,1}mod[ae]l", re.IGNORECASE )
-    # for i in range( 0, len( raw_txt ) ):
-    #     txt = raw_txt[ i ]
-    #     x = multimodal_regex.sub( "multimodal", txt, 1 )
-    #     print( x )
-    
-    # regex = re.compile( r"(\w+)(\s+)(\w+)" )
-    #
-    # #
-    # regex_str = "^\||\|$"
-    # regex_pattern = re.compile( regex_str )
-    # print( regex_pattern.sub( "", "|1|2|" ) )
-    # print( "|1|2|".replace( regex_str, "" ) )
-    #
-    # xlation_dict = get_file_as_dictionary( "conf/translation-dictionary.map", debug=True )
-    # print( "xlation_dict[ 'pipe' ] = [{}]".format( xlation_dict[ "pipe" ] ) )
-    # print( "xlation_dict[ 'space' ] = [{}]".format( xlation_dict[ "space" ] ) )
-    # print( "xlation_dict[ ' dot com' ] = [{}]".format( xlation_dict[ " dot com" ] ) )
-    # print( "xlation_dict[ 'comma ' ] = [{}]".format( xlation_dict[ "comma " ] ) )
+    print( "\n✓ Utility smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

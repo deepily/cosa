@@ -1,17 +1,16 @@
-from cosa.agents.math_refactoring_agent import MathRefactoringAgent
-from cosa.agents.receptionist_agent import ReceptionistAgent
-from cosa.agents.weather_agent import WeatherAgent
-from cosa.app.fifo_queue import FifoQueue
-from cosa.agents.agent_base import AgentBase
-# from lib.agents.agent_function_mapping   import FunctionMappingAgent
+# from cosa.agents.v010.math_refactoring_agent import MathRefactoringAgent
+from cosa.agents.v010.receptionist_agent import ReceptionistAgent
+from cosa.agents.v010.weather_agent import WeatherAgent
+from cosa.rest.fifo_queue import FifoQueue
+from cosa.agents.v010.agent_base import AgentBase
 from cosa.memory.input_and_output_table import InputAndOutputTable
 from cosa.memory.solution_snapshot import SolutionSnapshot
-# from app                                 import emit_audio
 
 import cosa.utils.util as du
 import cosa.utils.util_stopwatch as sw
+import time
 
-# import traceback
+import traceback
 import pprint
 from typing import Optional, Any
 
@@ -22,16 +21,17 @@ class RunningFifoQueue( FifoQueue ):
     Manages execution of jobs from todo queue to done/dead queues.
     Handles both AgentBase instances and SolutionSnapshot instances.
     """
-    def __init__( self, app: Any, socketio: Any, snapshot_mgr: Any, jobs_todo_queue: FifoQueue, jobs_done_queue: FifoQueue, jobs_dead_queue: FifoQueue, config_mgr: Optional[Any]=None ) -> None:
+    def __init__( self, app: Any, websocket_mgr: Any, snapshot_mgr: Any, jobs_todo_queue: FifoQueue, jobs_done_queue: FifoQueue, jobs_dead_queue: FifoQueue, config_mgr: Optional[Any]=None, emit_audio_callback: Optional[Any]=None ) -> None:
         """
         Initialize the running FIFO queue.
         
         Requires:
             - app is a Flask application instance
-            - socketio is a SocketIO instance
+            - websocket_mgr is a WebSocketManager instance
             - snapshot_mgr is a valid snapshot manager
             - All queue parameters are FifoQueue instances
             - config_mgr is None or a valid ConfigurationManager
+            - emit_audio_callback is None or a callable function
             
         Ensures:
             - Sets up queue management components
@@ -42,26 +42,32 @@ class RunningFifoQueue( FifoQueue ):
             - None
         """
         
-        super().__init__()
+        super().__init__( websocket_mgr=websocket_mgr, queue_name="run", emit_enabled=True )
         
-        self.app             = app
-        self.socketio        = socketio
-        self.snapshot_mgr    = snapshot_mgr
-        self.jobs_todo_queue = jobs_todo_queue
-        self.jobs_done_queue = jobs_done_queue
-        self.jobs_dead_queue = jobs_dead_queue
+        self.app                 = app
+        self.snapshot_mgr        = snapshot_mgr
+        self.jobs_todo_queue     = jobs_todo_queue
+        self.jobs_done_queue     = jobs_done_queue
+        self.jobs_dead_queue     = jobs_dead_queue
+        self.emit_audio_callback = emit_audio_callback
         
-        self.auto_debug      = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
-        self.inject_bugs     = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
-        self.io_tbl          = InputAndOutputTable()
+        self.auto_debug          = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
+        self.inject_bugs         = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
+        self.io_tbl              = InputAndOutputTable()
     
     def enter_running_loop( self ) -> None:
         """
-        Enter the main job execution loop.
+        DEPRECATED: Enter the main job execution loop.
+        
+        This method is deprecated in favor of the producer-consumer pattern
+        using start_todo_producer_run_consumer_thread() which eliminates
+        the inefficient polling with time.sleep(1).
+        
+        Use _process_job() for individual job processing instead.
         
         Requires:
             - All queue instances are initialized
-            - socketio is connected
+            - websocket_mgr is connected
             
         Ensures:
             - Continuously processes jobs from todo queue
@@ -79,11 +85,9 @@ class RunningFifoQueue( FifoQueue ):
                 print( "Jobs running @ " + du.get_current_datetime() )
                 
                 print( "popping one job from todo Q" )
-                job = self.jobs_todo_queue.pop()
-                self.socketio.emit( 'todo_update', { 'value': self.jobs_todo_queue.size() } )
+                job = self.jobs_todo_queue.pop()  # Auto-emits 'todo_update'
                 
-                self.push( job )
-                self.socketio.emit( 'run_update', { 'value': self.size() } )
+                self.push( job )  # Auto-emits 'run_update'
                 
                 # Point to the head of the queue without popping it
                 running_job = self.head()
@@ -104,7 +108,52 @@ class RunningFifoQueue( FifoQueue ):
             
             else:
                 # print( "No jobs to pop from todo Q " )
-                self.socketio.sleep( 1 )
+                time.sleep( 1 )
+    
+    def _process_job( self, job: Any ) -> None:
+        """
+        Process a single job (extracted from enter_running_loop).
+        
+        Requires:
+            - job is a valid job instance (AgentBase or SolutionSnapshot)
+            - Job is already in the running queue
+            
+        Ensures:
+            - Processes job based on its type
+            - Moves job to done or dead queue when complete
+            - Emits appropriate WebSocket updates
+            
+        Raises:
+            - None (exceptions handled internally)
+        """
+        try:
+            # Point to the head of the queue without popping it
+            running_job = self.head()
+            
+            if not running_job:
+                print( "[RUNNING] Warning: _process_job called but no job in running queue" )
+                return
+            
+            # Limit the length of the question string
+            truncated_question = du.truncate_string( running_job.last_question_asked, max_len=64 )
+            
+            run_timer = sw.Stopwatch( "Starting job run timer..." )
+            
+            # Process based on job type (existing logic)
+            if isinstance( running_job, AgentBase ):
+                running_job = self._handle_base_agent( running_job, truncated_question, run_timer )
+            else:
+                running_job = self._handle_solution_snapshot( running_job, truncated_question, run_timer )
+                
+        except Exception as e:
+            print( f"[RUNNING] Error processing job: {e}" )
+            print( f"[RUNNING] Full stack trace:" )
+            traceback.print_exc()
+            
+            # Move job to dead queue on error
+            failed_job = self.pop()
+            if failed_job:
+                self.jobs_dead_queue.push( failed_job )
     
     def _handle_error_case( self, response: dict, running_job: Any, truncated_question: str ) -> Any:
         """
@@ -128,14 +177,12 @@ class RunningFifoQueue( FifoQueue ):
         
         for line in response[ "output" ].split( "\n" ): print( line )
         
-        self.pop()
+        self.pop()  # Auto-emits 'run_update'
         
-        from app import emit_audio
-        emit_audio( "I'm sorry Dave, I'm afraid I can't do that. Please check your logs" )
+        if self.emit_audio_callback:
+            self.emit_audio_callback( "I'm sorry Dave, I'm afraid I can't do that. Please check your logs" )
         
-        self.jobs_dead_queue.push( running_job )
-        self.socketio.emit( 'dead_update', { 'value': self.jobs_dead_queue.size() } )
-        self.socketio.emit( 'run_update', { 'value': self.size() } )
+        self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
         
         return running_job
     
@@ -179,16 +226,16 @@ class RunningFifoQueue( FifoQueue ):
         if running_job.code_ran_to_completion() and running_job.formatter_ran_to_completion():
             
             # If we've arrived at this point, then we've successfully run the agentic part of this job
-            from app import emit_audio
-            emit_audio( running_job.answer_conversational )
+            if self.emit_audio_callback:
+                self.emit_audio_callback( running_job.answer_conversational )
             agent_timer.print( "Done!", use_millis=True )
             
             # Only the ReceptionistAgent and WeatherAgent are not being serialized as a solution snapshot
             # TODO: this needs to not be so ad hoc as it appears right now!
             serialize_snapshot = (
                 not isinstance( running_job, ReceptionistAgent ) and 
-                not isinstance( running_job, WeatherAgent ) and
-                not isinstance( running_job, MathRefactoringAgent )
+                not isinstance( running_job, WeatherAgent ) # and
+                # not isinstance( running_job, MathRefactoringAgent )
             )
             if serialize_snapshot:
                 
@@ -212,10 +259,8 @@ class RunningFifoQueue( FifoQueue ):
                 # There's no code executed to generate a RAW answer, just a canned, conversational one
                 running_job.answer = "no code executed by non-serializing/ephemeral objects"
             
-            self.pop()
-            self.socketio.emit( 'run_update', { 'value': self.size() } )
-            if serialize_snapshot: self.jobs_done_queue.push( running_job )
-            self.socketio.emit( 'done_update', { 'value': self.jobs_done_queue.size() } )
+            self.pop()  # Auto-emits 'run_update'
+            if serialize_snapshot: self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
             
             # Write the job to the database for posterity's sake
             self.io_tbl.insert_io_row( input_type=running_job.routing_command, input=running_job.last_question_asked, output_raw=running_job.answer, output_final=running_job.answer_conversational )
@@ -251,15 +296,13 @@ class RunningFifoQueue( FifoQueue ):
         _ = running_job.run_code()
         timer.print( "Done!", use_millis=True )
         
-        formatted_output = running_job.format_output()
+        formatted_output = running_job.run_formatter()
         print( formatted_output )
-        from app import emit_audio
-        emit_audio( running_job.answer_conversational )
+        if self.emit_audio_callback:
+            self.emit_audio_callback( running_job.answer_conversational )
         
-        self.pop()
-        self.jobs_done_queue.push( running_job )
-        self.socketio.emit( 'run_update', { 'value': self.size() } )
-        self.socketio.emit( 'done_update', { 'value': self.jobs_done_queue.size() } )
+        self.pop()  # Auto-emits 'run_update'
+        self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
 
         # If we've arrived at this point, then we've successfully run the job
         run_timer.print( "Solution snapshot full run complete ", use_millis=True )
