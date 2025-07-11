@@ -303,6 +303,30 @@ class FifoQueue:
         else:
             return False
     
+    def clear( self ) -> None:
+        """
+        Clear all items from the queue and emit update.
+        
+        Requires:
+            - None
+            
+        Ensures:
+            - Empties both queue_list and queue_dict
+            - Resets push_counter to 0
+            - Clears blocking_object to None
+            - Resets accepting_jobs to True
+            - Emits queue update via WebSocket if configured
+            
+        Raises:
+            - None
+        """
+        self.queue_list.clear()
+        self.queue_dict.clear()
+        self.push_counter = 0
+        self._blocking_object = None
+        self._accepting_jobs = True
+        self._emit_queue_update()
+    
     def get_html_list( self, descending: bool = False ) -> list[str]:
         """
         Generate HTML list from queue items.

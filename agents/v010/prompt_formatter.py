@@ -52,7 +52,7 @@ class PromptFormatter:
         """
         self.debug      = debug
         self.verbose    = verbose
-        self.config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        self.config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         
         # Initialize template directory
         if template_dir:

@@ -373,7 +373,7 @@ def quick_smoke_test():
     
     try:
         # Set up test scenario
-        config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         code_file_path = config_mgr.get("code_execution_file_path")
         test_file_path = du.get_project_root() + code_file_path
         
@@ -426,7 +426,7 @@ def quick_smoke_test():
         print( f"✗ Error during debugging test: {e}" )
         # Ensure cleanup
         try:
-            config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+            config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
             code_file_path = config_mgr.get("code_execution_file_path")
             test_file_path = du.get_project_root() + code_file_path
             if os.path.exists( test_file_path ):

@@ -521,7 +521,7 @@ class SolutionSnapshot( RunnableCode ):
         """
         # TODO: decide what we're going to exclude from serialization, and why or why not!
         # Right now I'm just doing this for the sake of expediency as I'm playing with class inheritance for agents
-        fields_to_exclude = [ "prompt_response", "prompt_response_dict", "code_response_dict", "phind_tgi_url", "config_mgr" ]
+        fields_to_exclude = [ "prompt_response", "prompt_response_dict", "code_response_dict", "phind_tgi_url", "config_mgr", "_embedding_mgr" ]
         data = { field: value for field, value in self.__dict__.items() if field not in fields_to_exclude }
         return json.dumps( data )
         
@@ -686,7 +686,7 @@ class SolutionSnapshot( RunnableCode ):
         
         return self.code_response_dict
     
-    def format_output( self ) -> str:
+    def run_formatter( self ) -> str:
         """
         Format raw output for conversational response.
         
@@ -703,7 +703,7 @@ class SolutionSnapshot( RunnableCode ):
         """
         # du.print_banner( f"Formatting output for {self.routing_command}" )
         formatter                  = RawOutputFormatter( self.last_question_asked, self.answer, self.routing_command, debug=self.debug, verbose=self.verbose )
-        self.answer_conversational = formatter.format_output()
+        self.answer_conversational = formatter.run_formatter()
         
         if self.debug and self.verbose: print( f" PRE self.answer_conversational: [{self.answer_conversational}]" )
         self.answer_conversational = dux.get_value_by_xml_tag_name( self.answer_conversational, "rephrased-answer", default_value=self.answer_conversational )

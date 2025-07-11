@@ -3,7 +3,7 @@ import subprocess
 from subprocess import PIPE, run
 from typing import Any, Optional
 
-debug = os.getenv( "GIB_CODE_EXEC_DEBUG", "False" ) == "True"
+debug = os.getenv( "LUPIN_CODE_EXEC_DEBUG", "False" ) == "True"
 import cosa.utils.util as du
 
 @staticmethod
@@ -292,7 +292,7 @@ def assemble_and_run_solution( solution_code: list[str], example_code: str, path
     
     # Get the code execution file path, with a fallback for test environments
     try:
-        config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         code_file_path = config_mgr.get( "code_execution_file_path" )
     except ValueError as e:
         # We're likely in a test environment without the environment variable set

@@ -36,7 +36,7 @@ class QuestionEmbeddingsTable():
         Initialize the question embeddings table.
         
         Requires:
-            - GIB_CONFIG_MGR_CLI_ARGS environment variable is set or defaults available
+            - LUPIN_CONFIG_MGR_CLI_ARGS environment variable is set or defaults available
             - Database path is valid in configuration
             
         Ensures:
@@ -51,7 +51,7 @@ class QuestionEmbeddingsTable():
         
         self.debug          = debug
         self.verbose        = verbose
-        self._config_mgr    = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        self._config_mgr    = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         self._embedding_mgr = EmbeddingManager( debug=debug, verbose=verbose )
         
         uri = du.get_project_root() + self._config_mgr.get( "database_path_wo_root" )
@@ -154,7 +154,7 @@ class QuestionEmbeddingsTable():
     #     #
     #     # df_dict = df.to_dict( orient="records")
     #
-    #     self.config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+    #     self.config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
     #
     #     uri = du.get_project_root() + self.config_mgr.get( "database_path_wo_root" )
     #

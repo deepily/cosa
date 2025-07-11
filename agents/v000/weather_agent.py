@@ -1,7 +1,7 @@
 import cosa.utils.util as du
 
 from cosa.agents.agent_base import AgentBase
-from cosa.tools.search_gib import GibSearch
+from cosa.tools.search_lupin import LupinSearch
 from cosa.memory.solution_snapshot import SolutionSnapshot as ss
 
 
@@ -26,7 +26,7 @@ class WeatherAgent( AgentBase ):
     def run_code( self, auto_debug=None, inject_bugs=None ):
         
         try:
-            search   = GibSearch( query=self.reformulated_last_question_asked, debug=self.debug, verbose=self.verbose)
+            search   = LupinSearch( query=self.reformulated_last_question_asked, debug=self.debug, verbose=self.verbose)
             search.search_and_summarize_the_web()
             response = search.get_results( scope="summary" )
             

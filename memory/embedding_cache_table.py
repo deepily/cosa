@@ -24,7 +24,7 @@ class EmbeddingCacheTable:
         Initialize the embedding cache table.
         
         Requires:
-            - GIB_CONFIG_MGR_CLI_ARGS environment variable is set or defaults available
+            - LUPIN_CONFIG_MGR_CLI_ARGS environment variable is set or defaults available
             - Database path is valid in configuration
             
         Ensures:
@@ -39,7 +39,7 @@ class EmbeddingCacheTable:
         
         self.debug       = debug
         self.verbose     = verbose
-        self._config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        self._config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         
         uri = du.get_project_root() + self._config_mgr.get( "database_path_wo_root" )
         

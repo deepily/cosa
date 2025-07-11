@@ -85,7 +85,7 @@ class LlmClientFactory:
             return
         
         # Instantiate the global config manager
-        self.config_mgr   = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        self.config_mgr   = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         self._initialized = True
         self.debug        = debug
         self.verbose      = verbose
@@ -479,7 +479,7 @@ def quick_smoke_test():
     try:
         # Initialize factory
         factory = LlmClientFactory()
-        config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         print( "✓ LlmClientFactory initialized successfully" )
         
         # Prepare simple test prompt

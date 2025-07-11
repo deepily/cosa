@@ -206,30 +206,30 @@ class IterativeDebuggingAgent( AgentBase ):
 if __name__ == "__main__":
     
     error_message = """
-    File "/Users/rruiz/Projects/projects-sshfs/genie-in-the-box/io/code.py", line 11
+    File "/Users/rruiz/Projects/projects-sshfs/lupin/io/code.py", line 11
     birthdays = df[(df.event_type == 'birthday') && (df.start_date <= week_from_today) && (df.end_date >= today)]
     """
     #     error_message = """
     #     Traceback (most recent call last):
-    #   File "/Users/rruiz/Projects/projects-sshfs/genie-in-the-box/io/code.py", line 20, in <module>
+    #   File "/Users/rruiz/Projects/projects-sshfs/lupin/io/code.py", line 20, in <module>
     #     solution = get_concerts_this_week( df )
-    #   File "/Users/rruiz/Projects/projects-sshfs/genie-in-the-box/io/code.py", line 14, in get_concerts_this_week
+    #   File "/Users/rruiz/Projects/projects-sshfs/lupin/io/code.py", line 14, in get_concerts_this_week
     #     mask = (df['event_type'] == 'concert') & (df['start_date'] >= start_date) & (df['start_date'] < end_date)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/ops/common.py", line 81, in new_method
+    #   File "/Users/rruiz/Projects/lupin/venv/lib/python3.10/site-packages/pandas/core/ops/common.py", line 81, in new_method
     #     return method(self, other)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/arraylike.py", line 60, in __ge__
+    #   File "/Users/rruiz/Projects/lupin/venv/lib/python3.10/site-packages/pandas/core/arraylike.py", line 60, in __ge__
     #     return self._cmp_method(other, operator.ge)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/series.py", line 6096, in _cmp_method
+    #   File "/Users/rruiz/Projects/lupin/venv/lib/python3.10/site-packages/pandas/core/series.py", line 6096, in _cmp_method
     #     res_values = ops.comparison_op(lvalues, rvalues, op)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/ops/array_ops.py", line 279, in comparison_op
+    #   File "/Users/rruiz/Projects/lupin/venv/lib/python3.10/site-packages/pandas/core/ops/array_ops.py", line 279, in comparison_op
     #     res_values = op(lvalues, rvalues)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/ops/common.py", line 81, in new_method
+    #   File "/Users/rruiz/Projects/lupin/venv/lib/python3.10/site-packages/pandas/core/ops/common.py", line 81, in new_method
     #     return method(self, other)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/arraylike.py", line 60, in __ge__
+    #   File "/Users/rruiz/Projects/lupin/venv/lib/python3.10/site-packages/pandas/core/arraylike.py", line 60, in __ge__
     #     return self._cmp_method(other, operator.ge)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/arrays/datetimelike.py", line 937, in _cmp_method
+    #   File "/Users/rruiz/Projects/lupin/venv/lib/python3.10/site-packages/pandas/core/arrays/datetimelike.py", line 937, in _cmp_method
     #     return invalid_comparison(self, other, op)
-    #   File "/Users/rruiz/Projects/genie-in-the-box/venv/lib/python3.10/site-packages/pandas/core/ops/invalid.py", line 36, in invalid_comparison
+    #   File "/Users/rruiz/Projects/lupin/venv/lib/python3.10/site-packages/pandas/core/ops/invalid.py", line 36, in invalid_comparison
     #     raise TypeError(f"Invalid comparison between dtype={left.dtype} and {typ}")
     # TypeError: Invalid comparison between dtype=datetime64[ns] and date"""
 

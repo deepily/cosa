@@ -102,7 +102,7 @@ class ConfigurationManager():
         if env_var_name is None and config_path is None and splainer_path is None:
             raise ValueError(
                 "ConfigurationManager initialization error: No initialization parameters provided.\n"
-                "RECOMMENDED: Use ConfigurationManager(env_var_name=\"GIB_CONFIG_MGR_CLI_ARGS\")\n"
+                "RECOMMENDED: Use ConfigurationManager(env_var_name=\"LUPIN_CONFIG_MGR_CLI_ARGS\")\n"
                 "ALTERNATIVE: Provide explicit config_path and splainer_path arguments"
             )
             
@@ -886,7 +886,7 @@ def quick_smoke_test():
     # Test 2: Environment variable constructor
     timer = sw.Stopwatch( msg="Testing env_var_name constructor...", silent=False )
     try:
-        config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS", _reset_singleton=True )
+        config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS", _reset_singleton=True )
         print( f"✅ Successfully initialized with env_var_name" )
     except ValueError as e:
         print( f"❌ Error: {str( e )}" )
@@ -895,8 +895,8 @@ def quick_smoke_test():
     # Test 3: Explicit paths constructor
     timer = sw.Stopwatch( msg="Testing explicit paths constructor...", silent=False )
     try:
-        config_path     = du.get_project_root() + "/src/conf/gib-app.ini"
-        splainer_path   = du.get_project_root() + "/src/conf/gib-app-splainer.ini"
+        config_path     = du.get_project_root() + "/src/conf/lupin-app.ini"
+        splainer_path   = du.get_project_root() + "/src/conf/lupin-app-splainer.ini"
         config_block_id = "default"
         
         config_mgr = ConfigurationManager(
@@ -915,7 +915,7 @@ def quick_smoke_test():
     timer = sw.Stopwatch( msg="Testing conflicting parameters...", silent=False )
     try:
         config_mgr = ConfigurationManager(
-            env_var_name="GIB_CONFIG_MGR_CLI_ARGS",
+            env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS",
             config_path="/some/path",
             splainer_path="/some/path",
             _reset_singleton=True

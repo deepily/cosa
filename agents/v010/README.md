@@ -35,7 +35,7 @@ This directory contains the migrated agent implementations from the legacy v000 
 
 For all agents to function properly, the following external dependencies must be installed:
 
-1. `kagiapi` - Required for weather_agent.py (for GibSearch/KagiSearch functionality)
+1. `kagiapi` - Required for weather_agent.py (for LupinSearch/KagiSearch functionality)
 2. `lancedb` - Required for receptionist_agent.py (for memory/question_embeddings_table.py)
 
 Installation:

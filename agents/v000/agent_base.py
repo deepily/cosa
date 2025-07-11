@@ -52,7 +52,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.question_gist         = question_gist
         self.answer_conversational = None
         
-        self.config_mgr            = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        self.config_mgr            = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         
         self.df                    = None
         self.do_not_serialize      = { "df", "config_mgr", "two_word_id", "execution_state" }

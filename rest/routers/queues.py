@@ -35,6 +35,11 @@ def get_dead_queue():
     import fastapi_app.main as main_module
     return main_module.jobs_dead_queue
 
+def get_notification_queue():
+    """Dependency to get notification queue"""
+    import fastapi_app.main as main_module
+    return main_module.jobs_notification_queue
+
 @router.get("/push")
 async def push(
     question: str = Query(..., description="The question/query to process"),
@@ -129,3 +134,69 @@ async def get_queue(
     filtered_jobs = [job.replace("</li>", f" [user: {user_id}]</li>") for job in jobs]
     
     return {f"{queue_name}_jobs": filtered_jobs}
+
+@router.post("/reset-queues")
+async def reset_queues(
+    current_user: dict = Depends(get_current_user),
+    todo_queue = Depends(get_todo_queue),
+    running_queue = Depends(get_running_queue),
+    done_queue = Depends(get_done_queue),
+    dead_queue = Depends(get_dead_queue),
+    notification_queue = Depends(get_notification_queue)
+):
+    """
+    Reset all queues by clearing their contents.
+    
+    Requires:
+        - User must be authenticated with valid token
+        - All queue instances must be available
+        
+    Ensures:
+        - All queues are emptied
+        - WebSocket notifications are sent for queue updates
+        - Returns summary of reset operation
+        
+    Returns:
+        dict: Summary of queues reset with counts and timestamp
+    """
+    user_id = current_user["uid"]
+    print( f"[API] /api/reset-queues called by user: {user_id}" )
+    
+    # Get initial counts for reporting
+    initial_counts = {
+        "todo": todo_queue.size(),
+        "run": running_queue.size(),
+        "done": done_queue.size(),
+        "dead": dead_queue.size(),
+        "notification": notification_queue.size()
+    }
+    
+    try:
+        # Clear all queues (they will automatically emit updates)
+        todo_queue.clear()
+        running_queue.clear()
+        done_queue.clear()
+        dead_queue.clear()
+        notification_queue.clear()
+        
+        result = {
+            "status": "success",
+            "message": "All queues have been reset",
+            "user_id": user_id,
+            "timestamp": datetime.now().isoformat(),
+            "queues_reset": {
+                "todo": f"cleared {initial_counts['todo']} items",
+                "run": f"cleared {initial_counts['run']} items", 
+                "done": f"cleared {initial_counts['done']} items",
+                "dead": f"cleared {initial_counts['dead']} items",
+                "notification": f"cleared {initial_counts['notification']} items"
+            },
+            "total_items_cleared": sum( initial_counts.values() )
+        }
+        
+        print( f"[API] Successfully reset all queues - cleared {result['total_items_cleared']} total items" )
+        return result
+        
+    except Exception as e:
+        print( f"[ERROR] Failed to reset queues: {e}" )
+        raise HTTPException( status_code=500, detail=f"Failed to reset queues: {str(e)}" )

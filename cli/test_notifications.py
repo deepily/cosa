@@ -163,7 +163,7 @@ class NotificationTestSuite:
         print( "=" * 50 )
         
         workflow_tests = [
-            ( "Build Started", "Starting build process for genie-in-the-box", "progress", "low" ),
+            ( "Build Started", "Starting build process for lupin", "progress", "low" ),
             ( "Dependencies Installed", "npm install completed successfully", "progress", "low" ),
             ( "Running Tests", "Executing test suite (15 tests)", "progress", "medium" ),
             ( "Tests Passed", "All tests passed - 15/15 successful", "task", "medium" ),

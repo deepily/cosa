@@ -23,7 +23,7 @@ class InputAndOutputTable():
         Initialize the input/output table.
         
         Requires:
-            - GIB_CONFIG_MGR_CLI_ARGS environment variable is set or defaults available
+            - LUPIN_CONFIG_MGR_CLI_ARGS environment variable is set or defaults available
             - Database path is valid in configuration
             
         Ensures:
@@ -38,7 +38,7 @@ class InputAndOutputTable():
         
         self.debug          = debug
         self.verbose        = verbose
-        self._config_mgr    = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        self._config_mgr    = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         self._embedding_mgr = EmbeddingManager( debug=debug, verbose=verbose )
         
         self.db = lancedb.connect( du.get_project_root() + self._config_mgr.get( "database_path_wo_root" ) )
@@ -115,7 +115,8 @@ class InputAndOutputTable():
                         if self.debug: print( f"  Input embedding provided (skipping generation)" )
                     
                     if not output_final_embedding:
-                        if self.debug: print( f"  Generating output embedding for: '{output_final[:debug_truncate_len]}...'" )
+                        output_str = str(output_final) if output_final else ""
+                        if self.debug: print( f"  Generating output embedding for: '{output_str[:debug_truncate_len]}...'" )
                         # Note: EmbeddingManager handles its own cache hit detection internally
                         final_output_embedding = self._embedding_mgr.generate_embedding( output_final, normalize_for_cache=True )
                     else:

@@ -557,17 +557,17 @@ def get_project_root() -> str:
         
     Notes:
         If running in a Docker container, returns the container's root path.
-        Otherwise, uses the GENIE_IN_THE_BOX_ROOT environment variable.
+        Otherwise, uses the LUPIN_ROOT environment variable.
     """
     if debug:
-        print(f"GENIE_IN_THE_BOX_ROOT [{os.getenv('GENIE_IN_THE_BOX_ROOT')}]")
-        print(f"          os.getcwd() [{os.getcwd()}]")
+        print(f" LUPIN_ROOT [{os.getenv('LUPIN_ROOT')}]")
+        print(f"os.getcwd() [{os.getcwd()}]")
         
-    if "GENIE_IN_THE_BOX_ROOT" in os.environ:
-        return os.environ["GENIE_IN_THE_BOX_ROOT"]
+    if "LUPIN_ROOT" in os.environ:
+        return os.environ["LUPIN_ROOT"]
     else:
-        path = "/var/genie-in-the-box"
-        print(f"WARNING: GENIE_IN_THE_BOX_ROOT not found in environment variables. Returning default path '{path}'")
+        path = "/var/lupin"
+        print(f"WARNING: LUPIN_ROOT not found in environment variables. Returning default path '{path}'")
         return path
 
 def get_api_key( key_name: str, project_root: str = None ) -> Optional[str]:

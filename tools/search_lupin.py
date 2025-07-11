@@ -96,7 +96,7 @@ if __name__ == '__main__':
     print( results )
     
     formatter = RawOutputFormatter( query, results, routing_command="agent router go to weather", debug=False, verbose=False )
-    output    = formatter.format_output()
+    output    = formatter.run_formatter()
     print( output )
     
     

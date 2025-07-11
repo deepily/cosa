@@ -3,7 +3,7 @@ from typing import Any, Optional
 import cosa.utils.util as du
 
 from cosa.agents.v010.agent_base import AgentBase
-from cosa.tools.search_gib_v010 import GibSearch
+from cosa.tools.search_lupin_v010 import LupinSearch
 from cosa.memory.solution_snapshot import SolutionSnapshot as ss
 
 
@@ -11,7 +11,7 @@ class WeatherAgent( AgentBase ):
     """
     Agent that answers weather-related questions using web search.
     
-    This agent uses the GibSearch tool to fetch current weather information
+    This agent uses the LupinSearch tool to fetch current weather information
     from the web and format it for the user.
     """
     
@@ -20,7 +20,7 @@ class WeatherAgent( AgentBase ):
         Initialize the weather agent.
         
         Requires:
-            - GibSearch tool is available
+            - LupinSearch tool is available
             - last_question_asked is a weather-related query
             
         Ensures:
@@ -29,7 +29,7 @@ class WeatherAgent( AgentBase ):
             - Sets up empty XML response tags (not used)
             
         Raises:
-            - ImportError if GibSearch not available
+            - ImportError if LupinSearch not available
         """
         
         # Prepend a date and time to force the cache to update on an hourly basis
@@ -68,7 +68,7 @@ class WeatherAgent( AgentBase ):
         
         Requires:
             - self.reformulated_last_question_asked is set
-            - GibSearch tool is available
+            - LupinSearch tool is available
             
         Ensures:
             - Performs web search for weather info
@@ -81,7 +81,7 @@ class WeatherAgent( AgentBase ):
         """
         
         try:
-            search   = GibSearch( query=self.reformulated_last_question_asked, debug=self.debug, verbose=self.verbose)
+            search   = LupinSearch( query=self.reformulated_last_question_asked, debug=self.debug, verbose=self.verbose)
             search.search_and_summarize_the_web()
             response = search.get_results( scope="summary" )
             
@@ -155,7 +155,7 @@ class WeatherAgent( AgentBase ):
         
         Requires:
             - self.reformulated_last_question_asked is set
-            - GibSearch tool is available
+            - LupinSearch tool is available
             
         Ensures:
             - Runs web search for weather data

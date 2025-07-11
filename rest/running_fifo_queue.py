@@ -10,7 +10,7 @@ import cosa.utils.util as du
 import cosa.utils.util_stopwatch as sw
 import time
 
-# import traceback
+import traceback
 import pprint
 from typing import Optional, Any
 
@@ -57,7 +57,13 @@ class RunningFifoQueue( FifoQueue ):
     
     def enter_running_loop( self ) -> None:
         """
-        Enter the main job execution loop.
+        DEPRECATED: Enter the main job execution loop.
+        
+        This method is deprecated in favor of the producer-consumer pattern
+        using start_todo_producer_run_consumer_thread() which eliminates
+        the inefficient polling with time.sleep(1).
+        
+        Use _process_job() for individual job processing instead.
         
         Requires:
             - All queue instances are initialized
@@ -104,6 +110,51 @@ class RunningFifoQueue( FifoQueue ):
                 # print( "No jobs to pop from todo Q " )
                 time.sleep( 1 )
     
+    def _process_job( self, job: Any ) -> None:
+        """
+        Process a single job (extracted from enter_running_loop).
+        
+        Requires:
+            - job is a valid job instance (AgentBase or SolutionSnapshot)
+            - Job is already in the running queue
+            
+        Ensures:
+            - Processes job based on its type
+            - Moves job to done or dead queue when complete
+            - Emits appropriate WebSocket updates
+            
+        Raises:
+            - None (exceptions handled internally)
+        """
+        try:
+            # Point to the head of the queue without popping it
+            running_job = self.head()
+            
+            if not running_job:
+                print( "[RUNNING] Warning: _process_job called but no job in running queue" )
+                return
+            
+            # Limit the length of the question string
+            truncated_question = du.truncate_string( running_job.last_question_asked, max_len=64 )
+            
+            run_timer = sw.Stopwatch( "Starting job run timer..." )
+            
+            # Process based on job type (existing logic)
+            if isinstance( running_job, AgentBase ):
+                running_job = self._handle_base_agent( running_job, truncated_question, run_timer )
+            else:
+                running_job = self._handle_solution_snapshot( running_job, truncated_question, run_timer )
+                
+        except Exception as e:
+            print( f"[RUNNING] Error processing job: {e}" )
+            print( f"[RUNNING] Full stack trace:" )
+            traceback.print_exc()
+            
+            # Move job to dead queue on error
+            failed_job = self.pop()
+            if failed_job:
+                self.jobs_dead_queue.push( failed_job )
+    
     def _handle_error_case( self, response: dict, running_job: Any, truncated_question: str ) -> Any:
         """
         Handle error cases during job execution.
@@ -128,8 +179,8 @@ class RunningFifoQueue( FifoQueue ):
         
         self.pop()  # Auto-emits 'run_update'
         
-        from app import emit_audio
-        emit_audio( "I'm sorry Dave, I'm afraid I can't do that. Please check your logs" )
+        if self.emit_audio_callback:
+            self.emit_audio_callback( "I'm sorry Dave, I'm afraid I can't do that. Please check your logs" )
         
         self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
         
@@ -175,8 +226,8 @@ class RunningFifoQueue( FifoQueue ):
         if running_job.code_ran_to_completion() and running_job.formatter_ran_to_completion():
             
             # If we've arrived at this point, then we've successfully run the agentic part of this job
-            from app import emit_audio
-            emit_audio( running_job.answer_conversational )
+            if self.emit_audio_callback:
+                self.emit_audio_callback( running_job.answer_conversational )
             agent_timer.print( "Done!", use_millis=True )
             
             # Only the ReceptionistAgent and WeatherAgent are not being serialized as a solution snapshot
@@ -245,10 +296,10 @@ class RunningFifoQueue( FifoQueue ):
         _ = running_job.run_code()
         timer.print( "Done!", use_millis=True )
         
-        formatted_output = running_job.format_output()
+        formatted_output = running_job.run_formatter()
         print( formatted_output )
-        from app import emit_audio
-        emit_audio( running_job.answer_conversational )
+        if self.emit_audio_callback:
+            self.emit_audio_callback( running_job.answer_conversational )
         
         self.pop()  # Auto-emits 'run_update'
         self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'

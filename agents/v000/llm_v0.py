@@ -431,7 +431,7 @@ class Llm_v0:
     
 if __name__ == "__main__":
     
-    config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+    config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
     
     # prompt_template = du.get_file_as_string( du.get_project_root() + "/src/conf/prompts/agents/gist.txt" )
     # prompt = prompt_template.format( question='How many "R"s are in the word "strawberry"?' )

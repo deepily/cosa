@@ -15,7 +15,7 @@ def get_config_manager():
     """Dependency to get configuration manager"""
     global _config_mgr
     if _config_mgr is None:
-        _config_mgr = ConfigurationManager(env_var_name="GIB_CONFIG_MGR_CLI_ARGS")
+        _config_mgr = ConfigurationManager(env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS")
     return _config_mgr
 
 def get_snapshot_manager():

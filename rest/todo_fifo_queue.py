@@ -1,4 +1,5 @@
 import random
+import threading
 from typing import Any, Optional
 
 from cosa.agents.v010.confirmation_dialog import ConfirmationDialogue
@@ -12,7 +13,7 @@ from cosa.agents.v010.calendaring_agent import CalendaringAgent
 from cosa.agents.v010.math_agent import MathAgent
 from cosa.agents.v010.llm_client_factory import LlmClientFactory
 from cosa.agents.v010.gister import Gister
-from cosa.tools.search_gib_v010 import GibSearch
+from cosa.tools.search_lupin_v010 import LupinSearch
 
 # from app       import emit_audio
 from cosa.utils import util     as du
@@ -82,6 +83,10 @@ class TodoFifoQueue( FifoQueue ):
             "let me think about that...", "let me think about it...", "let me check...", "checking..."
         ]
         
+        # Producer-consumer coordination
+        self.condition = threading.Condition()
+        self.consumer_running = False
+        
     def parse_salutations( self, transcription: str ) -> tuple[str, str]:
         """
         Parse salutations from the beginning of a transcription.
@@ -117,6 +122,64 @@ class TodoFifoQueue( FifoQueue ):
         
         return ' '.join( prefix_holder ), remaining_string
     
+    def _is_fit( self, question: str ) -> bool:
+        """
+        Validate if job is suitable for processing.
+        
+        Requires:
+            - question is a string
+            
+        Ensures:
+            - Returns True if job meets processing criteria
+            - Returns False if job should be rejected
+            
+        Raises:
+            - None
+        """
+        if not question or not question.strip():
+            return False
+        if len( question ) > 1000:  # Example length limit
+            return False
+        if question.lower().startswith( "invalid" ):  # Example content filter
+            return False
+        return True
+    
+    def _notify_rejection( self, question: str, websocket_id: str, reason: str ) -> None:
+        """
+        Send rejection notification via WebSocket.
+        
+        Requires:
+            - question is the rejected question
+            - websocket_id is a valid websocket identifier  
+            - reason is a descriptive rejection reason
+            
+        Ensures:
+            - Sends job_rejected event to specific websocket session
+            - Includes question, reason, and timestamp
+            
+        Raises:
+            - None (handles errors gracefully)
+        """
+        if self.websocket_mgr:
+            rejection_data = {
+                "type": "job_rejected",
+                "question": question,
+                "reason": reason,
+                "timestamp": du.get_current_time()
+            }
+            try:
+                # Use emit_to_session if available, fallback to general emit
+                if hasattr( self.websocket_mgr, 'emit_to_session_sync' ):
+                    self.websocket_mgr.emit_to_session_sync( websocket_id, "job_rejected", rejection_data )
+                else:
+                    self.websocket_mgr.emit( "job_rejected", rejection_data )
+                    
+                if self.debug:
+                    print( f"[TODO-QUEUE] Sent rejection notification for: {question[:50]}..." )
+            except Exception as e:
+                if self.debug:
+                    print( f"[TODO-QUEUE] Failed to send rejection notification: {e}" )
+    
     def push_job( self, question: str, websocket_id: str ) -> str:
         """
         Push a new job onto the queue based on the question.
@@ -139,16 +202,26 @@ class TodoFifoQueue( FifoQueue ):
         run_previous_best_snapshot = False
         similar_snapshots = [ ]
         
+        # NEW: Pre-processing and validation
+        if not self._is_fit( question ):
+            reason = "Question does not meet processing criteria"
+            if not question or not question.strip():
+                reason = "Question cannot be empty"
+            elif len( question ) > 1000:
+                reason = "Question too long (max 1000 characters)"
+            elif question.lower().startswith( "invalid" ):
+                reason = "Question contains invalid content"
+                
+            self._notify_rejection( question, websocket_id, reason )
+            return f"Job rejected: {reason}"
+        
         # check to see if the queue isn't accepting jobs (because it's waiting for response to a previous request)
         if not self.is_accepting_jobs():
             
             msg = f"The human responded '{question}'"
-            # from app import emit_audio
-            # emit_audio( msg )
             du.print_banner( msg )
-            confirmation_llm_spec = self.config_mgr.get( "llm spec key for confirmation dialog" )
-            confirmation_client = self.llm_factory.get_client( confirmation_llm_spec, debug=self.debug, verbose=self.verbose )
-            run_previous_best_snapshot = ConfirmationDialogue( llm_client=confirmation_client, debug=self.debug, verbose=self.verbose ).confirmed( question )
+            confirmation_llm_spec      = self.config_mgr.get( "llm spec key for confirmation dialog" )
+            run_previous_best_snapshot = ConfirmationDialogue( confirmation_llm_spec, debug=self.debug, verbose=self.verbose ).confirmed( question )
             
         if run_previous_best_snapshot:
                 
@@ -243,7 +316,7 @@ class TodoFifoQueue( FifoQueue ):
                 msg = du.print_banner( f"TO DO: train and implement 'agent router go to search and summary' command {command}" )
                 print( msg )
                 self._emit_audio( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} I'm gonna ask our research librarian about that", None )
-                search = GibSearch( query=question_gist )
+                search = LupinSearch( query=question_gist )
                 search.search_and_summarize_the_web()
                 msg = search.get_results( scope="summary" )
             
@@ -294,9 +367,9 @@ class TodoFifoQueue( FifoQueue ):
             else:
                 msg = du.print_banner( f"TO DO: Implement else case command {command}" )
                 print( msg )
-                from app import emit_audio
-                emit_audio( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}" )
-                search = GibSearch( query=question_gist )
+                if self.emit_audio_callback:
+                    self.emit_audio_callback( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}" )
+                search = LupinSearch( query=question_gist )
                 search.search_and_summarize_the_web()
                 msg = search.get_results( scope="summary" )
                 
@@ -305,8 +378,8 @@ class TodoFifoQueue( FifoQueue ):
             if agent is not None:
                 self.push( agent )
             
-            from app import emit_audio
-            emit_audio( msg )
+            if self.emit_audio_callback:
+                self.emit_audio_callback( msg )
             
             return msg
             
@@ -403,8 +476,8 @@ class TodoFifoQueue( FifoQueue ):
         
         if self.size() != 0:
             suffix = "s" if self.size() > 1 else ""
-            from app import emit_audio
-            emit_audio( f"{self.size()} job{suffix} ahead of this one" )
+            if self.emit_audio_callback:
+                self.emit_audio_callback( f"{self.size()} job{suffix} ahead of this one" )
         else:
             print( "No jobs ahead of this one in the todo Q" )
         
@@ -444,6 +517,30 @@ class TodoFifoQueue( FifoQueue ):
         args    = dux.get_value_by_xml_tag_name( response, "args" )
         
         return command, args
+    
+    def push( self, item: Any ) -> None:
+        """
+        Override parent's push to add producer-consumer coordination.
+        
+        Requires:
+            - item must have an 'id_hash' attribute
+            
+        Ensures:
+            - Item is added to queue via parent method
+            - Consumer thread is notified of new work
+            
+        Raises:
+            - AttributeError if item doesn't have id_hash
+        """
+        # Use condition variable for producer-consumer coordination
+        with self.condition:
+            # Call parent's push method
+            super().push( item )
+            # Notify consumer thread that work is available
+            self.condition.notify()
+            
+        if self.debug:
+            print( f"[TODO-QUEUE] Added job and notified consumer: {item.id_hash}" )
     
 # Add me
 def quick_smoke_test():

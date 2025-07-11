@@ -200,7 +200,7 @@ class XmlPromptGenerator:
         """
         try:
             from cosa.config.configuration_manager import ConfigurationManager
-            config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+            config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
             agent_function_mapping_compound_commands = {
                 # This data set is not only static vs. dynamic, but also memory search vs. web search
                 "agent router go to search function mapping": config_mgr.get( "path_to_search_function_mapping_data_wo_root" )

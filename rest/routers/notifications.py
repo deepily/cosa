@@ -308,7 +308,7 @@ async def mark_notification_played(
         dict: Success status and updated notification info
     """
     try:
-        success = notification_queue.mark_as_played(notification_id)
+        success = notification_queue.mark_played(notification_id)
         
         if success:
             return {

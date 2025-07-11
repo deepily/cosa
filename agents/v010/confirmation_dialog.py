@@ -48,13 +48,10 @@ class ConfirmationDialogue:
             - FileNotFoundError if template file missing
         """
         
-        self.config_mgr = config_mgr or ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        self.config_mgr = config_mgr or ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         
         # Use provided model_name, or get from config
-        if model_name is None:
-            model_name = self.config_mgr.get( 
-                "llm_spec_key_for_confirmation_dialog"
-            )
+        if model_name is None: model_name = self.config_mgr.get( "llm spec key for confirmation dialog" )
         
         self.model_name = model_name
         self.debug = debug

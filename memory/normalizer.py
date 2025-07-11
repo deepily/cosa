@@ -116,7 +116,7 @@ class Normalizer:
             return
             
         # Initialize configuration manager
-        self._config_mgr = ConfigurationManager( env_var_name="GIB_CONFIG_MGR_CLI_ARGS" )
+        self._config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         
         # Get debug and verbose from config
         self.debug   = self._config_mgr.get( "app_debug", False )

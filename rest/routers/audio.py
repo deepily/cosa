@@ -11,12 +11,15 @@ import time
 import asyncio
 import uuid
 import os
+import json
 from datetime import datetime
+import aiohttp
+import websockets
 
 # Import dependencies
 from openai import OpenAI
 import cosa.utils.util as du
-from lib.clients import genie_client as gc
+from lib.clients import lupin_client as gc
 from cosa.rest.websocket_manager import WebSocketManager
 from cosa.memory.input_and_output_table import InputAndOutputTable
 from cosa.rest import multimodal_munger as mmm
@@ -45,6 +48,11 @@ def get_active_tasks():
     import fastapi_app.main as main_module
     return main_module.active_tasks
 
+def get_todo_queue():
+    """Dependency to get todo queue"""
+    import fastapi_app.main as main_module
+    return main_module.jobs_todo_queue
+
 @router.post("/upload-and-transcribe-mp3")
 async def upload_and_transcribe_mp3_file(
     request: Request,
@@ -52,7 +60,8 @@ async def upload_and_transcribe_mp3_file(
     prompt_key: str = Query("generic"),
     prompt_verbose: str = Query("verbose"),
     whisper_pipeline = Depends(get_whisper_pipeline),
-    config_mgr = Depends(get_config_manager)
+    config_mgr = Depends(get_config_manager),
+    todo_queue = Depends(get_todo_queue)
 ):
     """
     Upload and transcribe MP3 audio file using Whisper model.
@@ -120,42 +129,50 @@ async def upload_and_transcribe_mp3_file(
         if app_debug:
             print(f"Processed text: [{processed_text}]")
         
-        # Handle agent detection and routing
-        is_agent_request = False
-        if prefix and "agent" in prefix.lower():
-            is_agent_request = True
-            
-        # Get multimodal munger for processing
-        processed_transcription = mmm.process_transcription(
+        # Create multimodal munger instance for processing
+        munger = mmm.MultiModalMunger(
             processed_text,
+            prefix=prefix if prefix else "",
             prompt_key=prompt_key,
-            prompt_verbose=prompt_verbose,
+            debug=app_debug,
+            verbose=app_verbose,
             config_mgr=config_mgr
         )
         
-        if not is_agent_request:
+        # Check if this is an agent request using munger's method
+        if munger.is_agent():
+            # Push to todo queue for agent processing
+            if app_debug:
+                print(f"Munger: Posting [{munger.transcription}] to the agent's todo queue...")
+            
+            # TODO: Get websocket_id from the browser plugin request
+            # The browser plugin should be sending this as part of the request
+            munger.results = todo_queue.push_job(munger.transcription)
+        else:
+            # For non-agent requests, handle normally
+            # Get the processed transcription
+            processed_transcription = munger.transcription
+            
+            # If there are special results (e.g., contact info), use those instead
+            if munger.results:
+                processed_transcription = munger.results
+            
             # Add to I/O table for non-agent requests
             io_tbl = InputAndOutputTable(debug=app_debug, verbose=app_verbose)
-            io_tbl.add_entry(
-                input_text=processed_text,
+            io_tbl.insert_io_row(
                 input_type="stt_mp3",
-                output_text=processed_transcription,
-                output_type="processed_transcription"
+                input=processed_text,
+                output_raw=processed_text,
+                output_final=str(processed_transcription) if processed_transcription else ""
             )
         
-        response_data = {
-            "status": "success",
-            "transcription": processed_transcription,
-            "raw_transcription": processed_text,
-            "prompt_key": prompt_key,
-            "is_agent_request": is_agent_request,
-            "timestamp": datetime.now().isoformat()
-        }
+        # Get the munger's JSON representation for browser compatibility
+        response_json_str = munger.get_jsons()
+        response_data = json.loads(response_json_str)
         
-        # Save response to file
-        with open("/tmp/last_response.json", "w") as f:
-            import json
-            json.dump(response_data, f, indent=2)
+        # Save response to file (using the munger JSON format)
+        last_response_path = "/io/last_response.json"
+        du.write_string_to_file(du.get_project_root() + last_response_path, response_json_str)
         
         return JSONResponse(response_data)
         
@@ -189,19 +206,37 @@ async def get_tts_audio(
         JSONResponse: Immediate status response
     """
     try:
+        # Enhanced debugging for TTS requests
+        print(f"[TTS-DEBUG] POST /api/get-audio called from {request.client.host}")
+        print(f"[TTS-DEBUG] Headers: {dict(request.headers)}")
+        
         # Parse request body
         request_data = await request.json()
+        print(f"[TTS-DEBUG] Request data: {request_data}")
+        
         session_id = request_data.get("session_id")
         msg = request_data.get("text")
         
+        print(f"[TTS-DEBUG] Extracted - session_id: '{session_id}', text: '{msg}'")
+        
         if not session_id or not msg:
+            error_msg = f"Missing session_id or text - session_id: {session_id}, text: {msg}"
+            print(f"[TTS-ERROR] {error_msg}")
             raise HTTPException(status_code=400, detail="Missing session_id or text")
         
         # Check if WebSocket connection exists
-        if not ws_manager.is_connected(session_id):
-            raise HTTPException(status_code=404, detail=f"No WebSocket connection for session {session_id}")
+        is_connected = ws_manager.is_connected(session_id)
+        print(f"[TTS-DEBUG] WebSocket connection check for {session_id}: {is_connected}")
         
-        print(f"[TTS] Hybrid TTS request - session: {session_id}, msg: '{msg}'")
+        if not is_connected:
+            error_msg = f"No WebSocket connection for session {session_id}"
+            print(f"[TTS-ERROR] {error_msg}")
+            # List active connections for debugging
+            active_connections = list(ws_manager.active_connections.keys())
+            print(f"[TTS-DEBUG] Active connections: {active_connections}")
+            raise HTTPException(status_code=404, detail=error_msg)
+        
+        print(f"[TTS-SUCCESS] Starting TTS for session: {session_id}, msg: '{msg}'")
         
         # Start hybrid TTS streaming in background
         task = asyncio.create_task(stream_tts_hybrid(session_id, msg, ws_manager))
@@ -219,6 +254,88 @@ async def get_tts_audio(
     except Exception as e:
         print(f"[ERROR] TTS request failed: {e}")
         raise HTTPException(status_code=500, detail=f"TTS generation failed: {str(e)}")
+
+@router.post("/get-audio-elevenlabs")
+async def get_tts_audio_elevenlabs(
+    request: Request,
+    ws_manager: WebSocketManager = Depends(get_websocket_manager),
+    active_tasks = Depends(get_active_tasks)
+):
+    """
+    ElevenLabs WebSocket-based TTS endpoint that streams audio via WebSocket.
+    
+    Preconditions:
+        - Request body must contain session_id and text
+        - WebSocket connection must exist for session_id
+        - ElevenLabs API key must be available
+        - ElevenLabs WebSocket streaming API must be accessible
+        
+    Postconditions:
+        - Returns immediate status response
+        - Streams audio chunks via WebSocket to specified session
+        
+    Args:
+        request: FastAPI request containing JSON body with session_id, text, and optional voice settings
+        
+    Returns:
+        JSONResponse: Immediate status response
+    """
+    try:
+        # Enhanced debugging for ElevenLabs TTS requests
+        print(f"[TTS-ELEVENLABS-DEBUG] POST /api/get-audio-elevenlabs called from {request.client.host}")
+        print(f"[TTS-ELEVENLABS-DEBUG] Headers: {dict(request.headers)}")
+        
+        # Parse request body
+        request_data = await request.json()
+        print(f"[TTS-ELEVENLABS-DEBUG] Request data: {request_data}")
+        
+        session_id = request_data.get("session_id")
+        msg = request_data.get("text")
+        voice_id = request_data.get("voice_id", "21m00Tcm4TlvDq8ikWAM")  # Default Rachel voice
+        stability = request_data.get("stability", 0.5)
+        similarity_boost = request_data.get("similarity_boost", 0.8)
+        
+        print(f"[TTS-ELEVENLABS-DEBUG] Extracted - session_id: '{session_id}', text: '{msg}', voice_id: '{voice_id}'")
+        
+        if not session_id or not msg:
+            error_msg = f"Missing session_id or text - session_id: {session_id}, text: {msg}"
+            print(f"[TTS-ELEVENLABS-ERROR] {error_msg}")
+            raise HTTPException(status_code=400, detail="Missing session_id or text")
+        
+        # Check if WebSocket connection exists
+        is_connected = ws_manager.is_connected(session_id)
+        print(f"[TTS-ELEVENLABS-DEBUG] WebSocket connection check for {session_id}: {is_connected}")
+        
+        if not is_connected:
+            error_msg = f"No WebSocket connection for session {session_id}"
+            print(f"[TTS-ELEVENLABS-ERROR] {error_msg}")
+            # List active connections for debugging
+            active_connections = list(ws_manager.active_connections.keys())
+            print(f"[TTS-ELEVENLABS-DEBUG] Active connections: {active_connections}")
+            raise HTTPException(status_code=404, detail=error_msg)
+        
+        print(f"[TTS-ELEVENLABS-SUCCESS] Starting ElevenLabs TTS for session: {session_id}, msg: '{msg}'")
+        
+        # Start ElevenLabs TTS streaming in background
+        task = asyncio.create_task(stream_tts_elevenlabs(
+            session_id, msg, ws_manager, voice_id, stability, similarity_boost
+        ))
+        active_tasks[session_id] = task
+        
+        # Return immediate status response
+        return JSONResponse({
+            "status": "success",
+            "message": "ElevenLabs TTS generation started",
+            "session_id": session_id,
+            "provider": "elevenlabs",
+            "voice_id": voice_id
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERROR] ElevenLabs TTS request failed: {e}")
+        raise HTTPException(status_code=500, detail=f"ElevenLabs TTS generation failed: {str(e)}")
 
 @router.post("/upload-and-transcribe-wav")
 async def upload_and_transcribe_wav_file(
@@ -278,11 +395,11 @@ async def upload_and_transcribe_wav_file(
         
         # Add to I/O table
         io_tbl = InputAndOutputTable(debug=app_debug, verbose=app_verbose)
-        io_tbl.add_entry(
-            input_text=f"WAV file: {file.filename}",
+        io_tbl.insert_io_row(
             input_type="stt_wav",
-            output_text=processed_text,
-            output_type="transcription"
+            input=f"WAV file: {file.filename}",
+            output_raw=processed_text,
+            output_final=processed_text
         )
         
         # Clean up temp file
@@ -379,6 +496,167 @@ async def stream_tts_hybrid(session_id: str, msg: str, ws_manager: WebSocketMana
                     "type": "error", 
                     "text": f"TTS error: {str(e)}",
                     "status": "error"
+                })
+            except:
+                pass  # Connection might be lost
+
+async def stream_tts_elevenlabs(
+    session_id: str, 
+    msg: str, 
+    ws_manager: WebSocketManager,
+    voice_id: str = "21m00Tcm4TlvDq8ikWAM",
+    stability: float = 0.5,
+    similarity_boost: float = 0.8
+):
+    """
+    ElevenLabs WebSocket streaming: Direct WebSocket connection to ElevenLabs API.
+    Provides low-latency streaming optimized for conversational AI with ~150-250ms total latency.
+    
+    Args:
+        session_id: Session ID for WebSocket connection
+        msg: Text to convert to speech
+        ws_manager: WebSocket manager instance
+        voice_id: ElevenLabs voice ID (default: Rachel)
+        stability: Voice stability setting (0.0-1.0)
+        similarity_boost: Voice similarity boost (0.0-1.0)
+    """
+    websocket = ws_manager.active_connections.get(session_id)
+    if not websocket:
+        print(f"[ERROR] No WebSocket connection for session {session_id}")
+        return
+    
+    try:
+        # Get ElevenLabs API key using COSA utility
+        api_key = du.get_api_key("eleven11")
+        if not api_key:
+            raise ValueError("ElevenLabs API key not available")
+        
+        print(f"[TTS-ELEVENLABS] Starting generation for: '{msg}' with voice {voice_id}")
+        
+        # Send status update
+        await websocket.send_json({
+            "type": "status",
+            "text": "Connecting to ElevenLabs...",
+            "status": "loading",
+            "provider": "elevenlabs"
+        })
+        
+        # ElevenLabs WebSocket streaming endpoint
+        elevenlabs_ws_url = f"wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id=eleven_flash_v2_5"
+        
+        # Connect to ElevenLabs WebSocket with authentication header
+        elevenlabs_ws = await websockets.connect(
+            elevenlabs_ws_url,
+            additional_headers={"xi-api-key": api_key}
+        )
+        
+        async with elevenlabs_ws:
+            
+            print(f"[TTS-ELEVENLABS] Connected to ElevenLabs WebSocket")
+            
+            # Send configuration message to ElevenLabs
+            config_message = {
+                "text": " ",  # Initial space to start stream
+                "voice_settings": {
+                    "stability": stability,
+                    "similarity_boost": similarity_boost
+                },
+                "generation_config": {
+                    "chunk_length_schedule": [120, 160, 250, 290]  # Optimized for low latency
+                }
+            }
+            
+            await elevenlabs_ws.send(json.dumps(config_message))
+            
+            # Send the actual text
+            text_message = {
+                "text": msg,
+                "try_trigger_generation": True
+            }
+            
+            await elevenlabs_ws.send(json.dumps(text_message))
+            
+            # Send end-of-stream marker
+            await elevenlabs_ws.send(json.dumps({"text": ""}))
+            
+            # Update status
+            await websocket.send_json({
+                "type": "status",
+                "text": "Streaming audio from ElevenLabs...",
+                "status": "streaming",
+                "provider": "elevenlabs"
+            })
+            
+            chunk_count = 0
+            start_time = time.time()
+            
+            # Stream audio chunks from ElevenLabs to client
+            async for message in elevenlabs_ws:
+                # Check if client WebSocket is still connected
+                if not ws_manager.is_connected(session_id):
+                    print(f"[TTS-ELEVENLABS] Client connection lost for {session_id}")
+                    break
+                
+                try:
+                    # Parse ElevenLabs message
+                    data = json.loads(message)
+                    
+                    if data.get("audio"):
+                        # Decode base64 audio chunk
+                        audio_chunk = base64.b64decode(data["audio"])
+                        
+                        # Forward audio chunk to client WebSocket
+                        await websocket.send_bytes(audio_chunk)
+                        chunk_count += 1
+                        
+                    elif data.get("isFinal"):
+                        # End of stream
+                        print(f"[TTS-ELEVENLABS] Stream complete")
+                        break
+                        
+                    elif data.get("error"):
+                        # ElevenLabs error
+                        error_msg = data.get("error", "Unknown ElevenLabs error")
+                        print(f"[TTS-ELEVENLABS] ElevenLabs error: {error_msg}")
+                        raise Exception(f"ElevenLabs API error: {error_msg}")
+                        
+                except json.JSONDecodeError:
+                    # Handle binary data if any
+                    print(f"[TTS-ELEVENLABS] Received non-JSON message (possibly binary)")
+                    continue
+                
+            # Send completion signal
+            await websocket.send_json({
+                "type": "audio_complete",
+                "text": f"ElevenLabs streaming complete ({chunk_count} chunks, {time.time() - start_time:.1f}s)",
+                "status": "success",
+                "provider": "elevenlabs"
+            })
+            
+            print(f"[TTS-ELEVENLABS] ✓ Complete - {chunk_count} chunks in {time.time() - start_time:.2f}s")
+            
+    except websockets.exceptions.ConnectionClosed:
+        print(f"[TTS-ELEVENLABS] ElevenLabs WebSocket connection closed")
+        if websocket:
+            try:
+                await websocket.send_json({
+                    "type": "error",
+                    "text": "ElevenLabs connection closed",
+                    "status": "error",
+                    "provider": "elevenlabs"
+                })
+            except:
+                pass
+                
+    except Exception as e:
+        print(f"[TTS-ELEVENLABS] Error: {e}")
+        if websocket:
+            try:
+                await websocket.send_json({
+                    "type": "error", 
+                    "text": f"ElevenLabs TTS error: {str(e)}",
+                    "status": "error",
+                    "provider": "elevenlabs"
                 })
             except:
                 pass  # Connection might be lost

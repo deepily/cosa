@@ -34,7 +34,7 @@ async def health_check():
     """
     return {
         "status": "healthy",
-        "service": "genie-in-the-box-fastapi",
+        "service": "lupin-fastapi",
         "timestamp": datetime.now().isoformat(),
         "version": "0.1.0"
     }
@@ -86,7 +86,7 @@ async def init():
         import fastapi_app.main as main_module
         
         # Refresh configuration manager
-        config_mgr = ConfigurationManager(env_var_name="GIB_CONFIG_MGR_CLI_ARGS")
+        config_mgr = ConfigurationManager(env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS")
         config_mgr.print_configuration(brackets=True)
         
         # Reload snapshots using the global snapshot manager
