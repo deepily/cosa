@@ -7,6 +7,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from datetime import datetime
 import json
 import asyncio
+import re
 
 # Import dependencies
 from cosa.rest.auth import get_current_user
@@ -29,6 +30,26 @@ def get_app_debug():
     """Dependency to get debug settings"""
     import fastapi_app.main as main_module
     return main_module.app_debug, main_module.app_verbose
+
+def is_valid_session_id(session_id: str) -> bool:
+    """
+    Validate session ID format.
+    
+    Session IDs should be in the format: adjective noun (e.g., 'wise penguin')
+    
+    Args:
+        session_id: The session ID to validate
+        
+    Returns:
+        bool: True if valid format, False otherwise
+    """
+    # Check it's not empty or just whitespace
+    if not session_id or not session_id.strip():
+        return False
+    
+    # Check format: word word (with a single space)
+    pattern = r'^[a-z]+\s[a-z]+$'
+    return bool(re.match(pattern, session_id.lower()))
 
 @router.get("/api/auth-test")
 async def auth_test(current_user: dict = Depends(get_current_user)):
@@ -73,6 +94,12 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     active_tasks = main_module.active_tasks
     app_debug = main_module.app_debug
     app_verbose = main_module.app_verbose
+    
+    # Validate session ID format
+    if not is_valid_session_id(session_id):
+        await websocket.close(code=1008, reason="Invalid session ID format")
+        print(f"[WS] Rejected connection with invalid session ID: {session_id}")
+        return
     
     await websocket.accept()
     
@@ -155,6 +182,12 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
     websocket_manager = main_module.websocket_manager
     app_debug = main_module.app_debug
     
+    # Validate session ID format
+    if not is_valid_session_id(session_id):
+        await websocket.close(code=1008, reason="Invalid session ID format")
+        print(f"[WS-QUEUE] Rejected connection with invalid session ID: {session_id}")
+        return
+    
     await websocket.accept()
     print(f"[WS-QUEUE] Queue WebSocket connected for session: {session_id}")
     
@@ -178,8 +211,11 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
             user_info = await verify_firebase_token(auth_message["token"])
             user_id = user_info["uid"]
             
-            # Connect with user association
-            websocket_manager.connect(websocket, session_id, user_id)
+            # Extract subscribed events from auth message
+            subscribed_events = auth_message.get("subscribed_events", ["*"])
+            
+            # Connect with user association and subscriptions
+            websocket_manager.connect(websocket, session_id, user_id, subscribed_events)
             print(f"[WS-QUEUE] Authenticated session [{session_id}] for user [{user_id}]")
             
             # Send auth success
@@ -225,6 +261,16 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
                     await websocket.send_json({
                         "type": "pong",
                         "timestamp": datetime.now().isoformat()
+                    })
+                elif message.get("type") == "update_subscriptions":
+                    # Handle subscription updates
+                    events = message.get("events", [])
+                    action = message.get("action", "replace")
+                    success = websocket_manager.update_subscriptions(session_id, events, action)
+                    await websocket.send_json({
+                        "type": "subscription_update",
+                        "success": success,
+                        "subscriptions": websocket_manager.session_subscriptions.get(session_id, [])
                     })
                     
             except WebSocketDisconnect:
