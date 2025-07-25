@@ -75,7 +75,15 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     app_verbose = main_module.app_verbose
     
     await websocket.accept()
-    websocket_manager.connect(websocket, session_id)
+    
+    # For now, we need to associate the audio WebSocket with a user
+    # In the future, this should be done via authentication
+    # For testing, we'll use the default user ID
+    user_id = "ricardo_felipe_ruiz_6bdc"  # TODO: Get from authentication
+    websocket_manager.connect(websocket, session_id, user_id)
+    
+    if app_debug:
+        print( f"[WEBSOCKET] New connection on /ws/{session_id} endpoint (basic audio WebSocket) for user {user_id}" )
     
     print(f"[WS] WebSocket connected for session: {session_id}")
     
@@ -145,9 +153,13 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
     # Get dependencies from main module
     import fastapi_app.main as main_module
     websocket_manager = main_module.websocket_manager
+    app_debug = main_module.app_debug
     
     await websocket.accept()
     print(f"[WS-QUEUE] Queue WebSocket connected for session: {session_id}")
+    
+    if app_debug:
+        print( f"[WEBSOCKET] New connection on /ws/queue/{session_id} endpoint (authenticated queue WebSocket)" )
     
     # Wait for authentication message
     try:

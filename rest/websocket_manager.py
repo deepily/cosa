@@ -1,6 +1,6 @@
 from fastapi import WebSocket
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Optional
 import asyncio
 
 
@@ -19,6 +19,21 @@ class WebSocketManager:
         self.session_to_user: Dict[str, str] = {}
         # Map user_id to list of their session_ids
         self.user_sessions: Dict[str, list] = {}
+        # Store reference to main event loop for thread-safe operations
+        self.main_loop: Optional[asyncio.AbstractEventLoop] = None
+    
+    def set_event_loop( self, loop: asyncio.AbstractEventLoop ):
+        """
+        Store reference to the main event loop for thread-safe operations.
+        
+        This should be called during application startup to enable safe
+        WebSocket emissions from background threads.
+        
+        Args:
+            loop: The main asyncio event loop from FastAPI
+        """
+        self.main_loop = loop
+        print( "[WS] Event loop reference stored for thread-safe operations" )
     
     def connect( self, websocket: WebSocket, session_id: str, user_id: str = None ):
         """
@@ -147,28 +162,35 @@ class WebSocketManager:
     
     def emit( self, event: str, data: dict ):
         """
-        Synchronous wrapper for emit functionality.
+        Thread-safe synchronous wrapper for emit functionality.
         
         This method is called by COSA queues which expect synchronous Socket.IO-style emit.
-        It creates an async task to handle the actual WebSocket communication.
+        Uses asyncio.run_coroutine_threadsafe to safely schedule the coroutine
+        on the main event loop from any thread.
         
         Args:
             event: The event type (e.g., 'todo_update', 'done_update')
             data: The data to send with the event
         """
-        # Create async task to handle the emission
+        if not self.main_loop:
+            print( f"[ERROR] No event loop reference - cannot emit {event}" )
+            return
+        
+        if not self.main_loop.is_running():
+            print( f"[ERROR] Event loop not running - cannot emit {event}" )
+            return
+        
         try:
-            # Get the current event loop or create one if needed
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If loop is already running, create a task
-                asyncio.create_task( self._async_emit( event, data ) )
-            else:
-                # If no loop is running, run the coroutine
-                loop.run_until_complete( self._async_emit( event, data ) )
-        except RuntimeError:
-            # If we can't get an event loop, create a new one
-            asyncio.run( self._async_emit( event, data ) )
+            # Schedule coroutine on main event loop from any thread
+            future = asyncio.run_coroutine_threadsafe(
+                self._async_emit( event, data ),
+                self.main_loop
+            )
+            # Don't wait for result to avoid blocking
+            if hasattr( self, 'debug' ) and self.debug:
+                print( f"[WS] Scheduled emission of {event}" )
+        except Exception as e:
+            print( f"[ERROR] Failed to schedule emission: {e}" )
     
     async def _async_emit( self, event: str, data: dict ):
         """
@@ -180,23 +202,35 @@ class WebSocketManager:
     
     def emit_to_user_sync( self, user_id: str, event: str, data: dict ):
         """
-        Synchronous wrapper for emit_to_user.
+        Thread-safe synchronous wrapper for emit_to_user.
         
         This method is called by COSA queues which expect synchronous emit.
+        Uses asyncio.run_coroutine_threadsafe to safely schedule the coroutine
+        on the main event loop from any thread.
         
         Args:
             user_id: The user ID to send to
             event: The event type
             data: The data to send
         """
+        if not self.main_loop:
+            print( f"[ERROR] No event loop reference - cannot emit {event} to user {user_id}" )
+            return
+        
+        if not self.main_loop.is_running():
+            print( f"[ERROR] Event loop not running - cannot emit {event} to user {user_id}" )
+            return
+        
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.create_task( self.emit_to_user( user_id, event, data ) )
-            else:
-                loop.run_until_complete( self.emit_to_user( user_id, event, data ) )
-        except RuntimeError:
-            asyncio.run( self.emit_to_user( user_id, event, data ) )
+            # Schedule coroutine on main event loop from any thread
+            future = asyncio.run_coroutine_threadsafe(
+                self.emit_to_user( user_id, event, data ),
+                self.main_loop
+            )
+            # Don't wait for result to avoid blocking the COSA thread
+            print( f"[WS] Scheduled emission of {event} to user {user_id}" )
+        except Exception as e:
+            print( f"[ERROR] Failed to schedule emission to user {user_id}: {e}" )
     
     def is_user_connected( self, user_id: str ) -> bool:
         """

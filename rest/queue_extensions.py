@@ -69,9 +69,8 @@ def push_job_with_user(todo_queue, question: str, websocket_id: str, user_id: st
     Returns:
         str: Result message from push_job
     """
-    # Call the original push_job method
-    # Note: In production, push_job should be modified to accept user_id
-    result = todo_queue.push_job(question, websocket_id)
+    # Call the modified push_job method with user_id
+    result = todo_queue.push_job(question, websocket_id, user_id)
     
     # Extract job ID from the queue (last pushed item)
     if todo_queue.size() > 0:

@@ -356,29 +356,29 @@ class FifoQueue:
         
         return html_list
     
-    def _emit_audio( self, msg: str, websocket_id: str = None ) -> None:
+    def _emit_speech( self, msg: str, websocket_id: str = None ) -> None:
         """
-        Helper method to emit audio through the callback.
+        Helper method to emit speech through the callback.
         
         Requires:
-            - Subclass has self.emit_audio_callback attribute
+            - Subclass has self.emit_speech_callback attribute
             
         Ensures:
-            - Calls emit_audio_callback if available
+            - Calls emit_speech_callback if available
             - Handles exceptions gracefully
             
         Args:
-            msg: The message to convert to audio
+            msg: The message to convert to speech
             websocket_id: The websocket to send to (None means broadcast to all)
             
         Raises:
             - None (exceptions handled internally)
         """
-        if hasattr( self, 'emit_audio_callback' ) and self.emit_audio_callback:
+        if hasattr( self, 'emit_speech_callback' ) and self.emit_speech_callback:
             try:
-                self.emit_audio_callback( msg, websocket_id )
+                self.emit_speech_callback( msg, websocket_id )
             except Exception as e:
-                print( f"[ERROR] emit_audio_callback failed: {e}" )
+                print( f"[ERROR] emit_speech_callback failed: {e}" )
     
     def _emit_queue_update( self ) -> None:
         """

@@ -1,5 +1,5 @@
 """
-Audio processing endpoints (STT/TTS)
+Speech processing endpoints (STT/TTS)
 Generated on: 2025-01-24
 """
 
@@ -25,7 +25,7 @@ from cosa.memory.input_and_output_table import InputAndOutputTable
 from cosa.rest import multimodal_munger as mmm
 from cosa.config.configuration_manager import ConfigurationManager
 
-router = APIRouter(prefix="/api", tags=["audio"])
+router = APIRouter(prefix="/api", tags=["speech"])
 
 # Global dependencies (temporary access via main module)
 def get_whisper_pipeline():
@@ -180,7 +180,7 @@ async def upload_and_transcribe_mp3_file(
         print(f"[ERROR] MP3 transcription failed: {e}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
-@router.post("/get-audio")
+@router.post("/get-speech")
 async def get_tts_audio(
     request: Request,
     ws_manager: WebSocketManager = Depends(get_websocket_manager),
@@ -207,7 +207,7 @@ async def get_tts_audio(
     """
     try:
         # Enhanced debugging for TTS requests
-        print(f"[TTS-DEBUG] POST /api/get-audio called from {request.client.host}")
+        print(f"[TTS-DEBUG] POST /api/get-speech called from {request.client.host}")
         print(f"[TTS-DEBUG] Headers: {dict(request.headers)}")
         
         # Parse request body
@@ -255,7 +255,7 @@ async def get_tts_audio(
         print(f"[ERROR] TTS request failed: {e}")
         raise HTTPException(status_code=500, detail=f"TTS generation failed: {str(e)}")
 
-@router.post("/get-audio-elevenlabs")
+@router.post("/get-speech-elevenlabs")
 async def get_tts_audio_elevenlabs(
     request: Request,
     ws_manager: WebSocketManager = Depends(get_websocket_manager),
@@ -282,7 +282,7 @@ async def get_tts_audio_elevenlabs(
     """
     try:
         # Enhanced debugging for ElevenLabs TTS requests
-        print(f"[TTS-ELEVENLABS-DEBUG] POST /api/get-audio-elevenlabs called from {request.client.host}")
+        print(f"[TTS-ELEVENLABS-DEBUG] POST /api/get-speech-elevenlabs called from {request.client.host}")
         print(f"[TTS-ELEVENLABS-DEBUG] Headers: {dict(request.headers)}")
         
         # Parse request body

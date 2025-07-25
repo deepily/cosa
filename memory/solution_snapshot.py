@@ -146,7 +146,7 @@ class SolutionSnapshot( RunnableCode ):
                   id_hash: str="", solution_summary: str="", code: list[str]=[], code_returns: str="", code_example: str="", code_type: str="raw", thoughts: str="",
                   programming_language: str="Python", language_version: str="3.10",
                   question_embedding: list[float]=[ ], question_gist_embedding: list[float]=[ ], solution_embedding: list[float]=[ ], code_embedding: list[float]=[ ], thoughts_embedding: list[float]=[ ],
-                  solution_directory: str="/src/conf/long-term-memory/solutions/", solution_file: Optional[str]=None, debug: bool=False, verbose: bool=False
+                  solution_directory: str="/src/conf/long-term-memory/solutions/", solution_file: Optional[str]=None, user_id: str="ricardo_felipe_ruiz_6bdc", debug: bool=False, verbose: bool=False
                   ) -> None:
         """
         Initialize a solution snapshot.
@@ -155,12 +155,14 @@ class SolutionSnapshot( RunnableCode ):
             - All string parameters are strings or empty
             - All list parameters are lists or empty
             - Embeddings are lists of floats when provided
+            - user_id must be a valid system ID
             
         Ensures:
             - Initializes all fields with provided or default values
             - Generates missing embeddings if content provided
             - Creates unique ID hash if not provided
             - Writes to file if embeddings were generated
+            - user_id is stored for ownership tracking but excluded from serialization
             
         Raises:
             - None (handles errors internally)
@@ -184,6 +186,7 @@ class SolutionSnapshot( RunnableCode ):
         self.answer_conversational = answer_conversational
         self.error                 = error
         self.routing_command       = routing_command
+        self.user_id               = user_id
         
         # Is there is no synonymous questions to be found then just recycle the current question
         if len( synonymous_questions ) == 0:
@@ -521,7 +524,7 @@ class SolutionSnapshot( RunnableCode ):
         """
         # TODO: decide what we're going to exclude from serialization, and why or why not!
         # Right now I'm just doing this for the sake of expediency as I'm playing with class inheritance for agents
-        fields_to_exclude = [ "prompt_response", "prompt_response_dict", "code_response_dict", "phind_tgi_url", "config_mgr", "_embedding_mgr" ]
+        fields_to_exclude = [ "prompt_response", "prompt_response_dict", "code_response_dict", "phind_tgi_url", "config_mgr", "_embedding_mgr", "websocket_id", "user_id" ]
         data = { field: value for field, value in self.__dict__.items() if field not in fields_to_exclude }
         return json.dumps( data )
         
