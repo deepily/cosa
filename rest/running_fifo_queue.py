@@ -13,7 +13,6 @@ import time
 import traceback
 import pprint
 from typing import Optional, Any
-from cosa.rest.queue_extensions import user_job_tracker
 
 class RunningFifoQueue( FifoQueue ):
     """
@@ -56,46 +55,6 @@ class RunningFifoQueue( FifoQueue ):
         self.inject_bugs         = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
         self.io_tbl              = InputAndOutputTable()
     
-    def _emit_speech_to_user( self, job, message: str ) -> None:
-        """
-        Emit speech to the user who owns the job.
-        
-        Requires:
-            - job has an id_hash attribute
-            - message is a non-empty string
-            
-        Ensures:
-            - Speech is emitted only to the job owner
-            - Falls back to broadcast if no user found
-            
-        Raises:
-            - None (handles errors internally)
-        """
-        try:
-            if hasattr( job, 'id_hash' ):
-                user_id = user_job_tracker.get_user_for_job( job.id_hash )
-                if user_id:
-                    # Emit to specific user
-                    speech_data = {
-                        "text": message,
-                        "timestamp": du.get_current_datetime()
-                    }
-                    self.websocket_mgr.emit_to_user_sync( user_id, "speech_update", speech_data )
-                    print( f"[RUNNING-QUEUE] Emitted speech to user {user_id}: '{message[:50]}...'" )
-                    return
-            
-            # Fallback: use the legacy callback if available
-            if self.emit_speech_callback:
-                self.emit_speech_callback( message )
-                print( f"[RUNNING-QUEUE] Fallback: used legacy speech callback for: '{message[:50]}...'" )
-            else:
-                print( f"[RUNNING-QUEUE] No audio emission method available for: '{message[:50]}...'" )
-                
-        except Exception as e:
-            print( f"[RUNNING-QUEUE] Error emitting audio: {e}" )
-            # Final fallback
-            if self.emit_speech_callback:
-                self.emit_speech_callback( message )
     
     def enter_running_loop( self ) -> None:
         """
@@ -221,7 +180,7 @@ class RunningFifoQueue( FifoQueue ):
         
         self.pop()  # Auto-emits 'run_update'
         
-        self._emit_speech_to_user( running_job, "I'm sorry Dave, I'm afraid I can't do that. Please check your logs" )
+        self._emit_speech( "I'm sorry Dave, I'm afraid I can't do that. Please check your logs", job=running_job )
         
         self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
         
@@ -267,7 +226,7 @@ class RunningFifoQueue( FifoQueue ):
         if running_job.code_ran_to_completion() and running_job.formatter_ran_to_completion():
             
             # If we've arrived at this point, then we've successfully run the agentic part of this job
-            self._emit_speech_to_user( running_job, running_job.answer_conversational )
+            self._emit_speech( running_job.answer_conversational, job=running_job )
             agent_timer.print( "Done!", use_millis=True )
             
             # Only the ReceptionistAgent and WeatherAgent are not being serialized as a solution snapshot
@@ -338,7 +297,7 @@ class RunningFifoQueue( FifoQueue ):
         
         formatted_output = running_job.run_formatter()
         print( formatted_output )
-        self._emit_speech_to_user( running_job, running_job.answer_conversational )
+        self._emit_speech( running_job.answer_conversational, job=running_job )
         
         self.pop()  # Auto-emits 'run_update'
         self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'

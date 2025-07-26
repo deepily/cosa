@@ -131,6 +131,28 @@ class WebSocketManager:
                 if not self.user_sessions[user_id]:
                     del self.user_sessions[user_id]
     
+    def register_session_user( self, session_id: str, user_id: str ):
+        """
+        Register a session-to-user association without a WebSocket connection.
+        
+        This is used when a TTS request comes in with authentication, allowing
+        us to associate the session with a user before the audio WebSocket connects.
+        
+        Args:
+            session_id: The session ID to register
+            user_id: The user ID to associate with the session
+        """
+        # Store the association even if WebSocket hasn't connected yet
+        self.session_to_user[session_id] = user_id
+        
+        # Track user sessions
+        if user_id not in self.user_sessions:
+            self.user_sessions[user_id] = []
+        if session_id not in self.user_sessions[user_id]:
+            self.user_sessions[user_id].append( session_id )
+        
+        print( f"[WS] Registered session {session_id} for user {user_id} (pre-WebSocket)" )
+    
     async def async_emit( self, event: str, data: dict ):
         """
         Emit an event to all connected WebSocket clients.

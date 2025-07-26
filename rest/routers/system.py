@@ -162,3 +162,72 @@ async def auth_test(current_user: dict = Depends(get_current_user)):
         "user": current_user,
         "timestamp": datetime.now().isoformat()
     }
+
+@router.get("/api/websocket-sessions")
+async def get_websocket_sessions(
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get information about all active WebSocket sessions.
+    
+    Preconditions:
+        - Valid authentication token must be provided
+        - WebSocketManager must be initialized
+        
+    Returns:
+        dict: Contains list of active sessions with metrics
+    """
+    # Get WebSocketManager from main module
+    import fastapi_app.main as main_module
+    websocket_manager = main_module.websocket_manager
+    
+    sessions = websocket_manager.get_all_sessions_info()
+    
+    # Calculate metrics
+    total_sessions = len(sessions)
+    user_sessions = {}
+    for session in sessions:
+        user_id = session.get('user_id')
+        if user_id:
+            if user_id not in user_sessions:
+                user_sessions[user_id] = 0
+            user_sessions[user_id] += 1
+    
+    return {
+        "total_sessions": total_sessions,
+        "unique_users": len(user_sessions),
+        "users_with_multiple_sessions": sum(1 for count in user_sessions.values() if count > 1),
+        "single_session_policy": websocket_manager.single_session_per_user,
+        "sessions": sessions,
+        "timestamp": datetime.now().isoformat()
+    }
+
+@router.post("/api/websocket-sessions/cleanup")
+async def cleanup_stale_sessions(
+    max_age_hours: int = 24,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Clean up stale WebSocket sessions older than specified age.
+    
+    Preconditions:
+        - Valid authentication token must be provided
+        - WebSocketManager must be initialized
+        
+    Args:
+        max_age_hours: Maximum age in hours before a session is considered stale
+        
+    Returns:
+        dict: Number of sessions cleaned up
+    """
+    # Get WebSocketManager from main module
+    import fastapi_app.main as main_module
+    websocket_manager = main_module.websocket_manager
+    
+    cleaned = websocket_manager.cleanup_stale_sessions(max_age_hours)
+    
+    return {
+        "sessions_cleaned": cleaned,
+        "max_age_hours": max_age_hours,
+        "timestamp": datetime.now().isoformat()
+    }

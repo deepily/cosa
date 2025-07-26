@@ -70,8 +70,8 @@ async def auth_test(current_user: dict = Depends(get_current_user)):
         "timestamp": datetime.now().isoformat()
     }
 
-@router.websocket("/ws/{session_id}")
-async def websocket_endpoint(websocket: WebSocket, session_id: str):
+@router.websocket("/ws/audio/{session_id}")
+async def websocket_audio_endpoint(websocket: WebSocket, session_id: str):
     """
     WebSocket endpoint for real-time TTS audio streaming.
     
@@ -98,27 +98,37 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     # Validate session ID format
     if not is_valid_session_id(session_id):
         await websocket.close(code=1008, reason="Invalid session ID format")
-        print(f"[WS] Rejected connection with invalid session ID: {session_id}")
+        print(f"[WS-AUDIO] Rejected connection with invalid session ID: {session_id}")
         return
     
     await websocket.accept()
     
-    # For now, we need to associate the audio WebSocket with a user
-    # In the future, this should be done via authentication
-    # For testing, we'll use the default user ID
-    user_id = "ricardo_felipe_ruiz_6bdc"  # TODO: Get from authentication
-    websocket_manager.connect(websocket, session_id, user_id)
+    # Check if this session has been pre-registered with a user (from TTS request)
+    user_id = websocket_manager.session_to_user.get(session_id)
+    
+    # Audio WebSocket should only receive audio-related events
+    audio_events = ["audio_status", "audio_complete", "ping"]
+    
+    if not user_id:
+        # If no pre-registration, audio WebSocket connections don't require immediate auth
+        # The user association will be established when TTS request comes in
+        print(f"[WS-AUDIO] No pre-registered user for session {session_id}, connecting without user association")
+        websocket_manager.connect(websocket, session_id, subscribed_events=audio_events)
+    else:
+        print(f"[WS-AUDIO] Found pre-registered user {user_id} for session {session_id}")
+        websocket_manager.connect(websocket, session_id, user_id, subscribed_events=audio_events)
     
     if app_debug:
-        print( f"[WEBSOCKET] New connection on /ws/{session_id} endpoint (basic audio WebSocket) for user {user_id}" )
+        user_info = user_id if user_id else "no-user-yet"
+        print( f"[WEBSOCKET] New connection on /ws/audio/{session_id} endpoint (audio streaming WebSocket) for user {user_info}" )
     
-    print(f"[WS] WebSocket connected for session: {session_id}")
+    print(f"[WS-AUDIO] Audio WebSocket connected for session: {session_id}")
     
     try:
         # Send connection confirmation
         await websocket.send_json({
-            "type": "status",
-            "text": f"WebSocket connected for session {session_id}",
+            "type": "audio_status",
+            "text": f"Audio WebSocket connected for session {session_id}",
             "status": "success"
         })
         
@@ -130,13 +140,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 message = json.loads(data)
                 
                 if app_debug and app_verbose: 
-                    print(f"[WS] Received message from {session_id}: {message}")
+                    print(f"[WS-AUDIO] Received message from {session_id}: {message}")
                     
             except WebSocketDisconnect:
                 break
             except Exception as e:
                 if app_debug: 
-                    print(f"[WS] Error handling message from {session_id}: {e}")
+                    print(f"[WS-AUDIO] Error handling message from {session_id}: {e}")
                 break
                 
     except WebSocketDisconnect:
@@ -144,7 +154,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     finally:
         # Cancel any active streaming tasks for this session
         if session_id in active_tasks:
-            print(f"[WS] Cancelling active streaming task for session: {session_id}")
+            print(f"[WS-AUDIO] Cancelling active streaming task for session: {session_id}")
             active_tasks[session_id].cancel()
             try:
                 await active_tasks[session_id]
@@ -154,7 +164,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         
         # Clean up connection
         websocket_manager.disconnect(session_id)
-        print(f"[WS] WebSocket disconnected for session: {session_id}")
+        print(f"[WS-AUDIO] Audio WebSocket disconnected for session: {session_id}")
 
 @router.websocket("/ws/queue/{session_id}")
 async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):

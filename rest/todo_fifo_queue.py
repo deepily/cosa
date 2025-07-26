@@ -239,7 +239,7 @@ class TodoFifoQueue( FifoQueue ):
             best_snapshot.last_question_asked = last_question_asked
             
             self._dump_code( best_snapshot )
-            return self._queue_best_snapshot( best_snapshot, best_score )
+            return self._queue_best_snapshot( best_snapshot, best_score, user_id )
                 
         # if we're not running the previous best snapshot, then we need to find a similar one before queuing the job
         else:
@@ -285,7 +285,7 @@ class TodoFifoQueue( FifoQueue ):
                 msg = f"Is that the same as: {best_snapshot.question}?"
                 du.print_banner( msg )
                 print( "Blocking object pushed onto queue, waiting for response..." )
-                self._emit_speech( msg, websocket_id )
+                self._emit_speech( msg, user_id=user_id, websocket_id=websocket_id )
                 return msg
             
             # This is an exact match, so queue it up
@@ -294,7 +294,7 @@ class TodoFifoQueue( FifoQueue ):
                 # update last question asked before we throw it on the queue
                 best_snapshot.last_question_asked = ( salutations + ' ' + question ).strip()
                 self._dump_code( best_snapshot )
-                return self._queue_best_snapshot( best_snapshot, best_score )
+                return self._queue_best_snapshot( best_snapshot, best_score, user_id )
             
         else:
             
@@ -318,7 +318,7 @@ class TodoFifoQueue( FifoQueue ):
                 
                 msg = du.print_banner( f"TO DO: train and implement 'agent router go to search and summary' command {command}" )
                 print( msg )
-                self._emit_speech( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} I'm gonna ask our research librarian about that", None )
+                self._emit_speech( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} I'm gonna ask our research librarian about that", user_id=user_id )
                 search = LupinSearch( query=question_gist )
                 search.search_and_summarize_the_web()
                 msg = search.get_results( scope="summary" )
@@ -371,7 +371,7 @@ class TodoFifoQueue( FifoQueue ):
                 msg = du.print_banner( f"TO DO: Implement else case command {command}" )
                 print( msg )
                 if self.emit_speech_callback:
-                    self.emit_speech_callback( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}" )
+                    self.emit_speech_callback( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}", user_id=user_id )
                 search = LupinSearch( query=question_gist )
                 search.search_and_summarize_the_web()
                 msg = search.get_results( scope="summary" )
@@ -380,9 +380,13 @@ class TodoFifoQueue( FifoQueue ):
                 self.websocket_mgr.emit( 'notification_sound_update', { 'soundFile': '/static/gentle-gong.mp3' } )
             if agent is not None:
                 self.push( agent )
+                # Associate the agent with the user for routing
+                if hasattr( agent, 'id_hash' ):
+                    self.user_job_tracker.associate_job_with_user( agent.id_hash, user_id )
+                    print( f"[TODO-QUEUE] Associated agent {agent.id_hash} with user {user_id}" )
             
             if self.emit_speech_callback:
-                self.emit_speech_callback( msg )
+                self.emit_speech_callback( msg, user_id=user_id )
             
             return msg
             
@@ -446,7 +450,7 @@ class TodoFifoQueue( FifoQueue ):
             if len( lines_of_code ) > 0:
                 print()
                 
-    def _queue_best_snapshot( self, best_snapshot: SolutionSnapshot, best_score: float=100.0 ) -> str:
+    def _queue_best_snapshot( self, best_snapshot: SolutionSnapshot, best_score: float=100.0, user_id: str = None ) -> str:
         """
         Queue the best matching snapshot for execution.
         
@@ -480,11 +484,16 @@ class TodoFifoQueue( FifoQueue ):
         if self.size() != 0:
             suffix = "s" if self.size() > 1 else ""
             if self.emit_speech_callback:
-                self.emit_speech_callback( f"{self.size()} job{suffix} ahead of this one" )
+                self.emit_speech_callback( f"{self.size()} job{suffix} ahead of this one", user_id=user_id )
         else:
             print( "No jobs ahead of this one in the todo Q" )
         
         self.push( job )  # Auto-emits 'todo_update' via parent class
+        
+        # Associate the snapshot job with the user for routing
+        if user_id and hasattr( job, 'id_hash' ):
+            self.user_job_tracker.associate_job_with_user( job.id_hash, user_id )
+            print( f"[TODO-QUEUE] Associated snapshot job {job.id_hash} with user {user_id}" )
         
         return f'Job added to queue. Queue size [{self.size()}]'
     
