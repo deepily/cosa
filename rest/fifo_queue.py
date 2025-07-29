@@ -1,5 +1,6 @@
 from collections import OrderedDict
 from typing import Any, Optional
+from cosa.rest.queue_extensions import UserJobTracker
 
 
 class FifoQueue:
@@ -47,6 +48,9 @@ class FifoQueue:
         self.websocket_mgr   = websocket_mgr
         self.queue_name      = queue_name
         self.emit_enabled    = emit_enabled
+        
+        # User job tracking singleton for user-based routing
+        self.user_job_tracker = UserJobTracker()
         
     def pop_blocking_object( self ) -> Optional[Any]:
         """
@@ -356,29 +360,42 @@ class FifoQueue:
         
         return html_list
     
-    def _emit_audio( self, msg: str, websocket_id: str = None ) -> None:
+    def _emit_speech( self, msg: str, user_id: str = None, websocket_id: str = None, job: Any = None ) -> None:
         """
-        Helper method to emit audio through the callback.
+        Unified speech emission with smart routing.
+        
+        Priority: job context → user_id → websocket_id → broadcast
         
         Requires:
-            - Subclass has self.emit_audio_callback attribute
+            - Subclass has self.emit_speech_callback attribute
+            - job parameter (if provided) has id_hash attribute
             
         Ensures:
-            - Calls emit_audio_callback if available
+            - Determines user_id from job if available
+            - Calls emit_speech_callback with proper parameters
             - Handles exceptions gracefully
             
         Args:
-            msg: The message to convert to audio
-            websocket_id: The websocket to send to (None means broadcast to all)
+            msg: The message to convert to speech
+            user_id: Explicit user ID for routing (optional)
+            websocket_id: WebSocket session ID for routing (optional) 
+            job: Job object containing id_hash for user lookup (optional)
             
         Raises:
             - None (exceptions handled internally)
         """
-        if hasattr( self, 'emit_audio_callback' ) and self.emit_audio_callback:
+        # Determine user_id from job context if available
+        if job and hasattr( job, 'id_hash' ) and not user_id:
+            user_id = self.user_job_tracker.get_user_for_job( job.id_hash )
+            if user_id:
+                print( f"[FIFO] Resolved user_id {user_id} from job {job.id_hash}" )
+        
+        if hasattr( self, 'emit_speech_callback' ) and self.emit_speech_callback:
             try:
-                self.emit_audio_callback( msg, websocket_id )
+                # Use named parameters to ensure correct routing
+                self.emit_speech_callback( msg, user_id=user_id, websocket_id=websocket_id )
             except Exception as e:
-                print( f"[ERROR] emit_audio_callback failed: {e}" )
+                print( f"[ERROR] emit_speech_callback failed: {e}" )
     
     def _emit_queue_update( self ) -> None:
         """

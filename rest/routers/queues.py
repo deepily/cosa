@@ -10,7 +10,6 @@ from typing import Dict, Any
 
 # Import dependencies
 from cosa.rest.auth import get_current_user
-from cosa.rest.queue_extensions import push_job_with_user
 
 router = APIRouter(prefix="/api", tags=["queues"])
 
@@ -71,8 +70,8 @@ async def push(
     user_id = current_user["uid"]
     print(f"[API] /api/push called - question: '{question}', websocket_id: {websocket_id}, user_id: {user_id}")
     
-    # Push to queue with websocket_id and user_id using our wrapper
-    result = push_job_with_user(todo_queue, question, websocket_id, user_id)
+    # Push to queue with websocket_id and user_id
+    result = todo_queue.push_job(question, websocket_id, user_id)
     
     return {
         "status": "queued",

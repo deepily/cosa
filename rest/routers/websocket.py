@@ -7,6 +7,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from datetime import datetime
 import json
 import asyncio
+import re
 
 # Import dependencies
 from cosa.rest.auth import get_current_user
@@ -30,6 +31,26 @@ def get_app_debug():
     import fastapi_app.main as main_module
     return main_module.app_debug, main_module.app_verbose
 
+def is_valid_session_id(session_id: str) -> bool:
+    """
+    Validate session ID format.
+    
+    Session IDs should be in the format: adjective noun (e.g., 'wise penguin')
+    
+    Args:
+        session_id: The session ID to validate
+        
+    Returns:
+        bool: True if valid format, False otherwise
+    """
+    # Check it's not empty or just whitespace
+    if not session_id or not session_id.strip():
+        return False
+    
+    # Check format: word word (with a single space)
+    pattern = r'^[a-z]+\s[a-z]+$'
+    return bool(re.match(pattern, session_id.lower()))
+
 @router.get("/api/auth-test")
 async def auth_test(current_user: dict = Depends(get_current_user)):
     """
@@ -49,8 +70,8 @@ async def auth_test(current_user: dict = Depends(get_current_user)):
         "timestamp": datetime.now().isoformat()
     }
 
-@router.websocket("/ws/{session_id}")
-async def websocket_endpoint(websocket: WebSocket, session_id: str):
+@router.websocket("/ws/audio/{session_id}")
+async def websocket_audio_endpoint(websocket: WebSocket, session_id: str):
     """
     WebSocket endpoint for real-time TTS audio streaming.
     
@@ -74,16 +95,40 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     app_debug = main_module.app_debug
     app_verbose = main_module.app_verbose
     
-    await websocket.accept()
-    websocket_manager.connect(websocket, session_id)
+    # Validate session ID format
+    if not is_valid_session_id(session_id):
+        await websocket.close(code=1008, reason="Invalid session ID format")
+        print(f"[WS-AUDIO] Rejected connection with invalid session ID: {session_id}")
+        return
     
-    print(f"[WS] WebSocket connected for session: {session_id}")
+    await websocket.accept()
+    
+    # Check if this session has been pre-registered with a user (from TTS request)
+    user_id = websocket_manager.session_to_user.get(session_id)
+    
+    # Audio WebSocket should only receive audio-related events
+    audio_events = ["audio_status", "audio_complete", "ping"]
+    
+    if not user_id:
+        # If no pre-registration, audio WebSocket connections don't require immediate auth
+        # The user association will be established when TTS request comes in
+        print(f"[WS-AUDIO] No pre-registered user for session {session_id}, connecting without user association")
+        websocket_manager.connect(websocket, session_id, subscribed_events=audio_events)
+    else:
+        print(f"[WS-AUDIO] Found pre-registered user {user_id} for session {session_id}")
+        websocket_manager.connect(websocket, session_id, user_id, subscribed_events=audio_events)
+    
+    if app_debug:
+        user_info = user_id if user_id else "no-user-yet"
+        print( f"[WEBSOCKET] New connection on /ws/audio/{session_id} endpoint (audio streaming WebSocket) for user {user_info}" )
+    
+    print(f"[WS-AUDIO] Audio WebSocket connected for session: {session_id}")
     
     try:
         # Send connection confirmation
         await websocket.send_json({
-            "type": "status",
-            "text": f"WebSocket connected for session {session_id}",
+            "type": "audio_status",
+            "text": f"Audio WebSocket connected for session {session_id}",
             "status": "success"
         })
         
@@ -95,13 +140,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 message = json.loads(data)
                 
                 if app_debug and app_verbose: 
-                    print(f"[WS] Received message from {session_id}: {message}")
+                    print(f"[WS-AUDIO] Received message from {session_id}: {message}")
                     
             except WebSocketDisconnect:
                 break
             except Exception as e:
                 if app_debug: 
-                    print(f"[WS] Error handling message from {session_id}: {e}")
+                    print(f"[WS-AUDIO] Error handling message from {session_id}: {e}")
                 break
                 
     except WebSocketDisconnect:
@@ -109,7 +154,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     finally:
         # Cancel any active streaming tasks for this session
         if session_id in active_tasks:
-            print(f"[WS] Cancelling active streaming task for session: {session_id}")
+            print(f"[WS-AUDIO] Cancelling active streaming task for session: {session_id}")
             active_tasks[session_id].cancel()
             try:
                 await active_tasks[session_id]
@@ -119,7 +164,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         
         # Clean up connection
         websocket_manager.disconnect(session_id)
-        print(f"[WS] WebSocket disconnected for session: {session_id}")
+        print(f"[WS-AUDIO] Audio WebSocket disconnected for session: {session_id}")
 
 @router.websocket("/ws/queue/{session_id}")
 async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
@@ -145,9 +190,19 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
     # Get dependencies from main module
     import fastapi_app.main as main_module
     websocket_manager = main_module.websocket_manager
+    app_debug = main_module.app_debug
+    
+    # Validate session ID format
+    if not is_valid_session_id(session_id):
+        await websocket.close(code=1008, reason="Invalid session ID format")
+        print(f"[WS-QUEUE] Rejected connection with invalid session ID: {session_id}")
+        return
     
     await websocket.accept()
     print(f"[WS-QUEUE] Queue WebSocket connected for session: {session_id}")
+    
+    if app_debug:
+        print( f"[WEBSOCKET] New connection on /ws/queue/{session_id} endpoint (authenticated queue WebSocket)" )
     
     # Wait for authentication message
     try:
@@ -166,8 +221,11 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
             user_info = await verify_firebase_token(auth_message["token"])
             user_id = user_info["uid"]
             
-            # Connect with user association
-            websocket_manager.connect(websocket, session_id, user_id)
+            # Extract subscribed events from auth message
+            subscribed_events = auth_message.get("subscribed_events", ["*"])
+            
+            # Connect with user association and subscriptions
+            websocket_manager.connect(websocket, session_id, user_id, subscribed_events)
             print(f"[WS-QUEUE] Authenticated session [{session_id}] for user [{user_id}]")
             
             # Send auth success
@@ -213,6 +271,16 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
                     await websocket.send_json({
                         "type": "pong",
                         "timestamp": datetime.now().isoformat()
+                    })
+                elif message.get("type") == "update_subscriptions":
+                    # Handle subscription updates
+                    events = message.get("events", [])
+                    action = message.get("action", "replace")
+                    success = websocket_manager.update_subscriptions(session_id, events, action)
+                    await websocket.send_json({
+                        "type": "subscription_update",
+                        "success": success,
+                        "subscriptions": websocket_manager.session_subscriptions.get(session_id, [])
                     })
                     
             except WebSocketDisconnect:

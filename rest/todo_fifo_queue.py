@@ -21,6 +21,7 @@ from cosa.utils import util_xml as dux
 
 
 from cosa.memory.solution_snapshot import SolutionSnapshot
+from cosa.rest.queue_extensions import user_job_tracker
 
 class TodoFifoQueue( FifoQueue ):
     """
@@ -29,7 +30,7 @@ class TodoFifoQueue( FifoQueue ):
     Handles question parsing, agent routing, and snapshot management for
     conversational AI tasks.
     """
-    def __init__( self, websocket_mgr: Any, snapshot_mgr: Any, app: Any, config_mgr: Optional[Any]=None, emit_audio_callback: Optional[Any]=None, debug: bool=False, verbose: bool=False, silent: bool=False ) -> None:
+    def __init__( self, websocket_mgr: Any, snapshot_mgr: Any, app: Any, config_mgr: Optional[Any]=None, emit_speech_callback: Optional[Any]=None, debug: bool=False, verbose: bool=False, silent: bool=False ) -> None:
         """
         Initialize the todo FIFO queue.
         
@@ -38,7 +39,7 @@ class TodoFifoQueue( FifoQueue ):
             - snapshot_mgr is a valid snapshot manager or None for testing
             - app is a Flask application instance or None for testing
             - config_mgr is None or a valid ConfigurationManager
-            - emit_audio_callback is None or a callable function
+            - emit_speech_callback is None or a callable function
             
         Ensures:
             - Sets up queue management components
@@ -58,7 +59,7 @@ class TodoFifoQueue( FifoQueue ):
         self.app                 = app
         self.push_counter        = 0
         self.config_mgr          = config_mgr
-        self.emit_audio_callback = emit_audio_callback
+        self.emit_speech_callback = emit_speech_callback
         
         self.auto_debug   = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
         self.inject_bugs  = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
@@ -180,13 +181,14 @@ class TodoFifoQueue( FifoQueue ):
                 if self.debug:
                     print( f"[TODO-QUEUE] Failed to send rejection notification: {e}" )
     
-    def push_job( self, question: str, websocket_id: str ) -> str:
+    def push_job( self, question: str, websocket_id: str, user_id: str = "ricardo_felipe_ruiz_6bdc" ) -> str:
         """
         Push a new job onto the queue based on the question.
         
         Requires:
             - question is a non-empty string
             - websocket_id is a non-empty string
+            - user_id is a valid system ID
             - Queue and snapshot manager are initialized
             
         Ensures:
@@ -194,7 +196,8 @@ class TodoFifoQueue( FifoQueue ):
             - Searches for similar snapshots if applicable
             - Routes to appropriate agent or snapshot
             - Returns status message
-            - Associates websocket_id with the job
+            - Associates websocket_id and user_id with the job
+            - Passes user_id to agent creation for event routing
             
         Raises:
             - None (exceptions handled internally)
@@ -236,7 +239,7 @@ class TodoFifoQueue( FifoQueue ):
             best_snapshot.last_question_asked = last_question_asked
             
             self._dump_code( best_snapshot )
-            return self._queue_best_snapshot( best_snapshot, best_score )
+            return self._queue_best_snapshot( best_snapshot, best_score, user_id )
                 
         # if we're not running the previous best snapshot, then we need to find a similar one before queuing the job
         else:
@@ -282,7 +285,7 @@ class TodoFifoQueue( FifoQueue ):
                 msg = f"Is that the same as: {best_snapshot.question}?"
                 du.print_banner( msg )
                 print( "Blocking object pushed onto queue, waiting for response..." )
-                self._emit_audio( msg, websocket_id )
+                self._emit_speech( msg, user_id=user_id, websocket_id=websocket_id )
                 return msg
             
             # This is an exact match, so queue it up
@@ -291,7 +294,7 @@ class TodoFifoQueue( FifoQueue ):
                 # update last question asked before we throw it on the queue
                 best_snapshot.last_question_asked = ( salutations + ' ' + question ).strip()
                 self._dump_code( best_snapshot )
-                return self._queue_best_snapshot( best_snapshot, best_score )
+                return self._queue_best_snapshot( best_snapshot, best_score, user_id )
             
         else:
             
@@ -315,7 +318,7 @@ class TodoFifoQueue( FifoQueue ):
                 
                 msg = du.print_banner( f"TO DO: train and implement 'agent router go to search and summary' command {command}" )
                 print( msg )
-                self._emit_audio( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} I'm gonna ask our research librarian about that", None )
+                self._emit_speech( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} I'm gonna ask our research librarian about that", user_id=user_id )
                 search = LupinSearch( query=question_gist )
                 search.search_and_summarize_the_web()
                 msg = search.get_results( scope="summary" )
@@ -323,7 +326,7 @@ class TodoFifoQueue( FifoQueue ):
             elif command == "agent router go to calendar":
                 calendar_llm_spec = self.config_mgr.get( "llm spec key for calendar agent" )
                 calendar_client = self.llm_factory.get_client( calendar_llm_spec, debug=self.debug, verbose=self.verbose )
-                agent = CalendaringAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=calendar_client, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = CalendaringAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=calendar_client, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="calendaring" )
                 ding_for_new_job = True
             elif command == "agent router go to math":
@@ -335,40 +338,40 @@ class TodoFifoQueue( FifoQueue ):
                 else:
                     math_llm_spec = self.config_mgr.get( "llm spec key for math agent" )
                     math_client = self.llm_factory.get_client( math_llm_spec, debug=self.debug, verbose=self.verbose )
-                    agent = MathAgent( question=salutation_plus_question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=math_client, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                    agent = MathAgent( question=salutation_plus_question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=math_client, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                     msg = starting_a_new_job.format( agent_type="math" )
                 ding_for_new_job = True
             elif command == "agent router go to todo list":
                 todo_llm_spec = self.config_mgr.get( "llm spec key for todo list agent" )
                 todo_client = self.llm_factory.get_client( todo_llm_spec, debug=self.debug, verbose=self.verbose )
-                agent = TodoListAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=todo_client, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = TodoListAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=todo_client, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="todo list" )
                 ding_for_new_job = True
             elif command == "agent router go to date and time":
                 datetime_llm_spec = self.config_mgr.get( "llm spec key for date and time agent" )
                 datetime_client = self.llm_factory.get_client( datetime_llm_spec, debug=self.debug, verbose=self.verbose )
-                agent = DateAndTimeAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=datetime_client, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = DateAndTimeAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=datetime_client, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="date and time" )
                 ding_for_new_job = True
             elif command == "agent router go to weather":
                 weather_llm_spec = self.config_mgr.get( "llm spec key for weather agent" )
                 weather_client = self.llm_factory.get_client( weather_llm_spec, debug=self.debug, verbose=self.verbose )
-                agent = WeatherAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=weather_client, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = WeatherAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=weather_client, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="weather" )
                 # ding_for_new_job = False
             elif command == "agent router go to receptionist" or command == "none":
                 print( f"Routing '{command}' to receptionist..." )
                 receptionist_llm_spec = self.config_mgr.get( "llm spec key for receptionist agent" )
                 receptionist_client = self.llm_factory.get_client( receptionist_llm_spec, debug=self.debug, verbose=self.verbose )
-                agent = ReceptionistAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=receptionist_client, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = ReceptionistAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=receptionist_client, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 # Randomly grab hemming and hawing string and prepend it to a randomly chosen thinking string
                 msg = f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}".strip()
                 # ding_for_new_job = False
             else:
                 msg = du.print_banner( f"TO DO: Implement else case command {command}" )
                 print( msg )
-                if self.emit_audio_callback:
-                    self.emit_audio_callback( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}" )
+                if self.emit_speech_callback:
+                    self.emit_speech_callback( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}", user_id=user_id )
                 search = LupinSearch( query=question_gist )
                 search.search_and_summarize_the_web()
                 msg = search.get_results( scope="summary" )
@@ -377,9 +380,13 @@ class TodoFifoQueue( FifoQueue ):
                 self.websocket_mgr.emit( 'notification_sound_update', { 'soundFile': '/static/gentle-gong.mp3' } )
             if agent is not None:
                 self.push( agent )
+                # Associate the agent with the user for routing
+                if hasattr( agent, 'id_hash' ):
+                    self.user_job_tracker.associate_job_with_user( agent.id_hash, user_id )
+                    print( f"[TODO-QUEUE] Associated agent {agent.id_hash} with user {user_id}" )
             
-            if self.emit_audio_callback:
-                self.emit_audio_callback( msg )
+            if self.emit_speech_callback:
+                self.emit_speech_callback( msg, user_id=user_id )
             
             return msg
             
@@ -443,7 +450,7 @@ class TodoFifoQueue( FifoQueue ):
             if len( lines_of_code ) > 0:
                 print()
                 
-    def _queue_best_snapshot( self, best_snapshot: SolutionSnapshot, best_score: float=100.0 ) -> str:
+    def _queue_best_snapshot( self, best_snapshot: SolutionSnapshot, best_score: float=100.0, user_id: str = None ) -> str:
         """
         Queue the best matching snapshot for execution.
         
@@ -476,12 +483,17 @@ class TodoFifoQueue( FifoQueue ):
         
         if self.size() != 0:
             suffix = "s" if self.size() > 1 else ""
-            if self.emit_audio_callback:
-                self.emit_audio_callback( f"{self.size()} job{suffix} ahead of this one" )
+            if self.emit_speech_callback:
+                self.emit_speech_callback( f"{self.size()} job{suffix} ahead of this one", user_id=user_id )
         else:
             print( "No jobs ahead of this one in the todo Q" )
         
         self.push( job )  # Auto-emits 'todo_update' via parent class
+        
+        # Associate the snapshot job with the user for routing
+        if user_id and hasattr( job, 'id_hash' ):
+            self.user_job_tracker.associate_job_with_user( job.id_hash, user_id )
+            print( f"[TODO-QUEUE] Associated snapshot job {job.id_hash} with user {user_id}" )
         
         return f'Job added to queue. Queue size [{self.size()}]'
     

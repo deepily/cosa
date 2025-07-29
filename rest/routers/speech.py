@@ -1,5 +1,5 @@
 """
-Audio processing endpoints (STT/TTS)
+Speech processing endpoints (STT/TTS)
 Generated on: 2025-01-24
 """
 
@@ -24,8 +24,9 @@ from cosa.rest.websocket_manager import WebSocketManager
 from cosa.memory.input_and_output_table import InputAndOutputTable
 from cosa.rest import multimodal_munger as mmm
 from cosa.config.configuration_manager import ConfigurationManager
+from cosa.rest.auth import get_current_user_id
 
-router = APIRouter(prefix="/api", tags=["audio"])
+router = APIRouter(prefix="/api", tags=["speech"])
 
 # Global dependencies (temporary access via main module)
 def get_whisper_pipeline():
@@ -180,11 +181,12 @@ async def upload_and_transcribe_mp3_file(
         print(f"[ERROR] MP3 transcription failed: {e}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
-@router.post("/get-audio")
+@router.post("/get-speech")
 async def get_tts_audio(
     request: Request,
     ws_manager: WebSocketManager = Depends(get_websocket_manager),
-    active_tasks = Depends(get_active_tasks)
+    active_tasks = Depends(get_active_tasks),
+    current_user_id: str = Depends(get_current_user_id)
 ):
     """
     WebSocket-based TTS endpoint that streams audio via WebSocket.
@@ -207,7 +209,7 @@ async def get_tts_audio(
     """
     try:
         # Enhanced debugging for TTS requests
-        print(f"[TTS-DEBUG] POST /api/get-audio called from {request.client.host}")
+        print(f"[TTS-DEBUG] POST /api/get-speech called from {request.client.host}")
         print(f"[TTS-DEBUG] Headers: {dict(request.headers)}")
         
         # Parse request body
@@ -223,6 +225,10 @@ async def get_tts_audio(
             error_msg = f"Missing session_id or text - session_id: {session_id}, text: {msg}"
             print(f"[TTS-ERROR] {error_msg}")
             raise HTTPException(status_code=400, detail="Missing session_id or text")
+        
+        # Register session with authenticated user
+        print(f"[TTS-DEBUG] Registering session {session_id} for user {current_user_id}")
+        ws_manager.register_session_user(session_id, current_user_id)
         
         # Check if WebSocket connection exists
         is_connected = ws_manager.is_connected(session_id)
@@ -255,11 +261,12 @@ async def get_tts_audio(
         print(f"[ERROR] TTS request failed: {e}")
         raise HTTPException(status_code=500, detail=f"TTS generation failed: {str(e)}")
 
-@router.post("/get-audio-elevenlabs")
+@router.post("/get-speech-elevenlabs")
 async def get_tts_audio_elevenlabs(
     request: Request,
     ws_manager: WebSocketManager = Depends(get_websocket_manager),
-    active_tasks = Depends(get_active_tasks)
+    active_tasks = Depends(get_active_tasks),
+    current_user_id: str = Depends(get_current_user_id)
 ):
     """
     ElevenLabs WebSocket-based TTS endpoint that streams audio via WebSocket.
@@ -282,7 +289,7 @@ async def get_tts_audio_elevenlabs(
     """
     try:
         # Enhanced debugging for ElevenLabs TTS requests
-        print(f"[TTS-ELEVENLABS-DEBUG] POST /api/get-audio-elevenlabs called from {request.client.host}")
+        print(f"[TTS-ELEVENLABS-DEBUG] POST /api/get-speech-elevenlabs called from {request.client.host}")
         print(f"[TTS-ELEVENLABS-DEBUG] Headers: {dict(request.headers)}")
         
         # Parse request body
@@ -301,6 +308,10 @@ async def get_tts_audio_elevenlabs(
             error_msg = f"Missing session_id or text - session_id: {session_id}, text: {msg}"
             print(f"[TTS-ELEVENLABS-ERROR] {error_msg}")
             raise HTTPException(status_code=400, detail="Missing session_id or text")
+        
+        # Register session with authenticated user
+        print(f"[TTS-ELEVENLABS-DEBUG] Registering session {session_id} for user {current_user_id}")
+        ws_manager.register_session_user(session_id, current_user_id)
         
         # Check if WebSocket connection exists
         is_connected = ws_manager.is_connected(session_id)
@@ -442,7 +453,7 @@ async def stream_tts_hybrid(session_id: str, msg: str, ws_manager: WebSocketMana
         
         # Send status update
         await websocket.send_json({
-            "type": "status",
+            "type": "audio_status",
             "text": "Generating and streaming audio...",
             "status": "loading"
         })
@@ -535,7 +546,7 @@ async def stream_tts_elevenlabs(
         
         # Send status update
         await websocket.send_json({
-            "type": "status",
+            "type": "audio_status",
             "text": "Connecting to ElevenLabs...",
             "status": "loading",
             "provider": "elevenlabs"
@@ -581,7 +592,7 @@ async def stream_tts_elevenlabs(
             
             # Update status
             await websocket.send_json({
-                "type": "status",
+                "type": "audio_status",
                 "text": "Streaming audio from ElevenLabs...",
                 "status": "streaming",
                 "provider": "elevenlabs"

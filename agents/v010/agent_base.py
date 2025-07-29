@@ -57,7 +57,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         """
         pass
     
-    def __init__( self, df_path_key: Optional[str]=None, question: str="", question_gist: str="", last_question_asked: str="", push_counter: int=-1, routing_command: Optional[str]=None, debug: bool=False, verbose: bool=False, auto_debug: bool=False, inject_bugs: bool=False ) -> None:
+    def __init__( self, df_path_key: Optional[str]=None, question: str="", question_gist: str="", last_question_asked: str="", push_counter: int=-1, routing_command: Optional[str]=None, user_id: str="ricardo_felipe_ruiz_6bdc", debug: bool=False, verbose: bool=False, auto_debug: bool=False, inject_bugs: bool=False ) -> None:
         """
         Initialize a base agent with configuration and state.
         
@@ -65,6 +65,7 @@ class AgentBase( RunnableCode, abc.ABC ):
             - routing_command must be provided for proper initialization
             - df_path_key (if provided) must map to a valid CSV file path in config
             - Either question or last_question_asked must be a non-empty string
+            - user_id must be a valid system ID
             
         Ensures:
             - execution_state is set to STATE_INITIALIZING then STATE_WAITING_TO_RUN
@@ -73,6 +74,7 @@ class AgentBase( RunnableCode, abc.ABC ):
             - DataFrame is loaded and datetime columns cast if df_path_key provided
             - All instance variables are initialized
             - last_question_asked is set to question if empty
+            - user_id is stored for event routing and ownership tracking
             
         Raises:
             - KeyError if routing_command configuration keys are missing
@@ -90,6 +92,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.inject_bugs           = inject_bugs
         self.df_path_key           = df_path_key
         self.routing_command       = routing_command
+        self.user_id               = user_id
         
         # Added to allow behavioral compatibility with solution snapshot object
         self.run_date              = ss.SolutionSnapshot.get_timestamp()
@@ -116,7 +119,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.config_mgr            = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         
         self.df                    = None
-        self.do_not_serialize      = { "df", "config_mgr", "two_word_id", "execution_state" }
+        self.do_not_serialize      = { "df", "config_mgr", "two_word_id", "execution_state", "websocket_id", "user_id" }
 
         self.model_name            = self.config_mgr.get( f"llm spec key for {routing_command}" )
         template_path              = self.config_mgr.get( f"prompt template for {routing_command}" )

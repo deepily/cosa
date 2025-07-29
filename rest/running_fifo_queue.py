@@ -21,7 +21,7 @@ class RunningFifoQueue( FifoQueue ):
     Manages execution of jobs from todo queue to done/dead queues.
     Handles both AgentBase instances and SolutionSnapshot instances.
     """
-    def __init__( self, app: Any, websocket_mgr: Any, snapshot_mgr: Any, jobs_todo_queue: FifoQueue, jobs_done_queue: FifoQueue, jobs_dead_queue: FifoQueue, config_mgr: Optional[Any]=None, emit_audio_callback: Optional[Any]=None ) -> None:
+    def __init__( self, app: Any, websocket_mgr: Any, snapshot_mgr: Any, jobs_todo_queue: FifoQueue, jobs_done_queue: FifoQueue, jobs_dead_queue: FifoQueue, config_mgr: Optional[Any]=None, emit_speech_callback: Optional[Any]=None ) -> None:
         """
         Initialize the running FIFO queue.
         
@@ -31,7 +31,7 @@ class RunningFifoQueue( FifoQueue ):
             - snapshot_mgr is a valid snapshot manager
             - All queue parameters are FifoQueue instances
             - config_mgr is None or a valid ConfigurationManager
-            - emit_audio_callback is None or a callable function
+            - emit_speech_callback is None or a callable function
             
         Ensures:
             - Sets up queue management components
@@ -49,11 +49,12 @@ class RunningFifoQueue( FifoQueue ):
         self.jobs_todo_queue     = jobs_todo_queue
         self.jobs_done_queue     = jobs_done_queue
         self.jobs_dead_queue     = jobs_dead_queue
-        self.emit_audio_callback = emit_audio_callback
+        self.emit_speech_callback = emit_speech_callback
         
         self.auto_debug          = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
         self.inject_bugs         = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
         self.io_tbl              = InputAndOutputTable()
+    
     
     def enter_running_loop( self ) -> None:
         """
@@ -179,8 +180,7 @@ class RunningFifoQueue( FifoQueue ):
         
         self.pop()  # Auto-emits 'run_update'
         
-        if self.emit_audio_callback:
-            self.emit_audio_callback( "I'm sorry Dave, I'm afraid I can't do that. Please check your logs" )
+        self._emit_speech( "I'm sorry Dave, I'm afraid I can't do that. Please check your logs", job=running_job )
         
         self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
         
@@ -226,8 +226,7 @@ class RunningFifoQueue( FifoQueue ):
         if running_job.code_ran_to_completion() and running_job.formatter_ran_to_completion():
             
             # If we've arrived at this point, then we've successfully run the agentic part of this job
-            if self.emit_audio_callback:
-                self.emit_audio_callback( running_job.answer_conversational )
+            self._emit_speech( running_job.answer_conversational, job=running_job )
             agent_timer.print( "Done!", use_millis=True )
             
             # Only the ReceptionistAgent and WeatherAgent are not being serialized as a solution snapshot
@@ -298,8 +297,7 @@ class RunningFifoQueue( FifoQueue ):
         
         formatted_output = running_job.run_formatter()
         print( formatted_output )
-        if self.emit_audio_callback:
-            self.emit_audio_callback( running_job.answer_conversational )
+        self._emit_speech( running_job.answer_conversational, job=running_job )
         
         self.pop()  # Auto-emits 'run_update'
         self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
