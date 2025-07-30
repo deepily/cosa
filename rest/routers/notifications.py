@@ -163,7 +163,7 @@ async def notify_user(
             }
         
         # Send to specific user via WebSocket
-        message_sent = await ws_manager.emit_to_user(target_system_id, "user_notification", notification)
+        message_sent = await ws_manager.emit_to_user(target_system_id, "notification_message_user", notification)
         
         if message_sent:
             print(f"[NOTIFY] ✓ Notification delivered to {target_user} ({target_system_id}) - {connection_count} connection(s)")

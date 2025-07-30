@@ -160,7 +160,7 @@ class WebSocketManager:
         Mimics Socket.IO's emit functionality for COSA queue compatibility.
         
         Args:
-            event: The event type (e.g., 'todo_update', 'done_update')
+            event: The event type (e.g., 'queue_todo_update', 'queue_done_update')
             data: The data to send with the event
         """
         # Build message in format expected by queue.js
@@ -259,7 +259,7 @@ class WebSocketManager:
         on the main event loop from any thread.
         
         Args:
-            event: The event type (e.g., 'todo_update', 'done_update')
+            event: The event type (e.g., 'queue_todo_update', 'queue_done_update')
             data: The data to send with the event
         """
         if not self.main_loop:
@@ -515,7 +515,7 @@ class WebSocketManager:
             try:
                 # Attempt to send a ping message
                 await websocket.send_json( {
-                    "type": "ping",
+                    "type": "sys_ping",
                     "timestamp": datetime.now().isoformat()
                 } )
             except:

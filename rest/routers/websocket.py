@@ -107,7 +107,7 @@ async def websocket_audio_endpoint(websocket: WebSocket, session_id: str):
     user_id = websocket_manager.session_to_user.get(session_id)
     
     # Audio WebSocket should only receive audio-related events
-    audio_events = ["audio_status", "audio_complete", "ping"]
+    audio_events = ["audio_streaming_status", "audio_streaming_complete", "sys_ping"]
     
     if not user_id:
         # If no pre-registration, audio WebSocket connections don't require immediate auth
@@ -127,7 +127,7 @@ async def websocket_audio_endpoint(websocket: WebSocket, session_id: str):
     try:
         # Send connection confirmation
         await websocket.send_json({
-            "type": "audio_status",
+            "type": "audio_streaming_status",
             "text": f"Audio WebSocket connected for session {session_id}",
             "status": "success"
         })
@@ -207,10 +207,10 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
     # Wait for authentication message
     try:
         auth_message = await websocket.receive_json()
-        if auth_message.get("type") != "auth" or "token" not in auth_message:
+        if auth_message.get("type") != "auth_request" or "token" not in auth_message:
             await websocket.send_json({
                 "type": "error",
-                "message": "First message must be auth with token"
+                "message": "First message must be auth_request with token"
             })
             await websocket.close()
             return
@@ -267,9 +267,9 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
                 print(f"[WS-QUEUE] Received message from {session_id}: {message}")
                 
                 # Handle specific message types if needed
-                if message.get("type") == "ping":
+                if message.get("type") == "sys_ping":
                     await websocket.send_json({
-                        "type": "pong",
+                        "type": "sys_pong",
                         "timestamp": datetime.now().isoformat()
                     })
                 elif message.get("type") == "update_subscriptions":
