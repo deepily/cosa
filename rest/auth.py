@@ -13,11 +13,18 @@ FIREBASE_INITIALIZED = False
 
 def init_firebase():
     """
-    Initialize Firebase Admin SDK.
+    Initialize Firebase Admin SDK with mock implementation.
     
-    In production, this would:
-    - Load service account credentials
-    - Initialize firebase_admin app
+    Requires:
+        - None
+        
+    Ensures:
+        - Sets FIREBASE_INITIALIZED to True
+        - Prints initialization message
+        - Idempotent (safe to call multiple times)
+        
+    Raises:
+        - None
     """
     global FIREBASE_INITIALIZED
     if not FIREBASE_INITIALIZED:
@@ -36,14 +43,20 @@ async def verify_firebase_token(token: str) -> Dict:
     """
     Verify Firebase ID token and return decoded claims.
     
-    Args:
-        token: The Firebase ID token to verify
+    Requires:
+        - token is a non-empty string
+        - token follows expected format (mock_token_* or mock_token_email_*)
         
-    Returns:
-        dict: Decoded token claims including user_id
+    Ensures:
+        - Returns dictionary with complete user information
+        - Dictionary includes uid, email, name, email_verified fields
+        - User data is looked up or generated for unknown system IDs
+        - Prints verification success message
         
     Raises:
-        HTTPException: If token is invalid or expired
+        - HTTPException with 401 status if token format is invalid
+        - HTTPException with 401 status if email format is invalid in email-based tokens
+        - HTTPException with 401 status if system ID is empty
     """
     try:
         # MOCK: In production, this would be:
@@ -117,19 +130,20 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ) -> Dict:
     """
-    Dependency to get the current authenticated user.
+    FastAPI dependency to get the current authenticated user.
     
-    Extracts the bearer token from the Authorization header,
-    verifies it with Firebase, and returns the user info.
-    
-    Args:
-        credentials: The HTTP authorization credentials
+    Requires:
+        - credentials contains valid HTTPAuthorizationCredentials
+        - credentials.credentials is a valid token string
         
-    Returns:
-        dict: User information from the decoded token
+    Ensures:
+        - Firebase is initialized before token verification
+        - Returns complete user information dictionary
+        - Token is extracted and verified successfully
         
     Raises:
-        HTTPException: If authentication fails
+        - HTTPException with 401 status if token verification fails
+        - Any exceptions from verify_firebase_token are propagated
     """
     # Initialize Firebase if needed
     init_firebase()
@@ -147,13 +161,18 @@ async def get_current_user_id(
     current_user: Dict = Depends(get_current_user)
 ) -> str:
     """
-    Dependency to get just the user ID.
+    FastAPI dependency to extract just the user ID from authenticated user.
     
-    Args:
-        current_user: The current user dict from get_current_user
+    Requires:
+        - current_user is a valid user dictionary from get_current_user
+        - current_user contains 'uid' key
         
-    Returns:
-        str: The user's ID
+    Ensures:
+        - Returns the user's unique identifier as a string
+        - Provides simplified access to user ID for endpoints that only need ID
+        
+    Raises:
+        - KeyError if 'uid' key is missing from current_user dictionary
     """
     return current_user["uid"]
 
@@ -165,9 +184,19 @@ async def get_optional_user(
     )
 ) -> Optional[Dict]:
     """
-    Dependency for endpoints that optionally support authentication.
+    FastAPI dependency for endpoints with optional authentication.
     
-    Returns None if no valid token is provided, otherwise returns user info.
+    Requires:
+        - credentials may be None or valid HTTPAuthorizationCredentials
+        
+    Ensures:
+        - Returns None if no credentials provided
+        - Returns None if token verification fails (does not raise exceptions)
+        - Returns complete user dictionary if valid token provided
+        - Firebase is initialized before attempting verification
+        
+    Raises:
+        - None (all exceptions are caught and result in None return)
     """
     if not credentials:
         return None

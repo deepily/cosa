@@ -21,6 +21,20 @@ def email_to_system_id( email: str ) -> str:
     This is the SINGLE SOURCE OF TRUTH for email → system ID conversion.
     All Python modules should import and use this function.
     
+    Requires:
+        - email is a non-empty string containing '@' character
+        - email follows basic email format with local@domain structure
+        
+    Ensures:
+        - Returns collision-resistant system ID with 4-character hash suffix
+        - Output contains only lowercase letters, numbers, and underscores
+        - System ID is safe for file paths, URLs, and database keys
+        - Same email always produces same system ID (deterministic)
+        - Different emails produce different system IDs (collision-resistant)
+        
+    Raises:
+        - ValueError if email is empty or doesn't contain '@' character
+        
     Args:
         email: Email address to convert (e.g., "ricardo.felipe.ruiz@gmail.com")
         
@@ -59,6 +73,18 @@ def system_id_to_display_name( system_id: str ) -> str:
     """
     Extract a display name from system ID.
     
+    Requires:
+        - system_id is a non-empty string
+        - system_id follows expected format with underscores
+        
+    Ensures:
+        - Returns capitalized first part of system ID before first underscore
+        - Returns original system_id if no underscores found
+        - Always returns a non-empty string
+        
+    Raises:
+        - None (handles all cases gracefully)
+        
     Args:
         system_id: System ID (e.g., "ricardo_felipe_ruiz_6bdc")
         
@@ -77,6 +103,18 @@ def validate_system_id( system_id: str ) -> bool:
     """
     Validate that a system ID follows the expected format.
     
+    Requires:
+        - system_id is a string (may be empty or invalid)
+        
+    Ensures:
+        - Returns True if system_id matches expected format pattern
+        - Returns False for invalid formats or malformed strings
+        - Expected format: lowercase alphanumeric with underscores ending in 4-char hex
+        - Validates against regex pattern: ^[a-z0-9_]+_[a-f0-9]{4}$
+        
+    Raises:
+        - None (handles all input gracefully)
+        
     Args:
         system_id: System ID to validate
         
@@ -113,6 +151,18 @@ def get_user_info( system_id: str ) -> Optional[Dict]:
     """
     Get user information by system ID.
     
+    Requires:
+        - system_id is a string (may be invalid)
+        - MOCK_USER_DATABASE is initialized
+        
+    Ensures:
+        - Returns dictionary with user info if system_id exists in database
+        - Returns None if system_id not found
+        - Dictionary contains email, name, and email_verified fields when found
+        
+    Raises:
+        - None (handles all lookups gracefully)
+        
     Args:
         system_id: System ID to look up
         
@@ -126,6 +176,19 @@ def get_user_info_by_email( email: str ) -> Optional[Dict]:
     """
     Get user information by email address.
     
+    Requires:
+        - email is a string (may be invalid email format)
+        - email_to_system_id function is available
+        - get_user_info function is available
+        
+    Ensures:
+        - Converts email to system_id using standard conversion
+        - Returns user info if corresponding system_id exists in database
+        - Returns None if email conversion fails or user not found
+        
+    Raises:
+        - ValueError if email format is invalid (propagated from email_to_system_id)
+        
     Args:
         email: Email address to look up
         
@@ -139,6 +202,21 @@ def get_user_info_by_email( email: str ) -> Optional[Dict]:
 def quick_smoke_test():
     """
     Quick smoke test for user ID generation functions.
+    
+    Requires:
+        - All user ID generation functions are available
+        - MOCK_USER_DATABASE is initialized
+        
+    Ensures:
+        - Tests email to system ID conversion for multiple test cases
+        - Validates display name extraction functionality
+        - Verifies system ID format validation
+        - Tests user lookup by email functionality
+        - Returns True if all tests pass, False if any fail
+        - Prints detailed test results to console
+        
+    Raises:
+        - None (catches and reports all exceptions)
     """
     print( "🧪 Testing User ID Generator..." )
     

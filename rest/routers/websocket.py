@@ -1,6 +1,12 @@
 """
-WebSocket and authentication endpoints
+WebSocket and authentication endpoints for the COSA system.
+
+This module provides FastAPI router endpoints for WebSocket connections
+and authentication testing. Supports both audio streaming and queue
+update WebSocket connections with user authentication and session management.
+
 Generated on: 2025-01-24
+Updated: 2025-08-01 - Added Design by Contract documentation
 """
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
@@ -17,31 +23,72 @@ router = APIRouter(tags=["websocket"])
 
 # Global dependencies (temporary access via main module)
 def get_websocket_manager():
-    """Dependency to get WebSocket manager"""
+    """
+    FastAPI dependency to get the WebSocket manager instance.
+    
+    Requires:
+        - fastapi_app.main module exists and has websocket_manager attribute
+        
+    Ensures:
+        - Returns the global WebSocketManager instance
+        
+    Raises:
+        - ImportError if main module cannot be imported
+        - AttributeError if websocket_manager attribute is missing
+    """
     import fastapi_app.main as main_module
     return main_module.websocket_manager
 
 def get_active_tasks():
-    """Dependency to get active tasks"""
+    """
+    FastAPI dependency to get the active tasks dictionary.
+    
+    Requires:
+        - fastapi_app.main module exists and has active_tasks attribute
+        
+    Ensures:
+        - Returns the global active_tasks dictionary for task management
+        
+    Raises:
+        - ImportError if main module cannot be imported
+        - AttributeError if active_tasks attribute is missing
+    """
     import fastapi_app.main as main_module
     return main_module.active_tasks
 
 def get_app_debug():
-    """Dependency to get debug settings"""
+    """
+    FastAPI dependency to get application debug and verbose settings.
+    
+    Requires:
+        - fastapi_app.main module exists and has app_debug, app_verbose attributes
+        
+    Ensures:
+        - Returns tuple of (app_debug, app_verbose) boolean flags
+        
+    Raises:
+        - ImportError if main module cannot be imported
+        - AttributeError if debug/verbose attributes are missing
+    """
     import fastapi_app.main as main_module
     return main_module.app_debug, main_module.app_verbose
 
 def is_valid_session_id(session_id: str) -> bool:
     """
-    Validate session ID format.
+    Validate session ID format according to the expected pattern.
     
     Session IDs should be in the format: adjective noun (e.g., 'wise penguin')
     
-    Args:
-        session_id: The session ID to validate
+    Requires:
+        - session_id is a string (may be empty or invalid)
         
-    Returns:
-        bool: True if valid format, False otherwise
+    Ensures:
+        - Returns True if session_id matches pattern "word word" (lowercase)
+        - Returns False if empty, whitespace-only, or invalid format
+        - Uses regex pattern '^[a-z]+\s[a-z]+$' for validation
+        
+    Raises:
+        - None
     """
     # Check it's not empty or just whitespace
     if not session_id or not session_id.strip():
@@ -107,7 +154,7 @@ async def websocket_audio_endpoint(websocket: WebSocket, session_id: str):
     user_id = websocket_manager.session_to_user.get(session_id)
     
     # Audio WebSocket should only receive audio-related events
-    audio_events = ["audio_status", "audio_complete", "ping"]
+    audio_events = ["audio_streaming_status", "audio_streaming_complete", "sys_ping"]
     
     if not user_id:
         # If no pre-registration, audio WebSocket connections don't require immediate auth
@@ -127,7 +174,7 @@ async def websocket_audio_endpoint(websocket: WebSocket, session_id: str):
     try:
         # Send connection confirmation
         await websocket.send_json({
-            "type": "audio_status",
+            "type": "audio_streaming_status",
             "text": f"Audio WebSocket connected for session {session_id}",
             "status": "success"
         })
@@ -207,10 +254,10 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
     # Wait for authentication message
     try:
         auth_message = await websocket.receive_json()
-        if auth_message.get("type") != "auth" or "token" not in auth_message:
+        if auth_message.get("type") != "auth_request" or "token" not in auth_message:
             await websocket.send_json({
                 "type": "error",
-                "message": "First message must be auth with token"
+                "message": "First message must be auth_request with token"
             })
             await websocket.close()
             return
@@ -267,9 +314,9 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
                 print(f"[WS-QUEUE] Received message from {session_id}: {message}")
                 
                 # Handle specific message types if needed
-                if message.get("type") == "ping":
+                if message.get("type") == "sys_ping":
                     await websocket.send_json({
-                        "type": "pong",
+                        "type": "sys_pong",
                         "timestamp": datetime.now().isoformat()
                     })
                 elif message.get("type") == "update_subscriptions":

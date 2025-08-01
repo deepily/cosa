@@ -10,7 +10,20 @@ from typing import List
 
 
 class NotificationType(Enum):
-    """Standard notification types for Claude Code communications"""
+    """
+    Standard notification types for Claude Code communications.
+    
+    Provides enumerated values for different categories of notifications
+    that can be sent through the Claude Code notification system.
+    
+    Requires:
+        - None
+        
+    Ensures:
+        - Provides consistent notification type values
+        - Supports conversion to list of string values
+        - Maintains type safety for notification categories
+    """
     
     TASK = "task"           # Task completion (success/failure)
     PROGRESS = "progress"   # Progress updates during long operations  
@@ -19,12 +32,38 @@ class NotificationType(Enum):
     
     @classmethod
     def values(cls) -> List[str]:
-        """Get list of all notification type values"""
+        """
+        Get list of all notification type values.
+        
+        Requires:
+            - None
+            
+        Ensures:
+            - Returns list of all enum values as strings
+            - Order matches enum declaration order
+            - List contains exactly 4 elements
+            
+        Raises:
+            - None
+        """
         return [item.value for item in cls]
 
 
 class NotificationPriority(Enum):
-    """Priority levels for notifications"""
+    """
+    Priority levels for notifications.
+    
+    Defines the urgency levels for Claude Code notifications,
+    from background information to critical alerts.
+    
+    Requires:
+        - None
+        
+    Ensures:
+        - Provides consistent priority level values
+        - Supports conversion to list of string values
+        - Maintains hierarchical priority ordering
+    """
     
     LOW = "low"         # Background information
     MEDIUM = "medium"   # Normal notifications (default)
@@ -33,7 +72,20 @@ class NotificationPriority(Enum):
     
     @classmethod  
     def values(cls) -> List[str]:
-        """Get list of all priority values"""
+        """
+        Get list of all priority values.
+        
+        Requires:
+            - None
+            
+        Ensures:
+            - Returns list of all enum values as strings
+            - Order reflects priority hierarchy (low to urgent)
+            - List contains exactly 4 elements
+            
+        Raises:
+            - None
+        """
         return [item.value for item in cls]
 
 

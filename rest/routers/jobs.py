@@ -1,5 +1,10 @@
 """
-Job and snapshot management endpoints
+Job and snapshot management endpoints.
+
+Provides REST API endpoints for managing job lifecycle including
+snapshot deletion and audio answer retrieval. Currently implements
+stub functionality for Phase 1 development.
+
 Generated on: 2025-01-24
 """
 
@@ -12,7 +17,21 @@ router = APIRouter(tags=["jobs"])
 
 # Global dependencies (temporary access via main module)
 def get_static_dir():
-    """Dependency to get static directory"""
+    """
+    Dependency to get static directory from main module.
+    
+    Requires:
+        - fastapi_app.main module is available
+        - main_module has static_dir attribute
+        
+    Ensures:
+        - Returns the static directory path
+        - Provides access to static assets
+        
+    Raises:
+        - ImportError if main module not available
+        - AttributeError if static_dir not found
+    """
     import fastapi_app.main as main_module
     return main_module.static_dir
 
@@ -23,17 +42,23 @@ async def delete_snapshot(id: str):
     
     PHASE 1 STUB: Returns mock success response for testing.
     
-    Preconditions:
-        - id must be a valid job identifier
+    Requires:
+        - id is a non-empty string identifier
+        - id does not start with "invalid" (for stub validation)
         
-    Postconditions:
-        - Returns success confirmation (stubbed)
+    Ensures:
+        - Returns success status with job ID and timestamp
+        - Raises 404 HTTPException for invalid IDs
+        - Provides mock deletion confirmation
+        
+    Raises:
+        - HTTPException with 404 status for invalid or missing IDs
         
     Args:
         id: The job identifier to delete
         
     Returns:
-        dict: Deletion status
+        dict: Deletion status with confirmation details
     """
     print(f"[STUB] /api/delete-snapshot/{id} called")
     
@@ -55,18 +80,27 @@ async def get_answer(id: str):
     
     PHASE 1 STUB: Returns a placeholder audio file for testing.
     
-    Preconditions:
-        - id must be a valid job identifier
-        - Audio file should exist for the job
+    Requires:
+        - id is a non-empty string identifier
+        - fastapi_app.main module is accessible
+        - static_dir contains audio/gentle-gong.mp3 file
+        - Placeholder audio file exists in static directory
         
-    Postconditions:
-        - Returns audio file stream (stubbed with placeholder)
+    Ensures:
+        - Returns FileResponse with audio/mpeg media type
+        - Uses placeholder gentle-gong.mp3 for all requests
+        - Sets appropriate filename with job ID
+        - Raises 404 if placeholder audio file missing
+        
+    Raises:
+        - HTTPException with 404 status if audio file not found
+        - ImportError if main module not accessible
         
     Args:
         id: The job identifier to get audio for
         
     Returns:
-        FileResponse: Audio file for playback
+        FileResponse: Audio file stream for playback
     """
     print(f"[STUB] /get-answer/{id} called")
     
