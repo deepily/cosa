@@ -1,5 +1,10 @@
 """
-Queue management endpoints
+Queue management endpoints.
+
+Provides REST API endpoints for managing COSA job queues including
+pushing jobs to todo queue, retrieving queue contents with user filtering,
+and resetting all queues.
+
 Generated on: 2025-01-24
 """
 
@@ -15,27 +20,97 @@ router = APIRouter(prefix="/api", tags=["queues"])
 
 # Global dependencies (temporary access via main module)
 def get_todo_queue():
-    """Dependency to get todo queue"""
+    """
+    Dependency to get todo queue from main module.
+    
+    Requires:
+        - fastapi_app.main module is available
+        - main_module has jobs_todo_queue attribute
+        
+    Ensures:
+        - Returns the todo queue instance
+        - Provides access to job queue management
+        
+    Raises:
+        - ImportError if main module not available
+        - AttributeError if todo queue not found
+    """
     import fastapi_app.main as main_module
     return main_module.jobs_todo_queue
 
 def get_running_queue():
-    """Dependency to get running queue"""
+    """
+    Dependency to get running queue from main module.
+    
+    Requires:
+        - fastapi_app.main module is available
+        - main_module has jobs_run_queue attribute
+        
+    Ensures:
+        - Returns the running queue instance
+        - Provides access to active job tracking
+        
+    Raises:
+        - ImportError if main module not available
+        - AttributeError if running queue not found
+    """
     import fastapi_app.main as main_module
     return main_module.jobs_run_queue
 
 def get_done_queue():
-    """Dependency to get done queue"""
+    """
+    Dependency to get done queue from main module.
+    
+    Requires:
+        - fastapi_app.main module is available
+        - main_module has jobs_done_queue attribute
+        
+    Ensures:
+        - Returns the done queue instance
+        - Provides access to completed job tracking
+        
+    Raises:
+        - ImportError if main module not available
+        - AttributeError if done queue not found
+    """
     import fastapi_app.main as main_module
     return main_module.jobs_done_queue
 
 def get_dead_queue():
-    """Dependency to get dead queue"""
+    """
+    Dependency to get dead queue from main module.
+    
+    Requires:
+        - fastapi_app.main module is available
+        - main_module has jobs_dead_queue attribute
+        
+    Ensures:
+        - Returns the dead queue instance
+        - Provides access to failed job tracking
+        
+    Raises:
+        - ImportError if main module not available
+        - AttributeError if dead queue not found
+    """
     import fastapi_app.main as main_module
     return main_module.jobs_dead_queue
 
 def get_notification_queue():
-    """Dependency to get notification queue"""
+    """
+    Dependency to get notification queue from main module.
+    
+    Requires:
+        - fastapi_app.main module is available
+        - main_module has jobs_notification_queue attribute
+        
+    Ensures:
+        - Returns the notification queue instance
+        - Provides access to notification management
+        
+    Raises:
+        - ImportError if main module not available
+        - AttributeError if notification queue not found
+    """
     import fastapi_app.main as main_module
     return main_module.jobs_notification_queue
 
@@ -49,15 +124,21 @@ async def push(
     """
     Add a question to the todo queue with required websocket tracking and user authentication.
     
-    Preconditions:
-        - jobs_todo_queue must be initialized
-        - Question parameter must be provided
-        - websocket_id parameter must be provided (from /api/get-session-id)
-        - User must be authenticated with valid token
+    Requires:
+        - question is a non-empty string query to process
+        - websocket_id is a valid WebSocket identifier from /api/get-session-id
+        - current_user is authenticated with valid token containing uid
+        - todo_queue is initialized and accessible
         
-    Postconditions:
-        - Question added to todo queue
-        - WebSocket ID and user ID associated with the job
+    Ensures:
+        - Question added to todo queue with metadata
+        - WebSocket ID and user ID properly associated with the job
+        - Returns confirmation with status and routing information
+        - Logs the push operation for debugging
+        
+    Raises:
+        - HTTPException if authentication fails
+        - Exception if queue push operation fails
         
     Args:
         question: The question/query to process (required)
@@ -94,14 +175,22 @@ async def get_queue(
     
     PHASE 2 IMPLEMENTATION: Connected to real COSA queue system with user filtering.
     
-    Preconditions:
-        - queue_name must be one of: 'todo', 'run', 'done', 'dead'
-        - Global queue objects must be initialized
-        - User must be authenticated
+    Requires:
+        - queue_name is one of: 'todo', 'run', 'done', 'dead'
+        - current_user is authenticated with valid token containing uid
+        - All queue objects (todo, running, done, dead) are initialized
+        - Queue objects have get_html_list() method
         
-    Postconditions:
-        - Returns JSON with queue-specific job arrays for authenticated user only
-        - Job format matches queue.html expectations
+    Ensures:
+        - Retrieves jobs from specified queue in HTML list format
+        - Applies appropriate sorting (descending for todo/done/dead, ascending for run)
+        - Adds user context to demonstrate filtering (temporary implementation)
+        - Returns queue-specific job arrays in expected format
+        - Raises 400 for invalid queue names
+        
+    Raises:
+        - HTTPException with 400 for invalid queue_name parameter
+        - HTTPException if authentication fails
         
     Args:
         queue_name: The queue to retrieve ('todo'|'run'|'done'|'dead')

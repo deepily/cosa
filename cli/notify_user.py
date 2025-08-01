@@ -47,8 +47,26 @@ def notify_user(
     timeout: int = 5
 ) -> bool:
     """
-    Send notification to user via Genie-in-the-Box API
+    Send notification to user via Genie-in-the-Box API.
     
+    Requires:
+        - message is a non-empty string
+        - notification_type is one of: task, progress, alert, custom
+        - priority is one of: low, medium, high, urgent
+        - target_user is a valid email address format
+        - server_url is None or a valid HTTP/HTTPS URL
+        - timeout is a positive integer
+        
+    Ensures:
+        - Returns True if notification sent successfully
+        - Returns False if validation fails or network error occurs
+        - Validates notification_type and priority against allowed values
+        - Uses environment variable or default server URL if not provided
+        - Prints status messages for debugging
+        
+    Raises:
+        - None (handles all exceptions gracefully)
+        
     Args:
         message: The notification message text
         notification_type: Type of notification (task, progress, alert, custom)
@@ -132,8 +150,21 @@ def notify_user(
 
 def validate_environment() -> bool:
     """
-    Validate environment setup for notification system
+    Validate environment setup for notification system.
     
+    Requires:
+        - urllib.parse module is available for URL validation
+        
+    Ensures:
+        - Returns True if all environment checks pass
+        - Returns False if any validation issues found
+        - Checks server URL format and validity
+        - Prints detailed validation results and issues
+        - Validates URL scheme (http/https) requirements
+        
+    Raises:
+        - None (handles all exceptions gracefully)
+        
     Returns:
         bool: True if environment is properly configured
     """
@@ -166,7 +197,24 @@ def validate_environment() -> bool:
 
 
 def main():
-    """CLI entry point for notify_user script"""
+    """
+    CLI entry point for notify_user script.
+    
+    Requires:
+        - argparse module is available
+        - All imported notification modules are accessible
+        - Command line arguments follow expected format
+        
+    Ensures:
+        - Parses command line arguments correctly
+        - Validates environment if requested
+        - Sends notification with provided parameters
+        - Exits with appropriate status code (0 for success, 1 for failure)
+        - Handles debug mode and validation options
+        
+    Raises:
+        - SystemExit with appropriate exit code
+    """
     
     parser = argparse.ArgumentParser(
         description="Send notification to Genie-in-the-Box",

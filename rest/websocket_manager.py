@@ -10,11 +10,46 @@ class WebSocketManager:
     Manages WebSocket connections and provides Socket.IO-like emit functionality.
     
     This class acts as an adapter between the COSA queue system (which expects
-    Socket.IO) and FastAPI's native WebSocket implementation.
+    Socket.IO-like emit methods) and FastAPI's native WebSocket implementation.
+    Supports user session management, event subscriptions, and thread-safe operations.
+    
+    Requires:
+        - ConfigurationManager with LUPIN_CONFIG_MGR_CLI_ARGS environment variable
+        - Configuration values for websocket behavior and available events
+        - Main asyncio event loop reference for thread-safe operations
+        
+    Ensures:
+        - Thread-safe WebSocket emission from background threads
+        - User session management with optional single-session enforcement
+        - Event subscription system with validation
+        - Automatic cleanup of stale and dead connections
+        - Socket.IO-compatible interface for COSA queue system
+        
+    Usage:
+        manager = WebSocketManager()
+        manager.set_event_loop(asyncio.get_event_loop())
+        manager.connect(websocket, session_id, user_id, events)
+        manager.emit("event_type", {"data": "value"})
     """
     
     def __init__( self ):
-        """Initialize the WebSocket manager with empty connections dict."""
+        """
+        Initialize the WebSocket manager with empty connections and configuration.
+        
+        Requires:
+            - ConfigurationManager environment variable LUPIN_CONFIG_MGR_CLI_ARGS is set
+            - Configuration contains 'websocket available events' list
+            
+        Ensures:
+            - Initializes all connection tracking dictionaries
+            - Loads configuration for session management and events
+            - Sets up event subscription system with validation
+            - Configures single-session policy based on configuration
+            
+        Raises:
+            - ValueError if websocket available events configuration is missing
+            - ConfigException if configuration manager initialization fails
+        """
         self.active_connections: Dict[str, WebSocket] = {}
         # Map session_id to user_id for routing
         self.session_to_user: Dict[str, str] = {}
@@ -47,8 +82,16 @@ class WebSocketManager:
         This should be called during application startup to enable safe
         WebSocket emissions from background threads.
         
-        Args:
-            loop: The main asyncio event loop from FastAPI
+        Requires:
+            - loop is a valid asyncio event loop
+            
+        Ensures:
+            - Stores loop reference for thread-safe coroutine scheduling
+            - Enables emit() method to work from any thread
+            - Prints confirmation message
+            
+        Raises:
+            - None
         """
         self.main_loop = loop
         print( "[WS] Event loop reference stored for thread-safe operations" )
@@ -60,10 +103,21 @@ class WebSocketManager:
         Implements optional single-session policy: if enabled, closes old sessions
         when a user connects with a new session.
         
-        Args:
-            websocket: The WebSocket connection
-            session_id: Unique session identifier
-            user_id: Optional user ID to associate with this session
+        Requires:
+            - websocket is a valid FastAPI WebSocket instance
+            - session_id is a unique string identifier
+            - subscribed_events (if provided) contains valid event names or "*"
+            
+        Ensures:
+            - Adds connection to active_connections dictionary
+            - Associates session with user if user_id provided
+            - Closes old sessions if single-session policy enabled
+            - Sets up event subscriptions (defaults to "*" for all events)
+            - Records connection timestamp
+            - Validates subscribed events against available_events
+            
+        Raises:
+            - Exception if closing old WebSocket connections fails (handled gracefully)
         """
         # Check for single-session policy
         if user_id and self.single_session_per_user and user_id in self.user_sessions:
@@ -109,7 +163,22 @@ class WebSocketManager:
             print( f"[WS] Session {session_id} subscribed to: all events (*)" )
     
     def disconnect( self, session_id: str ):
-        """Remove a WebSocket connection and clean up user associations."""
+        """
+        Remove a WebSocket connection and clean up all associated data.
+        
+        Requires:
+            - session_id is a string (may or may not exist in connections)
+            
+        Ensures:
+            - Removes connection from active_connections if present
+            - Cleans up session timestamp tracking
+            - Removes event subscription mappings
+            - Cleans up user-to-session associations
+            - Removes empty user session lists
+            
+        Raises:
+            - None (handles missing keys gracefully)
+        """
         if session_id in self.active_connections:
             del self.active_connections[session_id]
             
@@ -138,9 +207,19 @@ class WebSocketManager:
         This is used when a TTS request comes in with authentication, allowing
         us to associate the session with a user before the audio WebSocket connects.
         
-        Args:
-            session_id: The session ID to register
-            user_id: The user ID to associate with the session
+        Requires:
+            - session_id is a non-empty string
+            - user_id is a non-empty string
+            
+        Ensures:
+            - Creates session-to-user mapping
+            - Adds session to user's session list
+            - Initializes user session list if needed
+            - Avoids duplicate session entries
+            - Prints confirmation message
+            
+        Raises:
+            - None
         """
         # Store the association even if WebSocket hasn't connected yet
         self.session_to_user[session_id] = user_id
@@ -155,13 +234,23 @@ class WebSocketManager:
     
     async def async_emit( self, event: str, data: dict ):
         """
-        Emit an event to all connected WebSocket clients.
+        Emit an event to all connected WebSocket clients asynchronously.
         
         Mimics Socket.IO's emit functionality for COSA queue compatibility.
+        Sends messages only to clients subscribed to the event.
         
-        Args:
-            event: The event type (e.g., 'queue_todo_update', 'queue_done_update')
-            data: The data to send with the event
+        Requires:
+            - event is a non-empty string event name
+            - data is a dictionary containing event data
+            
+        Ensures:
+            - Creates timestamped message in expected format
+            - Sends to all clients subscribed to the event or "*"
+            - Automatically disconnects failed connections
+            - Cleans up disconnected clients from tracking
+            
+        Raises:
+            - None (WebSocket send failures handled gracefully)
         """
         # Build message in format expected by queue.js
         message = {
@@ -188,21 +277,53 @@ class WebSocketManager:
             self.disconnect( session_id )
     
     def get_connection_count( self ) -> int:
-        """Return the number of active connections."""
+        """
+        Return the number of active WebSocket connections.
+        
+        Requires:
+            - None
+            
+        Ensures:
+            - Returns count of active_connections dictionary
+            
+        Raises:
+            - None
+        """
         return len( self.active_connections )
     
     def is_connected( self, session_id: str ) -> bool:
-        """Check if a specific session is connected."""
+        """
+        Check if a specific session has an active WebSocket connection.
+        
+        Requires:
+            - session_id is a string
+            
+        Ensures:
+            - Returns True if session exists in active_connections
+            - Returns False otherwise
+            
+        Raises:
+            - None
+        """
         return session_id in self.active_connections
     
     async def emit_to_user( self, user_id: str, event: str, data: dict ):
         """
         Emit an event to all sessions belonging to a specific user.
         
-        Args:
-            user_id: The user ID to send to
-            event: The event type
-            data: The data to send
+        Requires:
+            - user_id is a non-empty string
+            - event is a non-empty string event name
+            - data is a dictionary containing event data
+            
+        Ensures:
+            - Sends timestamped message to all user's active sessions
+            - Only sends to sessions subscribed to the event
+            - Cleans up disconnected sessions
+            - Returns early if user has no sessions
+            
+        Raises:
+            - None (WebSocket send failures handled gracefully)
         """
         if user_id not in self.user_sessions:
             return
@@ -228,12 +349,20 @@ class WebSocketManager:
     
     async def emit_to_session( self, session_id: str, event: str, data: dict ):
         """
-        Emit an event to a specific session.
+        Emit an event to a specific WebSocket session.
         
-        Args:
-            session_id: The session ID to send to
-            event: The event type
-            data: The data to send
+        Requires:
+            - session_id is a non-empty string
+            - event is a non-empty string event name
+            - data is a dictionary containing event data
+            
+        Ensures:
+            - Sends timestamped message to specified session if active
+            - Disconnects session if send fails
+            - Returns early if session not found
+            
+        Raises:
+            - None (WebSocket send failures handled gracefully)
         """
         if session_id not in self.active_connections:
             return
@@ -258,9 +387,19 @@ class WebSocketManager:
         Uses asyncio.run_coroutine_threadsafe to safely schedule the coroutine
         on the main event loop from any thread.
         
-        Args:
-            event: The event type (e.g., 'queue_todo_update', 'queue_done_update')
-            data: The data to send with the event
+        Requires:
+            - event is a non-empty string event name
+            - data is a dictionary containing event data
+            - self.main_loop is set and running
+            
+        Ensures:
+            - Schedules async emission on main event loop
+            - Does not block calling thread
+            - Prints error messages if event loop unavailable
+            - Provides debug output when enabled
+            
+        Raises:
+            - None (errors logged but not raised)
         """
         if not self.main_loop:
             print( f"[ERROR] No event loop reference - cannot emit {event}" )
@@ -284,9 +423,20 @@ class WebSocketManager:
     
     async def _async_emit( self, event: str, data: dict ):
         """
-        Internal async method to emit events.
+        Internal async method to emit events to all clients.
         
         This is the actual implementation that sends to WebSocket clients.
+        Used by the thread-safe emit() wrapper method.
+        
+        Requires:
+            - event is a non-empty string event name
+            - data is a dictionary containing event data
+            
+        Ensures:
+            - Delegates to async_emit for actual message sending
+            
+        Raises:
+            - None (exceptions propagated from async_emit)
         """
         await self.async_emit( event, data )
     
@@ -298,10 +448,20 @@ class WebSocketManager:
         Uses asyncio.run_coroutine_threadsafe to safely schedule the coroutine
         on the main event loop from any thread.
         
-        Args:
-            user_id: The user ID to send to
-            event: The event type
-            data: The data to send
+        Requires:
+            - user_id is a non-empty string
+            - event is a non-empty string event name
+            - data is a dictionary containing event data
+            - self.main_loop is set and running
+            
+        Ensures:
+            - Schedules async emission to user on main event loop
+            - Does not block calling thread
+            - Prints error messages if event loop unavailable
+            - Prints confirmation when successfully scheduled
+            
+        Raises:
+            - None (errors logged but not raised)
         """
         if not self.main_loop:
             print( f"[ERROR] No event loop reference - cannot emit {event} to user {user_id}" )
@@ -326,11 +486,16 @@ class WebSocketManager:
         """
         Check if a specific user has any active WebSocket connections.
         
-        Args:
-            user_id: The user ID to check
+        Requires:
+            - user_id is a non-empty string
             
-        Returns:
-            bool: True if user has at least one active connection
+        Ensures:
+            - Returns True if user has at least one active session
+            - Returns False if user has no sessions or all sessions inactive
+            - Validates sessions against active_connections
+            
+        Raises:
+            - None
         """
         if user_id not in self.user_sessions:
             return False
@@ -347,11 +512,16 @@ class WebSocketManager:
         """
         Get the number of active connections for a specific user.
         
-        Args:
-            user_id: The user ID to check
+        Requires:
+            - user_id is a string
             
-        Returns:
-            int: Number of active connections for this user
+        Ensures:
+            - Returns count of active sessions for the user
+            - Returns 0 if user has no sessions
+            - Only counts sessions present in active_connections
+            
+        Raises:
+            - None
         """
         if user_id not in self.user_sessions:
             return 0
@@ -410,11 +580,17 @@ class WebSocketManager:
         """
         Emit an event to all connected WebSocket clients.
         
-        Alias for async_emit to match expected API naming.
+        Alias for async_emit to match expected API naming conventions.
         
-        Args:
-            event: The event type
-            data: The data to send
+        Requires:
+            - event is a non-empty string event name
+            - data is a dictionary containing event data
+            
+        Ensures:
+            - Delegates to async_emit for message broadcasting
+            
+        Raises:
+            - None (exceptions propagated from async_emit)
         """
         await self.async_emit( event, data )
     
@@ -424,21 +600,35 @@ class WebSocketManager:
         
         When enabled, new connections from a user will close their old sessions.
         
-        Args:
-            enabled: True to enable single-session policy, False to allow multiple sessions
+        Requires:
+            - enabled is a boolean value
+            
+        Ensures:
+            - Updates single_session_per_user flag
+            - Prints confirmation message
+            - Policy takes effect on subsequent connections
+            
+        Raises:
+            - None
         """
         self.single_session_per_user = enabled
         print( f"[WS] Single-session policy {'enabled' if enabled else 'disabled'}" )
     
     def get_session_info( self, session_id: str ) -> Optional[dict]:
         """
-        Get information about a specific session.
+        Get detailed information about a specific WebSocket session.
         
-        Args:
-            session_id: The session ID to look up
+        Requires:
+            - session_id is a string
             
-        Returns:
-            dict with session info or None if session not found
+        Ensures:
+            - Returns dict with session details if session exists
+            - Returns None if session not found in active_connections
+            - Includes connection duration and timestamp information
+            - Includes associated user_id if available
+            
+        Raises:
+            - None
         """
         if session_id not in self.active_connections:
             return None
@@ -459,10 +649,18 @@ class WebSocketManager:
     
     def get_all_sessions_info( self ) -> list:
         """
-        Get information about all active sessions.
+        Get detailed information about all active WebSocket sessions.
         
-        Returns:
-            List of session info dictionaries
+        Requires:
+            - None
+            
+        Ensures:
+            - Returns list of session info dictionaries
+            - Each dict contains session details from get_session_info
+            - Empty list if no active connections
+            
+        Raises:
+            - None
         """
         sessions = []
         for session_id in self.active_connections:
@@ -473,13 +671,19 @@ class WebSocketManager:
     
     def cleanup_stale_sessions( self, max_age_hours: int = 24 ) -> int:
         """
-        Remove sessions older than specified age.
+        Remove WebSocket sessions older than specified age.
         
-        Args:
-            max_age_hours: Maximum age in hours before a session is considered stale
+        Requires:
+            - max_age_hours is a positive integer
             
-        Returns:
-            Number of sessions cleaned up
+        Ensures:
+            - Identifies sessions older than max_age_hours
+            - Disconnects and cleans up stale sessions
+            - Prints cleanup messages for removed sessions
+            - Returns count of cleaned up sessions
+            
+        Raises:
+            - None
         """
         now = datetime.now()
         stale_sessions = []
@@ -502,8 +706,18 @@ class WebSocketManager:
         This method is called periodically by the heartbeat background task
         to proactively detect and clean up dead WebSocket connections.
         
-        Returns:
-            int: Number of dead connections removed
+        Requires:
+            - Method is called from async context
+            - Configuration may disable heartbeat checking
+            
+        Ensures:
+            - Sends sys_ping message to all active connections
+            - Identifies and removes connections that fail to receive ping
+            - Prints summary of removed connections
+            - Returns early if heartbeat disabled in configuration
+            
+        Raises:
+            - None (WebSocket failures handled gracefully)
         """
         if not self.config_mgr.get( "websocket heartbeat enabled", default=True, return_type="boolean" ):
             return 0
@@ -534,13 +748,23 @@ class WebSocketManager:
     
     async def auto_cleanup( self ) -> int:
         """
-        Run automatic cleanup of stale sessions.
+        Run automatic cleanup of stale WebSocket sessions.
         
         This method is called periodically by the cleanup background task
         to remove sessions that have been connected for too long.
         
-        Returns:
-            int: Number of stale sessions cleaned up
+        Requires:
+            - Method is called from async context
+            - Configuration may disable auto cleanup
+            
+        Ensures:
+            - Gets max age from configuration (default 24 hours)
+            - Calls cleanup_stale_sessions with configured max age
+            - Prints summary if sessions were cleaned
+            - Returns early if cleanup disabled in configuration
+            
+        Raises:
+            - None
         """
         if not self.config_mgr.get( "websocket cleanup enabled", default=True, return_type="boolean" ):
             return 0
@@ -557,13 +781,20 @@ class WebSocketManager:
         """
         Allow clients to update their event subscriptions after connection.
         
-        Args:
-            session_id: The session ID to update
-            events: List of events to subscribe/unsubscribe
-            action: "replace" (default), "add", or "remove"
+        Requires:
+            - session_id exists in session_subscriptions
+            - events is a list of strings (may include "*" for all events)
+            - action is one of "replace", "add", or "remove"
             
-        Returns:
-            bool: True if successful, False if session not found
+        Ensures:
+            - Validates events against available_events list
+            - Updates subscriptions according to specified action
+            - Prints confirmation of subscription changes
+            - Returns True if successful, False if session not found
+            - Handles duplicate prevention for "add" action
+            
+        Raises:
+            - None
         """
         if session_id not in self.session_subscriptions:
             return False
@@ -586,10 +817,20 @@ class WebSocketManager:
     
     def get_subscription_stats( self ) -> dict:
         """
-        Get statistics about event subscriptions.
+        Get comprehensive statistics about event subscriptions across all sessions.
         
-        Returns:
-            dict: Statistics including subscription counts and patterns
+        Requires:
+            - None
+            
+        Ensures:
+            - Returns dict with total connection count
+            - Includes count of wildcard subscribers ("*")
+            - Includes count of filtered (specific event) connections
+            - Provides per-event subscription counts
+            - Counts only reflect active sessions with subscriptions
+            
+        Raises:
+            - None
         """
         stats = {
             "total_connections": len( self.active_connections ),

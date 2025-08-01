@@ -30,15 +30,61 @@ except ImportError:
 
 
 class NotificationTestSuite:
-    """Comprehensive test suite for Claude Code notifications"""
+    """
+    Comprehensive test suite for Claude Code notifications.
+    
+    Provides structured testing of the notification system with various
+    test scenarios including basic functionality, priority levels, 
+    realistic workflows, and error handling.
+    
+    Requires:
+        - notify_user function is available and functional
+        - NotificationType and NotificationPriority enums are accessible
+        - time module is available for timing and delays
+        
+    Ensures:
+        - Provides comprehensive test coverage of notification system
+        - Records detailed test results and statistics
+        - Supports both quick and full test suites
+        - Handles errors gracefully during testing
+    """
     
     def __init__( self, debug: bool = False, delay: float = 1.0 ):
+        """
+        Initialize the notification test suite.
+        
+        Requires:
+            - debug is a boolean flag for debug output
+            - delay is a non-negative float for inter-test delays
+            
+        Ensures:
+            - Sets up test configuration with debug and delay settings
+            - Initializes empty results list for test tracking
+            - Prepares suite for test execution
+            
+        Raises:
+            - None
+        """
         self.debug = debug
         self.delay = delay  # Delay between tests to prevent overwhelming
         self.results: List[Dict[str, Any]] = []
     
     def log( self, message: str, level: str = "INFO" ):
-        """Log message with timestamp if debug enabled"""
+        """
+        Log message with timestamp if debug enabled.
+        
+        Requires:
+            - message is a string to log
+            - level is a valid log level string
+            
+        Ensures:
+            - Outputs timestamped message if debug mode is enabled
+            - Does nothing if debug mode is disabled
+            - Uses consistent timestamp format
+            
+        Raises:
+            - None
+        """
         if self.debug:
             timestamp = time.strftime( "%H:%M:%S" )
             print( f"[{timestamp}] {level}: {message}" )
@@ -51,7 +97,24 @@ class NotificationTestSuite:
         priority: str 
     ) -> bool:
         """
-        Run individual notification test
+        Run individual notification test.
+        
+        Requires:
+            - test_name is a non-empty descriptive string
+            - message is the notification message to send
+            - notification_type is a valid notification type
+            - priority is a valid priority level
+            - notify_user function is available
+            
+        Ensures:
+            - Executes notification test with timing
+            - Records test result with full metadata
+            - Prints formatted test progress and results
+            - Adds configurable delay between tests
+            - Returns True if notification succeeded, False otherwise
+            
+        Raises:
+            - None (handles all exceptions gracefully)
         
         Args:
             test_name: Human-readable test name
@@ -230,7 +293,24 @@ class NotificationTestSuite:
         return passed
     
     def print_summary( self, total_passed: int, total_tests: int ):
-        """Print comprehensive test results summary"""
+        """
+        Print comprehensive test results summary.
+        
+        Requires:
+            - total_passed is a non-negative integer <= total_tests
+            - total_tests is a non-negative integer
+            - self.results contains test result dictionaries
+            
+        Ensures:
+            - Prints detailed test statistics and breakdowns
+            - Shows results by notification type and priority
+            - Displays performance metrics (timing statistics)
+            - Provides overall pass/fail determination
+            - Returns True for successful test run, False otherwise
+            
+        Raises:
+            - None (handles division by zero and empty results)
+        """
         
         print( "\n" + "=" * 60 )
         print( "📊 TEST RESULTS SUMMARY" )
@@ -298,7 +378,24 @@ class NotificationTestSuite:
 
 
 def main():
-    """CLI entry point for notification tests"""
+    """
+    CLI entry point for notification tests.
+    
+    Requires:
+        - argparse module is available for command line parsing
+        - validate_environment function is accessible
+        - All test suite dependencies are available
+        
+    Ensures:
+        - Parses command line arguments correctly
+        - Validates environment before running tests
+        - Executes appropriate test suite (quick or full)
+        - Prints comprehensive results summary
+        - Exits with appropriate status code
+        
+    Raises:
+        - SystemExit with 0 for success, 1 for failure
+    """
     
     parser = argparse.ArgumentParser(
         description="Test Claude Code notification system",

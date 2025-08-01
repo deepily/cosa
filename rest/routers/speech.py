@@ -1,5 +1,10 @@
 """
-Speech processing endpoints (STT/TTS)
+Speech processing endpoints for speech-to-text and text-to-speech functionality.
+
+Provides comprehensive audio processing capabilities including Whisper-based STT
+for MP3 and WAV files, WebSocket-based TTS streaming with OpenAI and ElevenLabs
+integration, and multimodal content processing with agent request detection.
+
 Generated on: 2025-01-24
 """
 
@@ -30,27 +35,97 @@ router = APIRouter(prefix="/api", tags=["speech"])
 
 # Global dependencies (temporary access via main module)
 def get_whisper_pipeline():
-    """Dependency to get Whisper pipeline"""
+    """
+    Dependency to get Whisper pipeline from main module.
+    
+    Requires:
+        - fastapi_app.main module is available
+        - main_module has whisper_pipeline attribute
+        
+    Ensures:
+        - Returns the Whisper pipeline instance
+        - Provides access to speech-to-text transcription
+        
+    Raises:
+        - ImportError if main module not available
+        - AttributeError if whisper_pipeline not found
+    """
     import fastapi_app.main as main_module
     return main_module.whisper_pipeline
 
 def get_websocket_manager():
-    """Dependency to get WebSocket manager"""
+    """
+    Dependency to get WebSocket manager from main module.
+    
+    Requires:
+        - fastapi_app.main module is available
+        - main_module has websocket_manager attribute
+        
+    Ensures:
+        - Returns the WebSocket manager instance
+        - Provides access to WebSocket communication
+        
+    Raises:
+        - ImportError if main module not available
+        - AttributeError if websocket_manager not found
+    """
     import fastapi_app.main as main_module
     return main_module.websocket_manager
 
 def get_config_manager():
-    """Dependency to get config manager"""
+    """
+    Dependency to get configuration manager from main module.
+    
+    Requires:
+        - fastapi_app.main module is available
+        - main_module has config_mgr attribute
+        
+    Ensures:
+        - Returns the configuration manager instance
+        - Provides access to application configuration
+        
+    Raises:
+        - ImportError if main module not available
+        - AttributeError if config_mgr not found
+    """
     import fastapi_app.main as main_module
     return main_module.config_mgr
 
 def get_active_tasks():
-    """Dependency to get active tasks"""
+    """
+    Dependency to get active tasks dictionary from main module.
+    
+    Requires:
+        - fastapi_app.main module is available
+        - main_module has active_tasks attribute
+        
+    Ensures:
+        - Returns the active tasks dictionary
+        - Provides access to background task management
+        
+    Raises:
+        - ImportError if main module not available
+        - AttributeError if active_tasks not found
+    """
     import fastapi_app.main as main_module
     return main_module.active_tasks
 
 def get_todo_queue():
-    """Dependency to get todo queue"""
+    """
+    Dependency to get todo queue from main module.
+    
+    Requires:
+        - fastapi_app.main module is available
+        - main_module has jobs_todo_queue attribute
+        
+    Ensures:
+        - Returns the todo queue instance
+        - Provides access to job queue management
+        
+    Raises:
+        - ImportError if main module not available
+        - AttributeError if jobs_todo_queue not found
+    """
     import fastapi_app.main as main_module
     return main_module.jobs_todo_queue
 
@@ -65,32 +140,38 @@ async def upload_and_transcribe_mp3_file(
     todo_queue = Depends(get_todo_queue)
 ):
     """
-    Upload and transcribe MP3 audio file using Whisper model.
+    Upload and transcribe MP3 audio file using Whisper model with multimodal processing.
     
-    Preconditions:
-        - Request body must contain base64 encoded MP3 audio
-        - Whisper pipeline must be initialized
-        - Write permissions to docker path
-        - Valid prompt_key in configuration
-    
-    Postconditions:
-        - Audio file saved to disk temporarily
-        - Transcription completed and processed
-        - Response saved to last_response.json
-        - Entry added to I/O table if not agent request
-        - Job queued if agent request detected
-    
-    Args:
-        request: FastAPI request containing base64 encoded audio
-        prefix: Optional prefix for transcription processing
-        prompt_key: Key for prompt selection (default: "generic")
-        prompt_verbose: Verbosity level (default: "verbose")
-    
-    Returns:
-        JSONResponse: Processed transcription results
-    
+    Requires:
+        - request.body() contains valid base64 encoded MP3 audio data
+        - whisper_pipeline is initialized and functional
+        - Write permissions exist for docker path location
+        - prompt_key exists in configuration manager settings
+        - config_mgr is accessible and properly configured
+        
+    Ensures:
+        - Audio file is temporarily saved to docker path and processed
+        - Whisper transcription is completed with chunked processing
+        - MultiModalMunger processes transcription with agent detection
+        - Agent requests are pushed to todo queue with websocket tracking
+        - Non-agent requests are logged to InputAndOutputTable
+        - Response is saved to /io/last_response.json in JSON format
+        - Returns JSONResponse with processed transcription results
+        
     Raises:
-        HTTPException: If audio decoding or transcription fails
+        - HTTPException with 500 status if base64 decoding fails
+        - HTTPException with 500 status if file writing fails
+        - HTTPException with 500 status if Whisper transcription fails
+        - HTTPException with 500 status if multimodal processing fails
+        
+    Args:
+        request: FastAPI request containing base64 encoded MP3 audio
+        prefix: Optional prefix for transcription processing context
+        prompt_key: Configuration key for prompt selection (default: "generic")
+        prompt_verbose: Verbosity level for processing (default: "verbose")
+        
+    Returns:
+        JSONResponse: Processed transcription with munger JSON format
     """
     try:
         # Get global debug settings
@@ -189,23 +270,36 @@ async def get_tts_audio(
     current_user_id: str = Depends(get_current_user_id)
 ):
     """
-    WebSocket-based TTS endpoint that streams audio via WebSocket.
+    WebSocket-based TTS endpoint that streams audio via WebSocket using hybrid streaming.
     
-    Preconditions:
-        - Request body must contain session_id and text
-        - WebSocket connection must exist for session_id
-        - OpenAI API key must be available
-        - config_mgr must be initialized
+    Requires:
+        - request JSON body contains session_id and text fields
+        - WebSocket connection exists and is active for session_id
+        - OpenAI API key is available via du.get_api_key("openai")
+        - current_user_id is authenticated and valid
+        - ws_manager and active_tasks are properly initialized
         
-    Postconditions:
-        - Returns immediate status response
-        - Streams audio chunks via WebSocket to specified session
+    Ensures:
+        - Session is registered with authenticated user for tracking
+        - WebSocket connection status is verified before processing
+        - TTS streaming task is created and managed in background
+        - Returns immediate status response without blocking
+        - Active task is tracked in active_tasks dictionary
+        - Audio streaming occurs asynchronously via stream_tts_hybrid
+        
+    Raises:
+        - HTTPException with 400 status if session_id or text missing
+        - HTTPException with 404 status if WebSocket connection not found
+        - HTTPException with 500 status if TTS generation setup fails
         
     Args:
-        request: FastAPI request containing JSON body with session_id and text
+        request: FastAPI request containing JSON with session_id and text
+        ws_manager: WebSocket manager for connection handling
+        active_tasks: Dictionary for background task management
+        current_user_id: Authenticated user identifier
         
     Returns:
-        JSONResponse: Immediate status response
+        JSONResponse: Immediate status confirmation with session details
     """
     try:
         # Enhanced debugging for TTS requests
@@ -269,23 +363,38 @@ async def get_tts_audio_elevenlabs(
     current_user_id: str = Depends(get_current_user_id)
 ):
     """
-    ElevenLabs WebSocket-based TTS endpoint that streams audio via WebSocket.
+    ElevenLabs WebSocket-based TTS endpoint with low-latency streaming optimization.
     
-    Preconditions:
-        - Request body must contain session_id and text
-        - WebSocket connection must exist for session_id
-        - ElevenLabs API key must be available
-        - ElevenLabs WebSocket streaming API must be accessible
+    Requires:
+        - request JSON body contains session_id and text fields
+        - WebSocket connection exists and is active for session_id
+        - ElevenLabs API key is available via du.get_api_key("eleven11")
+        - current_user_id is authenticated and valid
+        - ElevenLabs WebSocket streaming API is accessible
+        - Optional voice_id, stability, and similarity_boost parameters are valid
         
-    Postconditions:
-        - Returns immediate status response
-        - Streams audio chunks via WebSocket to specified session
+    Ensures:
+        - Session is registered with authenticated user for tracking
+        - WebSocket connection status is verified before processing
+        - ElevenLabs TTS streaming task is created and managed in background
+        - Returns immediate status response with provider and voice information
+        - Active task is tracked in active_tasks dictionary
+        - Audio streaming occurs asynchronously via stream_tts_elevenlabs
+        - Voice settings are properly configured for optimal quality
+        
+    Raises:
+        - HTTPException with 400 status if session_id or text missing
+        - HTTPException with 404 status if WebSocket connection not found
+        - HTTPException with 500 status if ElevenLabs TTS setup fails
         
     Args:
-        request: FastAPI request containing JSON body with session_id, text, and optional voice settings
+        request: FastAPI request containing JSON with session_id, text, and voice settings
+        ws_manager: WebSocket manager for connection handling
+        active_tasks: Dictionary for background task management
+        current_user_id: Authenticated user identifier
         
     Returns:
-        JSONResponse: Immediate status response
+        JSONResponse: Immediate status with ElevenLabs provider details
     """
     try:
         # Enhanced debugging for ElevenLabs TTS requests
@@ -355,29 +464,35 @@ async def upload_and_transcribe_wav_file(
     whisper_pipeline = Depends(get_whisper_pipeline)
 ):
     """
-    Upload and transcribe WAV audio file using Whisper model.
+    Upload and transcribe WAV audio file using Whisper model with temporary file handling.
     
-    Preconditions:
-        - Request must contain a WAV file upload
-        - Whisper pipeline must be initialized
-        - Write permissions to /tmp directory
-        - Valid audio file format (WAV)
-    
-    Postconditions:
-        - Audio file saved to temp location and deleted after processing
-        - Transcription completed
-        - Entry added to I/O table
-        - Returns transcribed text (not JSON like MP3 endpoint)
-    
-    Args:
-        file: WAV audio file upload
-        prefix: Optional prefix for transcription processing
-    
-    Returns:
-        str: Transcribed and processed text
-    
+    Requires:
+        - file is a valid UploadFile containing WAV audio data
+        - whisper_pipeline is initialized and functional
+        - Write permissions exist for /tmp directory
+        - Audio file is in valid WAV format readable by Whisper
+        - fastapi_app.main module is accessible for debug settings
+        
+    Ensures:
+        - Uploaded file is saved to unique temporary location
+        - Whisper transcription is completed on temporary file
+        - Processed text is extracted and cleaned from transcription
+        - Entry is logged to InputAndOutputTable with stt_wav type
+        - Temporary file is always deleted after processing (success or failure)
+        - Returns plain text string (different from MP3 JSON response)
+        
     Raises:
-        HTTPException: If file processing or transcription fails
+        - HTTPException with 500 status if file upload/saving fails
+        - HTTPException with 500 status if Whisper transcription fails
+        - HTTPException with 500 status if I/O table insertion fails
+        
+    Args:
+        file: WAV audio file upload from client
+        prefix: Optional prefix for transcription processing context
+        whisper_pipeline: Whisper model pipeline for transcription
+        
+    Returns:
+        str: Transcribed and processed text content
     """
     try:
         # Get global debug settings
@@ -429,13 +544,31 @@ async def upload_and_transcribe_wav_file(
 
 async def stream_tts_hybrid(session_id: str, msg: str, ws_manager: WebSocketManager):
     """
-    Hybrid TTS streaming: Forward chunks immediately, client plays when complete.
-    Simple, no format complexity, no buffering - just pipe OpenAI chunks to WebSocket.
+    Hybrid TTS streaming with OpenAI: Forward chunks immediately for low-latency playback.
     
+    Requires:
+        - session_id exists in ws_manager.active_connections
+        - msg is a non-empty string for TTS conversion
+        - ws_manager is properly initialized with active WebSocket connections
+        - OpenAI API key is available via du.get_api_key("openai")
+        - WebSocket connection remains stable during streaming
+        
+    Ensures:
+        - Creates OpenAI client with hardcoded base URL for real TTS API
+        - Sends status updates to WebSocket during generation process
+        - Streams MP3 audio chunks directly from OpenAI to WebSocket
+        - Forwards each 8192-byte chunk immediately without buffering
+        - Sends completion signal with timing and chunk count statistics
+        - Handles connection loss gracefully with appropriate cleanup
+        - Provides error messages via WebSocket on failures
+        
+    Raises:
+        - None (handles all exceptions gracefully with error reporting)
+        
     Args:
-        session_id: Session ID for WebSocket connection
-        msg: Text to convert to speech
-        ws_manager: WebSocket manager instance
+        session_id: Session ID for active WebSocket connection
+        msg: Text content to convert to speech
+        ws_manager: WebSocket manager instance for connection handling
     """
     websocket = ws_manager.active_connections.get(session_id)
     if not websocket:
@@ -520,16 +653,37 @@ async def stream_tts_elevenlabs(
     similarity_boost: float = 0.8
 ):
     """
-    ElevenLabs WebSocket streaming: Direct WebSocket connection to ElevenLabs API.
-    Provides low-latency streaming optimized for conversational AI with ~150-250ms total latency.
+    ElevenLabs WebSocket streaming with optimized low-latency configuration for conversational AI.
     
+    Requires:
+        - session_id exists in ws_manager.active_connections
+        - msg is a non-empty string for TTS conversion
+        - ws_manager is properly initialized with active WebSocket connections
+        - ElevenLabs API key is available via du.get_api_key("eleven11")
+        - voice_id is a valid ElevenLabs voice identifier
+        - stability and similarity_boost are floats between 0.0-1.0
+        - ElevenLabs WebSocket streaming API is accessible
+        
+    Ensures:
+        - Establishes WebSocket connection to ElevenLabs streaming endpoint
+        - Configures optimized chunk length schedule for low latency (~150-250ms)
+        - Sends voice settings and generation configuration to ElevenLabs
+        - Streams text with try_trigger_generation for immediate processing
+        - Forwards base64-decoded audio chunks to client WebSocket
+        - Handles ElevenLabs protocol messages (audio, isFinal, error)
+        - Sends completion signal with timing and chunk count statistics
+        - Gracefully handles connection failures and API errors
+        
+    Raises:
+        - None (handles all exceptions gracefully with error reporting)
+        
     Args:
-        session_id: Session ID for WebSocket connection
-        msg: Text to convert to speech
-        ws_manager: WebSocket manager instance
-        voice_id: ElevenLabs voice ID (default: Rachel)
-        stability: Voice stability setting (0.0-1.0)
-        similarity_boost: Voice similarity boost (0.0-1.0)
+        session_id: Session ID for active WebSocket connection
+        msg: Text content to convert to speech
+        ws_manager: WebSocket manager instance for connection handling
+        voice_id: ElevenLabs voice ID (default: Rachel voice)
+        stability: Voice stability setting for consistent output (0.0-1.0)
+        similarity_boost: Voice similarity enhancement (0.0-1.0)
     """
     websocket = ws_manager.active_connections.get(session_id)
     if not websocket:

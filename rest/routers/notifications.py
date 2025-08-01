@@ -1,5 +1,10 @@
 """
-Notification management endpoints
+Notification management endpoints.
+
+Provides REST API endpoints for managing user notifications including
+sending notifications from Claude Code, retrieving user notifications,
+and managing notification lifecycle (played/deleted status).
+
 Generated on: 2025-01-24
 """
 
@@ -21,18 +26,62 @@ jobs_notification_queue = None
 websocket_manager = None
 
 def get_notification_queue():
-    """Dependency to get notification queue"""
+    """
+    Dependency to get notification queue from main module.
+    
+    Requires:
+        - fastapi_app.main module is available
+        - main_module has jobs_notification_queue attribute
+        
+    Ensures:
+        - Returns the notification queue instance
+        - Provides access to notification management
+        
+    Raises:
+        - ImportError if main module not available
+        - AttributeError if notification queue not found
+    """
     # This will be properly injected later
     import fastapi_app.main as main_module
     return main_module.jobs_notification_queue
 
 def get_websocket_manager():
-    """Dependency to get websocket manager"""
+    """
+    Dependency to get websocket manager from main module.
+    
+    Requires:
+        - fastapi_app.main module is available
+        - main_module has websocket_manager attribute
+        
+    Ensures:
+        - Returns the websocket manager instance
+        - Provides access to WebSocket communication
+        
+    Raises:
+        - ImportError if main module not available
+        - AttributeError if websocket manager not found
+    """
     import fastapi_app.main as main_module
     return main_module.websocket_manager
 
 def get_local_timestamp():
-    """Get timezone-aware timestamp using configured timezone from ConfigurationManager"""
+    """
+    Get timezone-aware timestamp using configured timezone from ConfigurationManager.
+    
+    Requires:
+        - fastapi_app.main module is available
+        - config_mgr and app_debug are accessible
+        - zoneinfo module is available
+        
+    Ensures:
+        - Returns ISO format timestamp with timezone information
+        - Uses configured timezone or defaults to America/New_York
+        - Falls back to UTC if timezone configuration is invalid
+        - Provides debug output if app_debug is enabled
+        
+    Raises:
+        - None (handles all exceptions with fallback to UTC)
+    """
     import fastapi_app.main as main_module
     config_mgr = main_module.config_mgr
     app_debug = main_module.app_debug
@@ -74,15 +123,26 @@ async def notify_user(
     to users through the Genie-in-the-Box application. Notifications are
     delivered via WebSocket and converted to audio using HybridTTS.
     
-    Preconditions:
-        - API key must match configured value
-        - WebSocket manager must be initialized
-        - Message must not be empty
+    Requires:
+        - api_key matches "claude_code_simple_key"
+        - message is non-empty after stripping whitespace
+        - type is one of: task, progress, alert, custom
+        - priority is one of: low, medium, high, urgent
+        - target_user is a valid email address
+        - WebSocket manager and notification queue are initialized
         
-    Postconditions:
-        - Notification logged in application logs
-        - WebSocket broadcast sent to all connected clients
-        - Audio notification triggered via HybridTTS
+    Ensures:
+        - Validates all input parameters against allowed values
+        - Converts target email to system ID for routing
+        - Adds notification to queue with proper metadata
+        - Attempts WebSocket delivery to connected users
+        - Returns appropriate status based on delivery success
+        - Logs all notification attempts and results
+        
+    Raises:
+        - HTTPException with 401 for invalid API key
+        - HTTPException with 400 for invalid parameters
+        - HTTPException with 500 for delivery failures
         
     Args:
         message: The notification message text
@@ -92,9 +152,6 @@ async def notify_user(
         
     Returns:
         dict: Success status and notification details
-        
-    Raises:
-        HTTPException: If authentication fails or invalid parameters
     """
     # Validate API key (Phase 1: Simple hardcoded key)
     if api_key != "claude_code_simple_key":
@@ -201,13 +258,21 @@ async def get_user_notifications(
     """
     Get notifications for a specific user.
     
-    Preconditions:
-        - user_id must be a valid system user ID
-        - notification_queue must be initialized
+    Requires:
+        - user_id is a non-empty valid system user ID
+        - notification_queue is initialized and accessible
+        - include_played is a boolean value
+        - limit is a positive integer or None
         
-    Postconditions:
-        - Returns list of notifications for the user
-        - Notifications are sorted by timestamp (newest first)
+    Ensures:
+        - Retrieves all notifications for the specified user
+        - Applies include_played filter as requested
+        - Limits results to specified number if provided
+        - Returns notifications sorted by timestamp (newest first)
+        - Includes metadata about query parameters and results
+        
+    Raises:
+        - HTTPException with 500 for query failures
         
     Args:
         user_id: The system user ID (not email)
@@ -249,13 +314,18 @@ async def get_next_notification(
     """
     Get the next unplayed notification for a user.
     
-    Preconditions:
-        - user_id must be a valid system user ID
-        - notification_queue must be initialized
+    Requires:
+        - user_id is a non-empty valid system user ID
+        - notification_queue is initialized and accessible
         
-    Postconditions:
-        - Returns next unplayed notification if available
-        - Does not mark notification as played
+    Ensures:
+        - Retrieves the next unplayed notification if available
+        - Does not modify notification played status
+        - Returns appropriate status indicating found/not found
+        - Includes timestamp for response tracking
+        
+    Raises:
+        - HTTPException with 500 for query failures
         
     Args:
         user_id: The system user ID (not email)
@@ -293,13 +363,20 @@ async def mark_notification_played(
     """
     Mark a notification as played.
     
-    Preconditions:
-        - notification_id must be a valid notification ID
-        - notification_queue must be initialized
+    Requires:
+        - notification_id is a non-empty valid notification ID
+        - notification_queue is initialized and accessible
+        - notification with given ID exists in the queue
         
-    Postconditions:
-        - Notification is marked as played with timestamp
-        - Played status is persisted to io_tbl
+    Ensures:
+        - Updates notification played status with timestamp
+        - Persists played status to io_tbl database
+        - Returns success confirmation with notification details
+        - Raises 404 if notification not found
+        
+    Raises:
+        - HTTPException with 404 if notification not found
+        - HTTPException with 500 for update failures
         
     Args:
         notification_id: The unique notification ID
@@ -334,13 +411,19 @@ async def delete_notification(
     """
     Delete a notification.
     
-    Preconditions:
-        - notification_id must be a valid notification ID
-        - notification_queue must be initialized
+    Requires:
+        - notification_id is a non-empty valid notification ID
+        - notification_queue is initialized and accessible
+        - notification with given ID exists in the queue
         
-    Postconditions:
-        - Notification is removed from queue and io_tbl
-        - Returns success status
+    Ensures:
+        - Removes notification from queue and io_tbl database
+        - Returns success confirmation with deletion details
+        - Raises 404 if notification not found
+        
+    Raises:
+        - HTTPException with 404 if notification not found
+        - HTTPException with 500 for deletion failures
         
     Args:
         notification_id: The unique notification ID
