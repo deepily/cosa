@@ -551,7 +551,7 @@ class WebSocketManager:
         message = {
             "type": event,
             "timestamp": datetime.now().isoformat(),
-            **data
+            "data": data
         }
         
         sent_count = 0

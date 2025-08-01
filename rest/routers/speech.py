@@ -360,6 +360,7 @@ async def get_tts_audio_elevenlabs(
     request: Request,
     ws_manager: WebSocketManager = Depends(get_websocket_manager),
     active_tasks = Depends(get_active_tasks),
+    config_mgr = Depends(get_config_manager),
     current_user_id: str = Depends(get_current_user_id)
 ):
     """
@@ -408,8 +409,13 @@ async def get_tts_audio_elevenlabs(
         session_id = request_data.get("session_id")
         msg = request_data.get("text")
         voice_id = request_data.get("voice_id", "21m00Tcm4TlvDq8ikWAM")  # Default Rachel voice
+        model_id = request_data.get("model_id", "eleven_turbo_v2_5")
         stability = request_data.get("stability", 0.5)
         similarity_boost = request_data.get("similarity_boost", 0.8)
+        style = request_data.get("style", 0.0)
+        use_speaker_boost = request_data.get("use_speaker_boost", False)
+        speed = request_data.get("speed", 1.0)
+        quality_profile = request_data.get("quality_profile", "balanced")
         
         print(f"[TTS-ELEVENLABS-DEBUG] Extracted - session_id: '{session_id}', text: '{msg}', voice_id: '{voice_id}'")
         
@@ -438,7 +444,8 @@ async def get_tts_audio_elevenlabs(
         
         # Start ElevenLabs TTS streaming in background
         task = asyncio.create_task(stream_tts_elevenlabs(
-            session_id, msg, ws_manager, voice_id, stability, similarity_boost
+            session_id, msg, ws_manager, voice_id, model_id, stability, 
+            similarity_boost, style, use_speaker_boost, speed, quality_profile, config_mgr
         ))
         active_tasks[session_id] = task
         
@@ -586,7 +593,7 @@ async def stream_tts_hybrid(session_id: str, msg: str, ws_manager: WebSocketMana
         
         # Send status update
         await websocket.send_json({
-            "type": "audio_status",
+            "type": "audio_streaming_status",
             "text": "Generating and streaming audio...",
             "status": "loading"
         })
@@ -617,7 +624,7 @@ async def stream_tts_hybrid(session_id: str, msg: str, ws_manager: WebSocketMana
                 
                 # Send completion signal
                 await websocket.send_json({
-                    "type": "audio_complete",
+                    "type": "audio_streaming_complete",
                     "text": f"Streaming complete ({chunk_count} chunks, {time.time() - start_time:.1f}s)",
                     "status": "success"
                 })
@@ -649,8 +656,14 @@ async def stream_tts_elevenlabs(
     msg: str, 
     ws_manager: WebSocketManager,
     voice_id: str = "21m00Tcm4TlvDq8ikWAM",
+    model_id: str = "eleven_turbo_v2_5",
     stability: float = 0.5,
-    similarity_boost: float = 0.8
+    similarity_boost: float = 0.8,
+    style: float = 0.0,
+    use_speaker_boost: bool = False,
+    speed: float = 1.0,
+    quality_profile: str = "balanced",
+    config_mgr = None
 ):
     """
     ElevenLabs WebSocket streaming with optimized low-latency configuration for conversational AI.
@@ -691,23 +704,62 @@ async def stream_tts_elevenlabs(
         return
     
     try:
+        # Load configuration profile settings if provided
+        if config_mgr and quality_profile and quality_profile != "custom":
+            profile_prefix = f"elevenlabs tts profile {quality_profile}"
+            
+            # Load profile settings, using current values as defaults if profile keys don't exist
+            model_id = config_mgr.get( f"{profile_prefix} model", default=model_id )
+            stability = config_mgr.get( f"{profile_prefix} stability", default=stability, return_type="float" )
+            similarity_boost = config_mgr.get( f"{profile_prefix} similarity boost", default=similarity_boost, return_type="float" )
+            style = config_mgr.get( f"{profile_prefix} style", default=style, return_type="float" )
+            use_speaker_boost = config_mgr.get( f"{profile_prefix} use speaker boost", default=use_speaker_boost, return_type="boolean" )
+            speed = config_mgr.get( f"{profile_prefix} speed", default=speed, return_type="float" )
+        
+        # Fall back to default config values if still using original defaults and config_mgr available
+        if config_mgr:
+            if voice_id == "21m00Tcm4TlvDq8ikWAM":  # Check if still using default
+                voice_id = config_mgr.get( "elevenlabs tts default voice id", default=voice_id )
+            if model_id == "eleven_turbo_v2_5" and quality_profile == "balanced":  # Check if still default and no profile applied
+                model_id = config_mgr.get( "elevenlabs tts default model", default=model_id )
+        
         # Get ElevenLabs API key using COSA utility
         api_key = du.get_api_key("eleven11")
         if not api_key:
             raise ValueError("ElevenLabs API key not available")
         
         print(f"[TTS-ELEVENLABS] Starting generation for: '{msg}' with voice {voice_id}")
+        print(f"[TTS-ELEVENLABS] Using model: {model_id}, profile: {quality_profile}")
+        
+        # Get app_verbose from main module (same pattern as other dependencies)
+        import fastapi_app.main as main_module
+        app_verbose = main_module.app_verbose
+        
+        if app_verbose:
+            # Build vertically aligned banner text with colons aligned
+            banner_text = f"""Voice Quality Settings:
+Model ID         : {model_id}
+Voice ID         : {voice_id}
+Quality Profile  : {quality_profile}
+Stability        : {stability:.2f}
+Similarity Boost : {similarity_boost:.2f}
+Style            : {style:.2f}
+Speaker Boost    : {use_speaker_boost}
+Speed            : {speed:.2f}"""
+            du.print_banner( banner_text )
+        else:
+            print(f"[TTS-ELEVENLABS] Voice settings: stability={stability}, similarity_boost={similarity_boost}, style={style}, speaker_boost={use_speaker_boost}, speed={speed}")
         
         # Send status update
         await websocket.send_json({
-            "type": "audio_status",
+            "type": "audio_streaming_status",
             "text": "Connecting to ElevenLabs...",
             "status": "loading",
             "provider": "elevenlabs"
         })
         
-        # ElevenLabs WebSocket streaming endpoint
-        elevenlabs_ws_url = f"wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id=eleven_flash_v2_5"
+        # ElevenLabs WebSocket streaming endpoint with dynamic model
+        elevenlabs_ws_url = f"wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}"
         
         # Connect to ElevenLabs WebSocket with authentication header
         elevenlabs_ws = await websockets.connect(
@@ -724,7 +776,10 @@ async def stream_tts_elevenlabs(
                 "text": " ",  # Initial space to start stream
                 "voice_settings": {
                     "stability": stability,
-                    "similarity_boost": similarity_boost
+                    "similarity_boost": similarity_boost,
+                    "style": style,
+                    "use_speaker_boost": use_speaker_boost,
+                    "speed": speed
                 },
                 "generation_config": {
                     "chunk_length_schedule": [120, 160, 250, 290]  # Optimized for low latency
@@ -746,7 +801,7 @@ async def stream_tts_elevenlabs(
             
             # Update status
             await websocket.send_json({
-                "type": "audio_status",
+                "type": "audio_streaming_status",
                 "text": "Streaming audio from ElevenLabs...",
                 "status": "streaming",
                 "provider": "elevenlabs"
@@ -792,7 +847,7 @@ async def stream_tts_elevenlabs(
                 
             # Send completion signal
             await websocket.send_json({
-                "type": "audio_complete",
+                "type": "audio_streaming_complete",
                 "text": f"ElevenLabs streaming complete ({chunk_count} chunks, {time.time() - start_time:.1f}s)",
                 "status": "success",
                 "provider": "elevenlabs"

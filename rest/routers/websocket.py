@@ -14,6 +14,7 @@ from datetime import datetime
 import json
 import asyncio
 import re
+from urllib.parse import unquote
 
 # Import dependencies
 from cosa.rest.auth import get_current_user
@@ -142,11 +143,15 @@ async def websocket_audio_endpoint(websocket: WebSocket, session_id: str):
     app_debug = main_module.app_debug
     app_verbose = main_module.app_verbose
     
-    # Validate session ID format
-    if not is_valid_session_id(session_id):
+    # URL decode session ID and validate format
+    decoded_session_id = unquote(session_id)
+    if not is_valid_session_id(decoded_session_id):
         await websocket.close(code=1008, reason="Invalid session ID format")
-        print(f"[WS-AUDIO] Rejected connection with invalid session ID: {session_id}")
+        print(f"[WS-AUDIO] Rejected connection with invalid session ID: {decoded_session_id}")
         return
+    
+    # Use decoded session ID for all further operations
+    session_id = decoded_session_id
     
     await websocket.accept()
     
@@ -239,11 +244,15 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
     websocket_manager = main_module.websocket_manager
     app_debug = main_module.app_debug
     
-    # Validate session ID format
-    if not is_valid_session_id(session_id):
+    # URL decode session ID and validate format
+    decoded_session_id = unquote(session_id)
+    if not is_valid_session_id(decoded_session_id):
         await websocket.close(code=1008, reason="Invalid session ID format")
-        print(f"[WS-QUEUE] Rejected connection with invalid session ID: {session_id}")
+        print(f"[WS-QUEUE] Rejected connection with invalid session ID: {decoded_session_id}")
         return
+    
+    # Use decoded session ID for all further operations
+    session_id = decoded_session_id
     
     await websocket.accept()
     print(f"[WS-QUEUE] Queue WebSocket connected for session: {session_id}")
