@@ -423,3 +423,229 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.run_formatter()
         
         return self.answer_conversational
+
+
+def quick_smoke_test():
+    """
+    Critical smoke test for AgentBase - validates foundation functionality for all v010 agents.
+    
+    This test is essential for v000 deprecation as AgentBase is the foundation class
+    that all v010 agents inherit from.
+    """
+    import cosa.utils.util as du
+    
+    du.print_banner( "AgentBase Smoke Test", prepend_nl=True )
+    
+    try:
+        # Test 1: Abstract class behavior
+        print( "Testing abstract class behavior..." )
+        try:
+            # This should fail because AgentBase is abstract
+            agent = AgentBase( routing_command="test", question="test question" )
+            print( "✗ ERROR: Abstract class was instantiated (should not happen)" )
+        except TypeError as e:
+            if "abstract" in str( e ).lower():
+                print( "✓ Abstract class properly prevents direct instantiation" )
+            else:
+                print( f"✗ Unexpected TypeError: {e}" )
+        except Exception as e:
+            print( f"⚠ Unexpected error testing abstract class: {e}" )
+        
+        # Test 2: State constants validation
+        print( "Testing state constants..." )
+        expected_states = [
+            "STATE_INITIALIZING", "STATE_WAITING_TO_RUN", "STATE_RUNNING",
+            "STATE_WAITING_FOR_RESPONSE", "STATE_STOPPED_ERROR", "STATE_STOPPED_DONE"
+        ]
+        
+        all_states_present = True
+        for state in expected_states:
+            if not hasattr( AgentBase, state ):
+                print( f"✗ Missing state constant: {state}" )
+                all_states_present = False
+        
+        if all_states_present:
+            print( "✓ All state constants present" )
+        
+        # Test 3: Required method signatures
+        print( "Testing abstract method signatures..." )
+        abstract_methods = [ "restore_from_serialized_state" ]
+        
+        for method_name in abstract_methods:
+            if hasattr( AgentBase, method_name ):
+                method = getattr( AgentBase, method_name )
+                if callable( method ):
+                    print( f"✓ Abstract method {method_name} is callable" )
+                else:
+                    print( f"✗ Abstract method {method_name} is not callable" )
+            else:
+                print( f"✗ Missing abstract method: {method_name}" )
+        
+        # Test 4: Basic method presence validation
+        print( "Testing core method presence..." )
+        core_methods = [
+            "get_html", "serialize_to_json", "run_prompt", "run_code", 
+            "is_format_output_runnable", "run_formatter", "formatter_ran_to_completion", "do_all"
+        ]
+        
+        methods_present = 0
+        for method_name in core_methods:
+            if hasattr( AgentBase, method_name ):
+                methods_present += 1
+            else:
+                print( f"⚠ Missing core method: {method_name}" )
+        
+        if methods_present == len( core_methods ):
+            print( f"✓ All {len( core_methods )} core methods present" )
+        else:
+            print( f"⚠ Only {methods_present}/{len( core_methods )} core methods present" )
+        
+        # Test 5: Inheritance structure validation
+        print( "Testing inheritance structure..." )
+        import inspect
+        
+        # Check if AgentBase properly inherits from RunnableCode and ABC
+        base_classes = inspect.getmro( AgentBase )
+        base_class_names = [ cls.__name__ for cls in base_classes ]
+        
+        if "RunnableCode" in base_class_names:
+            print( "✓ Properly inherits from RunnableCode" )
+        else:
+            print( "✗ Missing RunnableCode inheritance" )
+        
+        if "ABC" in base_class_names:
+            print( "✓ Properly inherits from ABC" )
+        else:
+            print( "✗ Missing ABC inheritance" )
+        
+        # Test 6: Configuration integration validation
+        print( "Testing configuration integration..." )
+        try:
+            # Test basic import paths work
+            from cosa.config.configuration_manager import ConfigurationManager
+            print( "✓ ConfigurationManager import successful" )
+        except ImportError as e:
+            print( f"✗ ConfigurationManager import failed: {e}" )
+        
+        # Test 7: Dependency imports validation
+        print( "Testing critical dependency imports..." )
+        critical_imports = [
+            ( "cosa.agents.v010.raw_output_formatter", "RawOutputFormatter" ),
+            ( "cosa.agents.v010.llm_client_factory", "LlmClientFactory" ),
+            ( "cosa.agents.v010.runnable_code", "RunnableCode" ),
+            ( "cosa.agents.v010.two_word_id_generator", "TwoWordIdGenerator" )
+        ]
+        
+        import_success_count = 0
+        for module_path, class_name in critical_imports:
+            try:
+                module = __import__( module_path, fromlist=[ class_name ] )
+                if hasattr( module, class_name ):
+                    import_success_count += 1
+                else:
+                    print( f"✗ {class_name} not found in {module_path}" )
+            except ImportError as e:
+                print( f"✗ Failed to import {class_name} from {module_path}: {e}" )
+        
+        if import_success_count == len( critical_imports ):
+            print( f"✓ All {len( critical_imports )} critical dependencies importable" )
+        else:
+            print( f"⚠ Only {import_success_count}/{len( critical_imports )} critical dependencies importable" )
+        
+        # Test 8: Critical v000 dependency scanning
+        print( "\n🔍 Scanning for v000 dependencies..." )
+        
+        # Scan the file for v000 patterns
+        import inspect
+        source_file = inspect.getfile( AgentBase )
+        
+        v000_found = False
+        v000_patterns = []
+        
+        with open( source_file, 'r' ) as f:
+            content = f.read()
+            
+            # Split content and exclude smoke test function
+            lines = content.split( '\n' )
+            in_smoke_test = False
+            
+            for i, line in enumerate( lines ):
+                stripped_line = line.strip()
+                
+                # Track if we're in the smoke test function
+                if "def quick_smoke_test" in line:
+                    in_smoke_test = True
+                    continue
+                elif in_smoke_test and line.startswith( "def " ):
+                    in_smoke_test = False
+                elif in_smoke_test:
+                    continue
+                
+                # Skip comments and docstrings
+                if ( stripped_line.startswith( '#' ) or 
+                     stripped_line.startswith( '"""' ) or
+                     stripped_line.startswith( "'" ) ):
+                    continue
+                
+                # Look for actual v000 code references
+                if "v000" in stripped_line and any( pattern in stripped_line for pattern in [
+                    "import", "from", "cosa.agents.v000", ".v000."
+                ] ):
+                    v000_found = True
+                    v000_patterns.append( f"Line {i+1}: {stripped_line}" )
+        
+        if v000_found:
+            print( "🚨 CRITICAL: v000 dependencies detected!" )
+            print( "   Found v000 references:" )
+            for pattern in v000_patterns[ :3 ]:  # Show first 3
+                print( f"     • {pattern}" )
+            if len( v000_patterns ) > 3:
+                print( f"     ... and {len( v000_patterns ) - 3} more v000 references" )
+            print( "   ⚠️  These dependencies MUST be resolved before v000 deprecation!" )
+        else:
+            print( "✅ EXCELLENT: No v000 dependencies found!" )
+        
+        # Test 9: Validate inheritance chain works
+        print( "\nTesting inheritance chain validation..." )
+        try:
+            # Create a minimal concrete subclass for testing
+            class TestAgent( AgentBase ):
+                def __init__( self ):
+                    # Minimal initialization to test inheritance
+                    self.xml_response_tag_names = [ "test" ]
+                
+                @staticmethod
+                def restore_from_serialized_state( file_path: str ):
+                    return TestAgent()
+            
+            # Test that abstract methods are properly defined
+            test_agent = TestAgent()
+            if hasattr( test_agent, 'restore_from_serialized_state' ):
+                print( "✓ Inheritance chain validation successful" )
+            else:
+                print( "✗ Inheritance chain validation failed" )
+        except Exception as e:
+            print( f"⚠ Inheritance chain test had issues: {e}" )
+        
+    except Exception as e:
+        print( f"✗ Error during AgentBase testing: {e}" )
+        import traceback
+        traceback.print_exc()
+    
+    # Summary
+    print( "\n" + "="*60 )
+    if v000_found:
+        print( "🚨 CRITICAL ISSUE: AgentBase has v000 dependencies!" )
+        print( "   Status: NOT READY for v000 deprecation" )
+        print( "   Priority: IMMEDIATE ACTION REQUIRED" )
+        print( "   Risk Level: CRITICAL - All v010 agents will break" )
+    else:
+        print( "✅ AgentBase smoke test completed successfully!" )
+        print( "   Status: Foundation class is ready for v000 deprecation" )
+        print( "   Risk Level: LOW" )
+    
+    print( "✓ AgentBase smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

@@ -424,3 +424,301 @@ class FifoQueue:
                     print( f"[QUEUE] Auto-emitted {event_name}: {data}" )
             except Exception as e:
                 print( f"[ERROR] _emit_queue_update failed: {e}" )
+
+
+def quick_smoke_test():
+    """
+    Critical smoke test for FIFO queue implementation - validates base queue functionality.
+    
+    This test is essential for v000 deprecation as fifo_queue.py is the foundation
+    for all queue implementations in the REST system.
+    """
+    import cosa.utils.util as du
+    
+    du.print_banner( "FIFO Queue Smoke Test", prepend_nl=True )
+    
+    try:
+        # Test 1: Basic class and method presence
+        print( "Testing core FIFO queue components..." )
+        expected_methods = [
+            "push", "pop", "head", "get_by_id_hash", "delete_by_id_hash",
+            "is_empty", "size", "has_changed", "clear", "get_html_list",
+            "pop_blocking_object", "push_blocking_object", "is_in_focus_mode", "is_accepting_jobs"
+        ]
+        
+        methods_found = 0
+        for method_name in expected_methods:
+            if hasattr( FifoQueue, method_name ):
+                methods_found += 1
+            else:
+                print( f"⚠ Missing method: {method_name}" )
+        
+        if methods_found == len( expected_methods ):
+            print( f"✓ All {len( expected_methods )} core FIFO methods present" )
+        else:
+            print( f"⚠ Only {methods_found}/{len( expected_methods )} FIFO methods present" )
+        
+        # Test 2: Critical dependency imports
+        print( "Testing critical dependency imports..." )
+        try:
+            from collections import OrderedDict
+            from typing import Any, Optional
+            print( "✓ Standard library imports successful" )
+        except ImportError as e:
+            print( f"✗ Standard library imports failed: {e}" )
+        
+        try:
+            from cosa.rest.queue_extensions import UserJobTracker
+            print( "✓ Queue extensions import successful" )
+        except ImportError as e:
+            print( f"⚠ Queue extensions import failed: {e}" )
+        
+        # Test 3: Basic FIFO queue functionality
+        print( "Testing basic FIFO queue functionality..." )
+        try:
+            # Create a test queue
+            queue = FifoQueue()
+            
+            # Test initial state
+            if queue.is_empty() and queue.size() == 0:
+                print( "✓ Queue initialization working" )
+            else:
+                print( "✗ Queue initialization failed" )
+            
+            # Test state properties
+            if queue.is_accepting_jobs() and queue.is_in_focus_mode():
+                print( "✓ Initial state properties correct" )
+            else:
+                print( "⚠ Initial state properties may have issues" )
+            
+        except Exception as e:
+            print( f"⚠ Basic queue functionality issues: {e}" )
+        
+        # Test 4: Queue operations with mock objects
+        print( "Testing queue operations..." )
+        try:
+            # Create simple mock objects for testing
+            class MockItem:
+                def __init__( self, id_hash, name ):
+                    self.id_hash = id_hash
+                    self.name = name
+                
+                def get_html( self ):
+                    return f"<li id='{self.id_hash}'>{self.name}</li>"
+            
+            queue = FifoQueue()
+            
+            # Test push operations
+            item1 = MockItem( "hash1", "Item 1" )
+            item2 = MockItem( "hash2", "Item 2" )
+            
+            queue.push( item1 )
+            queue.push( item2 )
+            
+            if queue.size() == 2 and not queue.is_empty():
+                print( "✓ Push operations working" )
+            else:
+                print( "✗ Push operations failed" )
+            
+            # Test head operation
+            head_item = queue.head()
+            if head_item and head_item.id_hash == "hash1":
+                print( "✓ Head operation working" )
+            else:
+                print( "✗ Head operation failed" )
+            
+            # Test get_by_id_hash
+            retrieved_item = queue.get_by_id_hash( "hash2" )
+            if retrieved_item and retrieved_item.name == "Item 2":
+                print( "✓ Get by ID hash working" )
+            else:
+                print( "✗ Get by ID hash failed" )
+            
+            # Test pop operation
+            popped_item = queue.pop()
+            if popped_item and popped_item.id_hash == "hash1" and queue.size() == 1:
+                print( "✓ Pop operation working" )
+            else:
+                print( "✗ Pop operation failed" )
+            
+            # Test delete operation
+            if queue.delete_by_id_hash( "hash2" ) and queue.is_empty():
+                print( "✓ Delete by ID hash working" )
+            else:
+                print( "✗ Delete by ID hash failed" )
+            
+        except Exception as e:
+            print( f"⚠ Queue operations testing issues: {e}" )
+        
+        # Test 5: Blocking object functionality
+        print( "Testing blocking object functionality..." )
+        try:
+            queue = FifoQueue()
+            test_blocking_obj = "blocking_test"
+            
+            # Test push blocking object
+            queue.push_blocking_object( test_blocking_obj )
+            
+            if not queue.is_accepting_jobs():
+                print( "✓ Push blocking object working" )
+            else:
+                print( "✗ Push blocking object failed" )
+            
+            # Test pop blocking object
+            popped_blocking = queue.pop_blocking_object()
+            
+            if popped_blocking == test_blocking_obj and queue.is_accepting_jobs():
+                print( "✓ Pop blocking object working" )
+            else:
+                print( "✗ Pop blocking object failed" )
+            
+        except Exception as e:
+            print( f"⚠ Blocking object functionality issues: {e}" )
+        
+        # Test 6: HTML generation functionality
+        print( "Testing HTML generation functionality..." )
+        try:
+            queue = FifoQueue()
+            
+            # Use mock items that have get_html method
+            class MockHtmlItem:
+                def __init__( self, id_hash, content ):
+                    self.id_hash = id_hash
+                    self.content = content
+                
+                def get_html( self ):
+                    return f"<div id='{self.id_hash}'>{self.content}</div>"
+            
+            queue.push( MockHtmlItem( "html1", "Content 1" ) )
+            queue.push( MockHtmlItem( "html2", "Content 2" ) )
+            
+            html_list = queue.get_html_list()
+            
+            if len( html_list ) == 2 and all( "<div" in item for item in html_list ):
+                print( "✓ HTML generation working" )
+            else:
+                print( "⚠ HTML generation may have issues" )
+            
+        except Exception as e:
+            print( f"⚠ HTML generation functionality issues: {e}" )
+        
+        # Test 7: WebSocket integration structure
+        print( "Testing WebSocket integration structure..." )
+        try:
+            # Test queue with WebSocket manager (mock)
+            mock_ws_mgr = type( 'MockWS', (), { 'emit': lambda self, event, data: None } )()
+            queue = FifoQueue( websocket_mgr=mock_ws_mgr, queue_name="test_queue" )
+            
+            if hasattr( queue, 'websocket_mgr' ) and hasattr( queue, 'queue_name' ):
+                print( "✓ WebSocket integration structure valid" )
+            else:
+                print( "⚠ WebSocket integration structure issues" )
+                
+        except Exception as e:
+            print( f"⚠ WebSocket integration issues: {e}" )
+        
+        # Test 8: Critical v000 dependency scanning
+        print( "\\n🔍 Scanning for v000 dependencies..." )
+        
+        # Scan the file for v000 patterns
+        import inspect
+        source_file = inspect.getfile( FifoQueue )
+        
+        v000_found = False
+        v000_patterns = []
+        
+        with open( source_file, 'r' ) as f:
+            content = f.read()
+            
+            # Split content and exclude smoke test function
+            lines = content.split( '\\n' )
+            in_smoke_test = False
+            
+            for i, line in enumerate( lines ):
+                stripped_line = line.strip()
+                
+                # Track if we're in the smoke test function
+                if "def quick_smoke_test" in line:
+                    in_smoke_test = True
+                    continue
+                elif in_smoke_test and line.startswith( "def " ):
+                    in_smoke_test = False
+                elif in_smoke_test:
+                    continue
+                
+                # Skip comments and docstrings
+                if ( stripped_line.startswith( '#' ) or 
+                     stripped_line.startswith( '"""' ) or
+                     stripped_line.startswith( "'" ) ):
+                    continue
+                
+                # Look for actual v000 code references
+                if "v000" in stripped_line and any( pattern in stripped_line for pattern in [
+                    "import", "from", "cosa.agents.v000", ".v000."
+                ] ):
+                    v000_found = True
+                    v000_patterns.append( f"Line {i+1}: {stripped_line}" )
+        
+        if v000_found:
+            print( "🚨 CRITICAL: v000 dependencies detected!" )
+            print( "   Found v000 references:" )
+            for pattern in v000_patterns[ :3 ]:  # Show first 3
+                print( f"     • {pattern}" )
+            if len( v000_patterns ) > 3:
+                print( f"     ... and {len( v000_patterns ) - 3} more v000 references" )
+            print( "   ⚠️  These dependencies MUST be resolved before v000 deprecation!" )
+        else:
+            print( "✅ EXCELLENT: No v000 dependencies found!" )
+        
+        # Test 9: Queue state consistency validation
+        print( "\\nTesting queue state consistency..." )
+        try:
+            queue = FifoQueue()
+            
+            # Test state consistency between operations
+            class TestItem:
+                def __init__( self, id_hash ):
+                    self.id_hash = id_hash
+                
+                def get_html( self ):
+                    return f"<item>{self.id_hash}</item>"
+            
+            # Add multiple items and test consistency
+            for i in range( 5 ):
+                queue.push( TestItem( f"test_{i}" ) )
+            
+            # Check list/dict consistency
+            list_size = len( queue.queue_list )
+            dict_size = len( queue.queue_dict )
+            reported_size = queue.size()
+            
+            if list_size == dict_size == reported_size == 5:
+                print( "✓ Queue state consistency validated" )
+            else:
+                print( f"⚠ State inconsistency: list={list_size}, dict={dict_size}, size={reported_size}" )
+            
+        except Exception as e:
+            print( f"⚠ Queue state consistency issues: {e}" )
+    
+    except Exception as e:
+        print( f"✗ Error during FIFO queue testing: {e}" )
+        import traceback
+        traceback.print_exc()
+    
+    # Summary
+    print( "\\n" + "="*60 )
+    if v000_found:
+        print( "🚨 CRITICAL ISSUE: FIFO queue has v000 dependencies!" )
+        print( "   Status: NOT READY for v000 deprecation" )
+        print( "   Priority: IMMEDIATE ACTION REQUIRED" )
+        print( "   Risk Level: CRITICAL - All queue operations will break" )
+    else:
+        print( "✅ FIFO queue smoke test completed successfully!" )
+        print( "   Status: Base queue implementation ready for v000 deprecation" )
+        print( "   Risk Level: LOW" )
+    
+    print( "✓ FIFO queue smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

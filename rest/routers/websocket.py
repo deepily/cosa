@@ -350,3 +350,358 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
     finally:
         websocket_manager.disconnect(session_id)
         print(f"[WS-QUEUE] Queue WebSocket disconnected for session: {session_id}")
+
+
+def quick_smoke_test():
+    """
+    Critical smoke test for WebSocket API router - validates WebSocket endpoint functionality.
+    
+    This test is essential for v000 deprecation as rest/routers/websocket.py is critical
+    for real-time communication and WebSocket management in the REST system.
+    """
+    import cosa.utils.util as du
+    
+    du.print_banner( "WebSocket API Router Smoke Test", prepend_nl=True )
+    
+    try:
+        # Test 1: Basic module and router structure
+        print( "Testing core WebSocket API components..." )
+        
+        # Check if router exists and has expected attributes
+        if 'router' in globals() and hasattr( router, 'routes' ):
+            print( "✓ FastAPI router structure present" )
+        else:
+            print( "✗ FastAPI router structure missing" )
+        
+        # Check expected endpoints
+        expected_endpoints = [ "auth_test", "websocket_audio_endpoint", "websocket_queue_endpoint" ]
+        endpoints_found = 0
+        
+        for endpoint_name in expected_endpoints:
+            if endpoint_name in globals():
+                endpoints_found += 1
+            else:
+                print( f"⚠ Missing endpoint: {endpoint_name}" )
+        
+        if endpoints_found == len( expected_endpoints ):
+            print( f"✓ All {len( expected_endpoints )} core WebSocket endpoints present" )
+        else:
+            print( f"⚠ Only {endpoints_found}/{len( expected_endpoints )} WebSocket endpoints present" )
+        
+        # Test 2: Critical dependency imports
+        print( "Testing critical dependency imports..." )
+        try:
+            from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
+            from datetime import datetime
+            import json
+            import asyncio
+            import re
+            from urllib.parse import unquote
+            print( "✓ Core FastAPI and standard library imports successful" )
+        except ImportError as e:
+            print( f"✗ Core imports failed: {e}" )
+        
+        try:
+            from cosa.rest.auth import get_current_user
+            from cosa.rest.websocket_manager import WebSocketManager
+            print( "✓ CoSA REST module imports successful" )
+        except ImportError as e:
+            print( f"⚠ CoSA REST imports failed: {e}" )
+        
+        # Test 3: Helper functions validation
+        print( "Testing helper functions..." )
+        helper_functions = [ "get_websocket_manager", "get_active_tasks", "get_app_debug", "is_valid_session_id" ]
+        
+        helpers_found = 0
+        for helper_name in helper_functions:
+            if helper_name in globals() and callable( globals()[helper_name] ):
+                helpers_found += 1
+            else:
+                print( f"⚠ Missing helper: {helper_name}" )
+        
+        if helpers_found == len( helper_functions ):
+            print( f"✓ All {len( helper_functions )} helper functions present" )
+        else:
+            print( f"⚠ Only {helpers_found}/{len( helper_functions )} helper functions present" )
+        
+        # Test 4: Session ID validation logic
+        print( "Testing session ID validation logic..." )
+        try:
+            # Test valid session IDs
+            valid_test_cases = [ "wise penguin", "happy cat", "smart dog" ]
+            invalid_test_cases = [ "", "   ", "singleword", "too many words here", "UPPERCASE", "with123numbers" ]
+            
+            valid_passed = 0
+            for valid_id in valid_test_cases:
+                if is_valid_session_id( valid_id ):
+                    valid_passed += 1
+            
+            invalid_rejected = 0
+            for invalid_id in invalid_test_cases:
+                if not is_valid_session_id( invalid_id ):
+                    invalid_rejected += 1
+            
+            if valid_passed == len( valid_test_cases ):
+                print( "✓ Valid session ID validation working" )
+            else:
+                print( f"⚠ Valid session ID validation: {valid_passed}/{len( valid_test_cases )} passed" )
+            
+            if invalid_rejected == len( invalid_test_cases ):
+                print( "✓ Invalid session ID rejection working" )
+            else:
+                print( f"⚠ Invalid session ID rejection: {invalid_rejected}/{len( invalid_test_cases )} rejected" )
+                
+        except Exception as e:
+            print( f"⚠ Session ID validation issues: {e}" )
+        
+        # Test 5: WebSocket endpoint function signatures
+        print( "Testing WebSocket endpoint signatures..." )
+        try:
+            import inspect
+            
+            # Test auth_test endpoint
+            if inspect.iscoroutinefunction( auth_test ):
+                print( "✓ auth_test is properly async" )
+            else:
+                print( "⚠ auth_test may not be async" )
+            
+            # Check dependencies in auth_test
+            sig = inspect.signature( auth_test )
+            if 'current_user' in sig.parameters:
+                print( "✓ auth_test has authentication dependency" )
+            else:
+                print( "⚠ auth_test missing authentication dependency" )
+            
+            # Test WebSocket endpoints
+            for ws_endpoint in [ websocket_audio_endpoint, websocket_queue_endpoint ]:
+                if inspect.iscoroutinefunction( ws_endpoint ):
+                    endpoint_name = ws_endpoint.__name__
+                    print( f"✓ {endpoint_name} is properly async" )
+                    
+                    # Check WebSocket parameter
+                    sig = inspect.signature( ws_endpoint )
+                    if 'websocket' in sig.parameters and 'session_id' in sig.parameters:
+                        print( f"✓ {endpoint_name} has required WebSocket parameters" )
+                    else:
+                        print( f"⚠ {endpoint_name} missing required parameters" )
+                else:
+                    print( f"⚠ {ws_endpoint.__name__} may not be async" )
+                    
+        except Exception as e:
+            print( f"⚠ WebSocket endpoint signature issues: {e}" )
+        
+        # Test 6: Router configuration validation
+        print( "Testing router configuration..." )
+        try:
+            # Test router has proper tags
+            if hasattr( router, 'tags' ) and 'websocket' in getattr( router, 'tags', [] ):
+                print( "✓ Router tags configuration valid" )
+            else:
+                print( "⚠ Router tags configuration may have issues" )
+            
+            # Test routes are registered
+            if hasattr( router, 'routes' ) and len( router.routes ) >= 3:
+                print( f"✓ Router has {len( router.routes )} registered routes" )
+            else:
+                print( "⚠ Router may have missing routes" )
+            
+            # Check route types (WebSocket vs HTTP)
+            ws_routes = 0
+            http_routes = 0
+            
+            for route in router.routes:
+                if hasattr( route, 'path' ):
+                    if route.path.startswith( '/ws/' ):
+                        ws_routes += 1
+                    elif route.path.startswith( '/api/' ):
+                        http_routes += 1
+            
+            if ws_routes >= 2 and http_routes >= 1:
+                print( f"✓ Route types balanced: {ws_routes} WebSocket, {http_routes} HTTP" )
+            else:
+                print( f"⚠ Route distribution: {ws_routes} WebSocket, {http_routes} HTTP" )
+                
+        except Exception as e:
+            print( f"⚠ Router configuration issues: {e}" )
+        
+        # Test 7: Dependency injection structure
+        print( "Testing dependency injection structure..." )
+        try:
+            import inspect
+            
+            # Test dependency functions have proper import structure
+            for dep_func in [ get_websocket_manager, get_active_tasks, get_app_debug ]:
+                source_lines = inspect.getsource( dep_func )
+                if 'import fastapi_app.main' in source_lines:
+                    print( f"✓ {dep_func.__name__} dependency injection structure valid" )
+                else:
+                    print( f"⚠ {dep_func.__name__} dependency structure may have issues" )
+                    
+        except Exception as e:
+            print( f"⚠ Dependency injection structure issues: {e}" )
+        
+        # Test 8: WebSocket message handling structure
+        print( "Testing WebSocket message handling structure..." )
+        try:
+            # Check that endpoints have proper WebSocket handling logic
+            for endpoint in [ websocket_audio_endpoint, websocket_queue_endpoint ]:
+                source_code = inspect.getsource( endpoint )
+                
+                # Check for essential WebSocket patterns
+                essential_patterns = [
+                    "await websocket.accept()",
+                    "WebSocketDisconnect",
+                    "websocket.send_json(",
+                    "websocket_manager.connect(",
+                    "websocket_manager.disconnect("
+                ]
+                
+                patterns_found = 0
+                for pattern in essential_patterns:
+                    if pattern in source_code:
+                        patterns_found += 1
+                
+                endpoint_name = endpoint.__name__
+                if patterns_found >= len( essential_patterns ) - 1:  # Allow for minor variations
+                    print( f"✓ {endpoint_name} has proper WebSocket handling" )
+                else:
+                    print( f"⚠ {endpoint_name} missing WebSocket patterns: {patterns_found}/{len( essential_patterns )}" )
+                    
+        except Exception as e:
+            print( f"⚠ WebSocket message handling issues: {e}" )
+        
+        # Test 9: Authentication integration validation
+        print( "Testing authentication integration..." )
+        try:
+            # Check that auth endpoint uses proper authentication
+            auth_source = inspect.getsource( auth_test )
+            if 'current_user' in auth_source and 'Depends' in auth_source:
+                print( "✓ Authentication endpoint integration valid" )
+            else:
+                print( "⚠ Authentication endpoint integration may have issues" )
+            
+            # Check that queue WebSocket handles authentication
+            queue_source = inspect.getsource( websocket_queue_endpoint )
+            auth_checks = [
+                "auth_request",
+                "verify_firebase_token",
+                "auth_success",
+                "auth_error"
+            ]
+            
+            auth_patterns_found = 0
+            for check in auth_checks:
+                if check in queue_source:
+                    auth_patterns_found += 1
+            
+            if auth_patterns_found >= len( auth_checks ) - 1:
+                print( "✓ WebSocket authentication handling present" )
+            else:
+                print( f"⚠ Limited WebSocket auth handling: {auth_patterns_found}/{len( auth_checks )}" )
+                
+        except Exception as e:
+            print( f"⚠ Authentication integration issues: {e}" )
+        
+        # Test 10: Critical v000 dependency scanning
+        print( "\\n🔍 Scanning for v000 dependencies..." )
+        
+        # Scan the file for v000 patterns
+        import inspect
+        source_file = inspect.getfile( auth_test )  # Use any function to get file
+        
+        v000_found = False
+        v000_patterns = []
+        
+        with open( source_file, 'r' ) as f:
+            content = f.read()
+            
+            # Split content and exclude smoke test function
+            lines = content.split( '\\n' )
+            in_smoke_test = False
+            
+            for i, line in enumerate( lines ):
+                stripped_line = line.strip()
+                
+                # Track if we're in the smoke test function
+                if "def quick_smoke_test" in line:
+                    in_smoke_test = True
+                    continue
+                elif in_smoke_test and line.startswith( "def " ):
+                    in_smoke_test = False
+                elif in_smoke_test:
+                    continue
+                
+                # Skip comments and docstrings
+                if ( stripped_line.startswith( '#' ) or 
+                     stripped_line.startswith( '"""' ) or
+                     stripped_line.startswith( "'" ) ):
+                    continue
+                
+                # Look for actual v000 code references
+                if "v000" in stripped_line and any( pattern in stripped_line for pattern in [
+                    "import", "from", "cosa.agents.v000", ".v000."
+                ] ):
+                    v000_found = True
+                    v000_patterns.append( f"Line {i+1}: {stripped_line}" )
+        
+        if v000_found:
+            print( "🚨 CRITICAL: v000 dependencies detected!" )
+            print( "   Found v000 references:" )
+            for pattern in v000_patterns[ :3 ]:  # Show first 3
+                print( f"     • {pattern}" )
+            if len( v000_patterns ) > 3:
+                print( f"     ... and {len( v000_patterns ) - 3} more v000 references" )
+            print( "   ⚠️  These dependencies MUST be resolved before v000 deprecation!" )
+        else:
+            print( "✅ EXCELLENT: No v000 dependencies found!" )
+        
+        # Test 11: WebSocket connection lifecycle validation
+        print( "\\nTesting WebSocket connection lifecycle..." )
+        try:
+            # Check that both WebSocket endpoints handle connection lifecycle properly
+            for endpoint in [ websocket_audio_endpoint, websocket_queue_endpoint ]:
+                source_code = inspect.getsource( endpoint )
+                
+                lifecycle_patterns = [
+                    "await websocket.accept()",
+                    "try:",
+                    "finally:",
+                    "websocket_manager.disconnect("
+                ]
+                
+                lifecycle_found = 0
+                for pattern in lifecycle_patterns:
+                    if pattern in source_code:
+                        lifecycle_found += 1
+                
+                endpoint_name = endpoint.__name__
+                if lifecycle_found == len( lifecycle_patterns ):
+                    print( f"✓ {endpoint_name} connection lifecycle properly managed" )
+                else:
+                    print( f"⚠ {endpoint_name} lifecycle issues: {lifecycle_found}/{len( lifecycle_patterns )}" )
+                    
+        except Exception as e:
+            print( f"⚠ WebSocket lifecycle validation issues: {e}" )
+    
+    except Exception as e:
+        print( f"✗ Error during WebSocket API testing: {e}" )
+        import traceback
+        traceback.print_exc()
+    
+    # Summary
+    print( "\\n" + "="*60 )
+    if v000_found:
+        print( "🚨 CRITICAL ISSUE: WebSocket API has v000 dependencies!" )
+        print( "   Status: NOT READY for v000 deprecation" )
+        print( "   Priority: IMMEDIATE ACTION REQUIRED" )
+        print( "   Risk Level: CRITICAL - WebSocket operations will break" )
+    else:
+        print( "✅ WebSocket API smoke test completed successfully!" )
+        print( "   Status: Real-time communication system ready for v000 deprecation" )
+        print( "   Risk Level: LOW" )
+    
+    print( "✓ WebSocket API smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

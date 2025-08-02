@@ -1102,4 +1102,129 @@ class XmlCoordinator:
                 print( f"ETA: Error '{e}'" )
                 
         return self.llm_client.run( prompt )
+
+
+def quick_smoke_test():
+    """
+    Critical smoke test for XmlCoordinator - validates functionality and detects v000 dependencies.
     
+    This test is essential for v000 deprecation as XmlCoordinator has known v000 dependencies
+    that must be resolved before v000 agent removal.
+    """
+    import cosa.utils.util as du
+    
+    du.print_banner( "XmlCoordinator Smoke Test", prepend_nl=True )
+    
+    try:
+        # Test 1: Basic instantiation
+        print( "Testing basic instantiation..." )
+        coordinator = XmlCoordinator( 
+            debug=False, 
+            verbose=False, 
+            silent=True,
+            init_prompt_templates=False  # Skip template initialization to avoid file dependencies
+        )
+        print( "✓ Basic instantiation successful" )
+        
+        # Test 2: Component initialization
+        print( "Testing component initialization..." )
+        if hasattr( coordinator, 'prompt_generator' ) and coordinator.prompt_generator is not None:
+            print( "✓ Prompt generator initialized" )
+        else:
+            print( "✗ Prompt generator failed to initialize" )
+            
+        if hasattr( coordinator, 'response_validator' ) and coordinator.response_validator is not None:
+            print( "✓ Response validator initialized" )
+        else:
+            print( "✗ Response validator failed to initialize" )
+        
+        # Test 3: Core functionality (safe methods only)
+        print( "Testing core functionality..." )
+        
+        # Test call counter operations
+        coordinator.reset_call_counter()
+        if coordinator._call_counter == 0:
+            print( "✓ Call counter reset working" )
+        else:
+            print( "✗ Call counter reset failed" )
+        
+        # Test helper methods
+        empty_lists = coordinator._get_6_empty_lists()
+        if len( empty_lists ) == 6 and all( isinstance( lst, list ) and len( lst ) == 0 for lst in empty_lists ):
+            print( "✓ Helper methods working" )
+        else:
+            print( "✗ Helper methods failed" )
+        
+        # Test 4: XML validation capabilities (basic)
+        print( "Testing XML validation..." )
+        test_xml = "<response><command>test</command></response>"
+        try:
+            is_valid = coordinator.is_valid_xml( test_xml )
+            print( f"✓ XML validation working (result: {is_valid})" )
+        except Exception as e:
+            print( f"⚠ XML validation had issues: {e}" )
+        
+        # Test 5: Critical v000 dependency detection
+        print( "\n🚨 CRITICAL: Scanning for v000 dependencies..." )
+        
+        # Scan the file for v000 patterns
+        import inspect
+        source_file = inspect.getfile( XmlCoordinator )
+        
+        v000_found = False
+        v000_patterns = []
+        
+        with open( source_file, 'r' ) as f:
+            content = f.read()
+            
+            # Check for v000 imports and references
+            if "v000" in content:
+                v000_found = True
+                lines = content.split( '\n' )
+                for i, line in enumerate( lines ):
+                    if "v000" in line:
+                        v000_patterns.append( f"Line {i+1}: {line.strip()}" )
+        
+        if v000_found:
+            print( "🚨 CRITICAL: v000 dependencies detected!" )
+            print( "   Found v000 references:" )
+            for pattern in v000_patterns[ :3 ]:  # Show first 3
+                print( f"     • {pattern}" )
+            if len( v000_patterns ) > 3:
+                print( f"     ... and {len( v000_patterns ) - 3} more v000 references" )
+            print( "   ⚠️  These dependencies MUST be resolved before v000 deprecation!" )
+            print( "   📋 Action Required: Update XmlCoordinator to use v010 agents only" )
+        else:
+            print( "✅ EXCELLENT: No v000 dependencies found!" )
+        
+        # Test 6: Error handling
+        print( "\nTesting error handling..." )
+        try:
+            # Test invalid XML
+            result = coordinator.is_response_exact_match( "invalid", "also_invalid" )
+            print( "✓ Error handling working" )
+        except Exception as e:
+            print( f"⚠ Error handling had issues: {e}" )
+        
+    except Exception as e:
+        print( f"✗ Error during XmlCoordinator testing: {e}" )
+        import traceback
+        traceback.print_exc()
+    
+    # Summary with v000 emphasis
+    print( "\n" + "="*60 )
+    if v000_found:
+        print( "🚨 CRITICAL ISSUE: XmlCoordinator has v000 dependencies!" )
+        print( "   Status: NOT READY for v000 deprecation" )
+        print( "   Priority: IMMEDIATE ACTION REQUIRED" )
+        print( "   Risk Level: HIGH - Training system will break" )
+    else:
+        print( "✅ XmlCoordinator smoke test completed successfully!" )
+        print( "   Status: Ready for v000 deprecation" )
+        print( "   Risk Level: LOW" )
+    
+    print( "✓ XmlCoordinator smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

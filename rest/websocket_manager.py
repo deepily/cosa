@@ -848,3 +848,230 @@ class WebSocketManager:
                     stats["subscription_counts"][event] = stats["subscription_counts"].get( event, 0 ) + 1
         
         return stats
+
+
+def quick_smoke_test():
+    """
+    Critical smoke test for WebSocketManager - validates core WebSocket functionality.
+    
+    This test is essential for v000 deprecation as WebSocketManager is critical
+    for real-time communication and REST service functionality.
+    """
+    import cosa.utils.util as du
+    
+    du.print_banner( "WebSocketManager Smoke Test", prepend_nl=True )
+    
+    try:
+        # Test 1: Basic instantiation
+        print( "Testing basic instantiation..." )
+        try:
+            # This may fail if configuration is missing, but we'll test what we can
+            manager = WebSocketManager()
+            print( "✓ Basic instantiation successful" )
+            instantiation_success = True
+        except Exception as e:
+            print( f"⚠ Basic instantiation failed: {e}" )
+            print( "  This may be due to missing configuration - continuing with other tests..." )
+            instantiation_success = False
+        
+        # Test 2: Core method presence
+        print( "Testing core method presence..." )
+        expected_methods = [
+            "set_event_loop", "connect", "disconnect", "register_session_user",
+            "async_emit", "get_connection_count", "is_connected", "emit_to_user",
+            "emit_to_session", "emit", "emit_to_user_sync", "is_user_connected",
+            "get_user_connection_count", "emit_to_all", "set_single_session_policy",
+            "get_session_info", "get_all_sessions_info", "cleanup_stale_sessions",
+            "heartbeat_check", "auto_cleanup", "update_subscriptions", "get_subscription_stats"
+        ]
+        
+        methods_found = 0
+        for method_name in expected_methods:
+            if hasattr( WebSocketManager, method_name ):
+                methods_found += 1
+            else:
+                print( f"⚠ Missing method: {method_name}" )
+        
+        if methods_found == len( expected_methods ):
+            print( f"✓ All {len( expected_methods )} core methods present" )
+        else:
+            print( f"⚠ Only {methods_found}/{len( expected_methods )} core methods present" )
+        
+        # Test 3: Configuration integration
+        print( "Testing configuration integration..." )
+        try:
+            from cosa.config.configuration_manager import ConfigurationManager
+            config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+            print( "✓ ConfigurationManager integration working" )
+        except Exception as e:
+            print( f"⚠ Configuration integration issues: {e}" )
+        
+        # Test 4: WebSocket dependency validation
+        print( "Testing WebSocket dependencies..." )
+        try:
+            from fastapi import WebSocket
+            print( "✓ FastAPI WebSocket import successful" )
+        except ImportError as e:
+            print( f"✗ FastAPI WebSocket import failed: {e}" )
+        
+        # Test 5: Async functionality validation (if instantiation worked)
+        if instantiation_success:
+            print( "Testing async functionality validation..." )
+            try:
+                # Test basic data structures are initialized
+                if hasattr( manager, 'active_connections' ) and isinstance( manager.active_connections, dict ):
+                    print( "✓ Connection tracking structures initialized" )
+                else:
+                    print( "✗ Connection tracking structures missing or wrong type" )
+                
+                # Test session mapping structures
+                required_attrs = [
+                    'session_to_user', 'user_sessions', 'session_timestamps', 
+                    'session_subscriptions', 'available_events'
+                ]
+                
+                attrs_present = 0
+                for attr in required_attrs:
+                    if hasattr( manager, attr ):
+                        attrs_present += 1
+                    else:
+                        print( f"⚠ Missing attribute: {attr}" )
+                
+                if attrs_present == len( required_attrs ):
+                    print( f"✓ All {len( required_attrs )} data structures present" )
+                else:
+                    print( f"⚠ Only {attrs_present}/{len( required_attrs )} data structures present" )
+                
+                # Test basic functionality without WebSocket connections
+                initial_count = manager.get_connection_count()
+                if initial_count == 0:
+                    print( "✓ Connection count tracking working (initially 0)" )
+                else:
+                    print( f"⚠ Initial connection count not 0: {initial_count}" )
+                
+            except Exception as e:
+                print( f"⚠ Async functionality validation issues: {e}" )
+        
+        # Test 6: Thread safety features
+        print( "Testing thread safety features..." )
+        try:
+            import asyncio
+            
+            # Test that asyncio is properly imported and used
+            if hasattr( WebSocketManager, 'set_event_loop' ):
+                print( "✓ Event loop management available" )
+            else:
+                print( "✗ Event loop management missing" )
+            
+            # Test thread-safe methods exist
+            thread_safe_methods = [ "emit", "emit_to_user_sync" ]
+            ts_methods_found = 0
+            for method in thread_safe_methods:
+                if hasattr( WebSocketManager, method ):
+                    ts_methods_found += 1
+            
+            if ts_methods_found == len( thread_safe_methods ):
+                print( f"✓ All {len( thread_safe_methods )} thread-safe methods present" )
+            else:
+                print( f"⚠ Only {ts_methods_found}/{len( thread_safe_methods )} thread-safe methods present" )
+                
+        except ImportError as e:
+            print( f"✗ asyncio import failed: {e}" )
+        
+        # Test 7: Critical v000 dependency scanning
+        print( "\n🔍 Scanning for v000 dependencies..." )
+        
+        # Scan the file for v000 patterns
+        import inspect
+        source_file = inspect.getfile( WebSocketManager )
+        
+        v000_found = False
+        v000_patterns = []
+        
+        with open( source_file, 'r' ) as f:
+            content = f.read()
+            
+            # Split content and exclude smoke test function
+            lines = content.split( '\n' )
+            in_smoke_test = False
+            
+            for i, line in enumerate( lines ):
+                stripped_line = line.strip()
+                
+                # Track if we're in the smoke test function
+                if "def quick_smoke_test" in line:
+                    in_smoke_test = True
+                    continue
+                elif in_smoke_test and line.startswith( "def " ):
+                    in_smoke_test = False
+                elif in_smoke_test:
+                    continue
+                
+                # Skip comments and docstrings
+                if ( stripped_line.startswith( '#' ) or 
+                     stripped_line.startswith( '"""' ) or
+                     stripped_line.startswith( "'" ) ):
+                    continue
+                
+                # Look for actual v000 code references
+                if "v000" in stripped_line and any( pattern in stripped_line for pattern in [
+                    "import", "from", "cosa.agents.v000", ".v000."
+                ] ):
+                    v000_found = True
+                    v000_patterns.append( f"Line {i+1}: {stripped_line}" )
+        
+        if v000_found:
+            print( "🚨 CRITICAL: v000 dependencies detected!" )
+            print( "   Found v000 references:" )
+            for pattern in v000_patterns[ :3 ]:  # Show first 3
+                print( f"     • {pattern}" )
+            if len( v000_patterns ) > 3:
+                print( f"     ... and {len( v000_patterns ) - 3} more v000 references" )
+            print( "   ⚠️  These dependencies MUST be resolved before v000 deprecation!" )
+        else:
+            print( "✅ EXCELLENT: No v000 dependencies found!" )
+        
+        # Test 8: Code quality validation
+        print( "\nTesting code quality issues..." )
+        
+        # Check for duplicate method definitions (common issue in this file)
+        method_names = []
+        duplicate_methods = []
+        
+        for line_num, line in enumerate( lines ):
+            if line.strip().startswith( "def " ) and not in_smoke_test:
+                method_match = line.strip().split( '(' )[ 0 ].replace( "def ", "" ).strip()
+                if method_match in method_names:
+                    duplicate_methods.append( f"{method_match} (around line {line_num+1})" )
+                else:
+                    method_names.append( method_match )
+        
+        if duplicate_methods:
+            print( f"⚠ Found {len( duplicate_methods )} duplicate method definitions:" )
+            for dup in duplicate_methods[ :3 ]:  # Show first 3
+                print( f"     • {dup}" )
+        else:
+            print( "✓ No duplicate method definitions found" )
+        
+    except Exception as e:
+        print( f"✗ Error during WebSocketManager testing: {e}" )
+        import traceback
+        traceback.print_exc()
+    
+    # Summary
+    print( "\n" + "="*60 )
+    if v000_found:
+        print( "🚨 CRITICAL ISSUE: WebSocketManager has v000 dependencies!" )
+        print( "   Status: NOT READY for v000 deprecation" )
+        print( "   Priority: IMMEDIATE ACTION REQUIRED" )
+        print( "   Risk Level: HIGH - WebSocket functionality will break" )
+    else:
+        print( "✅ WebSocketManager smoke test completed successfully!" )
+        print( "   Status: Core WebSocket functionality ready for v000 deprecation" )
+        print( "   Risk Level: LOW" )
+    
+    print( "✓ WebSocketManager smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

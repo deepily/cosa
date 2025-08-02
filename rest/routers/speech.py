@@ -416,8 +416,11 @@ async def get_tts_audio_elevenlabs(
         use_speaker_boost = request_data.get("use_speaker_boost", False)
         speed = request_data.get("speed", 1.0)
         quality_profile = request_data.get("quality_profile", "balanced")
+        debug_simulate_error = request_data.get("debug_simulate_error", False)
         
         print(f"[TTS-ELEVENLABS-DEBUG] Extracted - session_id: '{session_id}', text: '{msg}', voice_id: '{voice_id}'")
+        if debug_simulate_error:
+            print(f"[TTS-ELEVENLABS-DEBUG] 🧪 Debug mode: Error simulation enabled for this request")
         
         if not session_id or not msg:
             error_msg = f"Missing session_id or text - session_id: {session_id}, text: {msg}"
@@ -445,7 +448,7 @@ async def get_tts_audio_elevenlabs(
         # Start ElevenLabs TTS streaming in background
         task = asyncio.create_task(stream_tts_elevenlabs(
             session_id, msg, ws_manager, voice_id, model_id, stability, 
-            similarity_boost, style, use_speaker_boost, speed, quality_profile, config_mgr
+            similarity_boost, style, use_speaker_boost, speed, quality_profile, config_mgr, debug_simulate_error
         ))
         active_tasks[session_id] = task
         
@@ -663,7 +666,8 @@ async def stream_tts_elevenlabs(
     use_speaker_boost: bool = False,
     speed: float = 1.0,
     quality_profile: str = "balanced",
-    config_mgr = None
+    config_mgr = None,
+    debug_simulate_error: bool = False
 ):
     """
     ElevenLabs WebSocket streaming with optimized low-latency configuration for conversational AI.
@@ -750,6 +754,31 @@ Speed            : {speed:.2f}"""
         else:
             print(f"[TTS-ELEVENLABS] Voice settings: stability={stability}, similarity_boost={similarity_boost}, style={style}, speaker_boost={use_speaker_boost}, speed={speed}")
         
+        # 🧪 DEBUG: Check for error simulation before connecting to ElevenLabs
+        if debug_simulate_error:
+            print(f"[TTS-ELEVENLABS-DEBUG] 🧪 Simulating quota_exceeded error for testing")
+            
+            # Send initial status
+            await websocket.send_json({
+                "type": "audio_streaming_status",
+                "text": "Connecting to ElevenLabs...",
+                "status": "loading",
+                "provider": "elevenlabs"
+            })
+            
+            # Small delay to simulate connection attempt
+            await asyncio.sleep(0.5)
+            
+            # Simulate the quota_exceeded error
+            await websocket.send_json({
+                "type": "tts_error",
+                "text": "TTS service temporarily unavailable",
+                "status": "error",
+                "provider": "elevenlabs",
+                "details": "Please try again in a moment"
+            })
+            return
+        
         # Send status update
         await websocket.send_json({
             "type": "audio_streaming_status",
@@ -835,10 +864,22 @@ Speed            : {speed:.2f}"""
                         break
                         
                     elif data.get("error"):
-                        # ElevenLabs error
                         error_msg = data.get("error", "Unknown ElevenLabs error")
-                        print(f"[TTS-ELEVENLABS] ElevenLabs error: {error_msg}")
-                        raise Exception(f"ElevenLabs API error: {error_msg}")
+                        
+                        # Detailed logging for developers (shows real error for debugging)
+                        print(f"[TTS-ELEVENLABS] ElevenLabs API Error: {error_msg}")
+                        
+                        # Generic user-facing error message (this is what user sees now!)
+                        await websocket.send_json({
+                            "type": "tts_error",
+                            "text": "TTS service temporarily unavailable",
+                            "status": "error",
+                            "provider": "elevenlabs",
+                            "details": "Please try again in a moment"
+                        })
+                        
+                        # Break instead of raise to allow graceful completion
+                        break
                         
                 except json.JSONDecodeError:
                     # Handle binary data if any
