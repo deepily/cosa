@@ -23,7 +23,9 @@
       "Bash(chmod:*)",
       "Bash(./run-cosa-smoke-tests.sh:*)",
       "Bash(./tests/smoke/scripts/run-cosa-smoke-tests.sh:*)",
-      "Bash(/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh \"[LUPIN] 🚀 Phase 4 at 50%! Completed 4/8 HIGH priority modules. REST auth ✓ FIFO queue ✓ Running queue ✓ Model registry ✓ All testing excellent with 0 v000 deps!\" --type=progress --priority=medium --target-user=ricardo.felipe.ruiz@gmail.com)"
+      "Bash(/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh \"[LUPIN] 🚀 Phase 4 at 50%! Completed 4/8 HIGH priority modules. REST auth ✓ FIFO queue ✓ Running queue ✓ Model registry ✓ All testing excellent with 0 v000 deps!\" --type=progress --priority=medium --target-user=ricardo.felipe.ruiz@gmail.com)",
+      "Bash(./tests/unit/scripts/run-cosa-unit-tests.sh:*)",
+      "Bash(/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh:*)"
     ],
     "deny": []
   }

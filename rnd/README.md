@@ -5,6 +5,7 @@ This directory contains research, planning, and design documents for the CoSA (C
 ## Current Documents
 
 ### Framework Architecture and Planning
+- [2025.08.04 - CoSA Unit Testing Framework Implementation Plan](./2025.08.04-cosa-unit-testing-framework-implementation-plan.md) - Comprehensive unit testing strategy with progress tracking and CICD integration
 - [2025.08.02 - CoSA Smoke Test Suite Design](./2025.08.02-cosa-smoke-test-suite-design.md) - Comprehensive testing framework for CoSA components with v000 deprecation support
 - [2025.08.01 - Design by Contract Documentation Plan](./2025.08.01-design-by-contract-docstring-implementation-plan.md) - Implementation plan for comprehensive DbyC documentation
 - [2025.06.04 - LLM Client Architecture Refactoring Plan](./2025.06.04-llm-client-architecture-refactoring-plan.md) - Modern LLM client architecture design
@@ -55,6 +56,7 @@ When adding new research or planning documents:
 
 ## Recent Activity
 
+- **2025.08.04**: Added comprehensive CoSA unit testing framework implementation plan with progress tracking
 - **2025.08.02**: Added comprehensive CoSA smoke test suite design for v000 deprecation support
 - **2025.08.01**: Completed Design by Contract documentation implementation planning
 - **2025.06.04**: LLM client architecture refactoring planning and progress tracking
