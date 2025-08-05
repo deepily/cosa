@@ -8,7 +8,7 @@ import subprocess
 import threading
 import requests
 import torch, os, multiprocessing
-from typing import Optional, Union, list, dict, tuple, Any, Iterable
+from typing import Optional, Union, List, Dict, Tuple, Any, Iterable
 from peft import LoraConfig, prepare_model_for_kbit_training, PeftModel
 from torch.ao.quantization import quantize
 from torch.utils.benchmark import timer
@@ -1941,7 +1941,7 @@ def quick_smoke_test():
         # Test ML framework imports (just import, don't use)
         try:
             import torch, os, multiprocessing
-            from typing import Optional, Union, list, dict, tuple, Any, Iterable
+            from typing import Optional, Union, List, Dict, Tuple, Any, Iterable
             print( "✓ Core framework imports successful" )
         except ImportError as e:
             print( f"✗ Core framework imports failed: {e}" )
