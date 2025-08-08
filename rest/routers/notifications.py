@@ -219,30 +219,19 @@ async def notify_user(
                 "connection_count": 0
             }
         
-        # Send to specific user via WebSocket
-        message_sent = await ws_manager.emit_to_user(target_system_id, "notification_message_user", notification)
+        # Notification automatically queued and will be delivered via notification_queue_update event
+        # No immediate WebSocket emission needed - eliminates duplicate notification system
+        print(f"[NOTIFY] ✓ Notification queued for {target_user} ({target_system_id}) - {connection_count} connection(s)")
+        print(f"[NOTIFY] → Will be delivered via notification_queue_update WebSocket event")
         
-        if message_sent:
-            print(f"[NOTIFY] ✓ Notification delivered to {target_user} ({target_system_id}) - {connection_count} connection(s)")
-            
-            return {
-                "status": "delivered",
-                "message": f"Notification delivered to {target_user}",
-                "notification": notification,
-                "target_user": target_user,
-                "target_system_id": target_system_id,
-                "connection_count": connection_count
-            }
-        else:
-            print(f"[NOTIFY] ❌ Failed to deliver notification to {target_user} ({target_system_id})")
-            return {
-                "status": "delivery_failed",
-                "message": f"Failed to deliver notification to {target_user}",
-                "notification": notification,
-                "target_user": target_user,
-                "target_system_id": target_system_id,
-                "connection_count": connection_count
-            }
+        return {
+            "status": "queued",
+            "message": f"Notification queued for delivery to {target_user}",
+            "notification": notification,
+            "target_user": target_user,
+            "target_system_id": target_system_id,
+            "connection_count": connection_count
+        }
             
     except Exception as e:
         print(f"[NOTIFY] ❌ Notification error: {str(e)}")

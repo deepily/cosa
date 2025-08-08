@@ -109,7 +109,7 @@ class NotificationFifoQueue( FifoQueue ):
         """
         super().__init__(
             websocket_mgr=websocket_mgr,
-            queue_name="notification",  # Will auto-emit 'notification_update' events
+            queue_name="notification",  # Will emit 'notification_queue_update' events
             emit_enabled=emit_enabled
         )
         
@@ -141,7 +141,7 @@ class NotificationFifoQueue( FifoQueue ):
         self.queue_dict[ notification.id_hash ] = notification
         self.push_counter += 1
         
-        # Emit enhanced notification_update
+        # Emit enhanced notification_queue_update
         if self.websocket_mgr and self.emit_enabled:
             event_data = {
                 'queue_name': 'notification',
@@ -151,12 +151,12 @@ class NotificationFifoQueue( FifoQueue ):
             
             if notification.user_id:
                 # Targeted notification - send only to specific user
-                self.websocket_mgr.emit_to_user_sync( notification.user_id, 'notification_update', event_data )
+                self.websocket_mgr.emit_to_user_sync( notification.user_id, 'notification_queue_update', event_data )
                 if self.debug:
                     print( f"Emitted notification to user: {notification.user_id}" )
             else:
                 # Broadcast notification - send to all connected clients
-                self.websocket_mgr.emit( 'notification_update', event_data )
+                self.websocket_mgr.emit( 'notification_queue_update', event_data )
                 if self.debug:
                     print( f"Broadcast notification to all users" )
         
@@ -205,7 +205,7 @@ class NotificationFifoQueue( FifoQueue ):
             self.queue_dict[ notification.id_hash ] = notification
             self.push_counter += 1
             
-            # Emit enhanced notification_update (same as push method)
+            # Emit enhanced notification_queue_update (same as push method)
             if self.websocket_mgr and self.emit_enabled:
                 event_data = {
                     'queue_name': 'notification',
@@ -215,12 +215,12 @@ class NotificationFifoQueue( FifoQueue ):
                 
                 if notification.user_id:
                     # Targeted notification - send only to specific user
-                    self.websocket_mgr.emit_to_user_sync( notification.user_id, 'notification_update', event_data )
+                    self.websocket_mgr.emit_to_user_sync( notification.user_id, 'notification_queue_update', event_data )
                     if self.debug:
                         print( f"Emitted priority notification to user: {notification.user_id}" )
                 else:
                     # Broadcast notification - send to all connected clients
-                    self.websocket_mgr.emit( 'notification_update', event_data )
+                    self.websocket_mgr.emit( 'notification_queue_update', event_data )
                     if self.debug:
                         print( f"Broadcast priority notification to all users" )
         else:
