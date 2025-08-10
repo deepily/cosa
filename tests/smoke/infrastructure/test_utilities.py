@@ -435,9 +435,6 @@ def quick_smoke_test():
     """Quick smoke test to validate SmokeTestUtilities functionality."""
     try:
         # Import CoSA utils for banner printing
-        cosa_root = Path( __file__ ).parent.parent.parent.parent
-        sys.path.insert( 0, str( cosa_root.parent ) )
-        
         import cosa.utils.util as du
     except ImportError:
         # Fallback if CoSA utils not available

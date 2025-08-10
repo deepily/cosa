@@ -10,10 +10,6 @@ import os
 import sys
 from pathlib import Path
 
-# Add CoSA framework to Python path
-cosa_root = Path(__file__).parent.parent.parent.parent
-sys.path.insert(0, str(cosa_root.parent))
-
 try:
     from cosa.tests.smoke.infrastructure.test_utilities import SmokeTestUtilities
 except ImportError:

@@ -24,13 +24,9 @@ from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 from dataclasses import dataclass
 
-# Add CoSA framework to Python path
-cosa_root = Path(__file__).parent.parent.parent.parent
-sys.path.insert( 0, str( cosa_root.parent ) )  # Add src directory to path
-
 try:
-    from mock_manager import MockManager
-    from test_fixtures import CoSATestFixtures
+    from cosa.tests.unit.infrastructure.mock_manager import MockManager
+    from cosa.tests.unit.infrastructure.test_fixtures import CoSATestFixtures
 except ImportError:
     # Fallback for development
     class MockManager:

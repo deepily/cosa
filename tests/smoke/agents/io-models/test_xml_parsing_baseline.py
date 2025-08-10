@@ -21,10 +21,6 @@ import time
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 
-# Add CoSA framework to Python path
-cosa_root = Path(__file__).parent.parent.parent.parent.parent
-sys.path.insert( 0, str( cosa_root.parent ) )
-
 # Import CoSA utilities
 try:
     import cosa.utils.util_xml as dux

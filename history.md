@@ -33,10 +33,10 @@ Successfully completed Phase 3 of the Pydantic XML Migration project, achieving 
 - **xmltodict Behavior**: Empty tags convert to `None` (not empty strings), requiring validation adjustments
 
 #### Files Created/Modified
-- **New**: `cosa/agents/io-models/xml_models.py` - All 4 Pydantic models with comprehensive testing
-- **New**: `cosa/agents/io-models/utils/util_xml_pydantic.py` - BaseXMLModel and XML utilities  
-- **New**: `cosa/tests/unit/agents/io-models/unit_test_xml_parsing_baseline.py` - Baseline unit tests
-- **New**: `cosa/tests/smoke/agents/io-models/test_xml_parsing_baseline.py` - Baseline smoke tests
+- **New**: `cosa/agents.io_models.xml_models.py` - All 4 Pydantic models with comprehensive testing
+- **New**: `cosa/agents.io_models.utils/util_xml_pydantic.py` - BaseXMLModel and XML utilities  
+- **New**: `cosa/tests/unit/agents.io_models.unit_test_xml_parsing_baseline.py` - Baseline unit tests
+- **New**: `cosa/tests/smoke/agents.io_models.test_xml_parsing_baseline.py` - Baseline smoke tests
 - **Updated**: `src/rnd/2025.08.09-pydantic-xml-migration-plan.md` - Progress tracking and technical discoveries
 
 ### Next Steps

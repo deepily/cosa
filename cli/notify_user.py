@@ -22,20 +22,11 @@ from typing import Optional
 from datetime import datetime
 
 # Import notification types
-try:
-    from .notification_types import (
-        NotificationType, NotificationPriority, 
-        DEFAULT_TYPE, DEFAULT_PRIORITY, 
-        DEFAULT_API_KEY, DEFAULT_SERVER_URL, ENV_SERVER_URL
-    )
-except ImportError:
-    # Fallback for direct script execution
-    sys.path.insert( 0, os.path.dirname( os.path.abspath( __file__ ) ) )
-    from notification_types import (
-        NotificationType, NotificationPriority,
-        DEFAULT_TYPE, DEFAULT_PRIORITY,
-        DEFAULT_API_KEY, DEFAULT_SERVER_URL, ENV_SERVER_URL
-    )
+from cosa.cli.notification_types import (
+    NotificationType, NotificationPriority, 
+    DEFAULT_TYPE, DEFAULT_PRIORITY, 
+    DEFAULT_API_KEY, DEFAULT_SERVER_URL, ENV_SERVER_URL
+)
 
 
 def notify_user(

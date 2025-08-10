@@ -24,16 +24,11 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock, call, Mock
 from typing import Dict, Any, Optional
 
-# Add CoSA framework to Python path
-cosa_root = Path(__file__).parent.parent.parent.parent
-sys.path.insert( 0, str( cosa_root.parent ) )
-
 # Import test infrastructure
 try:
-    sys.path.insert( 0, str( Path(__file__).parent.parent / "infrastructure" ) )
-    from mock_manager import MockManager
-    from test_fixtures import CoSATestFixtures
-    from unit_test_utilities import UnitTestUtilities
+    from cosa.tests.unit.infrastructure.mock_manager import MockManager
+    from cosa.tests.unit.infrastructure.test_fixtures import CoSATestFixtures
+    from cosa.tests.unit.infrastructure.unit_test_utilities import UnitTestUtilities
 except ImportError as e:
     print( f"Failed to import test infrastructure: {e}" )
     sys.exit( 1 )

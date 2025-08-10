@@ -23,9 +23,6 @@ import json
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 
-# Add CoSA framework to Python path
-cosa_root = Path(__file__).parent.parent.parent.parent
-sys.path.insert( 0, str( cosa_root.parent ) )  # Add src directory to path
 
 try:
     from test_utilities import SmokeTestUtilities

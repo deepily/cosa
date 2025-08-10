@@ -20,12 +20,7 @@ import time
 from typing import Optional, List, Union
 from pydantic import Field, field_validator, model_validator
 
-import sys
-from pathlib import Path
-
-# Add the utils directory to path for import
-sys.path.insert(0, str(Path(__file__).parent / "utils"))
-from util_xml_pydantic import BaseXMLModel, XMLParsingError
+from cosa.agents.io_models.utils.util_xml_pydantic import BaseXMLModel, XMLParsingError
 
 
 class SimpleResponse( BaseXMLModel ):
