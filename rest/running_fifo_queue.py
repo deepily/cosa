@@ -42,7 +42,7 @@ class RunningFifoQueue( FifoQueue ):
             - None
         """
         
-        super().__init__( websocket_mgr=websocket_mgr, queue_name="run", emit_enabled=True )
+        super().__init__( websocket_mgr=websocket_mgr, queue_name="running", emit_enabled=True )
         
         self.app                 = app
         self.snapshot_mgr        = snapshot_mgr

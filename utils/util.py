@@ -82,18 +82,22 @@ def get_current_datetime_raw( tz_name: str = "US/Eastern", days_offset: int = 0 
     
     return tz_date
 
-def get_current_datetime( tz_name: str = "US/Eastern" ) -> str:
+def get_current_datetime( tz_name: str = "US/Eastern", format_str: str = '%Y-%m-%d @ %H:%M:%S %Z' ) -> str:
     """
     Get a formatted string of the current date and time in the specified timezone.
     
     Requires:
         - tz_name is a valid timezone string recognized by pytz
+        - format_str is a valid strftime format string
         
     Ensures:
-        - Returns a formatted date-time string in the format "YYYY-MM-DD @ HH:MM:SS TZ"
+        - Returns a formatted date-time string using the specified format
+        - Default format: "YYYY-MM-DD @ HH:MM:SS TZ"
+        - Microsecond format: "YYYY-MM-DD @ HH:MM:SS.ffffff TZ"
         
     Args:
         tz_name: The name of the timezone (default: "US/Eastern")
+        format_str: strftime format string (default: '%Y-%m-%d @ %H:%M:%S %Z')
         
     Returns:
         A formatted date-time string
@@ -103,7 +107,7 @@ def get_current_datetime( tz_name: str = "US/Eastern" ) -> str:
     """
     tz_date = get_current_datetime_raw( tz_name )
     
-    return tz_date.strftime( '%Y-%m-%d @ %H:%M:%S %Z' )
+    return tz_date.strftime( format_str )
 
 def get_current_date( tz_name: str = "US/Eastern", return_prose: bool = False, offset: int = 0 ) -> str:
     """

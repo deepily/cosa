@@ -17,6 +17,7 @@ from cosa.agents.v010.runnable_code import RunnableCode
 from cosa.config.configuration_manager import ConfigurationManager
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.agents.v010.two_word_id_generator import TwoWordIdGenerator
+from cosa.agents.io_models.utils.xml_parser_factory import XmlParserFactory
 
 class AgentBase( RunnableCode, abc.ABC ):
     
@@ -95,7 +96,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.user_id               = user_id
         
         # Added to allow behavioral compatibility with solution snapshot object
-        self.run_date              = ss.SolutionSnapshot.get_timestamp()
+        self.run_date              = ss.SolutionSnapshot.get_timestamp( microseconds=True )
         self.push_counter          = push_counter
         self.id_hash               = ss.SolutionSnapshot.generate_id_hash( self.push_counter, self.run_date )
         
@@ -118,8 +119,11 @@ class AgentBase( RunnableCode, abc.ABC ):
         
         self.config_mgr            = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         
+        # Initialize XML parser factory for configurable parsing strategy
+        self.xml_parser_factory    = XmlParserFactory( config_mgr=self.config_mgr )
+        
         self.df                    = None
-        self.do_not_serialize      = { "df", "config_mgr", "two_word_id", "execution_state", "websocket_id", "user_id" }
+        self.do_not_serialize      = { "df", "config_mgr", "xml_parser_factory", "two_word_id", "execution_state", "websocket_id", "user_id" }
 
         self.model_name            = self.config_mgr.get( f"llm spec key for {routing_command}" )
         template_path              = self.config_mgr.get( f"prompt template for {routing_command}" )
@@ -209,37 +213,67 @@ class AgentBase( RunnableCode, abc.ABC ):
         
     def _update_response_dictionary( self, response: str ) -> dict[str, Any]:
         """
-        Parse LLM response XML into structured dictionary.
+        Parse LLM response XML into structured dictionary using configurable strategy.
+        
+        This method now uses the XmlParserFactory to support gradual migration
+        from baseline XML parsing to Pydantic-based structured parsing.
         
         Requires:
             - response is a valid XML string
             - self.xml_response_tag_names is defined with expected tags
+            - self.routing_command identifies the agent for strategy selection
             
         Ensures:
             - Returns dictionary with parsed values for each expected tag
-            - 'code' and 'examples' tags are parsed as nested lists
-            - Other tags are parsed as simple string values
+            - Uses configuration-appropriate parsing strategy (baseline/hybrid/structured)
+            - Maintains backward compatibility with existing agent implementations
             
         Raises:
-            - None (malformed XML results in empty/partial dictionary)
+            - XMLParsingError for parsing failures (depending on strategy)
+            - ValidationError for Pydantic model validation failures
         """
         
-        if self.debug and self.verbose: print( f"update_response_dictionary called..." )
+        if self.debug and self.verbose: 
+            print( f"_update_response_dictionary called with strategy factory..." )
         
-        prompt_response_dict = { }
-        
-        for xml_tag in self.xml_response_tag_names:
+        # Use the factory to parse the XML response with appropriate strategy
+        try:
+            prompt_response_dict = self.xml_parser_factory.parse_agent_response(
+                xml_response=response,
+                agent_routing_command=self.routing_command,
+                xml_tag_names=self.xml_response_tag_names,
+                debug=self.debug,
+                verbose=self.verbose
+            )
             
-            if self.debug and self.verbose: print( f"Looking for xml_tag [{xml_tag}]" )
+            if self.debug and self.verbose:
+                print( f"Successfully parsed {len( prompt_response_dict )} fields using factory" )
+                
+            return prompt_response_dict
             
-            if xml_tag in [ "code", "examples" ]:
-                # the get_code method expects enclosing tags, like <code>...</code> or <examples>...</examples>
-                xml_string = f"<{xml_tag}>" + dux.get_value_by_xml_tag_name( response, xml_tag ) + f"</{xml_tag}>"
-                prompt_response_dict[ xml_tag ] = dux.get_nested_list( xml_string, tag_name=xml_tag, debug=self.debug, verbose=self.verbose )
-            else:
-                prompt_response_dict[ xml_tag ] = dux.get_value_by_xml_tag_name( response, xml_tag )
-        
-        return prompt_response_dict
+        except Exception as e:
+            if self.debug:
+                print( f"XML parsing failed: {e}" )
+            
+            # Fallback to legacy baseline parsing for maximum compatibility
+            if self.debug:
+                print( "Falling back to legacy baseline XML parsing..." )
+                
+            prompt_response_dict = { }
+            
+            for xml_tag in self.xml_response_tag_names:
+                
+                if self.debug and self.verbose: 
+                    print( f"Looking for xml_tag [{xml_tag}] (fallback mode)" )
+                
+                if xml_tag in [ "code", "examples" ]:
+                    # Legacy nested list parsing for code/examples
+                    xml_string = f"<{xml_tag}>" + dux.get_value_by_xml_tag_name( response, xml_tag ) + f"</{xml_tag}>"
+                    prompt_response_dict[ xml_tag ] = dux.get_nested_list( xml_string, tag_name=xml_tag, debug=self.debug, verbose=self.verbose )
+                else:
+                    prompt_response_dict[ xml_tag ] = dux.get_value_by_xml_tag_name( response, xml_tag )
+            
+            return prompt_response_dict
     
     def run_prompt( self, include_raw_response: bool=False ) -> dict[str, Any]:
         """

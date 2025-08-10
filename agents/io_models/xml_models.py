@@ -17,7 +17,7 @@ All models inherit from BaseXMLModel and include quick_smoke_test() methods.
 """
 
 import time
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Literal
 from pydantic import Field, field_validator, model_validator
 
 from cosa.agents.io_models.utils.util_xml_pydantic import BaseXMLModel, XMLParsingError
@@ -394,6 +394,178 @@ class YesNoResponse( BaseXMLModel ):
             return False
 
 
+class ReceptionistResponse( BaseXMLModel ):
+    """
+    Receptionist agent response model.
+    
+    Handles XML responses for receptionist agent conversations.
+    This agent acts as a receptionist, answering questions based on
+    previous conversations stored in memory.
+    
+    Expected XML format:
+    <response>
+        <thoughts>Analysis of the user query and memory search</thoughts>
+        <category>benign OR humorous OR salacious</category>
+        <answer>Concise conversational response to the query</answer>
+    </response>
+    
+    Requires:
+        - XML contains <thoughts>, <category>, and <answer> tags
+        - category must be one of: benign, humorous, salacious
+        - All fields contain non-empty strings
+        
+    Ensures:
+        - Type-safe access to all response components
+        - Automatic validation of category enum values
+        - Proper XML serialization and deserialization
+        
+    Raises:
+        - ValidationError if category is not in allowed values
+        - XMLParsingError if required tags are missing
+    """
+    
+    thoughts: str = Field( ..., description="Agent's reasoning process about the query and memory search" )
+    category: Literal["benign", "humorous", "salacious"] = Field( ..., description="Query categorization for content filtering" )
+    answer: str = Field( ..., description="Concise conversational answer to the user's query" )
+    
+    @field_validator( "thoughts" )
+    @classmethod
+    def validate_thoughts_not_empty( cls, v: str ) -> str:
+        """
+        Validate that thoughts field is not empty.
+        
+        Requires:
+            - v is a string (guaranteed by Pydantic)
+            
+        Ensures:
+            - Returns non-empty trimmed string
+            
+        Raises:
+            - ValueError if thoughts is empty after stripping whitespace
+        """
+        trimmed = v.strip()
+        if not trimmed:
+            raise ValueError( "thoughts cannot be empty" )
+        return trimmed
+        
+    @field_validator( "answer" )
+    @classmethod
+    def validate_answer_not_empty( cls, v: str ) -> str:
+        """
+        Validate that answer field is not empty.
+        
+        Requires:
+            - v is a string (guaranteed by Pydantic)
+            
+        Ensures:
+            - Returns non-empty trimmed string
+            
+        Raises:
+            - ValueError if answer is empty after stripping whitespace
+        """
+        trimmed = v.strip()
+        if not trimmed:
+            raise ValueError( "answer cannot be empty" )
+        return trimmed
+        
+    def is_safe_content( self ) -> bool:
+        """
+        Check if the response content is safe for all audiences.
+        
+        Requires:
+            - self.category is properly validated Literal value
+            
+        Ensures:
+            - Returns True if category is 'benign' or 'humorous'
+            - Returns False if category is 'salacious'
+            
+        Raises:
+            - None (category is guaranteed to be valid by Pydantic)
+        """
+        return self.category in ["benign", "humorous"]
+        
+    @classmethod
+    def quick_smoke_test( cls, debug: bool = False ) -> bool:
+        """
+        Quick smoke test for ReceptionistResponse model.
+        
+        Requires:
+            - debug is a boolean flag for verbose output
+            
+        Ensures:
+            - Tests XML parsing with valid receptionist response
+            - Tests category validation with all allowed values
+            - Tests field validation for empty strings
+            - Returns True if all tests pass, False otherwise
+            
+        Raises:
+            - None (catches and reports all exceptions)
+        """
+        if debug:
+            print( "Testing ReceptionistResponse..." )
+            
+        try:
+            # Test valid response parsing
+            valid_xml = '''<response>
+                <thoughts>The user is asking about system capabilities, which is a technical but innocent inquiry.</thoughts>
+                <category>benign</category>
+                <answer>CoSA is a collection of small agents designed for various tasks including code generation.</answer>
+            </response>'''
+            
+            response = cls.from_xml( valid_xml )
+            assert response.thoughts.startswith( "The user is asking" )
+            assert response.category == "benign"
+            assert "CoSA" in response.answer
+            assert response.is_safe_content() == True
+            
+            if debug:
+                print( "  ✓ Valid XML parsing test passed" )
+            
+            # Test all category values
+            for category in ["benign", "humorous", "salacious"]:
+                test_xml = f'''<response>
+                    <thoughts>Test thoughts for {category} category</thoughts>
+                    <category>{category}</category>
+                    <answer>Test answer for validation</answer>
+                </response>'''
+                
+                test_response = cls.from_xml( test_xml )
+                assert test_response.category == category
+                
+            if debug:
+                print( "  ✓ Category validation test passed" )
+            
+            # Test safe content detection
+            safe_response = cls.from_xml( valid_xml.replace( "benign", "humorous" ) )
+            assert safe_response.is_safe_content() == True
+            
+            unsafe_xml = valid_xml.replace( "benign", "salacious" )
+            unsafe_response = cls.from_xml( unsafe_xml )
+            assert unsafe_response.is_safe_content() == False
+            
+            if debug:
+                print( "  ✓ Safe content detection test passed" )
+                
+            # Test to_xml round-trip
+            xml_output = response.to_xml()
+            reparsed = cls.from_xml( xml_output )
+            assert reparsed.thoughts == response.thoughts
+            assert reparsed.category == response.category  
+            assert reparsed.answer == response.answer
+            
+            if debug:
+                print( "  ✓ Round-trip serialization test passed" )
+            
+            if debug:
+                print( "✓ ReceptionistResponse smoke test PASSED" )
+            return True
+            
+        except Exception as e:
+            if debug:
+                print( f"✗ ReceptionistResponse smoke test FAILED: {e}" )
+            return False
+
+
 class CodeResponse( BaseXMLModel ):
     """
     Code generation response model.
@@ -693,6 +865,149 @@ class CodeResponse( BaseXMLModel ):
             return False
 
 
+class CalendarResponse( CodeResponse ):
+    """
+    Calendar agent response model.
+    
+    Extends CodeResponse with an additional 'question' field for calendar agents.
+    
+    Handles XML responses like:
+    <response>
+        <question>What events do I have today?</question>
+        <thoughts>Need to filter events by today's date</thoughts>
+        <code>
+            <line>today_events = df[df['date'] == today]</line>
+            <line>result = today_events['title'].tolist()</line>
+        </code>
+        <returns>list</returns>
+        <example>get_today_events()</example>
+        <explanation>Filters and returns today's events</explanation>
+    </response>
+    
+    Used by calendaring agents that need to preserve the original question context.
+    """
+    
+    question: str = Field( ..., description="Original question being answered" )
+    
+    @field_validator( 'question' )
+    @classmethod
+    def validate_question( cls, v ):
+        """Ensure question is not empty."""
+        if not v or not v.strip():
+            raise ValueError( "Question cannot be empty" )
+        return v.strip()
+    
+    @classmethod 
+    def quick_smoke_test( cls, debug: bool = False ) -> bool:
+        """
+        Quick smoke test for CalendarResponse.
+        
+        Tests calendar-specific XML patterns including question field.
+        
+        Args:
+            debug: Enable debug output
+            
+        Returns:
+            True if all tests pass
+        """
+        try:
+            if debug:
+                print( f"Testing {cls.__name__}..." )
+            
+            # Test basic calendar XML
+            if debug:
+                print( "  - Testing basic calendar response..." )
+            calendar_xml = """<response>
+                <question>What meetings do I have today?</question>
+                <thoughts>User wants to see today's scheduled meetings</thoughts>
+                <code>
+                    <line>import pandas as pd</line>
+                    <line>from datetime import date</line>
+                    <line>today = date.today()</line>
+                    <line>meetings = df[df['date'] == today]</line>
+                    <line>result = meetings[['title', 'time']].to_dict('records')</line>
+                </code>
+                <returns>list</returns>
+                <example>get_meetings_today()</example>
+                <explanation>Filters events for today and returns meeting details</explanation>
+            </response>"""
+            
+            response = cls.from_xml( calendar_xml )
+            assert response.question == "What meetings do I have today?"
+            assert "today's scheduled meetings" in response.thoughts
+            assert len( response.code ) == 5
+            assert response.returns == "list"
+            assert response.has_imports() == True
+            
+            if debug:
+                print( "    ✓ Basic calendar test passed" )
+            
+            # Test question validation
+            if debug:
+                print( "  - Testing question validation..." )
+            try:
+                cls(
+                    question="",  # Empty question should fail
+                    thoughts="Test thoughts",
+                    code=["test_line"],
+                    returns="None",
+                    example="test()",
+                    explanation="Test"
+                )
+                assert False, "Empty question should have failed validation"
+            except ValueError:
+                pass  # Expected
+            
+            if debug:
+                print( "    ✓ Question validation test passed" )
+            
+            # Test inheritance from CodeResponse
+            if debug:
+                print( "  - Testing CodeResponse inheritance..." )
+            # Should inherit all CodeResponse functionality
+            code_string = response.get_code_as_string()
+            assert "import pandas as pd" in code_string
+            assert response.get_function_name() is None  # No function in this example
+            
+            if debug:
+                print( "    ✓ Inheritance test passed" )
+            
+            # Test round-trip with question field
+            if debug:
+                print( "  - Testing round-trip with question..." )
+            test_response = cls(
+                question="How many events this week?",
+                thoughts="Count events for the current week",
+                code=["events = df[df['week'] == current_week]", "count = len(events)"],
+                returns="int", 
+                example="weekly_count = count_events_this_week()",
+                explanation="Counts events in the current week"
+            )
+            
+            xml_output = test_response.to_xml()
+            parsed_back = cls.from_xml( xml_output )
+            
+            assert parsed_back.question == "How many events this week?"
+            assert parsed_back.thoughts == "Count events for the current week"
+            assert len( parsed_back.code ) == 2
+            assert parsed_back.returns == "int"
+            
+            if debug:
+                print( "    ✓ Round-trip test passed" )
+            
+            if debug:
+                print( f"✓ {cls.__name__} smoke test PASSED" )
+            
+            return True
+            
+        except Exception as e:
+            if debug:
+                print( f"✗ {cls.__name__} smoke test FAILED: {e}" )
+                import traceback
+                traceback.print_exc()
+            return False
+
+
 def quick_smoke_test() -> bool:
     """
     Quick smoke test for all XML models.
@@ -709,7 +1024,9 @@ def quick_smoke_test() -> bool:
             SimpleResponse,
             CommandResponse,
             YesNoResponse,
-            CodeResponse
+            ReceptionistResponse,
+            CodeResponse,
+            CalendarResponse
         ]
         
         passed = 0

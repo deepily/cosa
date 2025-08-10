@@ -218,8 +218,12 @@ async def get_queue(
         jobs = done_queue.get_html_list(descending=True)
         
         # Extract structured job data from SolutionSnapshot objects in done queue
+        # Apply same descending sort as HTML list for consistency
+        snapshots = list( done_queue.queue_list )
+        snapshots.reverse()  # Apply descending order (most recent first)
+        
         structured_jobs = []
-        for snapshot in done_queue.queue_list:
+        for snapshot in snapshots:
             # Generate job metadata from SolutionSnapshot fields
             job_data = {
                 "html": snapshot.get_html().replace("</li>", f" [user: {user_id}]</li>"),

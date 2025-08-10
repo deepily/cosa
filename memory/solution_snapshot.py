@@ -26,20 +26,28 @@ class SolutionSnapshot( RunnableCode ):
     future reuse and similarity matching.
     """
     @staticmethod
-    def get_timestamp() -> str:
+    def get_timestamp( microseconds: bool = False ) -> str:
         """
-        Get current timestamp.
+        Get current timestamp with optional microsecond precision.
         
         Requires:
             - None
             
         Ensures:
             - Returns formatted datetime string
+            - Default format: "YYYY-MM-DD @ HH:MM:SS TZ" 
+            - Microsecond format: "YYYY-MM-DD @ HH:MM:SS.ffffff TZ"
+            
+        Args:
+            microseconds: If True, include microseconds for unique IDs (default: False)
             
         Raises:
             - None
         """
-        return du.get_current_datetime()
+        if microseconds:
+            return du.get_current_datetime( format_str='%Y-%m-%d @ %H:%M:%S.%f %Z' )
+        else:
+            return du.get_current_datetime()
     
     @staticmethod
     def remove_non_alphanumerics( input: str, replacement_char: str="" ) -> str:
@@ -82,20 +90,23 @@ class SolutionSnapshot( RunnableCode ):
     @staticmethod
     def generate_id_hash( push_counter: int, run_date: str ) -> str:
         """
-        Generate unique ID hash for snapshot.
+        Generate unique ID hash for snapshot using microsecond-precision timestamp.
         
         Requires:
-            - push_counter is an integer
-            - run_date is a string
+            - push_counter is an integer (ignored - kept for backward compatibility)
+            - run_date is a string with microsecond precision
             
         Ensures:
             - Returns SHA256 hash as hex string
-            - Combines counter and date for uniqueness
+            - Uses only run_date for uniqueness (microsecond precision eliminates collisions)
+            - Maintains API compatibility with existing code
             
         Raises:
             - None
         """
-        return hashlib.sha256( (str( push_counter ) + run_date).encode() ).hexdigest()
+        # Use only timestamp for uniqueness - microsecond precision eliminates collisions
+        # push_counter parameter kept for backward compatibility but ignored
+        return hashlib.sha256( run_date.encode() ).hexdigest()
     
     @staticmethod
     def get_default_stats_dict() -> dict:
@@ -228,35 +239,35 @@ class SolutionSnapshot( RunnableCode ):
         
         # If the question embedding is empty, generate it
         if question != "" and not question_embedding:
-            self.question_embedding = self._embedding_mgr.generate_embedding( question, normalize_for_cache=True, debug=self.debug )
+            self.question_embedding = self._embedding_mgr.generate_embedding( question, normalize_for_cache=True )
             dirty = True
         else:
             self.question_embedding = question_embedding
             
         # If the gist embedding is empty, generate it
         if question_gist != "" and not question_gist_embedding:
-            self.question_gist_embedding = self._embedding_mgr.generate_embedding( question_gist, normalize_for_cache=True, debug=self.debug )
+            self.question_gist_embedding = self._embedding_mgr.generate_embedding( question_gist, normalize_for_cache=True )
             dirty = True
         else:
             self.question_gist_embedding = question_gist_embedding
         
         # If the code embedding is empty, generate it
         if code and not code_embedding:
-            self.code_embedding = self._embedding_mgr.generate_embedding( " ".join( code ), normalize_for_cache=False, debug=self.debug )
+            self.code_embedding = self._embedding_mgr.generate_embedding( " ".join( code ), normalize_for_cache=False )
             dirty = True
         else:
             self.code_embedding = code_embedding
     
         # If the solution embedding is empty, generate it
         if solution_summary and not solution_embedding:
-            self.solution_embedding = self._embedding_mgr.generate_embedding( solution_summary, normalize_for_cache=True, debug=self.debug )
+            self.solution_embedding = self._embedding_mgr.generate_embedding( solution_summary, normalize_for_cache=True )
             dirty = True
         else:
             self.solution_embedding = solution_embedding
 
         # If the thoughts embedding is empty, generate it
         if thoughts and not thoughts_embedding:
-            self.thoughts_embedding = self._embedding_mgr.generate_embedding( thoughts, normalize_for_cache=True, debug=self.debug )
+            self.thoughts_embedding = self._embedding_mgr.generate_embedding( thoughts, normalize_for_cache=True )
             dirty = True
         else:
             self.thoughts_embedding = thoughts_embedding
@@ -409,7 +420,7 @@ class SolutionSnapshot( RunnableCode ):
             - None
         """
         self.solution_summary = solution_summary
-        self.solution_embedding = self._embedding_mgr.generate_embedding( solution_summary, normalize_for_cache=True, debug=self.debug )
+        self.solution_embedding = self._embedding_mgr.generate_embedding( solution_summary, normalize_for_cache=True )
         self.updated_date = self.get_timestamp()
 
     def set_code( self, code: list[str] ) -> None:
@@ -429,7 +440,7 @@ class SolutionSnapshot( RunnableCode ):
         """
         # ¡OJO! code is a list of strings, not a string!
         self.code           = code
-        self.code_embedding = self._embedding_mgr.generate_embedding( " ".join( code ), normalize_for_cache=False, debug=self.debug )
+        self.code_embedding = self._embedding_mgr.generate_embedding( " ".join( code ), normalize_for_cache=False )
         self.updated_date   = self.get_timestamp()
     
     def get_question_similarity( self, other_snapshot: 'SolutionSnapshot' ) -> float:
@@ -737,7 +748,7 @@ def quick_smoke_test():
     # Test embedding generation
     print( "Testing embedding generation..." )
     embedding_mgr = EmbeddingManager( debug=True )
-    embedding = embedding_mgr.generate_embedding( "what time is it", normalize_for_cache=True, debug=True )
+    embedding = embedding_mgr.generate_embedding( "what time is it", normalize_for_cache=True )
     if embedding:
         print( f"✓ Generated embedding with {len( embedding )} dimensions" )
     else:
