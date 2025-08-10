@@ -214,11 +214,33 @@ async def get_queue(
     elif queue_name == "dead":
         jobs = dead_queue.get_html_list(descending=True)
     elif queue_name == "done":
+        # Enhanced done queue response with structured job metadata for replay functionality
         jobs = done_queue.get_html_list(descending=True)
+        
+        # Extract structured job data from SolutionSnapshot objects in done queue
+        structured_jobs = []
+        for snapshot in done_queue.queue_list:
+            # Generate job metadata from SolutionSnapshot fields
+            job_data = {
+                "html": snapshot.get_html().replace("</li>", f" [user: {user_id}]</li>"),
+                "job_id": snapshot.id_hash,
+                "question_text": snapshot.last_question_asked or snapshot.question,
+                "response_text": snapshot.answer_conversational or snapshot.answer,
+                "timestamp": snapshot.run_date or snapshot.created_date,
+                "user_id": user_id,
+                "has_audio_cache": False  # Will be determined by frontend cache check
+            }
+            structured_jobs.append( job_data )
+        
+        # Maintain backward compatibility: return both structured data and HTML list
+        return {
+            f"{queue_name}_jobs": [job["html"] for job in structured_jobs],
+            f"{queue_name}_jobs_metadata": structured_jobs
+        }
     else:
         raise HTTPException(status_code=400, detail=f"Invalid queue name: {queue_name}")
     
-    # Add user context to demonstrate filtering (temporary)
+    # Add user context to demonstrate filtering (temporary) - for non-done queues
     filtered_jobs = [job.replace("</li>", f" [user: {user_id}]</li>") for job in jobs]
     
     return {f"{queue_name}_jobs": filtered_jobs}

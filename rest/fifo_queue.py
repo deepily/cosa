@@ -417,7 +417,7 @@ class FifoQueue:
         """
         if self.emit_enabled and self.websocket_mgr and self.queue_name:
             try:
-                event_name = f"{self.queue_name}_update"
+                event_name = f"queue_{self.queue_name}_update"  # Fixed: Add "queue_" prefix
                 data = { 'value': self.size() }
                 self.websocket_mgr.emit( event_name, data )
                 if hasattr( self, 'debug' ) and self.debug:
