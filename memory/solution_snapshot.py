@@ -597,8 +597,7 @@ class SolutionSnapshot( RunnableCode ):
             print( "NO solution_file value provided (Must be a new object). Generating a unique file name..." )
             # Generate filename based on the first 64 characters of the question
             # filename_base = du.truncate_string( self.question, max_len=64 ).replace( " ", "-" )
-            # use the gist in lieu of the question
-            filename_base = du.truncate_string( self.remove_non_alphanumerics( self.question_gist, replacement_char="_" ), max_len=64 ).replace( " ", "-" )
+            filename_base = du.truncate_string( self.remove_non_alphanumerics( self.question, replacement_char="_" ), max_len=64 ).replace( " ", "-" )
             # Get a list of all files that start with the filename base
             existing_files = glob.glob( f"{directory}{filename_base}-*.json" )
             # The count of existing files will be used to make the filename unique

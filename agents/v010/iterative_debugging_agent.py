@@ -38,7 +38,7 @@ class IterativeDebuggingAgent( AgentBase ):
             - ConfigException if required config settings missing
         """
         
-        super().__init__( routing_command="agent router go to debugger", debug=debug, verbose=verbose )
+        super().__init__( routing_command="agent router go to debugger", debug=debug, verbose=verbose, question="Debug code error" )
         
         self.code                   = []
         self.example                = example
@@ -235,9 +235,20 @@ class IterativeDebuggingAgent( AgentBase ):
         self.prompt_response_dict[ "code" ] = code
         if self.debug: self.print_code( msg="BEFORE patching code in response dictionary" )
         
-        # Get the patched code
-        line_number  = int( prompt_response_dict[ "line-number" ] ) - 1
-        line_of_code = prompt_response_dict[ "one-line-of-code" ]
+        # Get the patched code - handle both Pydantic (line_number) and baseline (line-number) field names
+        if "line_number" in prompt_response_dict:
+            # Pydantic structured parsing (line-number → line_number)
+            line_number = int( prompt_response_dict[ "line_number" ] ) - 1
+        else:
+            # Baseline parsing (line-number)
+            line_number = int( prompt_response_dict[ "line-number" ] ) - 1
+            
+        if "one_line_of_code" in prompt_response_dict:
+            # Pydantic structured parsing (one-line-of-code → one_line_of_code)
+            line_of_code = prompt_response_dict[ "one_line_of_code" ]
+        else:
+            # Baseline parsing (one-line-of-code)
+            line_of_code = prompt_response_dict[ "one-line-of-code" ]
         line_of_code = dux.remove_xml_escapes( line_of_code )
         print( f"Patching line {line_number} with [{line_of_code}]")
         

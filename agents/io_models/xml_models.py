@@ -1008,6 +1008,828 @@ class CalendarResponse( CodeResponse ):
             return False
 
 
+class CodeBrainstormResponse( BaseXMLModel ):
+    """
+    Code generation response with brainstorming process.
+    
+    Handles XML responses for agents that generate code with detailed reasoning:
+    <response>
+        <thoughts>Initial reasoning about the problem</thoughts>
+        <brainstorm>Different approaches considered</brainstorm>
+        <evaluation>Analysis of chosen approach</evaluation>
+        <code>
+            <line>import math</line>
+            <line>def solve_problem():</line>
+            <line>    return solution</line>
+        </code>
+        <example>Usage example</example>
+        <returns>Return type description</returns>
+        <explanation>How the code works</explanation>
+    </response>
+    
+    Used by agents requiring brainstorming workflows:
+    - DateAndTimeAgent: Time-based code generation with approach analysis
+    - MathAgent: Mathematical code generation with solution exploration
+    - Future agents requiring detailed reasoning process
+    """
+    
+    thoughts: str = Field( ..., description="Initial reasoning about the problem" )
+    brainstorm: str = Field( ..., description="Different approaches considered" )
+    evaluation: str = Field( ..., description="Analysis of chosen approach" )
+    code: List[str] = Field( ..., description="Generated code as list of lines" )
+    example: str = Field( ..., description="Usage example" )
+    returns: str = Field( ..., description="Return type description" )
+    explanation: str = Field( ..., description="Code explanation" )
+    
+    @model_validator( mode='before' )
+    @classmethod
+    def process_xml_data( cls, data ):
+        """
+        Process XML data before field validation.
+        
+        Handles xmltodict structures and converts them to proper field types.
+        
+        Args:
+            data: Raw data from xmltodict or direct construction
+            
+        Returns:
+            Processed data ready for field validation
+        """
+        if not isinstance( data, dict ):
+            return data
+            
+        # Process code field if present (reuse logic from CodeResponse)
+        if 'code' in data and isinstance( data['code'], dict ):
+            data['code'] = cls._extract_lines_from_dict( data['code'] )
+            
+        return data
+    
+    @classmethod
+    def _extract_lines_from_dict( cls, code_dict: dict ) -> List[str]:
+        """
+        Extract code lines from xmltodict nested structure.
+        
+        xmltodict converts:
+        <code>
+            <line>import math</line>
+            <line>def func():</line>
+        </code>
+        
+        Into: {'line': ['import math', 'def func():']} or {'line': 'single line'}
+        
+        Args:
+            code_dict: Dictionary from xmltodict parsing
+            
+        Returns:
+            List of code lines as strings
+        """
+        if 'line' in code_dict:
+            lines = code_dict['line']
+            if isinstance( lines, list ):
+                # Multiple lines
+                return [str(line) if line is not None else "" for line in lines]
+            else:
+                # Single line
+                return [str(lines) if lines is not None else ""]
+        else:
+            # No line tags found - might be direct text content
+            return []
+    
+    @field_validator( 'code' )
+    @classmethod
+    def validate_code( cls, v ):
+        """
+        Validate that code list is not empty.
+        
+        Args:
+            v: List of code lines (already processed by model_validator)
+            
+        Returns:
+            Validated code list
+        """
+        if not v:
+            raise ValueError( "Code must contain at least one line" )
+        return v
+    
+    @field_validator( 'thoughts', 'brainstorm', 'evaluation', 'explanation' )
+    @classmethod
+    def validate_text_fields( cls, v ):
+        """Ensure text fields are not empty."""
+        if not v or not v.strip():
+            raise ValueError( "Text fields cannot be empty" )
+        return v.strip()
+    
+    @field_validator( 'returns' )
+    @classmethod
+    def validate_returns( cls, v ):
+        """Validate return type description."""
+        if not v or not v.strip():
+            return "None"  # Default return type
+        return v.strip()
+    
+    def get_code_as_string( self, indent: str = "" ) -> str:
+        """
+        Get code as a formatted string.
+        
+        Args:
+            indent: Optional indentation prefix for each line
+            
+        Returns:
+            Formatted code string
+        """
+        return '\n'.join( f"{indent}{line}" for line in self.code )
+    
+    def has_imports( self ) -> bool:
+        """
+        Check if code contains import statements.
+        
+        Returns:
+            True if any line starts with 'import' or 'from'
+        """
+        return any( 
+            line.strip().startswith( ('import ', 'from ') ) 
+            for line in self.code if line.strip()
+        )
+    
+    def get_function_name( self ) -> Optional[str]:
+        """
+        Extract function name from code if present.
+        
+        Returns:
+            Function name or None if no function definition found
+        """
+        import re
+        for line in self.code:
+            match = re.search( r'def\s+(\w+)\s*\(', line.strip() )
+            if match:
+                return match.group( 1 )
+        return None
+    
+    @classmethod
+    def quick_smoke_test( cls, debug: bool = False ) -> bool:
+        """
+        Quick smoke test for CodeBrainstormResponse.
+        
+        Tests brainstorming workflow and code generation patterns.
+        
+        Args:
+            debug: Enable debug output
+            
+        Returns:
+            True if all tests pass
+        """
+        if debug:
+            print( f"Testing {cls.__name__}..." )
+        
+        try:
+            # Test base functionality
+            if not super().quick_smoke_test( debug=False ):
+                if debug:
+                    print( "    ✗ Base functionality test failed" )
+                return False
+            
+            # Test math brainstorming response
+            if debug:
+                print( "  - Testing math brainstorming response..." )
+            math_xml = """<response>
+                <thoughts>The user wants to calculate the area of a circle given its radius</thoughts>
+                <brainstorm>I could use the formula A = πr² or I could approximate using polygon methods or I could use integration</brainstorm>
+                <evaluation>The direct formula approach is simplest and most accurate for this problem</evaluation>
+                <code>
+                    <line>import math</line>
+                    <line>def circle_area(radius):</line>
+                    <line>    return math.pi * radius ** 2</line>
+                </code>
+                <example>area = circle_area(5)</example>
+                <returns>float</returns>
+                <explanation>Uses the standard mathematical formula πr² to calculate circle area</explanation>
+            </response>"""
+            
+            math_response = cls.from_xml( math_xml )
+            assert "area of a circle" in math_response.thoughts
+            assert "formula" in math_response.brainstorm.lower()
+            assert "simplest and most accurate" in math_response.evaluation
+            assert len( math_response.code ) == 3
+            assert math_response.has_imports() == True
+            assert math_response.get_function_name() == "circle_area"
+            assert math_response.returns == "float"
+            
+            if debug:
+                print( "    ✓ Math brainstorming test passed" )
+            
+            # Test datetime brainstorming response
+            if debug:
+                print( "  - Testing datetime brainstorming response..." )
+            datetime_xml = """<response>
+                <thoughts>Need to determine what day of the week a specific date falls on</thoughts>
+                <brainstorm>Could use datetime.weekday(), or calendar module, or manual calculation using known reference dates</brainstorm>
+                <evaluation>datetime.weekday() is the most straightforward and reliable approach</evaluation>
+                <code>
+                    <line>from datetime import datetime</line>
+                    <line>def get_weekday(year, month, day):</line>
+                    <line>    date = datetime(year, month, day)</line>
+                    <line>    days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']</line>
+                    <line>    return days[date.weekday()]</line>
+                </code>
+                <example>day_name = get_weekday(2025, 8, 10)</example>
+                <returns>str</returns>
+                <explanation>Creates a datetime object and maps weekday() result to day names</explanation>
+            </response>"""
+            
+            datetime_response = cls.from_xml( datetime_xml )
+            assert "day of the week" in datetime_response.thoughts
+            assert "datetime.weekday" in datetime_response.brainstorm
+            assert "straightforward" in datetime_response.evaluation
+            assert len( datetime_response.code ) == 5
+            assert datetime_response.has_imports() == True
+            assert datetime_response.get_function_name() == "get_weekday"
+            
+            if debug:
+                print( "    ✓ Datetime brainstorming test passed" )
+            
+            # Test empty field validation
+            if debug:
+                print( "  - Testing field validation..." )
+            try:
+                cls(
+                    thoughts="",  # Empty thoughts should fail
+                    brainstorm="test brainstorm",
+                    evaluation="test evaluation",
+                    code=["test_line"],
+                    example="test()",
+                    returns="None",
+                    explanation="test explanation"
+                )
+                assert False, "Empty thoughts should have failed validation"
+            except ValueError:
+                pass  # Expected
+            
+            if debug:
+                print( "    ✓ Field validation test passed" )
+            
+            # Test round-trip serialization
+            if debug:
+                print( "  - Testing round-trip serialization..." )
+            test_response = cls(
+                thoughts="Test problem analysis",
+                brainstorm="Consider approach A vs approach B",
+                evaluation="Approach A is better because of efficiency",
+                code=["import os", "def test():", "    return True"],
+                example="result = test()",
+                returns="bool",
+                explanation="Test function for validation"
+            )
+            
+            xml_output = test_response.to_xml()
+            parsed_back = cls.from_xml( xml_output )
+            
+            assert parsed_back.thoughts == "Test problem analysis"
+            assert parsed_back.brainstorm == "Consider approach A vs approach B"
+            assert parsed_back.evaluation == "Approach A is better because of efficiency"
+            assert len( parsed_back.code ) == 3
+            assert parsed_back.returns == "bool"
+            
+            if debug:
+                print( "    ✓ Round-trip test passed" )
+            
+            # Test utility methods
+            if debug:
+                print( "  - Testing utility methods..." )
+            code_string = test_response.get_code_as_string()
+            assert "import os" in code_string
+            assert "def test():" in code_string
+            
+            indented_code = test_response.get_code_as_string( indent="    " )
+            assert "    import os" in indented_code
+            
+            if debug:
+                print( "    ✓ Utility methods test passed" )
+            
+            if debug:
+                print( f"✓ {cls.__name__} smoke test PASSED" )
+            
+            return True
+            
+        except Exception as e:
+            if debug:
+                print( f"✗ {cls.__name__} smoke test FAILED: {e}" )
+                import traceback
+                traceback.print_exc()
+            return False
+
+
+class BugInjectionResponse( BaseXMLModel ):
+    """
+    Response for bug injection operations.
+    
+    Handles XML responses for agents that inject bugs into code:
+    <response>
+        <line-number>3</line-number>
+        <bug>print("This is a bug!")</bug>
+    </response>
+    
+    Used by BugInjector agent for intelligent code modification with bug injection.
+    """
+    
+    line_number: int = Field( ..., description="Line number where bug should be injected (1-based indexing)", alias="line-number" )
+    bug: str = Field( ..., description="Bug code to inject at specified line" )
+    
+    @field_validator( 'line_number' )
+    @classmethod
+    def validate_line_number( cls, v ):
+        """
+        Validate line number is reasonable for bug injection.
+        
+        Args:
+            v: Line number value
+            
+        Returns:
+            Validated line number
+            
+        Raises:
+            ValueError: If line number is invalid
+        """
+        # Allow -1 as special "invalid response" indicator
+        if v < -1:
+            raise ValueError( "Line number must be -1 (invalid response) or positive integer" )
+        if v == 0:
+            raise ValueError( "Line number cannot be 0 (lines are 1-based indexed)" )
+        # Upper bound validation happens in the agent since it knows code length
+        return v
+    
+    @field_validator( 'bug' )
+    @classmethod
+    def validate_bug_code( cls, v ):
+        """
+        Validate bug code is non-empty and reasonable.
+        
+        Args:
+            v: Bug code string
+            
+        Returns:
+            Validated and cleaned bug code
+            
+        Raises:
+            ValueError: If bug code is empty or invalid
+        """
+        if not isinstance( v, str ):
+            raise ValueError( "Bug code must be a string" )
+        
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError( "Bug code cannot be empty" )
+            
+        return cleaned
+    
+    def is_valid_response( self ) -> bool:
+        """
+        Check if this represents a valid bug injection response.
+        
+        Returns:
+            True if line_number is positive (valid), False if -1 (invalid)
+        """
+        return self.line_number > 0
+    
+    def validate_against_code_length( self, code_length: int ) -> bool:
+        """
+        Validate line number against actual code length.
+        
+        Args:
+            code_length: Number of lines in the code to be modified
+            
+        Returns:
+            True if line number is within valid range for the code
+        """
+        if not self.is_valid_response():
+            return False
+        return 1 <= self.line_number <= code_length
+    
+    @classmethod
+    def quick_smoke_test( cls, debug: bool = False ) -> bool:
+        """
+        Quick smoke test for BugInjectionResponse.
+        
+        Tests bug injection response parsing and validation.
+        
+        Args:
+            debug: Enable debug output
+            
+        Returns:
+            True if all tests pass
+        """
+        if debug:
+            print( f"Testing {cls.__name__}..." )
+        
+        try:
+            # Test base functionality
+            if not super().quick_smoke_test( debug=False ):
+                if debug:
+                    print( "    ✗ Base functionality test failed" )
+                return False
+            
+            # Test valid bug injection response
+            if debug:
+                print( "  - Testing valid bug injection response..." )
+            valid_xml = '''<response>
+                <line-number>5</line-number>
+                <bug>x = x + "error"  # Intentional type error</bug>
+            </response>'''
+            
+            response = cls.from_xml( valid_xml )
+            assert response.line_number == 5
+            assert "error" in response.bug
+            assert response.is_valid_response() == True
+            assert response.validate_against_code_length( 10 ) == True
+            assert response.validate_against_code_length( 3 ) == False
+            
+            if debug:
+                print( "    ✓ Valid response test passed" )
+            
+            # Test invalid response (line-number = -1)
+            if debug:
+                print( "  - Testing invalid response handling..." )
+            invalid_xml = '''<response>
+                <line-number>-1</line-number>
+                <bug></bug>
+            </response>'''
+            
+            try:
+                invalid_response = cls.from_xml( invalid_xml )
+                # This should work (parsing succeeds) but validation shows it's invalid
+                assert invalid_response.line_number == -1
+                assert invalid_response.is_valid_response() == False
+                if debug:
+                    print( "    ✓ Invalid response detected correctly" )
+            except Exception:
+                # Might fail on empty bug validation, which is also correct
+                if debug:
+                    print( "    ✓ Invalid response rejected during parsing" )
+            
+            # Test line number validation
+            if debug:
+                print( "  - Testing line number validation..." )
+            try:
+                cls( line_number=0, bug="test bug" )  # Should fail
+                assert False, "Line number 0 should have failed validation"
+            except ValueError:
+                pass  # Expected
+            
+            try:
+                cls( line_number=-2, bug="test bug" )  # Should fail  
+                assert False, "Line number -2 should have failed validation"
+            except ValueError:
+                pass  # Expected
+            
+            if debug:
+                print( "    ✓ Line number validation test passed" )
+            
+            # Test bug code validation
+            if debug:
+                print( "  - Testing bug code validation..." )
+            try:
+                cls( line_number=1, bug="" )  # Should fail
+                assert False, "Empty bug should have failed validation"
+            except ValueError:
+                pass  # Expected
+            
+            try:
+                cls( line_number=1, bug="   " )  # Should fail
+                assert False, "Whitespace-only bug should have failed validation"
+            except ValueError:
+                pass  # Expected
+            
+            if debug:
+                print( "    ✓ Bug code validation test passed" )
+            
+            # Test utility methods
+            if debug:
+                print( "  - Testing utility methods..." )
+            test_response = cls( line_number=3, bug="print('injected bug')" )
+            assert test_response.is_valid_response() == True
+            assert test_response.validate_against_code_length( 5 ) == True
+            assert test_response.validate_against_code_length( 2 ) == False
+            
+            if debug:
+                print( "    ✓ Utility methods test passed" )
+            
+            if debug:
+                print( f"✓ {cls.__name__} smoke test PASSED" )
+            
+            return True
+            
+        except Exception as e:
+            if debug:
+                print( f"✗ {cls.__name__} smoke test FAILED: {e}" )
+                import traceback
+                traceback.print_exc()
+            return False
+
+
+class IterativeDebuggingMinimalistResponse( BaseXMLModel ):
+    """
+    Pydantic model for IterativeDebuggingAgent XML responses in minimalist mode.
+    
+    This model handles minimalist debugging responses focused on single-line fixes
+    with success indicators for iterative debugging workflows.
+    
+    Expected XML format:
+    <response>
+        <thoughts>Debugging analysis and reasoning</thoughts>
+        <line-number>5</line-number>
+        <one-line-of-code>fixed_code = corrected_value</one-line-of-code>
+        <success>True</success>
+    </response>
+    
+    Used by IterativeDebuggingAgent in minimalist mode for focused single-line debugging.
+    """
+    
+    thoughts: str = Field( ..., description="Debugging analysis and reasoning" )
+    line_number: int = Field( ..., description="Line number to modify (1-based indexing)", alias="line-number" )
+    one_line_of_code: str = Field( ..., description="Single line of fixed code", alias="one-line-of-code" )
+    success: str = Field( ..., description="Success indicator (True/False)" )
+    
+    @field_validator( 'line_number' )
+    @classmethod
+    def validate_line_number( cls, v ):
+        """Validate line_number is positive (1-based indexing)."""
+        if v <= 0:
+            raise ValueError( "line_number must be positive (1-based indexing)" )
+        return v
+    
+    @field_validator( 'success' )
+    @classmethod
+    def validate_success( cls, v ):
+        """Validate success is True or False string."""
+        if v not in [ "True", "False" ]:
+            raise ValueError( "success must be 'True' or 'False'" )
+        return v
+    
+    @field_validator( 'thoughts' )
+    @classmethod
+    def validate_thoughts( cls, v ):
+        """Ensure thoughts is not empty."""
+        if not v or not v.strip():
+            raise ValueError( "thoughts cannot be empty" )
+        return v.strip()
+    
+    @field_validator( 'one_line_of_code' )
+    @classmethod
+    def validate_code_line( cls, v ):
+        """Ensure code line is not empty."""
+        if not v or not v.strip():
+            raise ValueError( "one_line_of_code cannot be empty" )
+        return v.strip()
+    
+    def is_successful( self ) -> bool:
+        """Check if debugging was successful."""
+        return self.success == "True"
+    
+    @classmethod
+    def quick_smoke_test( cls, debug: bool = False ) -> bool:
+        """Quick smoke test for IterativeDebuggingMinimalistResponse."""
+        if debug:
+            print( f"Testing {cls.__name__}..." )
+        
+        try:
+            # Test valid minimalist debugging response
+            valid_xml = '''<response>
+                <thoughts>The variable name is misspelled on line 3</thoughts>
+                <line-number>3</line-number>
+                <one-line-of-code>result = calculate_sum(a, b)</one-line-of-code>
+                <success>True</success>
+            </response>'''
+            
+            response = cls.from_xml( valid_xml )
+            assert response.thoughts == "The variable name is misspelled on line 3"
+            assert response.line_number == 3
+            assert response.one_line_of_code == "result = calculate_sum(a, b)"
+            assert response.success == "True"
+            assert response.is_successful() == True
+            
+            if debug:
+                print( f"✓ {cls.__name__} smoke test PASSED" )
+            return True
+            
+        except Exception as e:
+            if debug:
+                print( f"✗ {cls.__name__} smoke test FAILED: {e}" )
+            return False
+
+
+class IterativeDebuggingFullResponse( BaseXMLModel ):
+    """
+    Pydantic model for IterativeDebuggingAgent XML responses in full mode.
+    
+    This model handles comprehensive debugging responses with complete code,
+    examples, return values, and explanations for complex debugging scenarios.
+    
+    Expected XML format:
+    <response>
+        <thoughts>Debugging analysis and reasoning</thoughts>
+        <code>
+            <line>import math</line>
+            <line>def fixed_function():</line>
+            <line>    return corrected_result</line>
+        </code>
+        <example>result = fixed_function()</example>
+        <returns>corrected_return_type</returns>
+        <explanation>Detailed explanation of the fix</explanation>
+    </response>
+    
+    Used by IterativeDebuggingAgent in full mode for comprehensive debugging with complete solutions.
+    """
+    
+    thoughts: str = Field( ..., description="Debugging analysis and reasoning" )
+    code: List[str] = Field( ..., description="Complete fixed code as list of lines" )
+    example: str = Field( ..., description="Example usage of the fixed code" )
+    returns: str = Field( ..., description="Expected return value or output" )
+    explanation: str = Field( ..., description="Detailed explanation of the fix" )
+    
+    @model_validator( mode='before' )
+    @classmethod
+    def process_xml_data( cls, data ):
+        """Process XML data before field validation."""
+        if not isinstance( data, dict ):
+            return data
+            
+        # Process code field if present (reuse logic from CodeResponse)
+        if 'code' in data and isinstance( data['code'], dict ):
+            data['code'] = cls._extract_lines_from_dict( data['code'] )
+            
+        return data
+    
+    @classmethod
+    def _extract_lines_from_dict( cls, code_dict: dict ) -> List[str]:
+        """Extract code lines from xmltodict nested structure."""
+        if 'line' in code_dict:
+            lines = code_dict['line']
+            if isinstance( lines, list ):
+                return [str(line) if line is not None else "" for line in lines]
+            else:
+                return [str(lines) if lines is not None else ""]
+        else:
+            return []
+    
+    @field_validator( 'code' )
+    @classmethod
+    def validate_code( cls, v ):
+        """Validate that code list is not empty."""
+        if not v:
+            raise ValueError( "Code must contain at least one line" )
+        return v
+    
+    @field_validator( 'thoughts', 'explanation' )
+    @classmethod
+    def validate_text_fields( cls, v ):
+        """Ensure text fields are not empty."""
+        if not v or not v.strip():
+            raise ValueError( "Text fields cannot be empty" )
+        return v.strip()
+    
+    @field_validator( 'returns' )
+    @classmethod
+    def validate_returns( cls, v ):
+        """Validate return type description."""
+        if not v or not v.strip():
+            return "None"  # Default return type
+        return v.strip()
+    
+    def get_code_as_string( self, indent: str = "" ) -> str:
+        """Get code as a formatted string."""
+        return '\n'.join( f"{indent}{line}" for line in self.code )
+    
+    def has_imports( self ) -> bool:
+        """Check if code contains import statements."""
+        return any( 
+            line.strip().startswith( ('import ', 'from ') ) 
+            for line in self.code if line.strip()
+        )
+    
+    def get_function_name( self ) -> Optional[str]:
+        """Extract function name from code if present."""
+        import re
+        for line in self.code:
+            match = re.search( r'def\s+(\w+)\s*\(', line.strip() )
+            if match:
+                return match.group( 1 )
+        return None
+    
+    @classmethod
+    def quick_smoke_test( cls, debug: bool = False ) -> bool:
+        """Quick smoke test for IterativeDebuggingFullResponse."""
+        if debug:
+            print( f"Testing {cls.__name__}..." )
+        
+        try:
+            # Test full debugging response
+            full_xml = '''<response>
+                <thoughts>The function has a logic error in the calculation</thoughts>
+                <code>
+                    <line>import math</line>
+                    <line>def calculate_area(radius):</line>
+                    <line>    return math.pi * radius * radius</line>
+                </code>
+                <example>area = calculate_area(5)</example>
+                <returns>float</returns>
+                <explanation>Fixed the area calculation by using radius * radius instead of radius * 2</explanation>
+            </response>'''
+            
+            response = cls.from_xml( full_xml )
+            assert "logic error" in response.thoughts
+            assert len( response.code ) == 3
+            assert response.has_imports() == True
+            assert response.get_function_name() == "calculate_area"
+            assert response.returns == "float"
+            assert "Fixed the area calculation" in response.explanation
+            
+            if debug:
+                print( f"✓ {cls.__name__} smoke test PASSED" )
+            return True
+            
+        except Exception as e:
+            if debug:
+                print( f"✗ {cls.__name__} smoke test FAILED: {e}" )
+            return False
+
+
+class WeatherResponse( BaseXMLModel ):
+    """
+    Pydantic model for Weather formatter XML responses.
+    
+    This model handles XML responses from the RawOutputFormatter when processing
+    weather-related queries. The WeatherAgent itself uses web search via LupinSearch,
+    but the final formatting stage uses an LLM that returns structured XML.
+    
+    Expected XML format:
+    <response>
+        <rephrased-answer>It's currently 76 degrees in Washington, DC.</rephrased-answer>
+    </response>
+    
+    Used by RawOutputFormatter when processing weather agent responses.
+    """
+    
+    rephrased_answer: str = Field( ..., description="Conversational weather response formatted for TTS", alias="rephrased-answer" )
+    
+    @field_validator( 'rephrased_answer' )
+    @classmethod
+    def validate_rephrased_answer( cls, v ):
+        """Ensure rephrased_answer is not empty."""
+        if not v or not v.strip():
+            raise ValueError( "rephrased_answer cannot be empty" )
+        return v.strip()
+    
+    def is_temperature_response( self ) -> bool:
+        """Check if this response contains temperature information."""
+        return any( temp_indicator in self.rephrased_answer.lower() 
+                   for temp_indicator in ["degrees", "°f", "°c", "temperature"] )
+    
+    def is_forecast_response( self ) -> bool:
+        """Check if this response contains forecast information."""
+        return any( forecast_indicator in self.rephrased_answer.lower()
+                   for forecast_indicator in ["rain", "snow", "sunny", "cloudy", "chance", "forecast", "tomorrow", "today"] )
+    
+    @classmethod
+    def quick_smoke_test( cls, debug: bool = False ) -> bool:
+        """Quick smoke test for WeatherResponse."""
+        if debug:
+            print( f"Testing {cls.__name__}..." )
+        
+        try:
+            # Test temperature response
+            temp_xml = '''<response>
+                <rephrased-answer>It's currently 76 degrees in Washington, DC.</rephrased-answer>
+            </response>'''
+            
+            temp_response = cls.from_xml( temp_xml )
+            assert temp_response.rephrased_answer == "It's currently 76 degrees in Washington, DC."
+            assert temp_response.is_temperature_response() == True
+            assert temp_response.is_forecast_response() == False
+            
+            # Test forecast response  
+            forecast_xml = '''<response>
+                <rephrased-answer>There's a 30% chance of rain in Washington, DC today.</rephrased-answer>
+            </response>'''
+            
+            forecast_response = cls.from_xml( forecast_xml )
+            assert forecast_response.rephrased_answer == "There's a 30% chance of rain in Washington, DC today."
+            assert forecast_response.is_temperature_response() == False
+            assert forecast_response.is_forecast_response() == True
+            
+            # Test field alias mapping
+            dumped = temp_response.model_dump()
+            assert "rephrased_answer" in dumped
+            assert "rephrased-answer" not in dumped
+            
+            if debug:
+                print( f"✓ {cls.__name__} smoke test PASSED" )
+            return True
+            
+        except Exception as e:
+            if debug:
+                print( f"✗ {cls.__name__} smoke test FAILED: {e}" )
+            return False
+
+
 def quick_smoke_test() -> bool:
     """
     Quick smoke test for all XML models.
@@ -1026,7 +1848,12 @@ def quick_smoke_test() -> bool:
             YesNoResponse,
             ReceptionistResponse,
             CodeResponse,
-            CalendarResponse
+            CalendarResponse,
+            CodeBrainstormResponse,
+            BugInjectionResponse,
+            IterativeDebuggingMinimalistResponse,
+            IterativeDebuggingFullResponse,
+            WeatherResponse
         ]
         
         passed = 0

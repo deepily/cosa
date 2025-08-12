@@ -98,9 +98,6 @@ class RunningFifoQueue( FifoQueue ):
                 
                 run_timer = sw.Stopwatch( "Starting job run timer..." )
                 
-                # if type( running_job ) == FunctionMappingAgent:
-                #     running_job = self._handle_function_mapping_agent( running_job, truncated_question )
-                
                 # Assume for now that all *agents* are of type AgentBase. If it's not, then it's a solution snapshot
                 if isinstance( running_job, AgentBase ):
                     running_job = self._handle_base_agent( running_job, truncated_question, run_timer )

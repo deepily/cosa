@@ -3,6 +3,7 @@ from cosa.utils import util_xml as dux
 
 from cosa.config.configuration_manager   import ConfigurationManager
 from cosa.agents.v010.llm_client_factory import LlmClientFactory
+from cosa.agents.io_models.utils.xml_parser_factory import XmlParserFactory
 
 class RawOutputFormatter:
     """
@@ -56,6 +57,9 @@ class RawOutputFormatter:
 
         factory                    = LlmClientFactory( debug=self.debug, verbose=self.verbose )
         self.llm                   = factory.get_client( model_name, debug=self.debug, verbose=self.verbose )
+        
+        # Initialize XML parser factory for structured parsing
+        self.xml_parser_factory    = XmlParserFactory( self.config_mgr )
     
     def run_formatter( self ) -> str:
         """
@@ -68,6 +72,7 @@ class RawOutputFormatter:
         Ensures:
             - Returns rephrased answer from 'rephrased-answer' XML tag
             - Natural language response suitable for users
+            - Uses factory-based XML parsing with fallback to baseline
             
         Raises:
             - LLM exceptions if formatting fails
@@ -75,7 +80,26 @@ class RawOutputFormatter:
         """
 
         response = self.llm.run( self.prompt )
-        output   = dux.get_value_by_xml_tag_name( response, "rephrased-answer" )
+        
+        # Use factory-based XML parsing with fallback to baseline
+        try:
+            parsed_response = self.xml_parser_factory.parse_agent_response(
+                response,
+                self.routing_command,
+                [ "rephrased-answer" ],
+                debug=self.debug,
+                verbose=self.verbose
+            )
+            output = parsed_response.get( "rephrased_answer", "" )  # Pydantic field name
+            
+            if self.debug and self.verbose:
+                print( f"RawOutputFormatter: parsed via factory: {output}" )
+                
+        except Exception as e:
+            if self.debug:
+                print( f"RawOutputFormatter: factory parsing failed, falling back to baseline: {e}" )
+            # Fallback to baseline parsing for compatibility
+            output = dux.get_value_by_xml_tag_name( response, "rephrased-answer" )
 
         return output
     

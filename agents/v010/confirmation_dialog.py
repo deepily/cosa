@@ -6,6 +6,7 @@ import cosa.utils.util_xml as dux
 from cosa.agents.v010.llm_client_factory import LlmClientFactory
 from cosa.agents.v010.llm_client import LlmClient
 from cosa.config.configuration_manager import ConfigurationManager
+from cosa.agents.io_models.xml_models import YesNoResponse
 
 class ConfirmationDialogue:
     """
@@ -58,6 +59,13 @@ class ConfirmationDialogue:
         self.verbose = verbose
         self.prompt = None
         
+        # Check if Pydantic parsing is enabled for ConfirmationDialogue
+        self.use_pydantic = self.config_mgr.get( "confirmation dialogue use pydantic xml parsing", default=False, return_type="boolean" )
+        
+        if self.debug:
+            parsing_mode = "Pydantic (structured)" if self.use_pydantic else "baseline"
+            print( f"ConfirmationDialogue initialized with {parsing_mode} XML parsing" )
+        
         # Get prompt template path from config
         prompt_template_path = self.config_mgr.get( "prompt template for confirmation dialog" )
         self.prompt_template = du.get_file_as_string( du.get_project_root() + prompt_template_path )
@@ -88,7 +96,23 @@ class ConfirmationDialogue:
         llm = factory.get_client( self.model_name, debug=self.debug, verbose=self.verbose )
         results = llm.run( self.prompt )
         
-        response = dux.get_value_by_xml_tag_name( results, "summary" ).strip().lower()
+        if self.use_pydantic:
+            # Use Pydantic YesNoResponse model for structured parsing
+            try:
+                # Create custom XML mapping for YesNoResponse since it expects "answer" but we get "summary"
+                # We need to replace the "summary" tag with "answer" tag for YesNoResponse
+                modified_xml = results.replace( "<summary>", "<answer>" ).replace( "</summary>", "</answer>" )
+                response_model = YesNoResponse.from_xml( modified_xml )
+                response = response_model.answer.strip().lower()
+                if self.debug and self.verbose: print( f"Pydantic parsing extracted response: '{response}'" )
+            except Exception as e:
+                if self.debug: print( f"Pydantic parsing failed, falling back to baseline: {e}" )
+                # Fallback to baseline parsing
+                response = dux.get_value_by_xml_tag_name( results, "summary" ).strip().lower()
+        else:
+            # Use baseline XML parsing
+            response = dux.get_value_by_xml_tag_name( results, "summary" ).strip().lower()
+            if self.debug and self.verbose: print( f"Baseline parsing extracted response: '{response}'" )
         
         if response == "yes":
             return True

@@ -25,7 +25,8 @@ from cosa.config.configuration_manager import ConfigurationManager
 from cosa.agents.io_models.utils.util_xml_pydantic import BaseXMLModel
 from cosa.agents.io_models.xml_models import (
     ReceptionistResponse, SimpleResponse, CommandResponse, 
-    YesNoResponse, CodeResponse, CalendarResponse
+    YesNoResponse, CodeResponse, CalendarResponse, CodeBrainstormResponse, BugInjectionResponse,
+    IterativeDebuggingMinimalistResponse, IterativeDebuggingFullResponse, WeatherResponse
 )
 
 
@@ -136,11 +137,36 @@ class PydanticXmlParsingStrategy( XmlParsingStrategy ):
             "agent router go to receptionist": ReceptionistResponse,
             "agent router go to todo list": CodeResponse,
             "agent router go to calendar": CalendarResponse,
+            "agent router go to date and time": CodeBrainstormResponse,
+            "agent router go to math": CodeBrainstormResponse,
+            "agent router go to bug injector": BugInjectionResponse,
+            "agent router go to debugger": self._get_debugging_model,  # Dynamic model selection based on mode
+            "agent router go to weather": WeatherResponse,  # For RawOutputFormatter weather responses
             # Future mappings will be added as more agents are migrated
-            # "agent router go to math": MathResponse,
-            # "agent router go to date and time": MathBrainstormResponse,
             # etc.
         }
+    
+    def _get_debugging_model( self, xml_tag_names: list[str] ):
+        """
+        Dynamically select debugging model based on XML tag names.
+        
+        The IterativeDebuggingAgent has two modes:
+        - Minimalist: ["thoughts", "line-number", "one-line-of-code", "success"]
+        - Full: ["thoughts", "code", "example", "returns", "explanation"]
+        
+        Args:
+            xml_tag_names: List of expected XML tags to determine mode
+            
+        Returns:
+            Appropriate Pydantic model class for the debugging mode
+        """
+        if "one-line-of-code" in xml_tag_names or "success" in xml_tag_names:
+            return IterativeDebuggingMinimalistResponse
+        elif "code" in xml_tag_names and "explanation" in xml_tag_names:
+            return IterativeDebuggingFullResponse
+        else:
+            # Default to minimalist if unclear
+            return IterativeDebuggingMinimalistResponse
     
     def parse_xml_response( self, xml_response: str, agent_routing_command: str, xml_tag_names: list[str], debug: bool = False, verbose: bool = False ) -> Dict[str, Any]:
         """
@@ -164,10 +190,16 @@ class PydanticXmlParsingStrategy( XmlParsingStrategy ):
             print( f"PydanticXmlParsingStrategy: parsing XML for agent [{agent_routing_command}]" )
             
         # Get the appropriate Pydantic model for this agent
-        model_class = self.agent_model_map.get( agent_routing_command )
+        model_class_or_method = self.agent_model_map.get( agent_routing_command )
         
-        if model_class is None:
+        if model_class_or_method is None:
             raise ValueError( f"Pydantic model not yet implemented for agent: {agent_routing_command}" )
+        
+        # Handle dynamic model selection (for debugging agent only)
+        if hasattr( model_class_or_method, '__name__' ) and model_class_or_method.__name__ == '_get_debugging_model':
+            model_class = model_class_or_method( xml_tag_names )
+        else:
+            model_class = model_class_or_method
             
         if debug and verbose:
             print( f"  Using Pydantic model: {model_class.__name__}" )
