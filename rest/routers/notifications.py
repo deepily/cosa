@@ -89,7 +89,6 @@ def get_local_timestamp():
     # Get timezone from config, default to America/New_York (East Coast)
     timezone_name = config_mgr.get("app_timezone", default="America/New_York")
     
-    if app_debug: print(f"[TIMEZONE-DEBUG] Configured timezone: {timezone_name}")
     
     try:
         # Create timezone-aware datetime
@@ -97,8 +96,6 @@ def get_local_timestamp():
         local_time = datetime.now(tz)
         result = local_time.isoformat()
         
-        if app_debug: print(f"[TIMEZONE-DEBUG] UTC time: {datetime.now().isoformat()}")
-        if app_debug: print(f"[TIMEZONE-DEBUG] Local time ({timezone_name}): {result}")
         
         return result
     except Exception as e:
@@ -176,7 +173,7 @@ async def notify_user(
     
     # Validate message
     if not message or not message.strip():
-        raise HTTPException(status_code=400, detail="Message cannot be empty")
+        raise HTTPException(status_code=400, detail="Please provide a message to send")
     
     # Create notification payload
     notification = {

@@ -260,7 +260,7 @@ async def upload_and_transcribe_mp3_file(
         
     except Exception as e:
         print(f"[ERROR] MP3 transcription failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Audio transcription failed. Please try uploading the file again or check that it's a valid audio format.")
 
 @router.post("/get-speech")
 async def get_tts_audio(
@@ -302,41 +302,68 @@ async def get_tts_audio(
         JSONResponse: Immediate status confirmation with session details
     """
     try:
+        # Get global debug settings
+        import fastapi_app.main as main_module
+        app_debug = main_module.app_debug
+        
         # Enhanced debugging for TTS requests
-        print(f"[TTS-DEBUG] POST /api/get-speech called from {request.client.host}")
-        print(f"[TTS-DEBUG] Headers: {dict(request.headers)}")
+        if app_debug:
+            print(f"[TTS-DEBUG] POST /api/get-speech called from {request.client.host}")
+            print(f"[TTS-DEBUG] Headers: {dict(request.headers)}")
         
         # Parse request body
         request_data = await request.json()
-        print(f"[TTS-DEBUG] Request data: {request_data}")
+        if app_debug: print(f"[TTS-DEBUG] Request data: {request_data}")
+        
+        # Validate request structure
+        if not isinstance(request_data, dict):
+            raise HTTPException(status_code=400, detail="Request body must be a valid JSON object")
         
         session_id = request_data.get("session_id")
         msg = request_data.get("text")
         
-        print(f"[TTS-DEBUG] Extracted - session_id: '{session_id}', text: '{msg}'")
+        if app_debug: print(f"[TTS-DEBUG] Extracted - session_id: '{session_id}', text: '{msg}'")
         
+        # Validate required fields
         if not session_id or not msg:
             error_msg = f"Missing session_id or text - session_id: {session_id}, text: {msg}"
             print(f"[TTS-ERROR] {error_msg}")
-            raise HTTPException(status_code=400, detail="Missing session_id or text")
+            raise HTTPException(status_code=400, detail="Please provide both a session ID and text message for audio generation")
+        
+        # Validate field types and formats
+        if not isinstance(session_id, str) or not isinstance(msg, str):
+            raise HTTPException(status_code=400, detail="Both session_id and text must be strings")
+        
+        # Validate lengths to prevent abuse
+        if len(session_id) > 255:
+            raise HTTPException(status_code=400, detail="Session ID too long (max 255 characters)")
+        
+        if len(msg) > 10000:  # 10KB limit for TTS text
+            raise HTTPException(status_code=400, detail="Text message too long (max 10,000 characters)")
+        
+        # Sanitize text input
+        msg = msg.strip()
+        if not msg:
+            raise HTTPException(status_code=400, detail="Text message cannot be empty after trimming whitespace")
         
         # Register session with authenticated user
-        print(f"[TTS-DEBUG] Registering session {session_id} for user {current_user_id}")
+        if app_debug: print(f"[TTS-DEBUG] Registering session {session_id} for user {current_user_id}")
         ws_manager.register_session_user(session_id, current_user_id)
         
         # Check if WebSocket connection exists
         is_connected = ws_manager.is_connected(session_id)
-        print(f"[TTS-DEBUG] WebSocket connection check for {session_id}: {is_connected}")
+        if app_debug: print(f"[TTS-DEBUG] WebSocket connection check for {session_id}: {is_connected}")
         
         if not is_connected:
             error_msg = f"No WebSocket connection for session {session_id}"
             print(f"[TTS-ERROR] {error_msg}")
             # List active connections for debugging
-            active_connections = list(ws_manager.active_connections.keys())
-            print(f"[TTS-DEBUG] Active connections: {active_connections}")
-            raise HTTPException(status_code=404, detail=error_msg)
+            if app_debug:
+                active_connections = list(ws_manager.active_connections.keys())
+                print(f"[TTS-DEBUG] Active connections: {active_connections}")
+            raise HTTPException(status_code=404, detail="Audio connection lost. Please refresh the page and try again.")
         
-        print(f"[TTS-SUCCESS] Starting TTS for session: {session_id}, msg: '{msg}'")
+        if app_debug: print(f"[TTS-SUCCESS] Starting TTS for session: {session_id}, msg: '{msg}'")
         
         # Start hybrid TTS streaming in background
         task = asyncio.create_task(stream_tts_hybrid(session_id, msg, ws_manager))
@@ -353,7 +380,7 @@ async def get_tts_audio(
         raise
     except Exception as e:
         print(f"[ERROR] TTS request failed: {e}")
-        raise HTTPException(status_code=500, detail=f"TTS generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Audio generation failed. Please try again, or check your connection and refresh the page.")
 
 @router.post("/get-speech-elevenlabs")
 async def get_tts_audio_elevenlabs(
@@ -398,13 +425,22 @@ async def get_tts_audio_elevenlabs(
         JSONResponse: Immediate status with ElevenLabs provider details
     """
     try:
+        # Get global debug settings
+        import fastapi_app.main as main_module
+        app_debug = main_module.app_debug
+        
         # Enhanced debugging for ElevenLabs TTS requests
-        print(f"[TTS-ELEVENLABS-DEBUG] POST /api/get-speech-elevenlabs called from {request.client.host}")
-        print(f"[TTS-ELEVENLABS-DEBUG] Headers: {dict(request.headers)}")
+        if app_debug:
+            print(f"[TTS-ELEVENLABS-DEBUG] POST /api/get-speech-elevenlabs called from {request.client.host}")
+            print(f"[TTS-ELEVENLABS-DEBUG] Headers: {dict(request.headers)}")
         
         # Parse request body
         request_data = await request.json()
-        print(f"[TTS-ELEVENLABS-DEBUG] Request data: {request_data}")
+        if app_debug: print(f"[TTS-ELEVENLABS-DEBUG] Request data: {request_data}")
+        
+        # Validate request structure
+        if not isinstance(request_data, dict):
+            raise HTTPException(status_code=400, detail="Request body must be a valid JSON object")
         
         session_id = request_data.get("session_id")
         msg = request_data.get("text")
@@ -418,30 +454,59 @@ async def get_tts_audio_elevenlabs(
         quality_profile = request_data.get("quality_profile", "balanced")
         debug_simulate_error = request_data.get("debug_simulate_error", False)
         
-        print(f"[TTS-ELEVENLABS-DEBUG] Extracted - session_id: '{session_id}', text: '{msg}', voice_id: '{voice_id}'")
-        if debug_simulate_error:
-            print(f"[TTS-ELEVENLABS-DEBUG] 🧪 Debug mode: Error simulation enabled for this request")
-        
+        # Validate required fields
         if not session_id or not msg:
             error_msg = f"Missing session_id or text - session_id: {session_id}, text: {msg}"
             print(f"[TTS-ELEVENLABS-ERROR] {error_msg}")
-            raise HTTPException(status_code=400, detail="Missing session_id or text")
+            raise HTTPException(status_code=400, detail="Please provide both a session ID and text message for audio generation")
+        
+        # Validate field types and formats
+        if not isinstance(session_id, str) or not isinstance(msg, str):
+            raise HTTPException(status_code=400, detail="Both session_id and text must be strings")
+        
+        # Validate lengths
+        if len(session_id) > 255:
+            raise HTTPException(status_code=400, detail="Session ID too long (max 255 characters)")
+        
+        if len(msg) > 10000:
+            raise HTTPException(status_code=400, detail="Text message too long (max 10,000 characters)")
+        
+        # Validate numeric parameters
+        if not isinstance(stability, (int, float)) or not (0.0 <= stability <= 1.0):
+            raise HTTPException(status_code=400, detail="Stability must be a number between 0.0 and 1.0")
+        
+        if not isinstance(similarity_boost, (int, float)) or not (0.0 <= similarity_boost <= 1.0):
+            raise HTTPException(status_code=400, detail="Similarity boost must be a number between 0.0 and 1.0")
+        
+        if not isinstance(speed, (int, float)) or not (0.1 <= speed <= 3.0):
+            raise HTTPException(status_code=400, detail="Speed must be a number between 0.1 and 3.0")
+        
+        # Sanitize text input
+        msg = msg.strip()
+        if not msg:
+            raise HTTPException(status_code=400, detail="Text message cannot be empty after trimming whitespace")
+        
+        if app_debug: 
+            print(f"[TTS-ELEVENLABS-DEBUG] Extracted - session_id: '{session_id}', text: '{msg}', voice_id: '{voice_id}'")
+            if debug_simulate_error:
+                print(f"[TTS-ELEVENLABS-DEBUG] 🧪 Debug mode: Error simulation enabled for this request")
         
         # Register session with authenticated user
-        print(f"[TTS-ELEVENLABS-DEBUG] Registering session {session_id} for user {current_user_id}")
+        if app_debug: print(f"[TTS-ELEVENLABS-DEBUG] Registering session {session_id} for user {current_user_id}")
         ws_manager.register_session_user(session_id, current_user_id)
         
         # Check if WebSocket connection exists
         is_connected = ws_manager.is_connected(session_id)
-        print(f"[TTS-ELEVENLABS-DEBUG] WebSocket connection check for {session_id}: {is_connected}")
+        if app_debug: print(f"[TTS-ELEVENLABS-DEBUG] WebSocket connection check for {session_id}: {is_connected}")
         
         if not is_connected:
             error_msg = f"No WebSocket connection for session {session_id}"
             print(f"[TTS-ELEVENLABS-ERROR] {error_msg}")
             # List active connections for debugging
-            active_connections = list(ws_manager.active_connections.keys())
-            print(f"[TTS-ELEVENLABS-DEBUG] Active connections: {active_connections}")
-            raise HTTPException(status_code=404, detail=error_msg)
+            if app_debug:
+                active_connections = list(ws_manager.active_connections.keys())
+                print(f"[TTS-ELEVENLABS-DEBUG] Active connections: {active_connections}")
+            raise HTTPException(status_code=404, detail="Audio connection lost. Please refresh the page and try again.")
         
         print(f"[TTS-ELEVENLABS-SUCCESS] Starting ElevenLabs TTS for session: {session_id}, msg: '{msg}'")
         
@@ -465,7 +530,7 @@ async def get_tts_audio_elevenlabs(
         raise
     except Exception as e:
         print(f"[ERROR] ElevenLabs TTS request failed: {e}")
-        raise HTTPException(status_code=500, detail=f"ElevenLabs TTS generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Audio generation failed. Please try again, or check your connection and refresh the page.")
 
 @router.post("/upload-and-transcribe-wav")
 async def upload_and_transcribe_wav_file(
@@ -756,7 +821,7 @@ Speed            : {speed:.2f}"""
         
         # 🧪 DEBUG: Check for error simulation before connecting to ElevenLabs
         if debug_simulate_error:
-            print(f"[TTS-ELEVENLABS-DEBUG] 🧪 Simulating quota_exceeded error for testing")
+            if app_debug: print(f"[TTS-ELEVENLABS-DEBUG] 🧪 Simulating quota_exceeded error for testing")
             
             # Send initial status
             await websocket.send_json({

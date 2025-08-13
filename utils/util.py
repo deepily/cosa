@@ -219,7 +219,10 @@ def get_name_value_pairs( arg_list: list[str], debug: bool=False, verbose: bool=
     if debug: print( "Name value dictionary pairs:", end="\n\n" )
     
     # get max width for right justification
-    max_len = max( [ len( key ) for key in name_value_pairs.keys() ] ) + 1
+    if name_value_pairs:
+        max_len = max( [ len( key ) for key in name_value_pairs.keys() ] ) + 1
+    else:
+        max_len = 1  # Default width when no pairs exist
     
     # iterate keys and print values w/ this format:
     #       [foo] = [bar]

@@ -5,11 +5,22 @@ This directory contains research, planning, and design documents for the CoSA (C
 ## Current Documents
 
 ### Framework Architecture and Planning
+- [2025.08.13 - Smoke Test Remediation Report](./2025.08.13-smoke-test-remediation-report.md) - ✅ COMPLETED: Successful remediation achieving 94.3% success rate and full automation readiness
+- [2025.08.13 - Comprehensive Smoke Test Execution and Remediation Plan](./2025.08.13-comprehensive-smoke-test-execution-and-remediation-plan.md) - Data-first approach to repo-wide smoke test execution and systematic issue remediation
+- [2025.08.13 - XML Fallback Deprecation Plan](./2025.08.13-xml-fallback-deprecation-plan.md) - Phased approach to deprecate XML parsing fallback mode and transition to 100% Pydantic
 - [2025.08.04 - CoSA Unit Testing Framework Implementation Plan](./2025.08.04-cosa-unit-testing-framework-implementation-plan.md) - Comprehensive unit testing strategy with progress tracking and CICD integration
 - [2025.08.02 - CoSA Smoke Test Suite Design](./2025.08.02-cosa-smoke-test-suite-design.md) - Comprehensive testing framework for CoSA components with v000 deprecation support
 - [2025.08.01 - Design by Contract Documentation Plan](./2025.08.01-design-by-contract-docstring-implementation-plan.md) - Implementation plan for comprehensive DbyC documentation
 - [2025.06.04 - LLM Client Architecture Refactoring Plan](./2025.06.04-llm-client-architecture-refactoring-plan.md) - Modern LLM client architecture design
 - [2025.06.04 - LLM Client Refactoring Progress](./2025.06.04-llm-client-refactoring-progress.md) - Progress tracking for LLM client implementation
+
+### Pydantic XML Migration
+- [2025.08.12 - Phase 6 Complex Agent Requirements](./2025.08.12-phase-6-complex-agent-requirements.md) - Requirements for complex agent Pydantic models
+- [2025.08.12 - Template Rendering Investigation](./2025.08.12-template-rendering-investigation.md) - Research on Pydantic object integration for prompt templates
+- [2025.08.10 - Pydantic XML Migration Runtime Flag System Design](./2025.08.10-pydantic-xml-migration-runtime-flag-system-design.md) - Runtime flag system for gradual migration
+- [2025.08.10 - XML Compatibility Investigation Findings](./2025.08.10-xml-compatibility-investigation-findings.md) - Baseline vs Pydantic parsing compatibility analysis
+- [2025.08.10 - Agent Migration Roadmap](./2025.08.10-agent-migration-roadmap.md) - Complete migration roadmap for all agents
+- [2025.08.09 - Pydantic XML Migration Plan](./2025.08.09-pydantic-xml-migration-plan.md) - Initial migration planning and implementation strategy
 
 ### Agent System Development
 - [2025.05.13 - Agent Migration v000 to v010 Plan](./2025-05-13_agent_migration_v000_to_v010_plan.md) - Migration strategy from legacy to modern agent architecture
@@ -56,6 +67,9 @@ When adding new research or planning documents:
 
 ## Recent Activity
 
+- **2025.08.13**: ✅ **COMPLETED** Comprehensive Smoke Test Execution & Remediation - Successfully achieved 94.3% success rate with full automation readiness
+- **2025.08.13**: 🔴 **PLANNING** XML Fallback Deprecation Plan - Phased approach to remove legacy XML parsing and transition to 100% Pydantic
+- **2025.08.12**: ✅ **COMPLETED** Pydantic XML Migration - 100% of agents migrated to structured_v2 parsing in production
 - **2025.08.05**: ✅ **COMPLETED** CoSA Unit Testing Framework - All 6 phases complete with 100% success rate (86/86 tests passing)
 - **2025.08.04**: Added comprehensive CoSA unit testing framework implementation plan with progress tracking
 - **2025.08.02**: Added comprehensive CoSA smoke test suite design for v000 deprecation support

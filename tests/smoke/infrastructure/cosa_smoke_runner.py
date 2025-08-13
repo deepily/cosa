@@ -90,11 +90,31 @@ class CoSASmokeTestRunner:
         Raises:
             - ImportError if required modules are not available
         """
+        import os
+        from pathlib import Path
+        
         self.debug = debug
         self.timeout = timeout
         self.utils = SmokeTestUtilities()
         self.baseline_mgr = BaselineManager()
-        self.cosa_root = cosa_root
+        
+        # Use COSA_CLI_PATH environment variable with fallback to derived path
+        self.cosa_root = os.environ.get('COSA_CLI_PATH', 
+                                       Path(__file__).parent.parent.parent)
+        
+        # Ensure PYTHONPATH includes the CoSA framework root for imports
+        import sys
+        cosa_root_str = str(self.cosa_root)
+        if cosa_root_str not in sys.path:
+            sys.path.insert(0, cosa_root_str)
+        
+        # Also update PYTHONPATH environment variable for subprocess consistency
+        current_pythonpath = os.environ.get('PYTHONPATH', '')
+        if cosa_root_str not in current_pythonpath:
+            if current_pythonpath:
+                os.environ['PYTHONPATH'] = f"{cosa_root_str}:{current_pythonpath}"
+            else:
+                os.environ['PYTHONPATH'] = cosa_root_str
         
         # Test categories mapped to their module paths
         self.test_categories = {

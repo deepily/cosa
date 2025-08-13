@@ -36,6 +36,8 @@ import random
 from functools import wraps
 from typing import Callable, Any
 
+import cosa.utils.util as du
+
 # Singleton decorator
 def singleton( cls: type ) -> Callable[..., Any]:
     """

@@ -621,7 +621,7 @@ class MultiModalMunger:
         """
         
         du.print_banner( "AGENT MODE for [{}]".format( raw_transcription ), end="\n" )
-        print( "TODO: Implement munge_vox_cmd_agent()... For now this is just a simple passthrough..." )
+        # Agent voice command processing - currently using simple passthrough
         
         transcription = self._remove_dashed_spellings( raw_transcription )
         # Add hawk clean up for forcing underscores when giving explicit field name commands to the agent
@@ -1028,10 +1028,6 @@ class MultiModalMunger:
                 
                 return True, command_dict
             
-            # elif command.startswith( transcription ):
-            #     print( "Command [{}] STARTS WITH transcription [{}]".format( command, transcription ) )
-            #     print( "TODO: Make sure we are handling startswith() properly" )
-            #     return True, "startswith" "args"
         
         print( "NO exact match        [{}]".format( transcription ) )
         print( "NO startswith() match [{}]".format( transcription ) )
