@@ -19,14 +19,8 @@ import argparse
 from typing import List, Tuple, Dict, Any
 
 # Import notification functionality
-try:
-    from .notify_user import notify_user, validate_environment
-    from .notification_types import NotificationType, NotificationPriority
-except ImportError:
-    # Fallback for direct script execution
-    sys.path.insert( 0, os.path.dirname( os.path.abspath( __file__ ) ) )
-    from notify_user import notify_user, validate_environment
-    from notification_types import NotificationType, NotificationPriority
+from cosa.cli.notify_user import notify_user, validate_environment
+from cosa.cli.notification_types import NotificationType, NotificationPriority
 
 
 class NotificationTestSuite:

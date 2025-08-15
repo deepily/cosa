@@ -8,7 +8,7 @@ and resetting all queues.
 Generated on: 2025-01-24
 """
 
-from fastapi import APIRouter, Query, HTTPException, Depends
+from fastapi import APIRouter, Query, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 from datetime import datetime
 from typing import Dict, Any
@@ -114,10 +114,9 @@ def get_notification_queue():
     import fastapi_app.main as main_module
     return main_module.jobs_notification_queue
 
-@router.get("/push")
+@router.post("/push")
 async def push(
-    question: str = Query(..., description="The question/query to process"),
-    websocket_id: str = Query(..., description="WebSocket identifier for routing"),
+    request: Request,
     current_user: dict = Depends(get_current_user),
     todo_queue = Depends(get_todo_queue)
 ):
@@ -125,6 +124,7 @@ async def push(
     Add a question to the todo queue with required websocket tracking and user authentication.
     
     Requires:
+        - request body contains JSON with "question" and "websocket_id" fields
         - question is a non-empty string query to process
         - websocket_id is a valid WebSocket identifier from /api/get-session-id
         - current_user is authenticated with valid token containing uid
@@ -137,17 +137,54 @@ async def push(
         - Logs the push operation for debugging
         
     Raises:
+        - HTTPException with 400 status if request body is malformed
+        - HTTPException with 400 status if required fields are missing
         - HTTPException if authentication fails
         - Exception if queue push operation fails
         
     Args:
-        question: The question/query to process (required)
-        websocket_id: WebSocket identifier for WebSocket routing (required)
+        request: FastAPI request containing JSON body with question and websocket_id
         current_user: Authenticated user info from token
+        todo_queue: Todo queue instance for job management
         
     Returns:
         dict: Status, websocket_id, user_id, and result from queue push
     """
+    try:
+        # Parse JSON request body
+        request_data = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON in request body: {str(e)}")
+    
+    # Validate required fields
+    if not isinstance(request_data, dict):
+        raise HTTPException(status_code=400, detail="Request body must be a JSON object")
+    
+    question = request_data.get("question")
+    websocket_id = request_data.get("websocket_id")
+    
+    if not question:
+        raise HTTPException(status_code=400, detail="Missing required field: question")
+    
+    if not websocket_id:
+        raise HTTPException(status_code=400, detail="Missing required field: websocket_id")
+    
+    # Validate field types
+    if not isinstance(question, str):
+        raise HTTPException(status_code=400, detail="Field 'question' must be a string")
+    
+    if not isinstance(websocket_id, str):
+        raise HTTPException(status_code=400, detail="Field 'websocket_id' must be a string")
+    
+    # Validate field content
+    question = question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Field 'question' cannot be empty")
+    
+    websocket_id = websocket_id.strip()
+    if not websocket_id:
+        raise HTTPException(status_code=400, detail="Field 'websocket_id' cannot be empty")
+    
     user_id = current_user["uid"]
     print(f"[API] /api/push called - question: '{question}', websocket_id: {websocket_id}, user_id: {user_id}")
     
@@ -214,11 +251,37 @@ async def get_queue(
     elif queue_name == "dead":
         jobs = dead_queue.get_html_list(descending=True)
     elif queue_name == "done":
+        # Enhanced done queue response with structured job metadata for replay functionality
         jobs = done_queue.get_html_list(descending=True)
+        
+        # Extract structured job data from SolutionSnapshot objects in done queue
+        # Apply same descending sort as HTML list for consistency
+        snapshots = list( done_queue.queue_list )
+        snapshots.reverse()  # Apply descending order (most recent first)
+        
+        structured_jobs = []
+        for snapshot in snapshots:
+            # Generate job metadata from SolutionSnapshot fields
+            job_data = {
+                "html": snapshot.get_html().replace("</li>", f" [user: {user_id}]</li>"),
+                "job_id": snapshot.id_hash,
+                "question_text": snapshot.last_question_asked or snapshot.question,
+                "response_text": snapshot.answer_conversational or snapshot.answer,
+                "timestamp": snapshot.run_date or snapshot.created_date,
+                "user_id": user_id,
+                "has_audio_cache": False  # Will be determined by frontend cache check
+            }
+            structured_jobs.append( job_data )
+        
+        # Maintain backward compatibility: return both structured data and HTML list
+        return {
+            f"{queue_name}_jobs": [job["html"] for job in structured_jobs],
+            f"{queue_name}_jobs_metadata": structured_jobs
+        }
     else:
         raise HTTPException(status_code=400, detail=f"Invalid queue name: {queue_name}")
     
-    # Add user context to demonstrate filtering (temporary)
+    # Add user context to demonstrate filtering (temporary) - for non-done queues
     filtered_jobs = [job.replace("</li>", f" [user: {user_id}]</li>") for job in jobs]
     
     return {f"{queue_name}_jobs": filtered_jobs}

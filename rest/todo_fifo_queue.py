@@ -324,9 +324,7 @@ class TodoFifoQueue( FifoQueue ):
                 msg = search.get_results( scope="summary" )
             
             elif command == "agent router go to calendar":
-                calendar_llm_spec = self.config_mgr.get( "llm spec key for calendar agent" )
-                calendar_client = self.llm_factory.get_client( calendar_llm_spec, debug=self.debug, verbose=self.verbose )
-                agent = CalendaringAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=calendar_client, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = CalendaringAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="calendaring" )
                 ding_for_new_job = True
             elif command == "agent router go to math":
@@ -336,34 +334,24 @@ class TodoFifoQueue( FifoQueue ):
                     # agent = self._get_math_refactoring_agent( question, question_gist, salutation_plus_question, self.push_counter )
                     # msg = starting_a_new_job.format( agent_type="math refactoring" )
                 else:
-                    math_llm_spec = self.config_mgr.get( "llm spec key for math agent" )
-                    math_client = self.llm_factory.get_client( math_llm_spec, debug=self.debug, verbose=self.verbose )
-                    agent = MathAgent( question=salutation_plus_question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=math_client, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                    agent = MathAgent( question=salutation_plus_question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                     msg = starting_a_new_job.format( agent_type="math" )
                 ding_for_new_job = True
             elif command == "agent router go to todo list":
-                todo_llm_spec = self.config_mgr.get( "llm spec key for todo list agent" )
-                todo_client = self.llm_factory.get_client( todo_llm_spec, debug=self.debug, verbose=self.verbose )
-                agent = TodoListAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=todo_client, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = TodoListAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="todo list" )
                 ding_for_new_job = True
             elif command == "agent router go to date and time":
-                datetime_llm_spec = self.config_mgr.get( "llm spec key for date and time agent" )
-                datetime_client = self.llm_factory.get_client( datetime_llm_spec, debug=self.debug, verbose=self.verbose )
-                agent = DateAndTimeAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=datetime_client, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = DateAndTimeAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="date and time" )
                 ding_for_new_job = True
             elif command == "agent router go to weather":
-                weather_llm_spec = self.config_mgr.get( "llm spec key for weather agent" )
-                weather_client = self.llm_factory.get_client( weather_llm_spec, debug=self.debug, verbose=self.verbose )
-                agent = WeatherAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=weather_client, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = WeatherAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="weather" )
                 # ding_for_new_job = False
             elif command == "agent router go to receptionist" or command == "none":
                 print( f"Routing '{command}' to receptionist..." )
-                receptionist_llm_spec = self.config_mgr.get( "llm spec key for receptionist agent" )
-                receptionist_client = self.llm_factory.get_client( receptionist_llm_spec, debug=self.debug, verbose=self.verbose )
-                agent = ReceptionistAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, llm_client=receptionist_client, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = ReceptionistAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 # Randomly grab hemming and hawing string and prepend it to a randomly chosen thinking string
                 msg = f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}".strip()
                 # ding_for_new_job = False
@@ -389,41 +377,7 @@ class TodoFifoQueue( FifoQueue ):
                 self.emit_speech_callback( msg, user_id=user_id )
             
             return msg
-            
-            # agent = FunctionMappingAgent( question=question, push_counter=self.push_counter, debug=True, verbose=True )
-            # self.push( agent )
-            # Auto-emission via parent class handles todo_update
-            #
-            # return f'No similar snapshots found, adding NEW FunctionMappingAgent to TODO queue. Queue size [{self.size()}]'
 
-    # TODO: implement math refactoring agent?
-    # def _get_math_refactoring_agent( self, question: str, question_gist: str, last_question_asked: str, push_counter: int ) -> MathRefactoringAgent:
-    #     """
-    #     Create a math refactoring agent for the given question.
-    #
-    #     Requires:
-    #         - question is the refactoring request
-    #         - question_gist is the extracted gist
-    #         - last_question_asked includes salutations
-    #         - push_counter is a valid integer
-    #
-    #     Ensures:
-    #         - Finds similar snapshots for refactoring
-    #         - Creates MathRefactoringAgent with examples
-    #         - Returns configured agent instance
-    #
-    #     Raises:
-    #         - None
-    #     """
-    #     # DEMO KLUDGE: if the question doesn't start with "refactor", then we're going to search for similar snapshots
-    #     threshold = 85.0
-    #     path_to_snapshots = du.get_project_root() + "/src/conf/long-term-memory/solutions/"
-    #     exemplar_snapshot = self.snapshot_mgr.get_snapshots_by_question( question, question_gist=question_gist, threshold_question=95.0, threshold_gist=92.5 )[ 0 ][ 1 ]
-    #     similar_snapshots = self.snapshot_mgr.get_snapshots_by_code_similarity( exemplar_snapshot, threshold=threshold )
-    #
-    #     agent = MathRefactoringAgent( similar_snapshots=similar_snapshots, path_to_solutions=path_to_snapshots, debug=True, verbose=False )
-    #     return agent
-    
     def _dump_code( self, best_snapshot: SolutionSnapshot ) -> None:
         """
         Debug helper to print snapshot code.

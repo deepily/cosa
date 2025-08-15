@@ -2,6 +2,7 @@ import cosa.utils.util as du
 import cosa.utils.util_xml as dux
 from cosa.config.configuration_manager import ConfigurationManager
 from cosa.agents.v010.llm_client_factory import LlmClientFactory
+from cosa.agents.io_models.xml_models import SimpleResponse
 
 
 class Gister:
@@ -24,13 +25,19 @@ class Gister:
             - Creates internal ConfigurationManager instance
             - Creates internal LlmClientFactory instance
             - Sets debug and verbose flags
+            - Configures XML parsing strategy (baseline or structured)
         """
         self.debug       = debug
         self.verbose     = verbose
         self.config_mgr  = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         self.llm_factory = LlmClientFactory()
         
-        if self.debug: print( "Gister initialized" )
+        # Check if Pydantic parsing is enabled for Gister
+        self.use_pydantic = self.config_mgr.get( "gister use pydantic xml parsing", default=False, return_type="boolean" )
+        
+        if self.debug: 
+            parsing_mode = "Pydantic (structured)" if self.use_pydantic else "baseline"
+            print( f"Gister initialized with {parsing_mode} XML parsing" )
     
     def get_gist( self, utterance: str ) -> str:
         """
@@ -61,7 +68,25 @@ class Gister:
         llm_spec_key = self.config_mgr.get( "llm spec key for gist generation" )
         llm_client = self.llm_factory.get_client( llm_spec_key, debug=self.debug, verbose=self.verbose )
         results = llm_client.run( prompt )
-        gist = dux.get_value_by_xml_tag_name( results, "gist", default_value="" ).strip()
+        
+        if self.use_pydantic:
+            # Use Pydantic SimpleResponse model for structured parsing
+            try:
+                response_model = SimpleResponse.from_xml( results )
+                gist = response_model.get_content()
+                if gist is None:
+                    gist = ""
+                    if self.debug: print( "Warning: Pydantic parsing returned None content" )
+                gist = gist.strip()
+                if self.debug and self.verbose: print( f"Pydantic parsing extracted gist: '{gist}'" )
+            except Exception as e:
+                if self.debug: print( f"Pydantic parsing failed, falling back to baseline: {e}" )
+                # Fallback to baseline parsing
+                gist = dux.get_value_by_xml_tag_name( results, "gist", default_value="" ).strip()
+        else:
+            # Use baseline XML parsing
+            gist = dux.get_value_by_xml_tag_name( results, "gist", default_value="" ).strip()
+            if self.debug and self.verbose: print( f"Baseline parsing extracted gist: '{gist}'" )
         
         return gist
 

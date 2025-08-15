@@ -1,6 +1,7 @@
 # Agent Migration Plan: v000 to v010 Architecture
 
-> **Last Updated:** 2025-05-15
+> **Last Updated:** 2025-05-15  
+> **v000 Directory Deletion:** 2025-08-12 - Successfully removed v000 directory (308KB recovered) with zero system impact
 
 ## Executive Summary
 

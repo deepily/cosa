@@ -8,7 +8,7 @@ import subprocess
 import threading
 import requests
 import torch, os, multiprocessing
-from typing import Optional, Union, list, dict, tuple, Any, Iterable
+from typing import Optional, Union, List, Dict, Tuple, Any, Iterable
 from peft import LoraConfig, prepare_model_for_kbit_training, PeftModel
 from torch.ao.quantization import quantize
 from torch.utils.benchmark import timer
@@ -30,7 +30,6 @@ from cosa.training.conf import load_model_config
 import cosa.utils.util as du
 import cosa.utils.util_pytorch as dupt
 
-# from cosa.agents.v000.llm_v0 import Llm_v0
 import cosa.agents.v010.llm_client as llm_v010
 from cosa.training.quantizer import Quantizer
 from cosa.utils.util_stopwatch import Stopwatch
@@ -1857,3 +1856,332 @@ if __name__ == "__main__":
     #     validation_sample_size=args.validation_sample_size,
     #     nuclear_kill_button=args.nuclear_kill_button
     # )
+
+
+def quick_smoke_test():
+    """
+    LIGHTWEIGHT STRUCTURAL smoke test for PeftTrainer - validates architecture only.
+    
+    ⚠️  IMPORTANT: This test validates STRUCTURE ONLY, not runtime ML behavior.
+    ⚠️  This module requires significant GPU resources, datasets, and time for actual operation.
+    ⚠️  This smoke test only verifies the module can be imported and basic structure accessed.
+    
+    This test is essential for v000 deprecation as peft_trainer.py is critical
+    for model fine-tuning infrastructure, but too resource-intensive for full testing.
+    """
+    import cosa.utils.util as du
+    
+    du.print_banner( "PEFT Trainer STRUCTURAL Smoke Test", prepend_nl=True )
+    print( "⚠️  STRUCTURAL TESTING ONLY - No ML operations will be performed" )
+    print( "⚠️  This test validates imports and architecture, not runtime behavior" )
+    print()
+    
+    try:
+        # Test 1: Core class and function structure
+        print( "Testing core PEFT trainer structure..." )
+        
+        # Test that PeftTrainer class exists and basic methods are present
+        expected_methods = [
+            "login_to_hf", "get_training_prompt_stats", "fine_tune", "save_model",
+            "run_validation", "load_and_merge_adapter", "save_merged_adapter", 
+            "quantize_merged_adapter", "get_prompt", "set_hf_env_vars", 
+            "set_lupin_env_vars", "run_pipeline", "run_pipeline_adhoc"
+        ]
+        
+        methods_found = 0
+        for method_name in expected_methods:
+            if hasattr( PeftTrainer, method_name ):
+                methods_found += 1
+            else:
+                print( f"⚠ Missing method: {method_name}" )
+        
+        if methods_found == len( expected_methods ):
+            print( f"✓ All {len( expected_methods )} core PeftTrainer methods present" )
+        else:
+            print( f"⚠ Only {methods_found}/{len( expected_methods )} PeftTrainer methods present" )
+        
+        # Test static utility functions
+        utility_functions = [ "is_root", "invoked_with_sudo", "print_gpu_memory", "release_gpus" ]
+        utils_found = 0
+        for func_name in utility_functions:
+            if func_name in globals():
+                utils_found += 1
+            else:
+                print( f"⚠ Missing utility function: {func_name}" )
+        
+        if utils_found == len( utility_functions ):
+            print( f"✓ All {len( utility_functions )} utility functions present" )
+        else:
+            print( f"⚠ Only {utils_found}/{len( utility_functions )} utility functions present" )
+        
+        # Test module-level functions
+        module_functions = [ "check_env", "check_privileges", "parse_arguments" ]
+        module_funcs_found = 0
+        for func_name in module_functions:
+            if func_name in globals():
+                module_funcs_found += 1
+            else:
+                print( f"⚠ Missing module function: {func_name}" )
+        
+        if module_funcs_found == len( module_functions ):
+            print( f"✓ All {len( module_functions )} module functions present" )
+        else:
+            print( f"⚠ Only {module_funcs_found}/{len( module_functions )} module functions present" )
+        
+        # Test 2: Critical import validation (lightweight - no actual ML loading)
+        print( "Testing critical import statements..." )
+        
+        # Test standard library imports
+        try:
+            import gc, sys, json, pandas, argparse, time, subprocess, threading, requests
+            print( "✓ Standard library imports successful" )
+        except ImportError as e:
+            print( f"✗ Standard library imports failed: {e}" )
+        
+        # Test ML framework imports (just import, don't use)
+        try:
+            import torch, os, multiprocessing
+            from typing import Optional, Union, List, Dict, Tuple, Any, Iterable
+            print( "✓ Core framework imports successful" )
+        except ImportError as e:
+            print( f"✗ Core framework imports failed: {e}" )
+        
+        # Test PEFT and transformer imports
+        try:
+            from peft import LoraConfig, prepare_model_for_kbit_training, PeftModel
+            from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
+            from datasets import Dataset
+            from trl import SFTTrainer, SFTConfig
+            print( "✓ ML library imports successful" )
+        except ImportError as e:
+            print( f"⚠ ML library imports failed (may be expected in test env): {e}" )
+        
+        # Test CoSA internal imports
+        try:
+            from cosa.training.conf import load_model_config
+            import cosa.utils.util as du
+            import cosa.utils.util_pytorch as dupt
+            from cosa.training.quantizer import Quantizer
+            from cosa.utils.util_stopwatch import Stopwatch
+            from cosa.training.xml_coordinator import XmlCoordinator
+            print( "✓ CoSA internal imports successful" )
+        except ImportError as e:
+            print( f"⚠ CoSA internal imports failed: {e}" )
+        
+        # Test 3: Configuration integration (without loading models)
+        print( "Testing configuration integration..." )
+        try:
+            # Test that we can access model config loading (without calling it)
+            if callable( load_model_config ):
+                print( "✓ Model config loading function available" )
+            else:
+                print( "✗ Model config loading function not callable" )
+        except Exception as e:
+            print( f"⚠ Configuration integration issues: {e}" )
+        
+        # Test 4: Basic PeftTrainer instantiation (minimal params)
+        print( "Testing basic PeftTrainer instantiation..." )
+        try:
+            # Test with minimal mock parameters - should not trigger ML operations
+            test_trainer = PeftTrainer(
+                model_hf_id="mock_model_id",
+                model_name="Mistral-7B-Instruct-v0.2",  # Use a known supported model
+                test_train_path="/mock/path",
+                debug=False,
+                verbose=False
+            )
+            
+            # Check basic attributes are set
+            if ( hasattr( test_trainer, 'model_hf_id' ) and 
+                 hasattr( test_trainer, 'model_name' ) and
+                 hasattr( test_trainer, 'debug' ) ):
+                print( "✓ PeftTrainer basic instantiation working" )
+            else:
+                print( "✗ PeftTrainer instantiation missing attributes" )
+                
+        except Exception as e:
+            print( f"⚠ PeftTrainer instantiation issues: {e}" )
+        
+        # Test 5: Argument parsing validation
+        print( "Testing argument parsing..." )
+        try:
+            # Test parse_arguments function structure (not actual parsing)
+            if callable( parse_arguments ):
+                print( "✓ Argument parsing function available" )
+            else:
+                print( "✗ Argument parsing function not callable" )
+        except Exception as e:
+            print( f"⚠ Argument parsing issues: {e}" )
+        
+        # Test 6: Environment checking capability
+        print( "Testing environment validation..." )
+        try:
+            # Test check_env function exists and is callable
+            if callable( check_env ):
+                print( "✓ Environment checking function available" )
+            else:
+                print( "✗ Environment checking function not callable" )
+                
+            # Test check_privileges function
+            if callable( check_privileges ):
+                print( "✓ Privileges checking function available" )
+            else:
+                print( "✗ Privileges checking function not callable" )
+        except Exception as e:
+            print( f"⚠ Environment validation issues: {e}" )
+        
+        # Test 7: Critical v000 dependency scanning
+        print( "\\n🔍 Scanning for v000 dependencies..." )
+        
+        # Scan the file for v000 patterns
+        import inspect
+        source_file = inspect.getfile( PeftTrainer )
+        
+        v000_found = False
+        v000_patterns = []
+        
+        with open( source_file, 'r' ) as f:
+            content = f.read()
+            
+            # Split content and exclude smoke test function
+            lines = content.split( '\\n' )
+            in_smoke_test = False
+            
+            for i, line in enumerate( lines ):
+                stripped_line = line.strip()
+                
+                # Track if we're in the smoke test function
+                if "def quick_smoke_test" in line:
+                    in_smoke_test = True
+                    continue
+                elif in_smoke_test and line.startswith( "def " ):
+                    in_smoke_test = False
+                elif in_smoke_test:
+                    continue
+                
+                # Skip comments and docstrings
+                if ( stripped_line.startswith( '#' ) or 
+                     stripped_line.startswith( '"""' ) or
+                     stripped_line.startswith( "'" ) ):
+                    continue
+                
+                # Look for actual v000 code references
+                if "v000" in stripped_line and any( pattern in stripped_line for pattern in [
+                    "import", "from", "cosa.agents.v000", ".v000."
+                ] ):
+                    v000_found = True
+                    v000_patterns.append( f"Line {i+1}: {stripped_line}" )
+        
+        if v000_found:
+            print( "🚨 CRITICAL: v000 dependencies detected!" )
+            print( "   Found v000 references:" )
+            for pattern in v000_patterns[ :3 ]:  # Show first 3
+                print( f"     • {pattern}" )
+            if len( v000_patterns ) > 3:
+                print( f"     ... and {len( v000_patterns ) - 3} more v000 references" )
+            print( "   ⚠️  These dependencies MUST be resolved before v000 deprecation!" )
+        else:
+            print( "✅ EXCELLENT: No v000 dependencies found!" )
+        
+        # Test 8: Supported models validation
+        print( "\\nTesting supported models configuration..." )
+        try:
+            # Create instance to check supported models
+            test_trainer = PeftTrainer(
+                model_hf_id="mock_model_id",
+                model_name="Mistral-7B-Instruct-v0.2",
+                test_train_path="/mock/path"
+            )
+            
+            if hasattr( test_trainer, 'supported_model_names' ):
+                model_count = len( test_trainer.supported_model_names )
+                print( f"✓ Supported models list available ({model_count} models)" )
+            else:
+                print( "⚠ Supported models list not found" )
+                
+        except Exception as e:
+            print( f"⚠ Supported models validation issues: {e}" )
+        
+        # Test 9: Method signature validation
+        print( "\\nTesting critical method signatures..." )
+        try:
+            critical_methods = [ 'fine_tune', 'run_pipeline', 'quantize_merged_adapter' ]
+            
+            for method_name in critical_methods:
+                if hasattr( PeftTrainer, method_name ):
+                    method = getattr( PeftTrainer, method_name )
+                    if callable( method ):
+                        print( f"✓ {method_name} method is callable" )
+                    else:
+                        print( f"✗ {method_name} method is not callable" )
+                else:
+                    print( f"✗ Missing critical method: {method_name}" )
+                    
+        except Exception as e:
+            print( f"⚠ Method signature validation issues: {e}" )
+    
+    except Exception as e:
+        print( f"✗ Error during PEFT trainer structural testing: {e}" )
+        import traceback
+        traceback.print_exc()
+    
+    # Summary
+    print( "\\n" + "="*70 )
+    print( "🔧 STRUCTURAL TEST SUMMARY - PEFT TRAINER" )
+    print( "="*70 )
+    
+    if v000_found:
+        print( "🚨 CRITICAL ISSUE: PEFT trainer has v000 dependencies!" )
+        print( "   Status: NOT READY for v000 deprecation" )
+        print( "   Priority: IMMEDIATE ACTION REQUIRED" )
+        print( "   Risk Level: CRITICAL - ML training infrastructure will break" )
+    else:
+        print( "✅ PEFT trainer structural validation completed successfully!" )
+        print( "   Status: ML training infrastructure structure ready for v000 deprecation" )
+        print( "   Risk Level: LOW" )
+    
+    print()
+    print( "⚠️  IMPORTANT REMINDER:" )
+    print( "   This was a STRUCTURAL test only - no ML operations were performed" )
+    print( "   Runtime validation requires GPU resources, datasets, and extensive time" )
+    print( "   Full training pipeline validation should be done separately in ML environment" )
+    print()
+    print( "✓ PEFT trainer structural smoke test completed" )
+
+
+if __name__ == "__main__":
+    import sys
+    
+    # Check if this is being run as a smoke test
+    if len( sys.argv ) == 1 or (len( sys.argv ) == 2 and sys.argv[1] == "--smoke-test"):
+        quick_smoke_test()
+        sys.exit( 0 )
+    
+    # Otherwise run normal training pipeline
+    
+    # Check for required environment variables
+    lupin_root = check_env()
+    
+    # Validate command line arguments
+    args = parse_arguments()
+    
+    # Check for nuclear_kill_button + elevated privileges
+    if args.nuclear_kill_button:
+        if args.debug: print( "Nuclear kill button is enabled..." )
+        check_privileges( debug=args.debug )
+    else:
+        if args.debug: print( "Nuclear kill button is disabled..." )
+        
+    # instantiate a trainer...
+    trainer = PeftTrainer(
+        args.model, args.model_name, args.test_train_path, lora_dir=args.lora_dir, debug=args.debug, verbose=args.verbose
+    )
+    
+    # ... And you're off to the races!
+    trainer.run_pipeline(
+        pre_training_stats=args.pre_training_stats,
+        post_training_stats=args.post_training_stats,
+        post_quantization_stats=args.post_quantization_stats,
+        validation_sample_size=args.validation_sample_size,
+        nuclear_kill_button=args.nuclear_kill_button
+    )

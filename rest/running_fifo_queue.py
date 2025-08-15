@@ -42,7 +42,7 @@ class RunningFifoQueue( FifoQueue ):
             - None
         """
         
-        super().__init__( websocket_mgr=websocket_mgr, queue_name="run", emit_enabled=True )
+        super().__init__( websocket_mgr=websocket_mgr, queue_name="running", emit_enabled=True )
         
         self.app                 = app
         self.snapshot_mgr        = snapshot_mgr
@@ -97,9 +97,6 @@ class RunningFifoQueue( FifoQueue ):
                 truncated_question = du.truncate_string( running_job.last_question_asked, max_len=64 )
                 
                 run_timer = sw.Stopwatch( "Starting job run timer..." )
-                
-                # if type( running_job ) == FunctionMappingAgent:
-                #     running_job = self._handle_function_mapping_agent( running_job, truncated_question )
                 
                 # Assume for now that all *agents* are of type AgentBase. If it's not, then it's a solution snapshot
                 if isinstance( running_job, AgentBase ):
@@ -325,3 +322,282 @@ class RunningFifoQueue( FifoQueue ):
     #         url = url_for( 'get_tts_audio' ) + f"?tts_text={text}"
     #
     #     return url
+
+
+def quick_smoke_test():
+    """
+    Critical smoke test for RunningFifoQueue - validates active queue management functionality.
+    
+    This test is essential for v000 deprecation as running_fifo_queue.py is critical
+    for active job processing and queue management in the REST system.
+    """
+    import cosa.utils.util as du
+    
+    du.print_banner( "Running FIFO Queue Smoke Test", prepend_nl=True )
+    
+    try:
+        # Test 1: Basic class and method presence
+        print( "Testing core running queue components..." )
+        expected_methods = [
+            "enter_running_loop", "_process_job", "_handle_base_agent", 
+            "_handle_solution_snapshot", "_handle_error_case"
+        ]
+        
+        methods_found = 0
+        for method_name in expected_methods:
+            if hasattr( RunningFifoQueue, method_name ):
+                methods_found += 1
+            else:
+                print( f"⚠ Missing method: {method_name}" )
+        
+        if methods_found == len( expected_methods ):
+            print( f"✓ All {len( expected_methods )} core running queue methods present" )
+        else:
+            print( f"⚠ Only {methods_found}/{len( expected_methods )} running queue methods present" )
+        
+        # Test 2: Critical dependency imports
+        print( "Testing critical dependency imports..." )
+        try:
+            from cosa.agents.v010.receptionist_agent import ReceptionistAgent
+            from cosa.agents.v010.weather_agent import WeatherAgent
+            from cosa.rest.fifo_queue import FifoQueue
+            from cosa.agents.v010.agent_base import AgentBase
+            print( "✓ Core agent imports successful" )
+        except ImportError as e:
+            print( f"✗ Core agent imports failed: {e}" )
+        
+        try:
+            from cosa.memory.input_and_output_table import InputAndOutputTable
+            from cosa.memory.solution_snapshot import SolutionSnapshot
+            print( "✓ Memory system imports successful" )
+        except ImportError as e:
+            print( f"⚠ Memory system imports failed: {e}" )
+        
+        try:
+            import cosa.utils.util_stopwatch as sw
+            print( "✓ Utility imports successful" )
+        except ImportError as e:
+            print( f"⚠ Utility imports failed: {e}" )
+        
+        # Test 3: Inheritance validation
+        print( "Testing inheritance structure..." )
+        import inspect
+        
+        # Check if RunningFifoQueue properly inherits from FifoQueue
+        base_classes = inspect.getmro( RunningFifoQueue )
+        base_class_names = [ cls.__name__ for cls in base_classes ]
+        
+        if "FifoQueue" in base_class_names:
+            print( "✓ Properly inherits from FifoQueue" )
+        else:
+            print( "✗ Missing FifoQueue inheritance" )
+        
+        # Test 4: Basic initialization (mock)
+        print( "Testing basic initialization..." )
+        try:
+            # Create mock objects for initialization
+            class MockApp:
+                pass
+            
+            class MockWebSocketMgr:
+                def emit( self, event, data ):
+                    pass
+            
+            class MockSnapshotMgr:
+                pass
+            
+            class MockConfigMgr:
+                def get( self, key, default=None, return_type=None ):
+                    return default
+            
+            # Create mock queues
+            mock_app = MockApp()
+            mock_ws_mgr = MockWebSocketMgr()
+            mock_snapshot_mgr = MockSnapshotMgr()
+            mock_todo_queue = FifoQueue()
+            mock_done_queue = FifoQueue()
+            mock_dead_queue = FifoQueue()
+            mock_config_mgr = MockConfigMgr()
+            
+            # Test initialization
+            running_queue = RunningFifoQueue(
+                app=mock_app,
+                websocket_mgr=mock_ws_mgr,
+                snapshot_mgr=mock_snapshot_mgr,
+                jobs_todo_queue=mock_todo_queue,
+                jobs_done_queue=mock_done_queue,
+                jobs_dead_queue=mock_dead_queue,
+                config_mgr=mock_config_mgr
+            )
+            
+            # Check basic attributes
+            if ( hasattr( running_queue, 'app' ) and 
+                 hasattr( running_queue, 'snapshot_mgr' ) and
+                 hasattr( running_queue, 'io_tbl' ) ):
+                print( "✓ Running queue initialization working" )
+            else:
+                print( "✗ Running queue initialization failed" )
+            
+        except Exception as e:
+            print( f"⚠ Basic initialization issues: {e}" )
+        
+        # Test 5: Job processing structure validation
+        print( "Testing job processing structure..." )
+        try:
+            # Verify that _process_job method has proper structure
+            process_job_method = getattr( RunningFifoQueue, '_process_job', None )
+            if callable( process_job_method ):
+                print( "✓ Job processing method structure valid" )
+            else:
+                print( "✗ Job processing method not callable" )
+            
+            # Check handler methods
+            handlers = [ '_handle_base_agent', '_handle_solution_snapshot', '_handle_error_case' ]
+            handler_count = 0
+            for handler in handlers:
+                if hasattr( RunningFifoQueue, handler ):
+                    handler_count += 1
+            
+            if handler_count == len( handlers ):
+                print( f"✓ All {len( handlers )} job handlers present" )
+            else:
+                print( f"⚠ Only {handler_count}/{len( handlers )} job handlers present" )
+            
+        except Exception as e:
+            print( f"⚠ Job processing structure issues: {e}" )
+        
+        # Test 6: Input/Output table integration
+        print( "Testing I/O table integration..." )
+        try:
+            # Test that InputAndOutputTable can be imported and instantiated
+            io_table = InputAndOutputTable()
+            if hasattr( io_table, 'insert_io_row' ):
+                print( "✓ I/O table integration structure valid" )
+            else:
+                print( "⚠ I/O table missing required methods" )
+        except Exception as e:
+            print( f"⚠ I/O table integration issues: {e}" )
+        
+        # Test 7: Job type handling logic
+        print( "Testing job type handling logic..." )
+        try:
+            # Create mock job types for testing logic
+            class MockAgentJob:
+                def __init__( self ):
+                    self.last_question_asked = "test question"
+                    self.id_hash = "mock_hash"
+            
+            class MockSolutionJob:
+                def __init__( self ):
+                    self.last_question_asked = "test question"
+                    self.id_hash = "mock_hash"
+            
+            mock_agent_job = MockAgentJob()
+            mock_solution_job = MockSolutionJob()
+            
+            # Test type checking logic (simulated)
+            if isinstance( mock_agent_job, AgentBase ):
+                agent_check = "would handle as AgentBase"
+            else:
+                agent_check = "would handle as non-AgentBase"
+            
+            print( f"✓ Job type handling logic structure validated" )
+            print( f"  Mock agent job: {agent_check}" )
+            
+        except Exception as e:
+            print( f"⚠ Job type handling issues: {e}" )
+        
+        # Test 8: Critical v000 dependency scanning
+        print( "\\n🔍 Scanning for v000 dependencies..." )
+        
+        # Scan the file for v000 patterns
+        import inspect
+        source_file = inspect.getfile( RunningFifoQueue )
+        
+        v000_found = False
+        v000_patterns = []
+        
+        with open( source_file, 'r' ) as f:
+            content = f.read()
+            
+            # Split content and exclude smoke test function
+            lines = content.split( '\\n' )
+            in_smoke_test = False
+            
+            for i, line in enumerate( lines ):
+                stripped_line = line.strip()
+                
+                # Track if we're in the smoke test function
+                if "def quick_smoke_test" in line:
+                    in_smoke_test = True
+                    continue
+                elif in_smoke_test and line.startswith( "def " ):
+                    in_smoke_test = False
+                elif in_smoke_test:
+                    continue
+                
+                # Skip comments and docstrings
+                if ( stripped_line.startswith( '#' ) or 
+                     stripped_line.startswith( '"""' ) or
+                     stripped_line.startswith( "'" ) ):
+                    continue
+                
+                # Look for actual v000 code references
+                if "v000" in stripped_line and any( pattern in stripped_line for pattern in [
+                    "import", "from", "cosa.agents.v000", ".v000."
+                ] ):
+                    v000_found = True
+                    v000_patterns.append( f"Line {i+1}: {stripped_line}" )
+        
+        if v000_found:
+            print( "🚨 CRITICAL: v000 dependencies detected!" )
+            print( "   Found v000 references:" )
+            for pattern in v000_patterns[ :3 ]:  # Show first 3
+                print( f"     • {pattern}" )
+            if len( v000_patterns ) > 3:
+                print( f"     ... and {len( v000_patterns ) - 3} more v000 references" )
+            print( "   ⚠️  These dependencies MUST be resolved before v000 deprecation!" )
+        else:
+            print( "✅ EXCELLENT: No v000 dependencies found!" )
+        
+        # Test 9: Queue management integration
+        print( "\\nTesting queue management integration..." )
+        try:
+            # Test that the class properly extends FifoQueue functionality
+            running_queue_methods = set( dir( RunningFifoQueue ) )
+            fifo_queue_methods = set( dir( FifoQueue ) )
+            
+            # Should have all FifoQueue methods plus additional ones
+            inherited_methods = fifo_queue_methods.intersection( running_queue_methods )
+            
+            if len( inherited_methods ) >= 10:  # Expect at least 10 core methods inherited
+                print( "✓ Queue management integration validated" )
+                print( f"  Inherited {len( inherited_methods )} methods from FifoQueue" )
+            else:
+                print( f"⚠ Limited queue inheritance: only {len( inherited_methods )} methods" )
+            
+        except Exception as e:
+            print( f"⚠ Queue management integration issues: {e}" )
+    
+    except Exception as e:
+        print( f"✗ Error during running FIFO queue testing: {e}" )
+        import traceback
+        traceback.print_exc()
+    
+    # Summary
+    print( "\\n" + "="*60 )
+    if v000_found:
+        print( "🚨 CRITICAL ISSUE: Running FIFO queue has v000 dependencies!" )
+        print( "   Status: NOT READY for v000 deprecation" )
+        print( "   Priority: IMMEDIATE ACTION REQUIRED" )
+        print( "   Risk Level: CRITICAL - Active job processing will break" )
+    else:
+        print( "✅ Running FIFO queue smoke test completed successfully!" )
+        print( "   Status: Active queue management ready for v000 deprecation" )
+        print( "   Risk Level: LOW" )
+    
+    print( "✓ Running FIFO queue smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

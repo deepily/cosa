@@ -17,6 +17,7 @@ from cosa.agents.v010.runnable_code import RunnableCode
 from cosa.config.configuration_manager import ConfigurationManager
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.agents.v010.two_word_id_generator import TwoWordIdGenerator
+from cosa.agents.io_models.utils.xml_parser_factory import XmlParserFactory
 
 class AgentBase( RunnableCode, abc.ABC ):
     
@@ -95,7 +96,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.user_id               = user_id
         
         # Added to allow behavioral compatibility with solution snapshot object
-        self.run_date              = ss.SolutionSnapshot.get_timestamp()
+        self.run_date              = ss.SolutionSnapshot.get_timestamp( microseconds=True )
         self.push_counter          = push_counter
         self.id_hash               = ss.SolutionSnapshot.generate_id_hash( self.push_counter, self.run_date )
         
@@ -118,12 +119,28 @@ class AgentBase( RunnableCode, abc.ABC ):
         
         self.config_mgr            = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         
+        # Initialize XML parser factory for configurable parsing strategy
+        self.xml_parser_factory    = XmlParserFactory( config_mgr=self.config_mgr )
+        
         self.df                    = None
-        self.do_not_serialize      = { "df", "config_mgr", "two_word_id", "execution_state", "websocket_id", "user_id" }
+        self.do_not_serialize      = { "df", "config_mgr", "xml_parser_factory", "two_word_id", "execution_state", "websocket_id", "user_id" }
 
         self.model_name            = self.config_mgr.get( f"llm spec key for {routing_command}" )
         template_path              = self.config_mgr.get( f"prompt template for {routing_command}" )
         self.prompt_template       = du.get_file_as_string( du.get_project_root() + template_path )
+        
+        # Always process template for dynamic XML
+        try:
+            from cosa.agents.io_models.utils.prompt_template_processor import PromptTemplateProcessor
+            processor = PromptTemplateProcessor( debug=self.debug, verbose=self.verbose )
+            self.prompt_template = processor.process_template( self.prompt_template, routing_command )
+            if self.debug:
+                print( f"✓ Processed template for {routing_command} with dynamic XML" )
+        except Exception as e:
+            if self.debug:
+                print( f"⚠ Dynamic XML processing failed for {routing_command}: {e}" )
+            # Continue with original template if processing fails
+        
         self.prompt                = None
         
         if self.df_path_key is not None:
@@ -209,37 +226,67 @@ class AgentBase( RunnableCode, abc.ABC ):
         
     def _update_response_dictionary( self, response: str ) -> dict[str, Any]:
         """
-        Parse LLM response XML into structured dictionary.
+        Parse LLM response XML into structured dictionary using configurable strategy.
+        
+        This method now uses the XmlParserFactory to support gradual migration
+        from baseline XML parsing to Pydantic-based structured parsing.
         
         Requires:
             - response is a valid XML string
             - self.xml_response_tag_names is defined with expected tags
+            - self.routing_command identifies the agent for strategy selection
             
         Ensures:
             - Returns dictionary with parsed values for each expected tag
-            - 'code' and 'examples' tags are parsed as nested lists
-            - Other tags are parsed as simple string values
+            - Uses configuration-appropriate parsing strategy (baseline/hybrid/structured)
+            - Maintains backward compatibility with existing agent implementations
             
         Raises:
-            - None (malformed XML results in empty/partial dictionary)
+            - XMLParsingError for parsing failures (depending on strategy)
+            - ValidationError for Pydantic model validation failures
         """
         
-        if self.debug and self.verbose: print( f"update_response_dictionary called..." )
+        if self.debug and self.verbose: 
+            print( f"_update_response_dictionary called with strategy factory..." )
         
-        prompt_response_dict = { }
-        
-        for xml_tag in self.xml_response_tag_names:
+        # Use the factory to parse the XML response with appropriate strategy
+        try:
+            prompt_response_dict = self.xml_parser_factory.parse_agent_response(
+                xml_response=response,
+                agent_routing_command=self.routing_command,
+                xml_tag_names=self.xml_response_tag_names,
+                debug=self.debug,
+                verbose=self.verbose
+            )
             
-            if self.debug and self.verbose: print( f"Looking for xml_tag [{xml_tag}]" )
+            if self.debug and self.verbose:
+                print( f"Successfully parsed {len( prompt_response_dict )} fields using factory" )
+                
+            return prompt_response_dict
             
-            if xml_tag in [ "code", "examples" ]:
-                # the get_code method expects enclosing tags, like <code>...</code> or <examples>...</examples>
-                xml_string = f"<{xml_tag}>" + dux.get_value_by_xml_tag_name( response, xml_tag ) + f"</{xml_tag}>"
-                prompt_response_dict[ xml_tag ] = dux.get_nested_list( xml_string, tag_name=xml_tag, debug=self.debug, verbose=self.verbose )
-            else:
-                prompt_response_dict[ xml_tag ] = dux.get_value_by_xml_tag_name( response, xml_tag )
-        
-        return prompt_response_dict
+        except Exception as e:
+            if self.debug:
+                print( f"XML parsing failed: {e}" )
+            
+            # Fallback to legacy baseline parsing for maximum compatibility
+            if self.debug:
+                print( "Falling back to legacy baseline XML parsing..." )
+                
+            prompt_response_dict = { }
+            
+            for xml_tag in self.xml_response_tag_names:
+                
+                if self.debug and self.verbose: 
+                    print( f"Looking for xml_tag [{xml_tag}] (fallback mode)" )
+                
+                if xml_tag in [ "code", "examples" ]:
+                    # Legacy nested list parsing for code/examples
+                    xml_string = f"<{xml_tag}>" + dux.get_value_by_xml_tag_name( response, xml_tag ) + f"</{xml_tag}>"
+                    prompt_response_dict[ xml_tag ] = dux.get_nested_list( xml_string, tag_name=xml_tag, debug=self.debug, verbose=self.verbose )
+                else:
+                    prompt_response_dict[ xml_tag ] = dux.get_value_by_xml_tag_name( response, xml_tag )
+            
+            return prompt_response_dict
     
     def run_prompt( self, include_raw_response: bool=False ) -> dict[str, Any]:
         """
@@ -423,3 +470,229 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.run_formatter()
         
         return self.answer_conversational
+
+
+def quick_smoke_test():
+    """
+    Critical smoke test for AgentBase - validates foundation functionality for all v010 agents.
+    
+    This test is essential for v000 deprecation as AgentBase is the foundation class
+    that all v010 agents inherit from.
+    """
+    import cosa.utils.util as du
+    
+    du.print_banner( "AgentBase Smoke Test", prepend_nl=True )
+    
+    try:
+        # Test 1: Abstract class behavior
+        print( "Testing abstract class behavior..." )
+        try:
+            # This should fail because AgentBase is abstract
+            agent = AgentBase( routing_command="test", question="test question" )
+            print( "✗ ERROR: Abstract class was instantiated (should not happen)" )
+        except TypeError as e:
+            if "abstract" in str( e ).lower():
+                print( "✓ Abstract class properly prevents direct instantiation" )
+            else:
+                print( f"✗ Unexpected TypeError: {e}" )
+        except Exception as e:
+            print( f"⚠ Unexpected error testing abstract class: {e}" )
+        
+        # Test 2: State constants validation
+        print( "Testing state constants..." )
+        expected_states = [
+            "STATE_INITIALIZING", "STATE_WAITING_TO_RUN", "STATE_RUNNING",
+            "STATE_WAITING_FOR_RESPONSE", "STATE_STOPPED_ERROR", "STATE_STOPPED_DONE"
+        ]
+        
+        all_states_present = True
+        for state in expected_states:
+            if not hasattr( AgentBase, state ):
+                print( f"✗ Missing state constant: {state}" )
+                all_states_present = False
+        
+        if all_states_present:
+            print( "✓ All state constants present" )
+        
+        # Test 3: Required method signatures
+        print( "Testing abstract method signatures..." )
+        abstract_methods = [ "restore_from_serialized_state" ]
+        
+        for method_name in abstract_methods:
+            if hasattr( AgentBase, method_name ):
+                method = getattr( AgentBase, method_name )
+                if callable( method ):
+                    print( f"✓ Abstract method {method_name} is callable" )
+                else:
+                    print( f"✗ Abstract method {method_name} is not callable" )
+            else:
+                print( f"✗ Missing abstract method: {method_name}" )
+        
+        # Test 4: Basic method presence validation
+        print( "Testing core method presence..." )
+        core_methods = [
+            "get_html", "serialize_to_json", "run_prompt", "run_code", 
+            "is_format_output_runnable", "run_formatter", "formatter_ran_to_completion", "do_all"
+        ]
+        
+        methods_present = 0
+        for method_name in core_methods:
+            if hasattr( AgentBase, method_name ):
+                methods_present += 1
+            else:
+                print( f"⚠ Missing core method: {method_name}" )
+        
+        if methods_present == len( core_methods ):
+            print( f"✓ All {len( core_methods )} core methods present" )
+        else:
+            print( f"⚠ Only {methods_present}/{len( core_methods )} core methods present" )
+        
+        # Test 5: Inheritance structure validation
+        print( "Testing inheritance structure..." )
+        import inspect
+        
+        # Check if AgentBase properly inherits from RunnableCode and ABC
+        base_classes = inspect.getmro( AgentBase )
+        base_class_names = [ cls.__name__ for cls in base_classes ]
+        
+        if "RunnableCode" in base_class_names:
+            print( "✓ Properly inherits from RunnableCode" )
+        else:
+            print( "✗ Missing RunnableCode inheritance" )
+        
+        if "ABC" in base_class_names:
+            print( "✓ Properly inherits from ABC" )
+        else:
+            print( "✗ Missing ABC inheritance" )
+        
+        # Test 6: Configuration integration validation
+        print( "Testing configuration integration..." )
+        try:
+            # Test basic import paths work
+            from cosa.config.configuration_manager import ConfigurationManager
+            print( "✓ ConfigurationManager import successful" )
+        except ImportError as e:
+            print( f"✗ ConfigurationManager import failed: {e}" )
+        
+        # Test 7: Dependency imports validation
+        print( "Testing critical dependency imports..." )
+        critical_imports = [
+            ( "cosa.agents.v010.raw_output_formatter", "RawOutputFormatter" ),
+            ( "cosa.agents.v010.llm_client_factory", "LlmClientFactory" ),
+            ( "cosa.agents.v010.runnable_code", "RunnableCode" ),
+            ( "cosa.agents.v010.two_word_id_generator", "TwoWordIdGenerator" )
+        ]
+        
+        import_success_count = 0
+        for module_path, class_name in critical_imports:
+            try:
+                module = __import__( module_path, fromlist=[ class_name ] )
+                if hasattr( module, class_name ):
+                    import_success_count += 1
+                else:
+                    print( f"✗ {class_name} not found in {module_path}" )
+            except ImportError as e:
+                print( f"✗ Failed to import {class_name} from {module_path}: {e}" )
+        
+        if import_success_count == len( critical_imports ):
+            print( f"✓ All {len( critical_imports )} critical dependencies importable" )
+        else:
+            print( f"⚠ Only {import_success_count}/{len( critical_imports )} critical dependencies importable" )
+        
+        # Test 8: Critical v000 dependency scanning
+        print( "\n🔍 Scanning for v000 dependencies..." )
+        
+        # Scan the file for v000 patterns
+        import inspect
+        source_file = inspect.getfile( AgentBase )
+        
+        v000_found = False
+        v000_patterns = []
+        
+        with open( source_file, 'r' ) as f:
+            content = f.read()
+            
+            # Split content and exclude smoke test function
+            lines = content.split( '\n' )
+            in_smoke_test = False
+            
+            for i, line in enumerate( lines ):
+                stripped_line = line.strip()
+                
+                # Track if we're in the smoke test function
+                if "def quick_smoke_test" in line:
+                    in_smoke_test = True
+                    continue
+                elif in_smoke_test and line.startswith( "def " ):
+                    in_smoke_test = False
+                elif in_smoke_test:
+                    continue
+                
+                # Skip comments and docstrings
+                if ( stripped_line.startswith( '#' ) or 
+                     stripped_line.startswith( '"""' ) or
+                     stripped_line.startswith( "'" ) ):
+                    continue
+                
+                # Look for actual v000 code references
+                if "v000" in stripped_line and any( pattern in stripped_line for pattern in [
+                    "import", "from", "cosa.agents.v000", ".v000."
+                ] ):
+                    v000_found = True
+                    v000_patterns.append( f"Line {i+1}: {stripped_line}" )
+        
+        if v000_found:
+            print( "🚨 CRITICAL: v000 dependencies detected!" )
+            print( "   Found v000 references:" )
+            for pattern in v000_patterns[ :3 ]:  # Show first 3
+                print( f"     • {pattern}" )
+            if len( v000_patterns ) > 3:
+                print( f"     ... and {len( v000_patterns ) - 3} more v000 references" )
+            print( "   ⚠️  These dependencies MUST be resolved before v000 deprecation!" )
+        else:
+            print( "✅ EXCELLENT: No v000 dependencies found!" )
+        
+        # Test 9: Validate inheritance chain works
+        print( "\nTesting inheritance chain validation..." )
+        try:
+            # Create a minimal concrete subclass for testing
+            class TestAgent( AgentBase ):
+                def __init__( self ):
+                    # Minimal initialization to test inheritance
+                    self.xml_response_tag_names = [ "test" ]
+                
+                @staticmethod
+                def restore_from_serialized_state( file_path: str ):
+                    return TestAgent()
+            
+            # Test that abstract methods are properly defined
+            test_agent = TestAgent()
+            if hasattr( test_agent, 'restore_from_serialized_state' ):
+                print( "✓ Inheritance chain validation successful" )
+            else:
+                print( "✗ Inheritance chain validation failed" )
+        except Exception as e:
+            print( f"⚠ Inheritance chain test had issues: {e}" )
+        
+    except Exception as e:
+        print( f"✗ Error during AgentBase testing: {e}" )
+        import traceback
+        traceback.print_exc()
+    
+    # Summary
+    print( "\n" + "="*60 )
+    if v000_found:
+        print( "🚨 CRITICAL ISSUE: AgentBase has v000 dependencies!" )
+        print( "   Status: NOT READY for v000 deprecation" )
+        print( "   Priority: IMMEDIATE ACTION REQUIRED" )
+        print( "   Risk Level: CRITICAL - All v010 agents will break" )
+    else:
+        print( "✅ AgentBase smoke test completed successfully!" )
+        print( "   Status: Foundation class is ready for v000 deprecation" )
+        print( "   Risk Level: LOW" )
+    
+    print( "✓ AgentBase smoke test completed" )
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

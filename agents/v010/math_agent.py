@@ -13,7 +13,7 @@ class MathAgent( AgentBase ):
     using the last_question_asked for maximum specificity.
     """
     
-    def __init__( self, question: str="", question_gist: str="", last_question_asked: str="", push_counter: int=-1, routing_command: str="agent router go to math", debug: bool=False, verbose: bool=False, auto_debug: bool=False, inject_bugs: bool=False ) -> None:
+    def __init__( self, question: str="", question_gist: str="", last_question_asked: str="", push_counter: int=-1, routing_command: str="agent router go to math", user_id: str="ricardo_felipe_ruiz_6bdc", debug: bool=False, verbose: bool=False, auto_debug: bool=False, inject_bugs: bool=False ) -> None:
         """
         Initialize math agent for mathematical computations.
         
@@ -30,7 +30,7 @@ class MathAgent( AgentBase ):
             - KeyError if required config missing
         """
         
-        super().__init__( df_path_key=None, question=question, question_gist=question_gist, last_question_asked=last_question_asked, routing_command=routing_command, push_counter=push_counter, debug=debug, verbose=verbose, auto_debug=auto_debug, inject_bugs=inject_bugs )
+        super().__init__( df_path_key=None, question=question, question_gist=question_gist, last_question_asked=last_question_asked, routing_command=routing_command, push_counter=push_counter, user_id=user_id, debug=debug, verbose=verbose, auto_debug=auto_debug, inject_bugs=inject_bugs )
         
         # du.print_banner( "MathAgent.__init__()" )
         print( "¡OJO! MathAgent is using last_question_asked because it wants all the specificity contained within the voice to text transcription" )

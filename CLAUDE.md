@@ -3,10 +3,12 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## IMPORTANT: Repository Context
-- This COSA repo is a git subproject/submodule contained within the parent "genie-in-the-box" project
+- This COSA repo is a git subproject/submodule contained within the parent "Lupin" project
 - When working within the COSA directory, only manage this repository (not the parent project)
 - Do not stage, commit, or push changes to the parent repository from here
 - NEVER commit or push changes automatically - ALWAYS wait for user review and explicit approval before committing
+- The global Claude Code Configuration file found in my home directory will direct you to update the parent "Lupin" project history.md file as a part of your end of session ritual.. 
+- After updating the Lupin repo, I want you to duplicate your history entry in this repo's history.md
 
 ## Commands
 - Run tests: `pytest tests/`

@@ -90,10 +90,23 @@ class SolutionSnapshotManager:
         filtered_files = [ file for file in os.listdir( self.path ) if not file.startswith( "._" ) and file.endswith( ".json" ) ]
         if self.debug and self.verbose: du.print_list( filtered_files )
         
+        failed_files = []
         for file in filtered_files:
             json_file = os.path.join( self.path, file )
-            snapshot = ss.SolutionSnapshot.from_json_file( json_file, debug=self.debug )
-            snapshots_by_question[ snapshot.question ] = snapshot
+            try:
+                snapshot = ss.SolutionSnapshot.from_json_file( json_file, debug=self.debug )
+                snapshots_by_question[ snapshot.question ] = snapshot
+            except Exception as e:
+                failed_files.append( ( file, str( e ) ) )
+                if self.debug: 
+                    print( f"ERROR: Failed to load snapshot from {file}: {str(e)}" )
+                    print( f"       Continuing with remaining snapshots..." )
+        
+        if failed_files:
+            print( f"WARNING: Failed to load {len(failed_files)} snapshot file(s):" )
+            for file, error in failed_files:
+                print( f"  - {file}: {error}" )
+            print( f"Successfully loaded {len(snapshots_by_question)} snapshots from remaining files." )
     
         return snapshots_by_question
     
@@ -291,7 +304,7 @@ class SolutionSnapshotManager:
         
         # Generate the embedding for the question if it doesn't already exist
         if not self._question_embeddings_tbl.has( question ):
-            question_embedding = self._embedding_mgr.generate_embedding( question, normalize_for_cache=True, debug=self.debug )
+            question_embedding = self._embedding_mgr.generate_embedding( question, normalize_for_cache=True )
             self._question_embeddings_tbl.add_embedding( question, question_embedding )
         else:
             print( f"Embedding for question [{question}] already exists!" )
@@ -300,7 +313,7 @@ class SolutionSnapshotManager:
         # generate the embedding for the question gist if it doesn't already exist
         question_gist_embedding = [ ]
         if question_gist is not None and not self._question_embeddings_tbl.has( question_gist ):
-            question_gist_embedding = self._embedding_mgr.generate_embedding( question_gist, normalize_for_cache=True, debug=self.debug )
+            question_gist_embedding = self._embedding_mgr.generate_embedding( question_gist, normalize_for_cache=True )
             self._question_embeddings_tbl.add_embedding( question_gist, question_gist_embedding )
         else:
             print( f"Embedding for question gist [{question_gist}] already exists!" )

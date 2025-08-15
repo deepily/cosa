@@ -611,6 +611,8 @@ class ConfigurationManager():
             Boolean indicating whether the key exists in the current configuration block
         """
         # Key must be forced to lowercase because configparser lowercases all keys internally
+        # Handle None config_key gracefully
+        if config_key is None: return False
         return config_key.lower() in self.config.options( self.config_block_id )
 
     def print_configuration( self, brackets: bool=True, include_sections: bool=True, prefixes: Optional[list[str]]=None ) -> None:
