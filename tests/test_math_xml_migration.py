@@ -80,7 +80,11 @@ class MathXmlMigrationTester:
                 "name": "simple_arithmetic",
                 "xml": '''<response>
                     <thoughts>The user wants to calculate 25 multiplied by 8</thoughts>
-                    <brainstorm>Could use basic multiplication, repeated addition, or Python's operator</brainstorm>
+                    <brainstorm>
+                        <idea1>Use basic multiplication operator</idea1>
+                        <idea2>Use repeated addition method</idea2>
+                        <idea3>Use Python's operator module</idea3>
+                    </brainstorm>
                     <evaluation>Direct multiplication is simplest and most efficient</evaluation>
                     <code>
                         <line>result = 25 * 8</line>
@@ -98,7 +102,11 @@ class MathXmlMigrationTester:
                 "name": "quadratic_formula",
                 "xml": '''<response>
                     <thoughts>Need to solve quadratic equation ax^2 + bx + c = 0 using the quadratic formula</thoughts>
-                    <brainstorm>Could factor if possible, complete the square, or use quadratic formula. Formula is most general</brainstorm>
+                    <brainstorm>
+                        <idea1>Factor if possible</idea1>
+                        <idea2>Complete the square method</idea2>
+                        <idea3>Use quadratic formula (most general)</idea3>
+                    </brainstorm>
                     <evaluation>Quadratic formula works for all cases and is most reliable approach</evaluation>
                     <code>
                         <line>import math</line>
@@ -123,7 +131,11 @@ class MathXmlMigrationTester:
                 "name": "area_calculation",
                 "xml": '''<response>
                     <thoughts>User wants to calculate the area of a circle given its radius</thoughts>
-                    <brainstorm>Could use pi*r^2, approximate with polygons, or use integration. Direct formula is best</brainstorm>
+                    <brainstorm>
+                        <idea1>Use pi*r^2 formula</idea1>
+                        <idea2>Approximate with polygons</idea2>
+                        <idea3>Use integration method</idea3>
+                    </brainstorm>
                     <evaluation>The standard formula A = pi*r^2 is most accurate and efficient</evaluation>
                     <code>
                         <line>import math</line>
@@ -144,7 +156,11 @@ class MathXmlMigrationTester:
                 "name": "statistical_calculation",
                 "xml": '''<response>
                     <thoughts>Need to calculate mean, median, and standard deviation of a dataset</thoughts>
-                    <brainstorm>Could implement manually, use statistics module, or numpy. Statistics module is standard</brainstorm>
+                    <brainstorm>
+                        <idea1>Implement manually with formulas</idea1>
+                        <idea2>Use statistics module</idea2>
+                        <idea3>Use numpy for calculations</idea3>
+                    </brainstorm>
                     <evaluation>Python's statistics module provides accurate built-in functions</evaluation>
                     <code>
                         <line>import statistics</line>
@@ -182,16 +198,20 @@ class MathXmlMigrationTester:
                 "name": "empty_brainstorm_field",
                 "xml": '''<response>
                     <thoughts>Testing empty brainstorm field behavior</thoughts>
-                    <brainstorm></brainstorm>
+                    <brainstorm>
+                        <idea1></idea1>
+                        <idea2></idea2>
+                        <idea3></idea3>
+                    </brainstorm>
                     <evaluation>Simple approach works</evaluation>
                     <code>
                         <line>result = 5 * 5</line>
                     </code>
                     <example>empty_example()</example>
                     <returns>int</returns>
-                    <explanation>Testing behavior with empty brainstorm field</explanation>
+                    <explanation>Testing behavior with empty brainstorm ideas</explanation>
                 </response>''',
-                "should_parse": False  # Should fail due to empty brainstorm requirement
+                "should_parse": False  # Should fail due to empty brainstorm ideas requirement
             }
         ]
         
@@ -777,7 +797,11 @@ def quick_smoke_test() -> bool:
         print( "  - Testing basic XML parsing..." )
         sample_xml = '''<response>
             <thoughts>Calculate 2 + 2</thoughts>
-            <brainstorm>Could add manually, use calculator, or write code</brainstorm>
+            <brainstorm>
+                <idea1>Add manually</idea1>
+                <idea2>Use calculator</idea2>
+                <idea3>Write code</idea3>
+            </brainstorm>
             <evaluation>Direct addition is simplest</evaluation>
             <code><line>result = 2 + 2</line></code>
             <example>print(result)</example>

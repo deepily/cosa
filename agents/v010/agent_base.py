@@ -128,6 +128,19 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.model_name            = self.config_mgr.get( f"llm spec key for {routing_command}" )
         template_path              = self.config_mgr.get( f"prompt template for {routing_command}" )
         self.prompt_template       = du.get_file_as_string( du.get_project_root() + template_path )
+        
+        # Always process template for dynamic XML
+        try:
+            from cosa.agents.io_models.utils.prompt_template_processor import PromptTemplateProcessor
+            processor = PromptTemplateProcessor( debug=self.debug, verbose=self.verbose )
+            self.prompt_template = processor.process_template( self.prompt_template, routing_command )
+            if self.debug:
+                print( f"✓ Processed template for {routing_command} with dynamic XML" )
+        except Exception as e:
+            if self.debug:
+                print( f"⚠ Dynamic XML processing failed for {routing_command}: {e}" )
+            # Continue with original template if processing fails
+        
         self.prompt                = None
         
         if self.df_path_key is not None:

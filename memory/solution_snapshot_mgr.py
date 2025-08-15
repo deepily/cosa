@@ -90,10 +90,23 @@ class SolutionSnapshotManager:
         filtered_files = [ file for file in os.listdir( self.path ) if not file.startswith( "._" ) and file.endswith( ".json" ) ]
         if self.debug and self.verbose: du.print_list( filtered_files )
         
+        failed_files = []
         for file in filtered_files:
             json_file = os.path.join( self.path, file )
-            snapshot = ss.SolutionSnapshot.from_json_file( json_file, debug=self.debug )
-            snapshots_by_question[ snapshot.question ] = snapshot
+            try:
+                snapshot = ss.SolutionSnapshot.from_json_file( json_file, debug=self.debug )
+                snapshots_by_question[ snapshot.question ] = snapshot
+            except Exception as e:
+                failed_files.append( ( file, str( e ) ) )
+                if self.debug: 
+                    print( f"ERROR: Failed to load snapshot from {file}: {str(e)}" )
+                    print( f"       Continuing with remaining snapshots..." )
+        
+        if failed_files:
+            print( f"WARNING: Failed to load {len(failed_files)} snapshot file(s):" )
+            for file, error in failed_files:
+                print( f"  - {file}: {error}" )
+            print( f"Successfully loaded {len(snapshots_by_question)} snapshots from remaining files." )
     
         return snapshots_by_question
     

@@ -200,14 +200,26 @@ class SolutionSnapshot( RunnableCode ):
         self.user_id               = user_id
         
         # Is there is no synonymous questions to be found then just recycle the current question
+        # Handle corrupted data: ensure synonymous_questions is a valid dict/OrderedDict
+        if not isinstance( synonymous_questions, dict ):
+            if self.debug: print( f"WARNING: synonymous_questions is invalid type {type(synonymous_questions)}, defaulting to empty OrderedDict" )
+            synonymous_questions = OrderedDict()
+            
         if len( synonymous_questions ) == 0:
-            self.synonymous_questions = synonymous_questions[ question ] = 100.0
+            synonymous_questions[ question ] = 100.0
+            self.synonymous_questions = synonymous_questions
         else:
             self.synonymous_questions = synonymous_questions
             
         # Is there is no synonymous gists to be found then just recycle the current gist
+        # Handle corrupted data: ensure synonymous_question_gists is a valid dict/OrderedDict
+        if not isinstance( synonymous_question_gists, dict ):
+            if self.debug: print( f"WARNING: synonymous_question_gists is invalid type {type(synonymous_question_gists)}, defaulting to empty OrderedDict" )
+            synonymous_question_gists = OrderedDict()
+            
         if len( synonymous_question_gists ) == 0:
-            self.synonymous_question_gists = synonymous_question_gists[ question_gist ] = 100.0
+            synonymous_question_gists[ question_gist ] = 100.0
+            self.synonymous_question_gists = synonymous_question_gists
         else:
             self.synonymous_question_gists = synonymous_question_gists
             

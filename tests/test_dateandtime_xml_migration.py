@@ -80,7 +80,11 @@ class DateAndTimeXmlMigrationTester:
                 "name": "current_time_query",
                 "xml": '''<response>
                     <thoughts>The user wants to know what time it is right now</thoughts>
-                    <brainstorm>Could use datetime.now(), time module, or system calls</brainstorm>
+                    <brainstorm>
+                        <idea1>Use datetime.now() method</idea1>
+                        <idea2>Use time module functions</idea2>
+                        <idea3>Use system calls</idea3>
+                    </brainstorm>
                     <evaluation>datetime.now() is the most straightforward and readable</evaluation>
                     <code>
                         <line>from datetime import datetime</line>
@@ -100,7 +104,11 @@ class DateAndTimeXmlMigrationTester:
                 "name": "time_zone_conversion",
                 "xml": '''<response>
                     <thoughts>Need to convert time between different time zones</thoughts>
-                    <brainstorm>Could use pytz library, datetime tzinfo, or manual offset calculations</brainstorm>
+                    <brainstorm>
+                        <idea1>Use pytz library</idea1>
+                        <idea2>Use datetime tzinfo</idea2>
+                        <idea3>Manual offset calculations</idea3>
+                    </brainstorm>
                     <evaluation>pytz provides the most accurate and complete timezone handling</evaluation>
                     <code>
                         <line>import pytz</line>
@@ -123,7 +131,11 @@ class DateAndTimeXmlMigrationTester:
                 "name": "date_calculation",
                 "xml": '''<response>
                     <thoughts>User wants to calculate the number of days until a future date</thoughts>
-                    <brainstorm>Could calculate manually, use timedelta objects, or use date arithmetic</brainstorm>
+                    <brainstorm>
+                        <idea1>Calculate manually with formulas</idea1>
+                        <idea2>Use timedelta objects</idea2>
+                        <idea3>Use date arithmetic methods</idea3>
+                    </brainstorm>
                     <evaluation>timedelta arithmetic is clearest and handles edge cases automatically</evaluation>
                     <code>
                         <line>from datetime import date, timedelta</line>
@@ -145,7 +157,11 @@ class DateAndTimeXmlMigrationTester:
                 "name": "weekday_determination",
                 "xml": '''<response>
                     <thoughts>Need to determine what day of the week a specific date falls on</thoughts>
-                    <brainstorm>Could use datetime.weekday(), calendar module, or manual calculation</brainstorm>
+                    <brainstorm>
+                        <idea1>Use datetime.weekday() method</idea1>
+                        <idea2>Use calendar module</idea2>
+                        <idea3>Manual calculation from reference date</idea3>
+                    </brainstorm>
                     <evaluation>datetime.weekday() is the most straightforward and reliable approach</evaluation>
                     <code>
                         <line>from datetime import datetime</line>
@@ -181,7 +197,11 @@ class DateAndTimeXmlMigrationTester:
                 "name": "empty_evaluation_field",
                 "xml": '''<response>
                     <thoughts>Testing empty evaluation field behavior</thoughts>
-                    <brainstorm>Could do this or that</brainstorm>
+                    <brainstorm>
+                        <idea1>Do this approach</idea1>
+                        <idea2>Do that alternative</idea2>
+                        <idea3>Try a third option</idea3>
+                    </brainstorm>
                     <evaluation></evaluation>
                     <code>
                         <line>print("test")</line>

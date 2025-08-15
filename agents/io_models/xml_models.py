@@ -564,6 +564,20 @@ class ReceptionistResponse( BaseXMLModel ):
             if debug:
                 print( f"✗ ReceptionistResponse smoke test FAILED: {e}" )
             return False
+    
+    @classmethod
+    def get_example_for_template( cls ) -> 'ReceptionistResponse':
+        """
+        Get example instance for prompt templates.
+        
+        Returns a receptionist response example with typical conversational content
+        that matches the expected XML structure for the receptionist.txt template.
+        """
+        return cls(
+            thoughts='[your thoughts here]',
+            category='benign',
+            answer='[your answer here]'
+        )
 
 
 class CodeResponse( BaseXMLModel ):
@@ -717,6 +731,32 @@ class CodeResponse( BaseXMLModel ):
                 return match.group( 1 )
         return None
     
+    def to_xml( self, root_tag: str = 'response', pretty: bool = True ) -> str:
+        """
+        Generate XML with proper nested structure for prompts.
+        
+        Overrides BaseXMLModel.to_xml() to handle the nested code
+        structure that prompt templates expect.
+        
+        Args:
+            root_tag: Root XML element name (default: 'response')
+            pretty: Whether to format XML with indentation (default: True)
+            
+        Returns:
+            Formatted XML string matching prompt template structure
+        """
+        import xmltodict
+        
+        data = {
+            'thoughts': self.thoughts,
+            'code': {'line': self.code},  # Creates nested <line> tags
+            'returns': self.returns,
+            'example': self.example,
+            'explanation': self.explanation
+        }
+        
+        return xmltodict.unparse( {root_tag: data}, pretty=pretty )
+    
     @classmethod
     def quick_smoke_test( cls, debug: bool = False ) -> bool:
         """
@@ -863,6 +903,32 @@ class CodeResponse( BaseXMLModel ):
                 import traceback
                 traceback.print_exc()
             return False
+    
+    @classmethod
+    def get_example_for_template( cls ) -> 'CodeResponse':
+        """
+        Get example instance for prompt templates.
+        
+        Creates a CodeResponse instance with standard template placeholder text
+        that matches the format expected in todo list and debugger prompt templates.
+        
+        Returns:
+            CodeResponse instance with template placeholder text
+        """
+        return cls(
+            thoughts='[your thoughts here]',
+            code=[
+                'All imports here',
+                '',
+                'def function_name_here( df, arg1, arg2 ):',
+                '    ...',
+                '    ...',
+                '    return solution'
+            ],
+            returns='Object type of the variable `solution`',
+            example='solution = your_function_name_here( df, arg1, etc. )',
+            explanation='Explanation of how the code works'
+        )
 
 
 class CalendarResponse( CodeResponse ):
@@ -896,6 +962,34 @@ class CalendarResponse( CodeResponse ):
         if not v or not v.strip():
             raise ValueError( "Question cannot be empty" )
         return v.strip()
+    
+    def to_xml( self, root_tag: str = 'response', pretty: bool = True ) -> str:
+        """
+        Generate XML with proper field order and nested structure for calendar prompts.
+        
+        Overrides CodeResponse.to_xml() to ensure proper field ordering
+        that matches the calendar prompt template structure.
+        
+        Args:
+            root_tag: Root XML element name (default: 'response')
+            pretty: Whether to format XML with indentation (default: True)
+            
+        Returns:
+            Formatted XML string matching calendar prompt template structure
+        """
+        import xmltodict
+        
+        # Specific field order matching calendar prompt template
+        data = {
+            'question': self.question,
+            'thoughts': self.thoughts,
+            'code': {'line': self.code},  # Creates nested <line> tags
+            'returns': self.returns,
+            'example': self.example,
+            'explanation': self.explanation
+        }
+        
+        return xmltodict.unparse( {root_tag: data}, pretty=pretty )
     
     @classmethod 
     def quick_smoke_test( cls, debug: bool = False ) -> bool:
@@ -1006,6 +1100,78 @@ class CalendarResponse( CodeResponse ):
                 import traceback
                 traceback.print_exc()
             return False
+    
+    @classmethod
+    def get_example_for_template( cls ) -> 'CalendarResponse':
+        """
+        Get example instance for prompt templates.
+        
+        Creates a CalendarResponse instance with standard template placeholder text
+        that matches the format expected in calendar prompt templates.
+        
+        Returns:
+            CalendarResponse instance with template placeholder text
+        """
+        return cls(
+            question='[question will be filled by template]',
+            thoughts='[your thoughts here]',
+            code=[
+                'All imports here',
+                '',
+                'def function_name_here( df, arg1, arg2 ):',
+                '    ...',
+                '    ...',
+                '    return solution'
+            ],
+            returns='Object type of the variable `solution`',
+            example='solution = your_function_name_here( df, arg1, etc. )',
+            explanation='Explanation of how the code works'
+        )
+
+
+class BrainstormIdeas( BaseXMLModel ):
+    """
+    Nested model for structured brainstorming ideas.
+    
+    Handles the three-idea brainstorming structure used in CodeBrainstormResponse:
+    <brainstorm>
+        <idea1>First idea</idea1>
+        <idea2>Second idea</idea2>
+        <idea3>Third idea</idea3>
+    </brainstorm>
+    
+    This structure ensures proper XML serialization and deserialization
+    for brainstorming workflows in math and datetime agents.
+    """
+    
+    idea1: str = Field( ..., description="First brainstormed idea" )
+    idea2: str = Field( ..., description="Second brainstormed idea" )
+    idea3: str = Field( ..., description="Third brainstormed idea" )
+    
+    @field_validator( 'idea1', 'idea2', 'idea3' )
+    @classmethod
+    def validate_ideas( cls, v ):
+        """Ensure idea fields are not empty."""
+        if not v or not v.strip():
+            raise ValueError( "Brainstorm ideas cannot be empty" )
+        return v.strip()
+    
+    @classmethod
+    def get_example_for_template( cls ) -> 'BrainstormIdeas':
+        """
+        Get example instance for prompt templates.
+        
+        Creates a BrainstormIdeas instance with standard template placeholder text
+        that matches the format expected in prompt templates.
+        
+        Returns:
+            BrainstormIdeas instance with template placeholder text
+        """
+        return cls(
+            idea1='Your first idea',
+            idea2='Your second idea',
+            idea3='Your third idea'
+        )
 
 
 class CodeBrainstormResponse( BaseXMLModel ):
@@ -1014,17 +1180,25 @@ class CodeBrainstormResponse( BaseXMLModel ):
     
     Handles XML responses for agents that generate code with detailed reasoning:
     <response>
-        <thoughts>Initial reasoning about the problem</thoughts>
-        <brainstorm>Different approaches considered</brainstorm>
-        <evaluation>Analysis of chosen approach</evaluation>
+        <thoughts>Your thoughts</thoughts>
+        <brainstorm>
+            <idea1>Your first idea</idea1>
+            <idea2>Your second idea</idea2>
+            <idea3>Your third idea</idea3>
+        </brainstorm>
+        <evaluation>Your evaluation</evaluation>
         <code>
-            <line>import math</line>
-            <line>def solve_problem():</line>
+            <line>All imports here</line>
+            <line></line>
+            <line>def your_function_name_here( optional_arguments ):</line>
+            <line>    ...</line>
+            <line>    ...</line>
             <line>    return solution</line>
+            <line></line>
         </code>
-        <example>Usage example</example>
-        <returns>Return type description</returns>
-        <explanation>How the code works</explanation>
+        <returns>Object type of the variable `solution`</returns>
+        <example>solution = your_function_name_here( optional_arguments )</example>
+        <explanation>Explanation of how the code works</explanation>
     </response>
     
     Used by agents requiring brainstorming workflows:
@@ -1034,7 +1208,7 @@ class CodeBrainstormResponse( BaseXMLModel ):
     """
     
     thoughts: str = Field( ..., description="Initial reasoning about the problem" )
-    brainstorm: str = Field( ..., description="Different approaches considered" )
+    brainstorm: BrainstormIdeas = Field( ..., description="Three brainstormed ideas in structured format" )
     evaluation: str = Field( ..., description="Analysis of chosen approach" )
     code: List[str] = Field( ..., description="Generated code as list of lines" )
     example: str = Field( ..., description="Usage example" )
@@ -1095,6 +1269,7 @@ class CodeBrainstormResponse( BaseXMLModel ):
             # No line tags found - might be direct text content
             return []
     
+    
     @field_validator( 'code' )
     @classmethod
     def validate_code( cls, v ):
@@ -1111,7 +1286,7 @@ class CodeBrainstormResponse( BaseXMLModel ):
             raise ValueError( "Code must contain at least one line" )
         return v
     
-    @field_validator( 'thoughts', 'brainstorm', 'evaluation', 'explanation' )
+    @field_validator( 'thoughts', 'evaluation', 'explanation' )
     @classmethod
     def validate_text_fields( cls, v ):
         """Ensure text fields are not empty."""
@@ -1126,6 +1301,38 @@ class CodeBrainstormResponse( BaseXMLModel ):
         if not v or not v.strip():
             return "None"  # Default return type
         return v.strip()
+    
+    def to_xml( self, root_tag: str = 'response', pretty: bool = True ) -> str:
+        """
+        Generate XML with proper nested structure for prompts.
+        
+        Overrides BaseXMLModel.to_xml() to handle the nested brainstorm
+        and code structures that prompt templates expect.
+        
+        Args:
+            root_tag: Root XML element name (default: 'response')
+            pretty: Whether to format XML with indentation (default: True)
+            
+        Returns:
+            Formatted XML string matching prompt template structure
+        """
+        import xmltodict
+        
+        data = {
+            'thoughts': self.thoughts,
+            'brainstorm': {
+                'idea1': self.brainstorm.idea1,
+                'idea2': self.brainstorm.idea2,
+                'idea3': self.brainstorm.idea3
+            },
+            'evaluation': self.evaluation,
+            'code': {'line': self.code},  # Creates <line> tags
+            'returns': self.returns,
+            'example': self.example,
+            'explanation': self.explanation
+        }
+        
+        return xmltodict.unparse( {root_tag: data}, pretty=pretty )
     
     def get_code_as_string( self, indent: str = "" ) -> str:
         """
@@ -1193,7 +1400,11 @@ class CodeBrainstormResponse( BaseXMLModel ):
                 print( "  - Testing math brainstorming response..." )
             math_xml = """<response>
                 <thoughts>The user wants to calculate the area of a circle given its radius</thoughts>
-                <brainstorm>I could use the formula A = πr² or I could approximate using polygon methods or I could use integration</brainstorm>
+                <brainstorm>
+                    <idea1>Use the formula A = πr²</idea1>
+                    <idea2>Approximate using polygon methods</idea2>
+                    <idea3>Use integration to derive the formula</idea3>
+                </brainstorm>
                 <evaluation>The direct formula approach is simplest and most accurate for this problem</evaluation>
                 <code>
                     <line>import math</line>
@@ -1207,7 +1418,9 @@ class CodeBrainstormResponse( BaseXMLModel ):
             
             math_response = cls.from_xml( math_xml )
             assert "area of a circle" in math_response.thoughts
-            assert "formula" in math_response.brainstorm.lower()
+            assert "formula" in math_response.brainstorm.idea1.lower()
+            assert "polygon" in math_response.brainstorm.idea2.lower()
+            assert "integration" in math_response.brainstorm.idea3.lower()
             assert "simplest and most accurate" in math_response.evaluation
             assert len( math_response.code ) == 3
             assert math_response.has_imports() == True
@@ -1222,7 +1435,11 @@ class CodeBrainstormResponse( BaseXMLModel ):
                 print( "  - Testing datetime brainstorming response..." )
             datetime_xml = """<response>
                 <thoughts>Need to determine what day of the week a specific date falls on</thoughts>
-                <brainstorm>Could use datetime.weekday(), or calendar module, or manual calculation using known reference dates</brainstorm>
+                <brainstorm>
+                    <idea1>Use datetime.weekday() method</idea1>
+                    <idea2>Use calendar module functions</idea2>
+                    <idea3>Manual calculation using known reference dates</idea3>
+                </brainstorm>
                 <evaluation>datetime.weekday() is the most straightforward and reliable approach</evaluation>
                 <code>
                     <line>from datetime import datetime</line>
@@ -1238,7 +1455,9 @@ class CodeBrainstormResponse( BaseXMLModel ):
             
             datetime_response = cls.from_xml( datetime_xml )
             assert "day of the week" in datetime_response.thoughts
-            assert "datetime.weekday" in datetime_response.brainstorm
+            assert "datetime.weekday" in datetime_response.brainstorm.idea1.lower()
+            assert "calendar" in datetime_response.brainstorm.idea2.lower()
+            assert "manual" in datetime_response.brainstorm.idea3.lower()
             assert "straightforward" in datetime_response.evaluation
             assert len( datetime_response.code ) == 5
             assert datetime_response.has_imports() == True
@@ -1253,7 +1472,7 @@ class CodeBrainstormResponse( BaseXMLModel ):
             try:
                 cls(
                     thoughts="",  # Empty thoughts should fail
-                    brainstorm="test brainstorm",
+                    brainstorm=BrainstormIdeas(idea1="test idea 1", idea2="test idea 2", idea3="test idea 3"),
                     evaluation="test evaluation",
                     code=["test_line"],
                     example="test()",
@@ -1272,7 +1491,7 @@ class CodeBrainstormResponse( BaseXMLModel ):
                 print( "  - Testing round-trip serialization..." )
             test_response = cls(
                 thoughts="Test problem analysis",
-                brainstorm="Consider approach A vs approach B",
+                brainstorm=BrainstormIdeas(idea1="Consider approach A", idea2="Consider approach B", idea3="Consider approach C"),
                 evaluation="Approach A is better because of efficiency",
                 code=["import os", "def test():", "    return True"],
                 example="result = test()",
@@ -1284,7 +1503,9 @@ class CodeBrainstormResponse( BaseXMLModel ):
             parsed_back = cls.from_xml( xml_output )
             
             assert parsed_back.thoughts == "Test problem analysis"
-            assert parsed_back.brainstorm == "Consider approach A vs approach B"
+            assert parsed_back.brainstorm.idea1 == "Consider approach A"
+            assert parsed_back.brainstorm.idea2 == "Consider approach B"
+            assert parsed_back.brainstorm.idea3 == "Consider approach C"
             assert parsed_back.evaluation == "Approach A is better because of efficiency"
             assert len( parsed_back.code ) == 3
             assert parsed_back.returns == "bool"
@@ -1316,6 +1537,35 @@ class CodeBrainstormResponse( BaseXMLModel ):
                 import traceback
                 traceback.print_exc()
             return False
+    
+    @classmethod
+    def get_example_for_template( cls ) -> 'CodeBrainstormResponse':
+        """
+        Get example instance for prompt templates.
+        
+        Creates a CodeBrainstormResponse instance with standard template placeholder text
+        that matches the format expected in math and date-and-time prompt templates.
+        
+        Returns:
+            CodeBrainstormResponse instance with template placeholder text
+        """
+        return cls(
+            thoughts='Your thoughts',
+            brainstorm=BrainstormIdeas.get_example_for_template(),
+            evaluation='Your evaluation',
+            code=[
+                'All imports here',
+                '',
+                'def your_function_name_here( optional_arguments ):',
+                '    ...',
+                '    ...',
+                '    return solution',
+                ''
+            ],
+            returns='Object type of the variable `solution`',
+            example='solution = your_function_name_here( optional_arguments )',
+            explanation='Explanation of how the code works'
+        )
 
 
 class BugInjectionResponse( BaseXMLModel ):
@@ -1403,6 +1653,29 @@ class BugInjectionResponse( BaseXMLModel ):
         if not self.is_valid_response():
             return False
         return 1 <= self.line_number <= code_length
+    
+    def to_xml( self, root_tag: str = 'response', pretty: bool = True ) -> str:
+        """
+        Generate XML with proper field aliases for bug injection prompts.
+        
+        Overrides BaseXMLModel.to_xml() to use hyphenated field names
+        that match the bug injection prompt template.
+        
+        Args:
+            root_tag: Root XML element name (default: 'response')
+            pretty: Whether to format XML with indentation (default: True)
+            
+        Returns:
+            Formatted XML string matching bug injection prompt template
+        """
+        import xmltodict
+        
+        data = {
+            'line-number': self.line_number,
+            'bug': self.bug
+        }
+        
+        return xmltodict.unparse( {root_tag: data}, pretty=pretty )
     
     @classmethod
     def quick_smoke_test( cls, debug: bool = False ) -> bool:
@@ -1523,6 +1796,22 @@ class BugInjectionResponse( BaseXMLModel ):
                 import traceback
                 traceback.print_exc()
             return False
+    
+    @classmethod
+    def get_example_for_template( cls ) -> 'BugInjectionResponse':
+        """
+        Get example instance for prompt templates.
+        
+        Creates a BugInjectionResponse instance with standard template placeholder text
+        that matches the format expected in bug injector prompt templates.
+        
+        Returns:
+            BugInjectionResponse instance with template placeholder text
+        """
+        return cls(
+            line_number=1,  # Line number where bug is introduced
+            bug='[one line of modified source code with bug in it]'
+        )
 
 
 class IterativeDebuggingMinimalistResponse( BaseXMLModel ):
@@ -1584,6 +1873,31 @@ class IterativeDebuggingMinimalistResponse( BaseXMLModel ):
         """Check if debugging was successful."""
         return self.success == "True"
     
+    def to_xml( self, root_tag: str = 'response', pretty: bool = True ) -> str:
+        """
+        Generate XML with proper field aliases for minimalist debugging prompts.
+        
+        Overrides BaseXMLModel.to_xml() to use hyphenated field names
+        that match the minimalist debugging prompt template.
+        
+        Args:
+            root_tag: Root XML element name (default: 'response')
+            pretty: Whether to format XML with indentation (default: True)
+            
+        Returns:
+            Formatted XML string matching minimalist debugging prompt template
+        """
+        import xmltodict
+        
+        data = {
+            'thoughts': self.thoughts,
+            'line-number': self.line_number,
+            'one-line-of-code': self.one_line_of_code,
+            'success': self.success
+        }
+        
+        return xmltodict.unparse( {root_tag: data}, pretty=pretty )
+    
     @classmethod
     def quick_smoke_test( cls, debug: bool = False ) -> bool:
         """Quick smoke test for IterativeDebuggingMinimalistResponse."""
@@ -1614,6 +1928,21 @@ class IterativeDebuggingMinimalistResponse( BaseXMLModel ):
             if debug:
                 print( f"✗ {cls.__name__} smoke test FAILED: {e}" )
             return False
+    
+    @classmethod
+    def get_example_for_template( cls ) -> 'IterativeDebuggingMinimalistResponse':
+        """
+        Get example instance for prompt templates.
+        
+        Returns a minimalist debugging response example with typical debugging content
+        that matches the expected XML structure for the debugger-minimalist.txt template.
+        """
+        return cls(
+            thoughts='Your thoughts',
+            line_number=1,
+            one_line_of_code='One line of code with proper indentation',
+            success='True'
+        )
 
 
 class IterativeDebuggingFullResponse( BaseXMLModel ):
@@ -1714,6 +2043,32 @@ class IterativeDebuggingFullResponse( BaseXMLModel ):
                 return match.group( 1 )
         return None
     
+    def to_xml( self, root_tag: str = 'response', pretty: bool = True ) -> str:
+        """
+        Generate XML with proper nested structure for debugging prompts.
+        
+        Overrides BaseXMLModel.to_xml() to handle the nested code
+        structure that debugging prompt templates expect.
+        
+        Args:
+            root_tag: Root XML element name (default: 'response')
+            pretty: Whether to format XML with indentation (default: True)
+            
+        Returns:
+            Formatted XML string matching debugging prompt template structure
+        """
+        import xmltodict
+        
+        data = {
+            'thoughts': self.thoughts,
+            'code': {'line': self.code},  # Creates nested <line> tags
+            'example': self.example,
+            'returns': self.returns,
+            'explanation': self.explanation
+        }
+        
+        return xmltodict.unparse( {root_tag: data}, pretty=pretty )
+    
     @classmethod
     def quick_smoke_test( cls, debug: bool = False ) -> bool:
         """Quick smoke test for IterativeDebuggingFullResponse."""
@@ -1750,6 +2105,36 @@ class IterativeDebuggingFullResponse( BaseXMLModel ):
             if debug:
                 print( f"✗ {cls.__name__} smoke test FAILED: {e}" )
             return False
+    
+    @classmethod
+    def get_example_for_template( cls ) -> 'IterativeDebuggingFullResponse':
+        """
+        Get example instance for prompt templates.
+        
+        Creates an IterativeDebuggingFullResponse instance with standard template placeholder text
+        that matches the format expected in debugger prompt templates.
+        
+        Returns:
+            IterativeDebuggingFullResponse instance with template placeholder text
+        """
+        return cls(
+            thoughts='Your thoughts',
+            code=[
+                'All imports here',
+                '',
+                'All code that preceded the function',
+                '',
+                'def function_name_here( df, arg1 ):',
+                '    ...',
+                '    ...',
+                '    return solution',
+                '',
+                'All code that followed the function'
+            ],
+            example='solution = function_name_here( arguments )',
+            returns='Object type of the variable `solution`',
+            explanation='Explanation of how the code works'
+        )
 
 
 class WeatherResponse( BaseXMLModel ):
@@ -1787,6 +2172,28 @@ class WeatherResponse( BaseXMLModel ):
         """Check if this response contains forecast information."""
         return any( forecast_indicator in self.rephrased_answer.lower()
                    for forecast_indicator in ["rain", "snow", "sunny", "cloudy", "chance", "forecast", "tomorrow", "today"] )
+    
+    def to_xml( self, root_tag: str = 'response', pretty: bool = True ) -> str:
+        """
+        Generate XML with proper field aliases for weather prompts.
+        
+        Overrides BaseXMLModel.to_xml() to use hyphenated field names
+        that match the weather prompt template.
+        
+        Args:
+            root_tag: Root XML element name (default: 'response')
+            pretty: Whether to format XML with indentation (default: True)
+            
+        Returns:
+            Formatted XML string matching weather prompt template
+        """
+        import xmltodict
+        
+        data = {
+            'rephrased-answer': self.rephrased_answer
+        }
+        
+        return xmltodict.unparse( {root_tag: data}, pretty=pretty )
     
     @classmethod
     def quick_smoke_test( cls, debug: bool = False ) -> bool:
@@ -1828,6 +2235,18 @@ class WeatherResponse( BaseXMLModel ):
             if debug:
                 print( f"✗ {cls.__name__} smoke test FAILED: {e}" )
             return False
+    
+    @classmethod
+    def get_example_for_template( cls ) -> 'WeatherResponse':
+        """
+        Get example instance for prompt templates.
+        
+        Returns a weather response example with typical weather content
+        that matches the expected XML structure for the weather.txt template.
+        """
+        return cls(
+            rephrased_answer='[your rephrased answer here]'
+        )
 
 
 def quick_smoke_test() -> bool:
