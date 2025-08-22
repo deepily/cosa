@@ -1082,7 +1082,6 @@ class MultiModalMunger:
         prompt          = prompt_template.format( voice_command=transcription )
         
         model         = self.config_mgr.get( "router_and_vox_command_model" )
-        # url           = self.config_mgr.get( "router_and_vox_command_url" )
         is_completion = self.config_mgr.get( "router_and_vox_command_is_completion", return_type="boolean", default=False )
         
         factory  = LlmClientFactory( debug=self.debug, verbose=self.verbose )

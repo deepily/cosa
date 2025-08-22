@@ -15,6 +15,7 @@ This directory contains research, planning, and design documents for the CoSA (C
 - [2025.06.04 - LLM Client Refactoring Progress](./2025.06.04-llm-client-refactoring-progress.md) - Progress tracking for LLM client implementation
 
 ### Pydantic XML Migration
+- [2025.08.22 - Phase 5 Final Prompt Migration Completion](./2025.08.22-phase-5-final-prompt-migration-completion.md) - ✅ COMPLETED: Critical priority prompt migration with 4 new Pydantic models
 - [2025.08.12 - Phase 6 Complex Agent Requirements](./2025.08.12-phase-6-complex-agent-requirements.md) - Requirements for complex agent Pydantic models
 - [2025.08.12 - Template Rendering Investigation](./2025.08.12-template-rendering-investigation.md) - Research on Pydantic object integration for prompt templates
 - [2025.08.10 - Pydantic XML Migration Runtime Flag System Design](./2025.08.10-pydantic-xml-migration-runtime-flag-system-design.md) - Runtime flag system for gradual migration
