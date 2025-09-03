@@ -210,8 +210,8 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             "error": getattr( snapshot, 'error', '' ) or '',
             "routing_command": getattr( snapshot, 'routing_command', '' ) or '',
             
-            # Code execution data
-            "code": getattr( snapshot, 'code', [] ) or [],
+            # Code execution data - ensure code is always a list for LanceDB schema compatibility
+            "code": self._ensure_list( getattr( snapshot, 'code', [] ) ),
             "code_returns": getattr( snapshot, 'code_returns', '' ) or '',
             "code_example": getattr( snapshot, 'code_example', '' ) or '',
             "code_type": getattr( snapshot, 'code_type', '' ) or '',
@@ -221,7 +221,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             # Synonymous questions (convert dict to JSON string)
             "synonymous_questions": json.dumps( getattr( snapshot, 'synonymous_questions', {} ) ),
             "synonymous_question_gists": json.dumps( getattr( snapshot, 'synonymous_question_gists', {} ) ),
-            "non_synonymous_questions": getattr( snapshot, 'non_synonymous_questions', [] ) or [],
+            "non_synonymous_questions": self._ensure_list( getattr( snapshot, 'non_synonymous_questions', [] ) ),
             "last_question_asked": getattr( snapshot, 'last_question_asked', '' ) or '',
             
             # Temporal data
@@ -239,6 +239,38 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         }
         
         return record
+    
+    def _ensure_list( self, value ) -> list:
+        """
+        Ensure value is a list for LanceDB schema compatibility.
+        
+        Handles the common case where test suite passes strings instead of lists
+        for fields that expect list types in the PyArrow schema.
+        
+        Requires:
+            - value can be any type
+            
+        Ensures:
+            - Returns a list
+            - Strings are converted to single-item lists
+            - Lists are returned as-is
+            - None/empty values become empty lists
+            
+        Raises:
+            - None
+        """
+        if value is None:
+            return []
+        elif isinstance( value, str ):
+            return [value] if value else []
+        elif isinstance( value, list ):
+            return value
+        else:
+            # For other types, try to convert to list
+            try:
+                return list( value ) if value else []
+            except (TypeError, ValueError):
+                return []
     
     def _record_to_snapshot( self, record: Dict[str, Any] ) -> SolutionSnapshot:
         """
@@ -349,48 +381,11 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                 if self.debug:
                     print( f"✓ Opened existing table: {self.table_name}" )
             else:
-                # Create new table with schema and dummy record
+                # Create new table with explicit schema (not from data to avoid type inference issues)
                 schema = self._get_schema()
                 
-                # Create dummy record to initialize table (LanceDB requires at least one record)
-                dummy_record = {
-                    "id_hash": "dummy_init_record",
-                    "user_id": "system",
-                    "question": "__INIT_DUMMY_RECORD__",
-                    "question_gist": "",
-                    "answer": "",
-                    "answer_conversational": "",
-                    "solution_summary": "",
-                    "thoughts": "",
-                    "error": "",
-                    "routing_command": "",
-                    "code": [],
-                    "code_returns": "",
-                    "code_example": "",
-                    "code_type": "",
-                    "programming_language": "python",
-                    "language_version": "3.10",
-                    "synonymous_questions": "{}",
-                    "synonymous_question_gists": "{}",
-                    "non_synonymous_questions": [],
-                    "last_question_asked": "",
-                    "created_date": time.strftime( "%Y-%m-%d @ %H:%M:%S %Z" ),
-                    "updated_date": time.strftime( "%Y-%m-%d @ %H:%M:%S %Z" ),
-                    "run_date": "",
-                    "runtime_stats": "{}",
-                    "question_embedding": [0.0] * 1536,
-                    "question_gist_embedding": [0.0] * 1536,
-                    "solution_embedding": [0.0] * 1536,
-                    "code_embedding": [0.0] * 1536,
-                    "thoughts_embedding": [0.0] * 1536,
-                }
-                
-                import pandas as pd
-                dummy_df = pd.DataFrame( [dummy_record] )
-                self._table = self._db.create_table( self.table_name, dummy_df )
-                
-                # Immediately delete the dummy record
-                self._table.delete( "id_hash = 'dummy_init_record'" )
+                # Create table with explicit schema - this ensures correct list item types
+                self._table = self._db.create_table( self.table_name, schema=schema )
                 
                 if self.debug:
                     print( f"✓ Created new table: {self.table_name}" )
@@ -438,7 +433,11 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
     
     def add_snapshot( self, snapshot: SolutionSnapshot ) -> bool:
         """
-        Add snapshot to LanceDB table.
+        Add snapshot to LanceDB table using context-aware operations.
+        
+        Uses appropriate LanceDB operation based on whether this is a new snapshot
+        or an update to existing data. This fixes the persistence issue by using
+        proper LanceDB APIs instead of manual delete/add operations.
         
         Requires:
             - Manager is initialized
@@ -446,7 +445,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             - snapshot.question is not empty
             
         Ensures:
-            - Snapshot is stored in LanceDB table
+            - Snapshot is stored in LanceDB table using optimal operation
             - Cache is updated with new snapshot
             - Returns True if successful
             
@@ -461,41 +460,159 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             raise ValueError( "Invalid snapshot: question cannot be empty" )
         
         try:
-            # Convert snapshot to record format
-            record = self._snapshot_to_record( snapshot )
-            
-            # Check if snapshot already exists (upsert behavior)
+            # Check if snapshot already exists
             question = snapshot.question
-            if question in self._question_lookup:
-                # Update existing record
-                id_hash = self._question_lookup[question]
-                # LanceDB doesn't have direct update, so we'll use merge
-                # For now, we'll delete and re-insert
-                self._table.delete( f"id_hash = '{id_hash}'" )
-                
+            exists = self._check_snapshot_exists( question )
+            
+            if not exists:
+                # Brand new snapshot - use direct INSERT
+                if self.debug:
+                    print( f"Inserting new snapshot for: {du.truncate_string( question, 50 )}" )
+                return self._insert_new_snapshot( snapshot )
+            else:
+                # Existing snapshot - determine best update approach
                 if self.debug:
                     print( f"Updating existing snapshot for: {du.truncate_string( question, 50 )}" )
-            else:
-                if self.debug:
-                    print( f"Adding new snapshot for: {du.truncate_string( question, 50 )}" )
+                return self._update_existing_snapshot( snapshot )
+                
+        except Exception as e:
+            if self.debug:
+                print( f"✗ Failed to add snapshot: {e}" )
+            return False
+    
+    def _check_snapshot_exists( self, question: str ) -> bool:
+        """
+        Check if snapshot exists using cache for fast lookup.
+        
+        Requires:
+            - question is non-empty string
             
-            # Add to table
+        Ensures:
+            - Returns True if snapshot exists
+            - Returns False if snapshot doesn't exist
+            
+        Raises:
+            - None
+        """
+        return question in self._question_lookup
+    
+    def _insert_new_snapshot( self, snapshot: SolutionSnapshot ) -> bool:
+        """
+        Insert a brand new snapshot using direct LanceDB add.
+        
+        Requires:
+            - snapshot is valid SolutionSnapshot
+            - snapshot doesn't exist in table
+            
+        Ensures:
+            - Snapshot inserted using table.add()
+            - Cache updated with new snapshot
+            - Returns True if successful
+            
+        Raises:
+            - Exception if insert fails
+        """
+        try:
+            record = self._snapshot_to_record( snapshot )
+            
+            # Use direct insert for new snapshots
             import pandas as pd
             df = pd.DataFrame( [record] )
             self._table.add( df )
             
             # Update cache
             id_hash = record["id_hash"]
-            self._question_lookup[question] = id_hash
+            self._question_lookup[snapshot.question] = id_hash
             self._id_lookup[id_hash] = record
             
+            if self.debug:
+                print( f"  ✓ Inserted new snapshot with id_hash: {id_hash[:8]}..." )
+                
             return True
             
         except Exception as e:
             if self.debug:
-                print( f"✗ Failed to add snapshot: {e}" )
-            return False
+                print( f"  ✗ Insert failed: {e}" )
+            raise e
     
+    def _update_existing_snapshot( self, snapshot: SolutionSnapshot ) -> bool:
+        """
+        Update existing snapshot using appropriate LanceDB operation.
+        
+        Determines the most efficient update method based on what fields changed:
+        - Runtime stats only: Use table.update() for targeted field update
+        - Multiple fields: Use merge_insert for full replacement
+        
+        Requires:
+            - snapshot is valid SolutionSnapshot
+            - snapshot exists in table
+            
+        Ensures:
+            - Snapshot updated using optimal LanceDB operation
+            - Cache updated with new data
+            - Returns True if successful
+            
+        Raises:
+            - Exception if update fails
+        """
+        try:
+            # Get existing snapshot for comparison
+            existing_id_hash = self._question_lookup[snapshot.question]
+            existing_record = self._id_lookup[existing_id_hash]
+            
+            # For now, use merge_insert for all updates (safest approach)
+            # TODO: Add smart detection for partial updates in future iterations
+            return self._full_replace_snapshot( snapshot )
+            
+        except Exception as e:
+            if self.debug:
+                print( f"  ✗ Update failed: {e}" )
+            raise e
+    
+    def _full_replace_snapshot( self, snapshot: SolutionSnapshot ) -> bool:
+        """
+        Replace entire snapshot using LanceDB merge_insert operation.
+        
+        Uses the proper LanceDB merge_insert API which handles atomicity
+        and persistence correctly, unlike the old delete/add pattern.
+        
+        Requires:
+            - snapshot is valid SolutionSnapshot
+            
+        Ensures:
+            - Snapshot replaced using merge_insert
+            - Cache updated with new data
+            - Returns True if successful
+            
+        Raises:
+            - Exception if merge fails
+        """
+        try:
+            record = self._snapshot_to_record( snapshot )
+            
+            # Use proper LanceDB merge_insert for atomic upsert
+            (
+                self._table.merge_insert( "id_hash" )
+                .when_matched_update_all()
+                .when_not_matched_insert_all()
+                .execute( [record] )
+            )
+            
+            # Update cache
+            id_hash = record["id_hash"]
+            self._question_lookup[snapshot.question] = id_hash
+            self._id_lookup[id_hash] = record
+            
+            if self.debug:
+                print( f"  ✓ Merge completed for id_hash: {id_hash[:8]}..." )
+                
+            return True
+            
+        except Exception as e:
+            if self.debug:
+                print( f"  ✗ Merge failed: {e}" )
+            raise e
+
     def delete_snapshot( self, question: str, delete_physical: bool = False ) -> bool:
         """
         Delete snapshot by question.
@@ -520,19 +637,22 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             raise ValueError( "Question cannot be empty" )
         
         try:
-            if question not in self._question_lookup:
+            # Normalize question case for consistent lookup (SolutionSnapshot stores lowercase)
+            normalized_question = question.lower()
+            
+            if normalized_question not in self._question_lookup:
                 if self.debug:
                     print( f"Snapshot not found for: {du.truncate_string( question, 50 )}" )
                 return False
             
-            # Get ID hash for deletion
-            id_hash = self._question_lookup[question]
+            # Get ID hash for deletion using normalized question
+            id_hash = self._question_lookup[normalized_question]
             
             # Delete from table
             self._table.delete( f"id_hash = '{id_hash}'" )
             
-            # Update cache
-            del self._question_lookup[question]
+            # Update cache using normalized question
+            del self._question_lookup[normalized_question]
             del self._id_lookup[id_hash]
             
             if self.debug:
@@ -591,6 +711,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                 record = self._id_lookup[id_hash]
                 snapshot = self._record_to_snapshot( record )
                 
+                monitor.stop()  # Fix: Call stop() before getting metrics
                 return [(100.0, snapshot)], monitor.get_metrics( result_count=1 )
             
             # For similarity search, we need to generate an embedding for the question
