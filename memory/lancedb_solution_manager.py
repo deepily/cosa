@@ -665,12 +665,13 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                 print( f"✗ Failed to delete snapshot: {e}" )
             return False
     
-    def find_by_question( self, 
-                         question: str,
-                         question_gist: Optional[str] = None,
-                         threshold_question: float = 100.0,
-                         threshold_gist: float = 100.0,
-                         limit: int = 7 ) -> Tuple[List[Tuple[float, SolutionSnapshot]], PerformanceMetrics]:
+    def get_snapshots_by_question( self, 
+                                  question: str,
+                                  question_gist: Optional[str] = None,
+                                  threshold_question: float = 100.0,
+                                  threshold_gist: float = 100.0,
+                                  limit: int = 7, 
+                                  debug: bool = False ) -> List[Tuple[float, Any]]:
         """
         Search for snapshots by question similarity using LanceDB vector search.
         
@@ -698,7 +699,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         if not (0.0 <= threshold_question <= 100.0) or not (0.0 <= threshold_gist <= 100.0):
             raise ValueError( "Thresholds must be between 0.0 and 100.0" )
         
-        monitor = PerformanceMonitor( "find_by_question" )
+        monitor = PerformanceMonitor( "get_snapshots_by_question" )
         monitor.start()
         
         try:
@@ -712,7 +713,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                 snapshot = self._record_to_snapshot( record )
                 
                 monitor.stop()  # Fix: Call stop() before getting metrics
-                return [(100.0, snapshot)], monitor.get_metrics( result_count=1 )
+                return [(100.0, snapshot)]
             
             # For similarity search, we need to generate an embedding for the question
             # Since we don't have direct access to embedding generation here,
@@ -776,10 +777,11 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         
         return len( intersection ) / len( union ) if union else 0.0
     
-    def find_by_code_similarity( self,
-                                exemplar_snapshot: SolutionSnapshot,
-                                threshold: float = 85.0,
-                                limit: int = -1 ) -> Tuple[List[Tuple[float, SolutionSnapshot]], PerformanceMetrics]:
+    def get_snapshots_by_code_similarity( self,
+                                         exemplar_snapshot: SolutionSnapshot,
+                                         threshold: float = 85.0,
+                                         limit: int = -1, 
+                                         debug: bool = False ) -> List[Tuple[float, Any]]:
         """
         Search for snapshots by code similarity using LanceDB vector search.
         
@@ -807,7 +809,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         if not (0.0 <= threshold <= 100.0):
             raise ValueError( "Threshold must be between 0.0 and 100.0" )
         
-        monitor = PerformanceMonitor( "find_by_code_similarity" )
+        monitor = PerformanceMonitor( "get_snapshots_by_code_similarity" )
         monitor.start()
         
         try:
@@ -846,9 +848,9 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         finally:
             monitor.stop()
             
-        return similar_snapshots, monitor.get_metrics( result_count=len( similar_snapshots ) )
+        return similar_snapshots
     
-    def get_all_gists( self ) -> List[str]:
+    def get_gists( self ) -> List[str]:
         """
         Return all available question gists.
         
@@ -1000,7 +1002,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                 "backend_type": "lancedb",
                 "errors": [f"Health check failed: {e}"]
             }
-
+    
 
 def quick_smoke_test():
     """Test the LanceDB manager interface implementation."""
@@ -1064,13 +1066,13 @@ def quick_smoke_test():
         
         # Test gists retrieval
         print( "\nTesting gists retrieval..." )
-        gists = manager.get_all_gists()
+        gists = manager.get_gists()
         print( f"✓ Retrieved {len( gists )} question gists" )
         
         # Test basic search
         print( "\nTesting basic search..." )
-        results, search_metrics = manager.find_by_question( "test question" )
-        print( f"✓ Search returned {len( results )} results in {search_metrics.search_time_ms:.1f}ms" )
+        results = manager.get_snapshots_by_question( "test question" )
+        print( f"✓ Search returned {len( results )} results" )
         
         print( "\n✓ LanceDBSolutionManager smoke test completed successfully" )
         

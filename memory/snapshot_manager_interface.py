@@ -217,12 +217,13 @@ class SolutionSnapshotManagerInterface( ABC ):
         pass
     
     @abstractmethod
-    def find_by_question( self, 
-                         question: str,
-                         question_gist: Optional[str] = None,
-                         threshold_question: float = 100.0,
-                         threshold_gist: float = 100.0,
-                         limit: int = 7 ) -> Tuple[List[Tuple[float, SolutionSnapshot]], PerformanceMetrics]:
+    def get_snapshots_by_question( self, 
+                                  question: str,
+                                  question_gist: Optional[str] = None,
+                                  threshold_question: float = 100.0,
+                                  threshold_gist: float = 100.0,
+                                  limit: int = 7,
+                                  debug: bool = False ) -> List[Tuple[float, Any]]:
         """
         Search for snapshots by question similarity.
         
@@ -246,10 +247,11 @@ class SolutionSnapshotManagerInterface( ABC ):
         pass
     
     @abstractmethod
-    def find_by_code_similarity( self,
-                                exemplar_snapshot: SolutionSnapshot,
-                                threshold: float = 85.0,
-                                limit: int = -1 ) -> Tuple[List[Tuple[float, SolutionSnapshot]], PerformanceMetrics]:
+    def get_snapshots_by_code_similarity( self,
+                                         exemplar_snapshot: SolutionSnapshot,
+                                         threshold: float = 85.0,
+                                         limit: int = -1,
+                                         debug: bool = False ) -> List[Tuple[float, Any]]:
         """
         Search for snapshots by code similarity.
         
@@ -273,7 +275,7 @@ class SolutionSnapshotManagerInterface( ABC ):
         pass
     
     @abstractmethod
-    def get_all_gists( self ) -> List[str]:
+    def get_gists( self ) -> List[str]:
         """
         Return all available question gists.
         
