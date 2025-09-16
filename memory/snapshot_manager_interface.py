@@ -152,9 +152,9 @@ class SolutionSnapshotManagerInterface( ABC ):
         self._performance_monitoring = config.get( "enable_performance_monitoring", True )
     
     @abstractmethod
-    def initialize( self ) -> PerformanceMetrics:
+    def initialize( self ) -> None:
         """
-        Load/initialize storage backend and return initialization metrics.
+        Load/initialize storage backend.
         
         Requires:
             - Configuration is valid and complete
@@ -162,7 +162,6 @@ class SolutionSnapshotManagerInterface( ABC ):
             
         Ensures:
             - Storage system is ready for operations
-            - Returns metrics about initialization performance
             - Sets _initialized flag to True
             - Can be called multiple times safely
             
@@ -237,7 +236,6 @@ class SolutionSnapshotManagerInterface( ABC ):
             - Returns list of (similarity_score, snapshot) tuples
             - Results sorted by similarity descending
             - Limited to requested count
-            - Returns performance metrics
             - Identical behavior across implementations
             
         Raises:
@@ -265,7 +263,6 @@ class SolutionSnapshotManagerInterface( ABC ):
             - Returns list of (similarity_score, snapshot) tuples
             - Results sorted by similarity descending
             - Limited to requested count (-1 = no limit)
-            - Returns performance metrics
             - Identical behavior across implementations
             
         Raises:

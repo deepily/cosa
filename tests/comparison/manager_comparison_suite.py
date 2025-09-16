@@ -139,10 +139,9 @@ class SolutionSnapshotManagerTestSuite:
             return health
         
         def test_initialization():
-            metrics = self.manager.initialize()
+            result = self.manager.initialize()
             assert self.manager.is_initialized()
-            assert metrics.operation_type == "initialization"
-            return metrics
+            return result
         
         def test_health_after_init():
             health = self.manager.health_check()
@@ -179,7 +178,7 @@ class SolutionSnapshotManagerTestSuite:
         print( f"\n📝 Testing Basic Operations..." )
         
         def test_gists_retrieval():
-            gists = self.manager.get_all_gists()
+            gists = self.manager.get_gists()
             assert isinstance( gists, list )
             return len( gists )
         
@@ -201,12 +200,11 @@ class SolutionSnapshotManagerTestSuite:
             return test_snapshot.question
         
         def test_search_added_snapshot():
-            results, metrics = self.manager.find_by_question( 
+            results = self.manager.get_snapshots_by_question( 
                 "test question for CRUD operations",
                 threshold_question=90.0
             )
             assert len( results ) > 0, "Could not find added snapshot"
-            assert metrics.result_count > 0
             return len( results )
         
         def test_delete_snapshot():
@@ -224,29 +222,27 @@ class SolutionSnapshotManagerTestSuite:
         print( f"\n🔍 Testing Search Functionality..." )
         
         def test_question_search_high_threshold():
-            results, metrics = self.manager.find_by_question( 
+            results = self.manager.get_snapshots_by_question( 
                 "nonexistent question xyz123",
                 threshold_question=95.0,
                 limit=5
             )
             assert isinstance( results, list )
-            assert metrics.search_time_ms >= 0
-            return {"results": len( results ), "time_ms": metrics.search_time_ms}
+            return {"results": len( results )}
         
         def test_question_search_low_threshold():
-            results, metrics = self.manager.find_by_question(
+            results = self.manager.get_snapshots_by_question(
                 "what",  # Common word that might match something
                 threshold_question=50.0,
                 limit=10
             )
             assert isinstance( results, list )
-            assert metrics.search_time_ms >= 0
-            return {"results": len( results ), "time_ms": metrics.search_time_ms}
+            return {"results": len( results )}
         
         def test_search_with_limits():
             # Test different limit values
-            results_5, _ = self.manager.find_by_question( "test", limit=5 )
-            results_10, _ = self.manager.find_by_question( "test", limit=10 )
+            results_5 = self.manager.get_snapshots_by_question( "test", limit=5 )
+            results_10 = self.manager.get_snapshots_by_question( "test", limit=10 )
             
             assert len( results_5 ) <= 5
             assert len( results_10 ) <= 10
@@ -263,14 +259,14 @@ class SolutionSnapshotManagerTestSuite:
         
         def test_empty_question_search():
             try:
-                self.manager.find_by_question( "" )
+                self.manager.get_snapshots_by_question( "" )
                 return "No error raised for empty question"
             except ValueError:
                 return "Correctly rejected empty question"
         
         def test_invalid_threshold():
             try:
-                self.manager.find_by_question( "test", threshold_question=150.0 )
+                self.manager.get_snapshots_by_question( "test", threshold_question=150.0 )
                 return "No error raised for invalid threshold"
             except ValueError:
                 return "Correctly rejected invalid threshold"
@@ -294,7 +290,7 @@ class SolutionSnapshotManagerTestSuite:
             
             for i in range( 5 ):
                 start = time.time()
-                results, metrics = self.manager.find_by_question( query, limit=5 )
+                results = self.manager.get_snapshots_by_question( query, limit=5 )
                 duration = ( time.time() - start ) * 1000
                 times.append( duration )
             
@@ -309,7 +305,7 @@ class SolutionSnapshotManagerTestSuite:
         
         def test_large_limit_search():
             start = time.time()
-            results, metrics = self.manager.find_by_question( 
+            results = self.manager.get_snapshots_by_question( 
                 "test", 
                 threshold_question=1.0,  # Very low threshold to potentially get many results
                 limit=100  # Large limit

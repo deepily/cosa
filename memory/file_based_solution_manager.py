@@ -74,7 +74,7 @@ class FileBasedSolutionManager( SolutionSnapshotManagerInterface ):
         if self.debug:
             print( f"FileBasedSolutionManager configured with path: {self.path}" )
     
-    def initialize( self ) -> PerformanceMetrics:
+    def initialize( self ) -> None:
         """
         Initialize the underlying file-based storage system.
         
@@ -85,7 +85,6 @@ class FileBasedSolutionManager( SolutionSnapshotManagerInterface ):
         Ensures:
             - Creates underlying SolutionSnapshotManager
             - Loads all existing snapshots from disk
-            - Returns initialization performance metrics
             - Sets _initialized flag to True
             
         Raises:
@@ -122,9 +121,7 @@ class FileBasedSolutionManager( SolutionSnapshotManagerInterface ):
         finally:
             monitor.stop()
         
-        return monitor.get_metrics( 
-            result_count=len( self._underlying_manager._snapshots_by_question ) if self._underlying_manager else 0
-        )
+        # Initialization complete, no return value needed
     
     def add_snapshot( self, snapshot: SolutionSnapshot ) -> bool:
         """

@@ -27,7 +27,9 @@
       "Bash(./tests/unit/scripts/run-cosa-unit-tests.sh:*)",
       "Bash(/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh:*)",
       "WebFetch(domain:ai.pydantic.dev)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Read(//home/rruiz/.claude/**)",
+      "Read(//mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/**)"
     ],
     "deny": [],
     "additionalDirectories": [

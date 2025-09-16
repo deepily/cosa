@@ -342,7 +342,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         
         return snapshot
     
-    def initialize( self ) -> PerformanceMetrics:
+    def initialize( self ) -> None:
         """
         Initialize LanceDB connection and create/open solution snapshots table.
         
@@ -429,7 +429,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         finally:
             monitor.stop()
         
-        return monitor.get_metrics( result_count=snapshot_count )
+        # Initialization complete, no return value needed
     
     def add_snapshot( self, snapshot: SolutionSnapshot ) -> bool:
         """
@@ -753,7 +753,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         finally:
             monitor.stop()
             
-        return similar_snapshots, monitor.get_metrics( result_count=len( similar_snapshots ) )
+        return similar_snapshots
     
     def _calculate_text_similarity( self, text1: str, text2: str ) -> float:
         """
