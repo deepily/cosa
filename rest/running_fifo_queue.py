@@ -304,9 +304,9 @@ class RunningFifoQueue( FifoQueue ):
         running_job.update_runtime_stats( run_timer )
         du.print_banner( f"Job [{running_job.question}] complete!", prepend_nl=True, end="\n" )
         
-        print( f"Writing job [{running_job.last_question_asked}] to file..." )
-        running_job.write_current_state_to_file()
-        print( f"Writing job [{running_job.last_question_asked}] to file... Done!" )
+        # Note: Snapshot already saved via self.snapshot_mgr.add_snapshot() at line 248
+        # Removed redundant write_current_state_to_file() call as serialization
+        # is now handled by managers, not snapshot objects
         
         du.print_banner( "running_job.runtime_stats", prepend_nl=True )
         pprint.pprint( running_job.runtime_stats )

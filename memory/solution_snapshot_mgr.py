@@ -10,27 +10,49 @@ from cosa.memory.question_embeddings_table import QuestionEmbeddingsTable
 
 class SolutionSnapshotManager:
     """
-    Manages solution snapshots stored as JSON files.
-    
+    DEPRECATED: Use SolutionSnapshotManagerFactory.create_manager() instead.
+
+    This class is deprecated as of 2025.09.17 and will be removed in a future version.
+    The factory pattern with FileBasedSolutionManager provides better architecture
+    with interface compliance and performance monitoring.
+
+    Legacy class that manages solution snapshots stored as JSON files.
     Handles loading, searching, and managing solution snapshots with
     embedding-based similarity search capabilities.
+
+    Migration path:
+        # OLD (deprecated):
+        manager = SolutionSnapshotManager(path, debug=True)
+
+        # NEW (recommended):
+        from cosa.memory.solution_manager_factory import SolutionSnapshotManagerFactory
+        config = {"path": path}
+        manager = SolutionSnapshotManagerFactory.create_manager("file_based", config, debug=True)
     """
     def __init__( self, path: str, debug: bool=False, verbose: bool=False ) -> None:
         """
-        Initialize the solution snapshot manager.
-        
+        DEPRECATED: Initialize the solution snapshot manager.
+
+        Use SolutionSnapshotManagerFactory.create_manager("file_based", config) instead.
+
         Requires:
             - path is a valid directory path
             - Directory contains JSON snapshot files
-            
+
         Ensures:
             - Loads all snapshots from directory
             - Creates lookup dictionaries by question and gist
             - Initializes embeddings table
-            
+
         Raises:
             - OSError if directory doesn't exist
         """
+        import warnings
+        warnings.warn(
+            "SolutionSnapshotManager is deprecated. Use SolutionSnapshotManagerFactory.create_manager('file_based', config) instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         
         self.debug                              = debug
         self.verbose                            = verbose

@@ -284,12 +284,20 @@ class SolutionSnapshot( RunnableCode ):
         else:
             self.thoughts_embedding = thoughts_embedding
             
-        # Save changes if we've made any change as while loading
-        if dirty: self.write_current_state_to_file()
+        # Note: Auto-save removed - serialization is now handled by managers
+        # If embeddings were generated during loading, they will be persisted
+        # when the manager calls add_snapshot() or equivalent method
         
     @classmethod
     def from_json_file( cls, filename: str, debug: bool=False ) -> 'SolutionSnapshot':
         """
+        DEPRECATED: Load snapshot from JSON file.
+
+        This method is deprecated as of 2025.09.17. Deserialization should be handled
+        by the manager, not the snapshot object.
+
+        Use: manager.get_snapshots_by_question() or similar manager methods instead.
+
         Load snapshot from JSON file.
         
         Requires:
@@ -304,10 +312,17 @@ class SolutionSnapshot( RunnableCode ):
             - FileNotFoundError if file doesn't exist
             - JSONDecodeError if invalid JSON
         """
+        import warnings
+        warnings.warn(
+            "from_json_file() is deprecated. Use manager methods for loading snapshots.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
         if debug: print( f"Reading {filename}..." )
         with open( filename, "r" ) as f:
             data = json.load( f )
-        
+
         return cls( **data )
     
     @classmethod
@@ -532,19 +547,19 @@ class SolutionSnapshot( RunnableCode ):
     
     def to_jsons( self, verbose: bool=True ) -> str:
         """
-        Serialize snapshot to JSON string.
-        
-        Requires:
-            - Object is properly initialized
-            
-        Ensures:
-            - Returns valid JSON string
-            - Excludes non-serializable fields
-            - All data preserved for loading
-            
-        Raises:
-            - JSON serialization errors
+        DEPRECATED: Serialize snapshot to JSON string.
+
+        This method is deprecated as of 2025.09.17. Serialization should be handled
+        by the manager, not the snapshot object.
         """
+        import warnings
+        warnings.warn(
+            "to_jsons() is deprecated. Serialization should be handled by managers.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
+        # Original method logic continues (keeping functionality for now)
         # TODO: decide what we're going to exclude from serialization, and why or why not!
         # Right now I'm just doing this for the sake of expediency as I'm playing with class inheritance for agents
         fields_to_exclude = [ "prompt_response", "prompt_response_dict", "code_response_dict", "phind_tgi_url", "config_mgr", "_embedding_mgr", "websocket_id", "user_id" ]
@@ -585,20 +600,31 @@ class SolutionSnapshot( RunnableCode ):
      
     def write_current_state_to_file( self ) -> None:
         """
-        Write snapshot to JSON file.
-        
+        DEPRECATED: Write snapshot to JSON file.
+
+        This method is deprecated as of 2025.09.17. Serialization should be handled
+        by the manager, not the snapshot object.
+
+        Use: manager.add_snapshot(snapshot) instead.
+
         Requires:
             - solution_directory is valid path
             - All required fields populated
-            
+
         Ensures:
             - Creates JSON file with snapshot data
             - Generates unique filename if needed
             - Sets file permissions to 0o666
-            
+
         Raises:
             - OSError if file operations fail
         """
+        import warnings
+        warnings.warn(
+            "write_current_state_to_file() is deprecated. Use manager.add_snapshot() instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         # Get the project root directory
         project_root = du.get_project_root()
         # Define the directory where the file will be saved
@@ -635,18 +661,29 @@ class SolutionSnapshot( RunnableCode ):
         
     def delete_file( self ) -> None:
         """
-        Delete snapshot file from filesystem.
-        
+        DEPRECATED: Delete snapshot file from filesystem.
+
+        This method is deprecated as of 2025.09.17. File management should be handled
+        by the manager, not the snapshot object.
+
+        Use: manager.delete_snapshot(question, delete_physical=True) instead.
+
         Requires:
             - solution_file and solution_directory are set
-            
+
         Ensures:
             - Removes file if it exists
             - Prints status message
-            
+
         Raises:
             - None (handles errors internally)
         """
+        import warnings
+        warnings.warn(
+            "delete_file() is deprecated. Use manager.delete_snapshot() instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         file_path = f"{du.get_project_root()}{self.solution_directory}{self.solution_file}"
         
         if os.path.isfile( file_path ):
