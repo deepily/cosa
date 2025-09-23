@@ -15,7 +15,7 @@ class WeatherAgent( AgentBase ):
     from the web and format it for the user.
     """
     
-    def __init__( self, prepend_date_and_time: bool=True, question: str="", question_gist: str="", last_question_asked: str="", push_counter: int=-1, routing_command: str="agent router go to weather", debug: bool=False, verbose: bool=False, auto_debug: bool=False, inject_bugs: bool=False ) -> None:
+    def __init__( self, prepend_date_and_time: bool=True, question: str="", question_gist: str="", last_question_asked: str="", push_counter: int=-1, routing_command: str="agent router go to weather", user_id: str="ricardo_felipe_ruiz_6bdc", debug: bool=False, verbose: bool=False, auto_debug: bool=False, inject_bugs: bool=False ) -> None:
         """
         Initialize the weather agent.
         
@@ -38,7 +38,7 @@ class WeatherAgent( AgentBase ):
         else:
             self.reformulated_last_question_asked = last_question_asked
         
-        super().__init__( df_path_key=None, question=question, question_gist=question_gist, last_question_asked=last_question_asked, routing_command=routing_command, push_counter=push_counter, debug=debug, verbose=verbose, auto_debug=auto_debug, inject_bugs=inject_bugs )
+        super().__init__( df_path_key=None, question=question, question_gist=question_gist, last_question_asked=last_question_asked, routing_command=routing_command, push_counter=push_counter, user_id=user_id, debug=debug, verbose=verbose, auto_debug=auto_debug, inject_bugs=inject_bugs )
         
         self.prompt                   = None
         self.xml_response_tag_names   = []

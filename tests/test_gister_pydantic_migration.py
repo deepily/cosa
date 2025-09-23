@@ -19,7 +19,7 @@ import time
 from typing import Dict, Any
 
 from cosa.config.configuration_manager import ConfigurationManager
-from cosa.agents.v010.gister import Gister
+from cosa.memory.gister import Gister
 from cosa.agents.io_models.xml_models import SimpleResponse
 
 
@@ -586,7 +586,7 @@ def quick_smoke_test() -> bool:
         
         # Test 4: Basic Gister functionality
         print( "  - Testing basic Gister functionality..." )
-        from cosa.agents.v010.gister import Gister
+        from cosa.memory.gister import Gister
         
         gister = Gister( debug=False, verbose=False )
         result = gister.get_gist( "hello" )
