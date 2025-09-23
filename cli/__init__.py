@@ -14,12 +14,11 @@ Main Components:
 __version__ = "0.1.0"
 __author__ = "CoSA Development Team"
 
-# Make main functions available at package level
-from .notify_user import notify_user
-from .notification_types import NotificationType, NotificationPriority
+# NOTE: Convenience imports removed to prevent any potential circular dependencies
+# Use direct imports instead, e.g.:
+#   from cosa.cli.notify_user import notify_user
+#   from cosa.cli.notification_types import NotificationType, NotificationPriority
 
-__all__ = [
-    'notify_user',
-    'NotificationType', 
-    'NotificationPriority'
-]
+# Removed imports:
+# from .notify_user import notify_user
+# from .notification_types import NotificationType, NotificationPriority

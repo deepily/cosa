@@ -10,112 +10,47 @@ This package contains modernized agent implementations providing:
 Previously organized under v010/, now consolidated in the main agents directory.
 """
 
-# Agent implementations
-from .agent_base import AgentBase
-from .calendaring_agent import CalendaringAgent
-from .date_and_time_agent import DateAndTimeAgent
-from .math_agent import MathAgent
-from .receptionist_agent import ReceptionistAgent
-from .todo_list_agent import TodoListAgent
-from .weather_agent import WeatherAgent
-from .bug_injector import BugInjector
-from .iterative_debugging_agent import IterativeDebuggingAgent
+# NOTE: Imports removed to prevent circular dependency with memory modules
+# Direct imports should be used instead, e.g.:
+#   from cosa.agents.agent_base import AgentBase
+#   from cosa.agents.math_agent import MathAgent
+#
+# The circular dependency chain was:
+# gister.py → agents.llm_client_factory → agents.__init__ → agent_base →
+# solution_snapshot → embedding_manager → gist_normalizer → gister.py
 
-# Dialog utilities
-from .confirmation_dialog import ConfirmationDialogue
+# Agent implementations - use direct imports instead:
+# from .agent_base import AgentBase
+# from .calendaring_agent import CalendaringAgent
+# from .date_and_time_agent import DateAndTimeAgent
+# from .math_agent import MathAgent
+# from .receptionist_agent import ReceptionistAgent
+# from .todo_list_agent import TodoListAgent
+# from .weather_agent import WeatherAgent
+# from .bug_injector import BugInjector
+# from .iterative_debugging_agent import IterativeDebuggingAgent
 
-# LLM client infrastructure
-from .llm_client import LlmClient
-from .llm_client_factory import LlmClientFactory
-from .token_counter import TokenCounter
-from .llm_completion import LlmCompletion
-from .chat_client import ChatClient
-from .completion_client import CompletionClient
+# Dialog utilities - use direct imports instead:
+# from .confirmation_dialog import ConfirmationDialogue
 
-# Base abstractions for refactored architecture
-from .base_llm_client import BaseLlmClient
-from .llm_data_types import (
-    MessageRole,
-    LlmMessage,
-    LlmRequest,
-    LlmResponse,
-    LlmStreamChunk
-)
-from .llm_exceptions import (
-    LlmError,
-    LlmConfigError,
-    LlmAPIError,
-    LlmTimeoutError,
-    LlmAuthenticationError,
-    LlmRateLimitError,
-    LlmModelError,
-    LlmStreamingError,
-    LlmValidationError
-)
-from .model_registry import (
-    LlmProvider,
-    ModelConfig,
-    ModelRegistry
-)
+# LLM client infrastructure - use direct imports instead:
+# from .llm_client import LlmClient
+# from .llm_client_factory import LlmClientFactory
+# from .token_counter import TokenCounter
+# from .llm_completion import LlmCompletion
+# from .chat_client import ChatClient
+# from .completion_client import CompletionClient
 
-# Utilities
-from .prompt_formatter import PromptFormatter
-from .raw_output_formatter import RawOutputFormatter
-from .runnable_code import RunnableCode
-from .two_word_id_generator import TwoWordIdGenerator
+# Base abstractions - use direct imports instead:
+# from .base_llm_client import BaseLlmClient
+# from .llm_data_types import (MessageRole, LlmMessage, LlmRequest, LlmResponse, LlmStreamChunk)
+# from .llm_exceptions import (LlmError, LlmConfigError, LlmAPIError, LlmTimeoutError, etc.)
+# from .model_registry import (LlmProvider, ModelConfig, ModelRegistry)
 
-__all__ = [
-    # Agent implementations
-    'AgentBase',
-    'CalendaringAgent',
-    'DateAndTimeAgent',
-    'MathAgent',
-    'ReceptionistAgent',
-    'TodoListAgent',
-    'WeatherAgent',
-    'BugInjector',
-    'IterativeDebuggingAgent',
+# Utilities - use direct imports instead:
+# from .prompt_formatter import PromptFormatter
+# from .raw_output_formatter import RawOutputFormatter
+# from .runnable_code import RunnableCode
+# from .two_word_id_generator import TwoWordIdGenerator
 
-    # Dialog utilities
-    'ConfirmationDialogue',
-
-    # LLM client infrastructure
-    'LlmClient',
-    'LlmClientFactory',
-    'TokenCounter',
-    'LlmCompletion',
-    'ChatClient',
-    'CompletionClient',
-
-    # Base abstractions
-    'BaseLlmClient',
-
-    # Data types
-    'MessageRole',
-    'LlmMessage',
-    'LlmRequest',
-    'LlmResponse',
-    'LlmStreamChunk',
-
-    # Exceptions
-    'LlmError',
-    'LlmConfigError',
-    'LlmAPIError',
-    'LlmTimeoutError',
-    'LlmAuthenticationError',
-    'LlmRateLimitError',
-    'LlmModelError',
-    'LlmStreamingError',
-    'LlmValidationError',
-
-    # Registry
-    'LlmProvider',
-    'ModelConfig',
-    'ModelRegistry',
-
-    # Utilities
-    'PromptFormatter',
-    'RawOutputFormatter',
-    'RunnableCode',
-    'TwoWordIdGenerator'
-]
+# Note: __all__ list removed to prevent any import-time dependencies

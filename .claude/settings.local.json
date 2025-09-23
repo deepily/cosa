@@ -29,7 +29,17 @@
       "WebFetch(domain:ai.pydantic.dev)",
       "Bash(echo:*)",
       "Read(//home/rruiz/.claude/**)",
-      "Read(//mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/**)"
+      "Read(//mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/**)",
+      "Bash(for:*)",
+      "Bash(do echo \"=== $file ===\")",
+      "Bash(wc:*)",
+      "Bash(head:*)",
+      "Bash(done)",
+      "Bash(do:*)",
+      "Bash(if [ -f \"$file\" ])",
+      "Bash(then wc -l \"$file\")",
+      "Bash(else echo \"File not found\")",
+      "Bash(fi)"
     ],
     "deny": [],
     "additionalDirectories": [

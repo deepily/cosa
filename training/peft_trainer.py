@@ -25,7 +25,7 @@ from auto_round import AutoRoundConfig
 from huggingface_hub import login
 
 # Import the model configuration loader
-from cosa.training.conf import load_model_config
+from cosa.training.conf.model_config_loader import load_model_config
 
 import cosa.utils.util as du
 import cosa.utils.util_pytorch as dupt
@@ -271,7 +271,7 @@ class PeftTrainer:
             - ValueError if model_name not supported
         """
         # Import the model config map which has all supported models
-        from cosa.training.conf import MODEL_CONFIG_MAP
+        from cosa.training.conf.model_config_loader import MODEL_CONFIG_MAP
         
         if self.model_name not in MODEL_CONFIG_MAP:
             raise ValueError(
@@ -1958,7 +1958,7 @@ def quick_smoke_test():
         
         # Test CoSA internal imports
         try:
-            from cosa.training.conf import load_model_config
+            from cosa.training.conf.model_config_loader import load_model_config
             import cosa.utils.util as du
             import cosa.utils.util_pytorch as dupt
             from cosa.training.quantizer import Quantizer
