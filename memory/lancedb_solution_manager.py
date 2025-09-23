@@ -91,7 +91,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         if self.debug:
             print( f"LanceDBSolutionManager configured:" )
             print( f"  Database: {self.db_path}" )
-            print( f"  Table: {self.table_name}" )
+            print( f"     Table: {self.table_name}" )
     
     def _get_schema( self ) -> pa.Schema:
         """
