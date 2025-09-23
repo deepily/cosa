@@ -10,13 +10,13 @@ import cosa.utils.util_pandas        as dup
 import cosa.utils.util_xml as dux
 import cosa.memory.solution_snapshot as ss
 
-from cosa.agents.v010.raw_output_formatter import RawOutputFormatter
+from cosa.agents.raw_output_formatter import RawOutputFormatter
 
-from cosa.agents.v010.llm_client_factory import LlmClientFactory
-from cosa.agents.v010.runnable_code import RunnableCode
+from cosa.agents.llm_client_factory import LlmClientFactory
+from cosa.agents.runnable_code import RunnableCode
 from cosa.config.configuration_manager import ConfigurationManager
 from cosa.memory.solution_snapshot import SolutionSnapshot
-from cosa.agents.v010.two_word_id_generator import TwoWordIdGenerator
+from cosa.agents.two_word_id_generator import TwoWordIdGenerator
 from cosa.agents.io_models.utils.xml_parser_factory import XmlParserFactory
 
 class AgentBase( RunnableCode, abc.ABC ):
@@ -363,7 +363,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         elif auto_debug:
             
             # Iterative debugging agent extends this class: agent base
-            from cosa.agents.v010.iterative_debugging_agent import IterativeDebuggingAgent
+            from cosa.agents.iterative_debugging_agent import IterativeDebuggingAgent
 
             self.error = self.code_response_dict[ "output" ]
             
@@ -577,10 +577,10 @@ def quick_smoke_test():
         # Test 7: Dependency imports validation
         print( "Testing critical dependency imports..." )
         critical_imports = [
-            ( "cosa.agents.v010.raw_output_formatter", "RawOutputFormatter" ),
-            ( "cosa.agents.v010.llm_client_factory", "LlmClientFactory" ),
-            ( "cosa.agents.v010.runnable_code", "RunnableCode" ),
-            ( "cosa.agents.v010.two_word_id_generator", "TwoWordIdGenerator" )
+            ( "cosa.agents.raw_output_formatter", "RawOutputFormatter" ),
+            ( "cosa.agents.llm_client_factory", "LlmClientFactory" ),
+            ( "cosa.agents.runnable_code", "RunnableCode" ),
+            ( "cosa.agents.two_word_id_generator", "TwoWordIdGenerator" )
         ]
         
         import_success_count = 0

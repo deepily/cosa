@@ -18,7 +18,7 @@ from ..auth import get_current_user
 from ..dependencies.config import get_config_manager, get_snapshot_manager, get_id_generator
 from cosa.config.configuration_manager import ConfigurationManager
 from cosa.memory.solution_snapshot_mgr import SolutionSnapshotManager
-from cosa.agents.v010.two_word_id_generator import TwoWordIdGenerator
+from cosa.agents.two_word_id_generator import TwoWordIdGenerator
 import cosa.utils.util as du
 
 router = APIRouter(tags=["system"])

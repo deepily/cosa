@@ -32,8 +32,8 @@ except ImportError as e:
 
 # Import the modules under test
 try:
-    from cosa.agents.v010.math_agent import MathAgent
-    from cosa.agents.v010.agent_base import AgentBase
+    from cosa.agents.math_agent import MathAgent
+    from cosa.agents.agent_base import AgentBase
 except ImportError as e:
     print( f"Failed to import MathAgent: {e}" )
     sys.exit( 1 )
@@ -93,17 +93,17 @@ class MathAgentUnitTests:
             
             # Mock ConfigurationManager
             mock_cm_class = stack.enter_context( 
-                patch( 'cosa.agents.v010.agent_base.ConfigurationManager' ) 
+                patch( 'cosa.agents.agent_base.ConfigurationManager' ) 
             )
             mock_config = self.mock_mgr.config_manager_mock( config_values ).__enter__()
             mock_cm_class.return_value = mock_config
             
             # Mock file system operations
             mock_get_file = stack.enter_context( 
-                patch( 'cosa.agents.v010.agent_base.du.get_file_as_string' ) 
+                patch( 'cosa.agents.agent_base.du.get_file_as_string' ) 
             )
             mock_get_root = stack.enter_context( 
-                patch( 'cosa.agents.v010.agent_base.du.get_project_root' ) 
+                patch( 'cosa.agents.agent_base.du.get_project_root' ) 
             )
             
             mock_get_root.return_value = "/mocked/project/root"
@@ -111,13 +111,13 @@ class MathAgentUnitTests:
             
             # Mock SolutionSnapshot static methods
             mock_get_timestamp = stack.enter_context(
-                patch( 'cosa.agents.v010.agent_base.ss.SolutionSnapshot.get_timestamp' )
+                patch( 'cosa.agents.agent_base.ss.SolutionSnapshot.get_timestamp' )
             )
             mock_gen_hash = stack.enter_context(
-                patch( 'cosa.agents.v010.agent_base.ss.SolutionSnapshot.generate_id_hash' )
+                patch( 'cosa.agents.agent_base.ss.SolutionSnapshot.generate_id_hash' )
             )
             mock_remove_non_alpha = stack.enter_context(
-                patch( 'cosa.agents.v010.agent_base.ss.SolutionSnapshot.remove_non_alphanumerics' )
+                patch( 'cosa.agents.agent_base.ss.SolutionSnapshot.remove_non_alphanumerics' )
             )
             
             mock_get_timestamp.return_value = "2025-08-04-20-00-00"
@@ -126,7 +126,7 @@ class MathAgentUnitTests:
             
             # Mock TwoWordIdGenerator
             mock_two_word_gen = stack.enter_context(
-                patch( 'cosa.agents.v010.agent_base.TwoWordIdGenerator' )
+                patch( 'cosa.agents.agent_base.TwoWordIdGenerator' )
             )
             mock_two_word_instance = MagicMock()
             mock_two_word_instance.get_id.return_value = "math-test-id"
@@ -376,7 +376,7 @@ class MathAgentUnitTests:
             
             mock_context2 = self._create_math_agent_mock_context( config_values_full )
             with mock_context2(), \
-                 patch( 'cosa.agents.v010.agent_base.RawOutputFormatter' ) as mock_formatter_class:
+                 patch( 'cosa.agents.agent_base.RawOutputFormatter' ) as mock_formatter_class:
                 
                 # Mock the formatter
                 mock_formatter = MagicMock()

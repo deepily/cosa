@@ -1,7 +1,7 @@
 import cosa.utils.util as du
 import cosa.utils.util_xml as dux
 from cosa.config.configuration_manager import ConfigurationManager
-from cosa.agents.v010.llm_client_factory import LlmClientFactory
+from cosa.agents.llm_client_factory import LlmClientFactory
 from cosa.agents.io_models.xml_models import SimpleResponse
 from cosa.agents.io_models.utils.prompt_template_processor import PromptTemplateProcessor
 

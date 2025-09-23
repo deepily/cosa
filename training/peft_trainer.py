@@ -30,7 +30,7 @@ from cosa.training.conf import load_model_config
 import cosa.utils.util as du
 import cosa.utils.util_pytorch as dupt
 
-import cosa.agents.v010.llm_client as llm_v010
+import cosa.agents.llm_client as llm_v010
 from cosa.training.quantizer import Quantizer
 from cosa.utils.util_stopwatch import Stopwatch
 

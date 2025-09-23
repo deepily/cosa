@@ -1,8 +1,8 @@
-# from cosa.agents.v010.math_refactoring_agent import MathRefactoringAgent
-from cosa.agents.v010.receptionist_agent import ReceptionistAgent
-from cosa.agents.v010.weather_agent import WeatherAgent
+# from cosa.agents.math_refactoring_agent import MathRefactoringAgent
+from cosa.agents.receptionist_agent import ReceptionistAgent
+from cosa.agents.weather_agent import WeatherAgent
 from cosa.rest.fifo_queue import FifoQueue
-from cosa.agents.v010.agent_base import AgentBase
+from cosa.agents.agent_base import AgentBase
 from cosa.memory.input_and_output_table import InputAndOutputTable
 from cosa.memory.solution_snapshot import SolutionSnapshot
 
@@ -358,10 +358,10 @@ def quick_smoke_test():
         # Test 2: Critical dependency imports
         print( "Testing critical dependency imports..." )
         try:
-            from cosa.agents.v010.receptionist_agent import ReceptionistAgent
-            from cosa.agents.v010.weather_agent import WeatherAgent
+            from cosa.agents.receptionist_agent import ReceptionistAgent
+            from cosa.agents.weather_agent import WeatherAgent
             from cosa.rest.fifo_queue import FifoQueue
-            from cosa.agents.v010.agent_base import AgentBase
+            from cosa.agents.agent_base import AgentBase
             print( "✓ Core agent imports successful" )
         except ImportError as e:
             print( f"✗ Core agent imports failed: {e}" )

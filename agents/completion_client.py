@@ -6,9 +6,9 @@ import asyncio
 import concurrent.futures
 
 import cosa.utils.util as du
-from cosa.agents.v010.base_llm_client import LlmClientInterface
-from cosa.agents.v010.llm_completion import LlmCompletion
-from cosa.agents.v010.token_counter import TokenCounter
+from cosa.agents.base_llm_client import LlmClientInterface
+from cosa.agents.llm_completion import LlmCompletion
+from cosa.agents.token_counter import TokenCounter
 
 
 def clean_llm_response( response: str ) -> str:

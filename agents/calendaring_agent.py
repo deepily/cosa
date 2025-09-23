@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-from cosa.agents.v010.agent_base import AgentBase
+from cosa.agents.agent_base import AgentBase
 
 
 class CalendaringAgent( AgentBase ):

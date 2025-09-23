@@ -3,7 +3,7 @@ import cosa.utils.util_xml as dux
 
 from cosa.utils.util_stopwatch import Stopwatch
 from cosa.memory.solution_snapshot import SolutionSnapshot
-from cosa.agents.v010.agent_base import AgentBase
+from cosa.agents.agent_base import AgentBase
 
 class MathAgent( AgentBase ):
     """

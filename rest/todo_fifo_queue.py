@@ -2,16 +2,16 @@ import random
 import threading
 from typing import Any, Optional
 
-from cosa.agents.v010.confirmation_dialog import ConfirmationDialogue
+from cosa.agents.confirmation_dialog import ConfirmationDialogue
 from cosa.rest.fifo_queue import FifoQueue
 
-from cosa.agents.v010.date_and_time_agent import DateAndTimeAgent
-from cosa.agents.v010.receptionist_agent import ReceptionistAgent
-from cosa.agents.v010.weather_agent import WeatherAgent
-from cosa.agents.v010.todo_list_agent import TodoListAgent
-from cosa.agents.v010.calendaring_agent import CalendaringAgent
-from cosa.agents.v010.math_agent import MathAgent
-from cosa.agents.v010.llm_client_factory import LlmClientFactory
+from cosa.agents.date_and_time_agent import DateAndTimeAgent
+from cosa.agents.receptionist_agent import ReceptionistAgent
+from cosa.agents.weather_agent import WeatherAgent
+from cosa.agents.todo_list_agent import TodoListAgent
+from cosa.agents.calendaring_agent import CalendaringAgent
+from cosa.agents.math_agent import MathAgent
+from cosa.agents.llm_client_factory import LlmClientFactory
 from cosa.memory.gister import Gister
 from cosa.memory.gist_normalizer import GistNormalizer
 from cosa.memory.normalizer import Normalizer

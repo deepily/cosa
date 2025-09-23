@@ -8,10 +8,10 @@ from pydantic_ai import Agent
 import cosa.utils.util as du
 # from cosa.utils.util_stopwatch import Stopwatch
 
-from cosa.agents.v010.llm_client import LlmClient
-from cosa.agents.v010.chat_client import ChatClient
-from cosa.agents.v010.completion_client import CompletionClient
-from cosa.agents.v010.base_llm_client import LlmClientInterface
+from cosa.agents.llm_client import LlmClient
+from cosa.agents.chat_client import ChatClient
+from cosa.agents.completion_client import CompletionClient
+from cosa.agents.base_llm_client import LlmClientInterface
 from cosa.config.configuration_manager import ConfigurationManager
 
 class LlmClientFactory:

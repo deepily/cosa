@@ -1,4 +1,4 @@
-from cosa.agents.v010.agent_base import AgentBase
+from cosa.agents.agent_base import AgentBase
 
 class DateAndTimeAgent( AgentBase ):
     """

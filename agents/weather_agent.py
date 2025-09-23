@@ -2,7 +2,7 @@ from typing import Any, Optional
 
 import cosa.utils.util as du
 
-from cosa.agents.v010.agent_base import AgentBase
+from cosa.agents.agent_base import AgentBase
 from cosa.tools.search_lupin_v010 import LupinSearch
 from cosa.memory.solution_snapshot import SolutionSnapshot as ss
 

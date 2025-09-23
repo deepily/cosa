@@ -3,8 +3,8 @@ from typing import Any
 import cosa.utils.util as du
 import cosa.utils.util_xml as dux
 
-from cosa.agents.v010.agent_base import AgentBase
-from cosa.agents.v010.llm_client_factory import LlmClientFactory
+from cosa.agents.agent_base import AgentBase
+from cosa.agents.llm_client_factory import LlmClientFactory
 from cosa.agents.io_models.utils.xml_parser_factory import XmlParserFactory
 
 class BugInjector( AgentBase ):

@@ -34,8 +34,8 @@ except ImportError as e:
 
 # Import the modules under test
 try:
-    from cosa.agents.v010.weather_agent import WeatherAgent
-    from cosa.agents.v010.agent_base import AgentBase
+    from cosa.agents.weather_agent import WeatherAgent
+    from cosa.agents.agent_base import AgentBase
 except ImportError as e:
     print( f"Failed to import WeatherAgent: {e}" )
     sys.exit( 1 )
@@ -117,18 +117,18 @@ class WeatherAgentUnitTests:
             
             # Mock time utility functions
             mock_get_current_time = stack.enter_context(
-                patch( 'cosa.agents.v010.weather_agent.du.get_current_time' )
+                patch( 'cosa.agents.weather_agent.du.get_current_time' )
             )
             mock_get_current_time.return_value = self.test_current_time
             
             mock_get_current_date = stack.enter_context(
-                patch( 'cosa.agents.v010.weather_agent.du.get_current_date' )
+                patch( 'cosa.agents.weather_agent.du.get_current_date' )
             )
             mock_get_current_date.return_value = self.test_current_date
             
             # Mock LupinSearch class
             mock_lupin_search_class = stack.enter_context(
-                patch( 'cosa.agents.v010.weather_agent.LupinSearch' )
+                patch( 'cosa.agents.weather_agent.LupinSearch' )
             )
             mock_lupin_search = MagicMock()
             mock_lupin_search.search_and_summarize_the_web.return_value = None
@@ -137,7 +137,7 @@ class WeatherAgentUnitTests:
             
             # Mock ConfigurationManager in AgentBase
             mock_config_mgr_class = stack.enter_context(
-                patch( 'cosa.agents.v010.agent_base.ConfigurationManager' )
+                patch( 'cosa.agents.agent_base.ConfigurationManager' )
             )
             mock_config_mgr = MagicMock()
             # Return appropriate values based on the key
@@ -155,13 +155,13 @@ class WeatherAgentUnitTests:
             
             # Mock SolutionSnapshot utility
             mock_solution_snapshot = stack.enter_context(
-                patch( 'cosa.agents.v010.weather_agent.ss' )
+                patch( 'cosa.agents.weather_agent.ss' )
             )
             mock_solution_snapshot.remove_non_alphanumerics.side_effect = lambda x: x.replace( " ", "_" ).lower()
             
             # Mock RawOutputFormatter for run_formatter
             mock_formatter_class = stack.enter_context(
-                patch( 'cosa.agents.v010.agent_base.RawOutputFormatter' )
+                patch( 'cosa.agents.agent_base.RawOutputFormatter' )
             )
             mock_formatter = MagicMock()
             mock_formatter.run_formatter.return_value = f"Conversational response: {self.test_search_response}"
@@ -169,13 +169,13 @@ class WeatherAgentUnitTests:
             
             # Mock du.get_file_as_string for prompt template loading
             mock_get_file_as_string = stack.enter_context(
-                patch( 'cosa.agents.v010.agent_base.du.get_file_as_string' )
+                patch( 'cosa.agents.agent_base.du.get_file_as_string' )
             )
             mock_get_file_as_string.return_value = "Test prompt template: {question}"
             
             # Mock du.get_project_root
             mock_get_project_root = stack.enter_context(
-                patch( 'cosa.agents.v010.agent_base.du.get_project_root' )
+                patch( 'cosa.agents.agent_base.du.get_project_root' )
             )
             mock_get_project_root.return_value = "/test/project"
             

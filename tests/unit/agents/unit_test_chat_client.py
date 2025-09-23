@@ -34,8 +34,8 @@ except ImportError as e:
 
 # Import the modules under test
 try:
-    from cosa.agents.v010.chat_client import ChatClient
-    from cosa.agents.v010.base_llm_client import LlmClientInterface
+    from cosa.agents.chat_client import ChatClient
+    from cosa.agents.base_llm_client import LlmClientInterface
 except ImportError as e:
     print( f"Failed to import ChatClient: {e}" )
     sys.exit( 1 )
@@ -106,7 +106,7 @@ class ChatClientUnitTests:
             
             # Mock pydantic-ai Agent class
             mock_agent_class = stack.enter_context(
-                patch( 'cosa.agents.v010.chat_client.Agent' )
+                patch( 'cosa.agents.chat_client.Agent' )
             )
             mock_agent = MagicMock()
             
@@ -120,7 +120,7 @@ class ChatClientUnitTests:
             
             # Mock TokenCounter class
             mock_token_counter_class = stack.enter_context(
-                patch( 'cosa.agents.v010.chat_client.TokenCounter' )
+                patch( 'cosa.agents.chat_client.TokenCounter' )
             )
             mock_token_counter = MagicMock()
             mock_token_counter.count_tokens.side_effect = lambda model, text: len( text.split() ) * 2  # Simple approximation
@@ -128,18 +128,18 @@ class ChatClientUnitTests:
             
             # Mock print_banner utility
             mock_print_banner = stack.enter_context(
-                patch( 'cosa.agents.v010.chat_client.du.print_banner' )
+                patch( 'cosa.agents.chat_client.du.print_banner' )
             )
             
             # Mock time performance counter
             mock_perf_counter = stack.enter_context(
-                patch( 'cosa.agents.v010.chat_client.time.perf_counter' )
+                patch( 'cosa.agents.chat_client.time.perf_counter' )
             )
             mock_perf_counter.side_effect = [ 0.0, 0.08 ]  # 80ms duration
             
             # Mock asyncio.get_running_loop to force sync context for testing
             mock_get_running_loop = stack.enter_context(
-                patch( 'cosa.agents.v010.chat_client.asyncio.get_running_loop' )
+                patch( 'cosa.agents.chat_client.asyncio.get_running_loop' )
             )
             mock_get_running_loop.side_effect = RuntimeError( "No running event loop" )
             

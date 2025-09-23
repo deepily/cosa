@@ -3,8 +3,8 @@ from typing import Any
 
 import cosa.utils.util as du
 
-from cosa.agents.v010.agent_base import AgentBase
-from cosa.agents.v010.raw_output_formatter import RawOutputFormatter
+from cosa.agents.agent_base import AgentBase
+from cosa.agents.raw_output_formatter import RawOutputFormatter
 from cosa.memory.input_and_output_table import InputAndOutputTable
 
 class ReceptionistAgent( AgentBase ):

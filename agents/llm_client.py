@@ -3,9 +3,9 @@ import time
 from typing import Optional, Any
 
 import cosa.utils.util as du
-from cosa.agents.v010.llm_completion import LlmCompletion
+from cosa.agents.llm_completion import LlmCompletion
 
-from cosa.agents.v010.token_counter import TokenCounter
+from cosa.agents.token_counter import TokenCounter
 
 from pydantic_ai import Agent
 # from pydantic_ai.models.openai import OpenAIModel

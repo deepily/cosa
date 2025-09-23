@@ -6,7 +6,7 @@ import cosa.utils.util as du
 import cosa.utils.util_code_runner as ucr
 import cosa.utils.util_xml as dux
 
-from cosa.agents.v010.agent_base import AgentBase
+from cosa.agents.agent_base import AgentBase
 
 
 class IterativeDebuggingAgent( AgentBase ):

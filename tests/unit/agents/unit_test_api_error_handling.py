@@ -35,13 +35,13 @@ except ImportError as e:
 
 # Import the modules under test
 try:
-    from cosa.agents.v010.llm_exceptions import (
+    from cosa.agents.llm_exceptions import (
         LlmError, LlmAPIError, LlmTimeoutError, LlmAuthenticationError, 
         LlmRateLimitError, LlmModelError, LlmValidationError
     )
-    from cosa.agents.v010.llm_completion import LlmCompletion
-    from cosa.agents.v010.chat_client import ChatClient
-    from cosa.agents.v010.completion_client import CompletionClient
+    from cosa.agents.llm_completion import LlmCompletion
+    from cosa.agents.chat_client import ChatClient
+    from cosa.agents.completion_client import CompletionClient
 except ImportError as e:
     print( f"Failed to import required modules: {e}" )
     sys.exit( 1 )
@@ -131,12 +131,12 @@ class APIErrorHandlingUnitTests:
             
             # Mock requests library
             mock_requests = stack.enter_context(
-                patch( 'cosa.agents.v010.llm_completion.requests' )
+                patch( 'cosa.agents.llm_completion.requests' )
             )
             
             # Mock aiohttp for async requests
             mock_aiohttp = stack.enter_context(
-                patch( 'cosa.agents.v010.llm_completion.aiohttp' )
+                patch( 'cosa.agents.llm_completion.aiohttp' )
             )
             
             # Configure mock responses based on error scenario

@@ -12,8 +12,8 @@ import cosa.utils.util_stopwatch as sw
 import cosa.utils.util_code_runner as ucr
 import cosa.utils.util_xml as dux
 
-from cosa.agents.v010.runnable_code import RunnableCode
-from cosa.agents.v010.raw_output_formatter import RawOutputFormatter
+from cosa.agents.runnable_code import RunnableCode
+from cosa.agents.raw_output_formatter import RawOutputFormatter
 
 import numpy as np
 from cosa.memory.embedding_manager import EmbeddingManager

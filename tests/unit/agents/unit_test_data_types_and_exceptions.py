@@ -35,7 +35,7 @@ except ImportError as e:
 
 # Import the modules under test
 try:
-    from cosa.agents.v010.llm_exceptions import (
+    from cosa.agents.llm_exceptions import (
         LlmError, LlmConfigError, LlmAPIError, LlmTimeoutError,
         LlmAuthenticationError, LlmRateLimitError, LlmModelError,
         LlmStreamingError, LlmValidationError

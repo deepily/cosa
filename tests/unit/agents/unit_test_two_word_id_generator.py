@@ -31,7 +31,7 @@ except ImportError as e:
 
 # Import the modules under test
 try:
-    from cosa.agents.v010.two_word_id_generator import TwoWordIdGenerator, singleton
+    from cosa.agents.two_word_id_generator import TwoWordIdGenerator, singleton
 except ImportError as e:
     print( f"Failed to import TwoWordIdGenerator: {e}" )
     sys.exit( 1 )

@@ -3,8 +3,8 @@ from typing import Optional
 import cosa.utils.util as du
 import cosa.utils.util_xml as dux
 
-from cosa.agents.v010.llm_client_factory import LlmClientFactory
-from cosa.agents.v010.llm_client import LlmClient
+from cosa.agents.llm_client_factory import LlmClientFactory
+from cosa.agents.llm_client import LlmClient
 from cosa.config.configuration_manager import ConfigurationManager
 from cosa.agents.io_models.xml_models import YesNoResponse
 
