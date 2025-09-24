@@ -1,5 +1,57 @@
 # COSA Development History
 
+> **🚨 PENDING TOMORROW**: Slash Command Source File Sync - The bash execution fixes applied to `.claude/commands/smoke-test-baseline.md` need to be applied to `src/rnd/prompts/baseline-smoke-test-prompt.md` to prevent regenerating broken commands. See `rnd/2025.09.23-slash-command-bash-fix-status.md` for details.
+
+## 2025.09.23 - Slash Command Bash Execution Fix + Source File Sync Issue Identified
+
+### Summary
+Successfully fixed bash execution errors in `/smoke-test-baseline` slash command by resolving variable persistence issues between bash blocks. However, discovered that source prompt files still contain the original bugs and need to be synchronized with the fixes to prevent regenerating broken slash commands.
+
+### Work Performed
+
+#### Slash Command Bash Fix - 100% SUCCESS ✅
+- **Root Cause Identified**: Variables don't persist between separate bash code blocks in slash commands
+- **Fix Applied**: Generate TIMESTAMP within each bash block that uses it, rather than in separate setup block
+- **Complex Command Issue Resolved**: Broke down multi-command chains that were being mangled during execution
+- **Template Issues Fixed**: Updated report template placeholders to avoid variable expansion problems
+
+#### Testing Infrastructure Created ✅
+- **Test Harness**: Created `test-bash-commands.sh` with 13/13 passing validation tests
+- **Mock Testing**: Created `mock-cosa-smoke.sh` for safe command pattern validation
+- **Pattern Validation**: All bash execution patterns now verified working correctly
+
+#### Critical Discovery - Source File Inconsistency ❌
+- **Issue Found**: `src/rnd/prompts/baseline-smoke-test-prompt.md` still contains the original bugs
+- **Impact**: Source prompt will regenerate broken slash command if used
+- **Files Out of Sync**: Slash command fixed but source prompt not updated
+- **Priority**: HIGH - Need to sync source files with fixes tomorrow
+
+### Files Modified
+- **Fixed**: `.claude/commands/smoke-test-baseline.md` - Bash execution patterns corrected
+- **Created**: `test-bash-commands.sh` - Test harness for command validation
+- **Created**: `mock-cosa-smoke.sh` - Mock test for safe validation
+- **Created**: `rnd/2025.09.23-slash-command-bash-fix-status.md` - Status tracking for tomorrow
+
+### Technical Achievements
+- ✅ **Bash Execution Patterns**: All command patterns validated and working
+- ✅ **Variable Persistence**: Fixed cross-block variable dependency issues
+- ✅ **Error Pattern Analysis**: Documented and resolved syntax error causes
+- ❌ **Source File Sync**: Still pending - high priority for tomorrow
+
+### Current Status
+- **Slash Command**: ✅ WORKING - Bash execution errors resolved
+- **Source Prompts**: ❌ OUT OF SYNC - Need to apply same fixes to source files
+- **Test Infrastructure**: ✅ COMPLETE - Ready for validation
+- **Documentation**: ✅ COMPLETE - Status tracked for continuation tomorrow
+
+### Next Session Priorities
+- **HIGH PRIORITY**: Apply bash execution fixes to `src/rnd/prompts/baseline-smoke-test-prompt.md`
+- Check if `src/cosa/rnd/prompts/cosa-baseline-smoke-test-prompt.md` needs similar fixes
+- Verify source prompts and slash commands remain synchronized
+- Test consistency between all related files
+
+---
+
 ## 2025.09.23 - Pre-Change COSA Framework Baseline Collection COMPLETE
 
 ### Summary

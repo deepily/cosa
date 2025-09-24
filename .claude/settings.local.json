@@ -44,7 +44,9 @@
       "Bash(then:*)",
       "Bash(else echo \"✓ Notification system not available - proceeding with COSA baseline collection\")",
       "Bash(LOG_FILE=\"tests/results/logs/baseline_cosa_smoke_20250923_173035.log\")",
-      "Bash(tee:*)"
+      "Bash(tee:*)",
+      "Bash(./test-bash-commands.sh:*)",
+      "Bash(SCOPE=\"full\")"
     ],
     "deny": [],
     "additionalDirectories": [

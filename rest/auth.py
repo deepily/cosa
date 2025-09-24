@@ -42,17 +42,17 @@ security = HTTPBearer()
 async def verify_firebase_token(token: str) -> Dict:
     """
     Verify Firebase ID token and return decoded claims.
-    
+
     Requires:
         - token is a non-empty string
         - token follows expected format (mock_token_* or mock_token_email_*)
-        
+
     Ensures:
         - Returns dictionary with complete user information
         - Dictionary includes uid, email, name, email_verified fields
         - User data is looked up or generated for unknown system IDs
         - Prints verification success message
-        
+
     Raises:
         - HTTPException with 401 status if token format is invalid
         - HTTPException with 401 status if email format is invalid in email-based tokens
@@ -61,7 +61,18 @@ async def verify_firebase_token(token: str) -> Dict:
     try:
         # MOCK: In production, this would be:
         # decoded_token = auth.verify_id_token(token)
-        
+
+        # SECURITY: Validate token input
+        if not isinstance(token, str):
+            raise ValueError("Token must be a string")
+
+        if not token.strip():
+            raise ValueError("Token cannot be empty")
+
+        # SECURITY: Prevent extremely long tokens (potential DoS)
+        if len(token) > 500:  # Reasonable limit for mock tokens
+            raise ValueError("Token exceeds maximum length")
+
         # For mocking, we'll decode email-based format: "mock_token_email_user@example.com"
         if not token.startswith("mock_token_"):
             raise ValueError("Invalid mock token format")

@@ -77,26 +77,37 @@ def get_app_debug():
 def is_valid_session_id(session_id: str) -> bool:
     """
     Validate session ID format according to the expected pattern.
-    
+
     Session IDs should be in the format: adjective noun (e.g., 'wise penguin')
-    
+
     Requires:
         - session_id is a string (may be empty or invalid)
-        
+
     Ensures:
         - Returns True if session_id matches pattern "word word" (lowercase)
         - Returns False if empty, whitespace-only, or invalid format
-        - Uses regex pattern '^[a-z]+\s[a-z]+$' for validation
-        
+        - Uses regex pattern '^[a-z]+ [a-z]+$' for validation (single space only)
+        - Rejects tab, newline, and other whitespace characters for security
+
     Raises:
         - None
     """
-    # Check it's not empty or just whitespace
-    if not session_id or not session_id.strip():
+    # Check it's not empty
+    if not session_id:
         return False
-    
-    # Check format: word word (with a single space)
-    pattern = r'^[a-z]+\s[a-z]+$'
+
+    # SECURITY: Check for any whitespace characters other than single space
+    # Reject if contains tabs, newlines, or other whitespace before processing
+    if any(c in session_id for c in ['\t', '\n', '\r', '\f', '\v']):
+        return False
+
+    # Check if it's only whitespace
+    if not session_id.strip():
+        return False
+
+    # Check format: word word (with a single space only - no tabs/newlines/etc)
+    # SECURITY: Use literal space ' ' instead of \s to prevent tab/newline injection
+    pattern = r'^[a-z]+ [a-z]+$'
     return bool(re.match(pattern, session_id.lower()))
 
 @router.get("/api/auth-test")
@@ -262,19 +273,72 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
     
     # Wait for authentication message
     try:
-        auth_message = await websocket.receive_json()
-        if auth_message.get("type") != "auth_request" or "token" not in auth_message:
+        # SECURITY: Handle malformed JSON gracefully
+        try:
+            auth_message = await websocket.receive_json()
+        except json.JSONDecodeError:
             await websocket.send_json({
-                "type": "error",
-                "message": "First message must be auth_request with token"
+                "type": "auth_error",
+                "message": "Authentication message must be valid JSON"
             })
             await websocket.close()
             return
-            
+        except Exception as parse_error:
+            await websocket.send_json({
+                "type": "auth_error",
+                "message": f"Failed to parse authentication message: {str(parse_error)}"
+            })
+            await websocket.close()
+            return
+
+        # SECURITY: Validate message structure first
+        if not isinstance(auth_message, dict):
+            await websocket.send_json({
+                "type": "auth_error",
+                "message": "Authentication message must be a JSON object"
+            })
+            await websocket.close()
+            return
+
+        # SECURITY: Check required fields
+        if auth_message.get("type") != "auth_request":
+            await websocket.send_json({
+                "type": "auth_error",
+                "message": "First message must be auth_request"
+            })
+            await websocket.close()
+            return
+
+        if "token" not in auth_message:
+            await websocket.send_json({
+                "type": "auth_error",
+                "message": "Authentication message must include token field"
+            })
+            await websocket.close()
+            return
+
+        # SECURITY: Validate token format before attempting verification
+        token = auth_message["token"]
+        if not isinstance(token, str):
+            await websocket.send_json({
+                "type": "auth_error",
+                "message": "Token must be a string"
+            })
+            await websocket.close()
+            return
+
+        if not token.strip():
+            await websocket.send_json({
+                "type": "auth_error",
+                "message": "Token cannot be empty"
+            })
+            await websocket.close()
+            return
+
         # Verify token
         from cosa.rest.auth import verify_firebase_token
         try:
-            user_info = await verify_firebase_token(auth_message["token"])
+            user_info = await verify_firebase_token(token)
             user_id = user_info["uid"]
             
             # Extract subscribed events from auth message
