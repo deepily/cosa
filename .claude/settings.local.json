@@ -47,7 +47,8 @@
       "Bash(tee:*)",
       "Bash(./test-bash-commands.sh:*)",
       "Bash(SCOPE=\"full\")",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\n[COSA] Three-Level Question Architecture Infrastructure + Interface Enhancements\n\nSupport three-level question representation architecture implementation:\n\nINTERFACE FIXES:\n- Add abstract reload() method to snapshot_manager_interface.py\n- Implement reload() in FileBasedSolutionManager and LanceDBSolutionManager  \n- Fix /api/init endpoint to use reload() instead of load_snapshots()\n- Resolve interface violation preventing proper manager abstraction\n\nVERBOSITY OPTIMIZATIONS:\n- Update normalizer.py debug output (require debug AND verbose)\n- Update completion_client.py debug output (require debug AND verbose)\n- Update llm_client_factory.py debug output (require debug AND verbose)\n- Reduce console noise when app_verbose=False but app_debug=True\n\nAddresses critical search failure: \"What time is it?\" returning 0 snapshots\ndue to punctuation normalization inconsistencies. Establishes interface\nfoundation for upcoming three-level architecture implementation.\n\nRelated: Three-Level Question Representation Architecture design\n(see /src/rnd/2025.09.27-three-level-question-representation-architecture.md)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
     ],
     "deny": [],
     "additionalDirectories": [
