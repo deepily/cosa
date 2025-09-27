@@ -46,7 +46,8 @@
       "Bash(LOG_FILE=\"tests/results/logs/baseline_cosa_smoke_20250923_173035.log\")",
       "Bash(tee:*)",
       "Bash(./test-bash-commands.sh:*)",
-      "Bash(SCOPE=\"full\")"
+      "Bash(SCOPE=\"full\")",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "additionalDirectories": [

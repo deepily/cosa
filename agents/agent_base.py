@@ -19,6 +19,20 @@ from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.agents.two_word_id_generator import TwoWordIdGenerator
 from cosa.agents.io_models.utils.xml_parser_factory import XmlParserFactory
 
+class CodeGenerationFailedException( Exception ):
+    """
+    Exception raised when code generation fails after exhausting all debugging attempts.
+
+    This exception indicates that:
+    1. The initial code generation produced syntactically invalid code
+    2. All available iterative debugging models failed to fix the code
+    3. The system has exhausted all automated repair attempts
+
+    This should result in an HTTP 500 error to signal that the agent
+    cannot complete the requested task.
+    """
+    pass
+
 class AgentBase( RunnableCode, abc.ABC ):
     
     STATE_INITIALIZING         = "initializing"
@@ -369,28 +383,50 @@ class AgentBase( RunnableCode, abc.ABC ):
             
             # Start out by running the minimalistic debugger first, and then if it fails run the full debugger
             for minimalist in [ True, False ]:
-                
-                debugging_agent = IterativeDebuggingAgent(
-                    code_response_dict[ "output" ], "/io/code.py",
-                    minimalist=minimalist, example=self.prompt_response_dict[ "example" ], returns=self.prompt_response_dict.get( "returns", "string" ),
-                    debug=self.debug, verbose=self.verbose
+
+                try:
+                    debugging_agent = IterativeDebuggingAgent(
+                        code_response_dict[ "output" ], "/io/code.py",
+                        minimalist=minimalist, example=self.prompt_response_dict[ "example" ], returns=self.prompt_response_dict.get( "returns", "string" ),
+                        debug=self.debug, verbose=self.verbose
+                    )
+                    # Iterates across multiple LLMs in either minimalist or non-minimalist mode until a solution is found
+                    debugging_agent.run_prompts()
+
+                    if debugging_agent.was_successfully_debugged():
+
+                        self.prompt_response_dict[ "code" ] = debugging_agent.code
+                        self.code_response_dict             = debugging_agent.code_response_dict
+                        self.error                          = None
+
+                        self.print_code( msg=f"Minimalist [{minimalist}] debugging successful, corrected code returned to calling AgentBase run_code()" )
+                        break
+
+                    else:
+
+                        du.print_banner( f"Minimalist [{minimalist}] debugging failed, returning original code, such as it is... 😢 sniff 😢" )
+
+                except Exception as debugging_exception:
+                    # ANY exception during debugging should be logged but not crash the system
+                    # We continue to try the next debugging mode or ultimately raise CodeGenerationFailedException
+                    du.print_banner( f"Minimalist [{minimalist}] debugging crashed with exception: {type(debugging_exception).__name__}: {debugging_exception}", expletive=True )
+                    if self.debug:
+                        import traceback
+                        traceback.print_exc()
+                    # Continue to next debugging attempt or fall through to final error handling
+
+            # If we reach here, all debugging attempts (both minimalist and full) have failed
+            if self.error is not None:
+                error_details = f"Original error: {self.error}"
+                if self.debug:
+                    du.print_banner( "CRITICAL: Code generation failed after exhausting all debugging models", expletive=True )
+                    print( f"Question: {self.last_question_asked}" )
+                    print( f"Error: {error_details}" )
+
+                raise CodeGenerationFailedException(
+                    f"Code generation failed: Unable to fix code errors after exhausting all debugging models. {error_details}"
                 )
-                # Iterates across multiple LLMs in either minimalist or non-minimalist mode until a solution is found
-                debugging_agent.run_prompts()
-                
-                if debugging_agent.was_successfully_debugged():
-                    
-                    self.prompt_response_dict[ "code" ] = debugging_agent.code
-                    self.code_response_dict             = debugging_agent.code_response_dict
-                    self.error                          = None
-                    
-                    self.print_code( msg=f"Minimalist [{minimalist}] debugging successful, corrected code returned to calling AgentBase run_code()" )
-                    break
-                    
-                else:
-                    
-                    du.print_banner( f"Minimalist [{minimalist}] debugging failed, returning original code, such as it is... 😢 sniff 😢" )
-        
+
             return self.code_response_dict
     
     def is_format_output_runnable( self ) -> bool:
