@@ -13,7 +13,8 @@ redundancy and ensuring single source of truth for XML structures.
 from cosa.agents.io_models.xml_models import (
     CodeBrainstormResponse, CalendarResponse, CodeResponse,
     IterativeDebuggingFullResponse, IterativeDebuggingMinimalistResponse,
-    BugInjectionResponse, ReceptionistResponse, WeatherResponse
+    BugInjectionResponse, ReceptionistResponse, WeatherResponse,
+    VoxCommandResponse, AgentRouterResponse, GistResponse, ConfirmationResponse
 )
 
 
@@ -36,6 +37,11 @@ class PromptTemplateProcessor:
         'agent router go to bug injector': BugInjectionResponse,
         'agent router go to receptionist': ReceptionistResponse,
         'agent router go to weather': WeatherResponse,
+        # New mappings for utility prompts
+        'agent router': AgentRouterResponse,
+        'vox command': VoxCommandResponse,
+        'gist generation': GistResponse,
+        'confirmation dialog': ConfirmationResponse,
     }
     
     def __init__( self, debug: bool = False, verbose: bool = False ):

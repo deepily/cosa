@@ -42,6 +42,10 @@ class InputAndOutputTable():
         self._embedding_mgr = EmbeddingManager( debug=debug, verbose=verbose )
         
         self.db = lancedb.connect( du.get_project_root() + self._config_mgr.get( "database_path_wo_root" ) )
+
+        # Create table if it doesn't exist
+        self._create_table_if_needed( self.db )
+
         self._input_and_output_tbl    = self.db.open_table( "input_and_output_tbl" )
         self._question_embeddings_tbl = QuestionEmbeddingsTable( debug=self.debug, verbose=self.verbose )
 
@@ -52,7 +56,51 @@ class InputAndOutputTable():
         #     print( self.db.table_names() )
         #     du.print_banner( "Table:" )
         #     print( self._input_and_output_tbl.select( [ "date", "time", "input", "output_final" ] ).head( 10 ) )
-        
+
+    def _create_table_if_needed( self, db ) -> None:
+        """
+        Create input_and_output_tbl if it doesn't exist.
+
+        Requires:
+            - db is a valid lancedb connection
+            - self.debug is set
+
+        Ensures:
+            - Creates table with proper schema if it doesn't exist
+            - Creates FTS indexes on key fields
+            - No-op if table already exists
+
+        Raises:
+            - lancedb errors propagated
+        """
+        if "input_and_output_tbl" not in db.table_names():
+            if self.debug:
+                print( "Table 'input_and_output_tbl' doesn't exist, creating it..." )
+
+            import pyarrow as pa
+            schema = pa.schema( [
+                pa.field( "date",                     pa.string() ),
+                pa.field( "time",                     pa.string() ),
+                pa.field( "input_type",               pa.string() ),
+                pa.field( "input",                    pa.string() ),
+                pa.field( "input_embedding",          pa.list_( pa.float32(), 1536 ) ),
+                pa.field( "output_raw",               pa.string() ),
+                pa.field( "output_final",             pa.string() ),
+                pa.field( "output_final_embedding",   pa.list_( pa.float32(), 1536 ) ),
+                pa.field( "solution_path_wo_root",    pa.string() ),
+            ] )
+
+            self._input_and_output_tbl = db.create_table( "input_and_output_tbl", schema=schema, mode="overwrite" )
+            self._input_and_output_tbl.create_fts_index( "input", replace=True )
+            self._input_and_output_tbl.create_fts_index( "input_type", replace=True )
+            self._input_and_output_tbl.create_fts_index( "date", replace=True )
+            self._input_and_output_tbl.create_fts_index( "time", replace=True )
+            self._input_and_output_tbl.create_fts_index( "output_final", replace=True )
+
+            if self.debug:
+                print( f"✓ Created input_and_output_tbl with schema: {schema}" )
+                print( f"✓ Created FTS indexes on input, input_type, date, time, output_final fields" )
+
     def insert_io_row( self, date: str=du.get_current_date(), time: str=du.get_current_time( include_timezone=False ),
         input_type: str="", input: str="", input_embedding: list[float]=[], output_raw: str="", output_final: str="", output_final_embedding: list[float]=[], solution_path_wo_root: Optional[str]=None, async_embedding: bool=None
     ) -> None:

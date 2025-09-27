@@ -213,7 +213,7 @@ class Normalizer:
         
         # Step 1: Expand contractions
         text = self.expand_contractions( text )
-        if self.debug: print( f"After contractions: {text}" )
+        if self.debug and self.verbose: print( f"After contractions: {text}" )
         
         # Step 2: Process with spaCy
         doc = self.nlp( text.lower() )
@@ -241,9 +241,9 @@ class Normalizer:
                 normalized_sentences.append( ' '.join( sent_tokens ) )
         
         result = ' '.join( normalized_sentences )
-        
-        if self.verbose: du.print_banner( f"Normalized result: {result}" )
-        
+
+        if self.debug and self.verbose: du.print_banner( f"Normalized result: {result}" )
+
         return result
     
     def normalize_batch( self, texts ):

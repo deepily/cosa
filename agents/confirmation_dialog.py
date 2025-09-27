@@ -3,8 +3,8 @@ from typing import Optional
 import cosa.utils.util as du
 import cosa.utils.util_xml as dux
 
-from cosa.agents.v010.llm_client_factory import LlmClientFactory
-from cosa.agents.v010.llm_client import LlmClient
+from cosa.agents.llm_client_factory import LlmClientFactory
+from cosa.agents.llm_client import LlmClient
 from cosa.config.configuration_manager import ConfigurationManager
 from cosa.agents.io_models.xml_models import YesNoResponse
 
@@ -83,7 +83,7 @@ class ConfirmationDialogue:
             - Returns True for affirmative responses
             - Returns False for negative responses
             - Returns default for ambiguous responses (if provided)
-            - Response is parsed from 'summary' XML tag
+            - Response is parsed from 'answer' XML tag
             
         Raises:
             - ValueError if response is ambiguous and no default provided
@@ -99,19 +99,16 @@ class ConfirmationDialogue:
         if self.use_pydantic:
             # Use Pydantic YesNoResponse model for structured parsing
             try:
-                # Create custom XML mapping for YesNoResponse since it expects "answer" but we get "summary"
-                # We need to replace the "summary" tag with "answer" tag for YesNoResponse
-                modified_xml = results.replace( "<summary>", "<answer>" ).replace( "</summary>", "</answer>" )
-                response_model = YesNoResponse.from_xml( modified_xml )
+                response_model = YesNoResponse.from_xml( results )
                 response = response_model.answer.strip().lower()
                 if self.debug and self.verbose: print( f"Pydantic parsing extracted response: '{response}'" )
             except Exception as e:
                 if self.debug: print( f"Pydantic parsing failed, falling back to baseline: {e}" )
-                # Fallback to baseline parsing
-                response = dux.get_value_by_xml_tag_name( results, "summary" ).strip().lower()
+                # Fallback to baseline parsing - now expecting 'answer' field
+                response = dux.get_value_by_xml_tag_name( results, "answer" ).strip().lower()
         else:
-            # Use baseline XML parsing
-            response = dux.get_value_by_xml_tag_name( results, "summary" ).strip().lower()
+            # Use baseline XML parsing - expecting 'answer' field
+            response = dux.get_value_by_xml_tag_name( results, "answer" ).strip().lower()
             if self.debug and self.verbose: print( f"Baseline parsing extracted response: '{response}'" )
         
         if response == "yes":

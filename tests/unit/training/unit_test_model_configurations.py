@@ -29,7 +29,7 @@ from mock_manager import MockManager
 from unit_test_utilities import UnitTestUtilities
 
 # Import the module under test
-from cosa.training.conf import load_model_config, MODEL_CONFIG_MAP
+from cosa.training.conf.model_config_loader import load_model_config, MODEL_CONFIG_MAP
 
 
 class TestModelConfigurations( unittest.TestCase ):

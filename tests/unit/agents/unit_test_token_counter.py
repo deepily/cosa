@@ -33,7 +33,7 @@ except ImportError as e:
 
 # Import the modules under test
 try:
-    from cosa.agents.v010.token_counter import TokenCounter
+    from cosa.agents.token_counter import TokenCounter
 except ImportError as e:
     print( f"Failed to import TokenCounter: {e}" )
     sys.exit( 1 )

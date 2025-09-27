@@ -44,16 +44,16 @@ def test_v010_agent_modules():
         List[Dict]: Results for each v010 agent module tested
     """
     v010_agents = [
-        ("math_agent", "cosa.agents.v010.math_agent"),
-        ("calendaring_agent", "cosa.agents.v010.calendaring_agent"),
-        ("weather_agent", "cosa.agents.v010.weather_agent"),
-        ("todo_list_agent", "cosa.agents.v010.todo_list_agent"),
-        ("receptionist_agent", "cosa.agents.v010.receptionist_agent"),
-        ("bug_injector", "cosa.agents.v010.bug_injector"),
-        ("confirmation_dialog", "cosa.agents.v010.confirmation_dialog"),
-        ("date_and_time_agent", "cosa.agents.v010.date_and_time_agent"),
-        ("gister", "cosa.agents.v010.gister"),
-        ("iterative_debugging_agent", "cosa.agents.v010.iterative_debugging_agent"),
+        ("math_agent", "cosa.agents.math_agent"),
+        ("calendaring_agent", "cosa.agents.calendaring_agent"),
+        ("weather_agent", "cosa.agents.weather_agent"),
+        ("todo_list_agent", "cosa.agents.todo_list_agent"),
+        ("receptionist_agent", "cosa.agents.receptionist_agent"),
+        ("bug_injector", "cosa.agents.bug_injector"),
+        ("confirmation_dialog", "cosa.agents.confirmation_dialog"),
+        ("date_and_time_agent", "cosa.agents.date_and_time_agent"),
+        ("gister", "cosa.agents.gister"),
+        ("iterative_debugging_agent", "cosa.agents.iterative_debugging_agent"),
     ]
     
     results = []
@@ -128,15 +128,15 @@ def test_agent_infrastructure():
         List[Dict]: Results for each infrastructure component tested
     """
     infrastructure_modules = [
-        ("agent_base", "cosa.agents.v010.agent_base"),
-        ("llm_client", "cosa.agents.v010.llm_client"),
-        ("llm_client_factory", "cosa.agents.v010.llm_client_factory"),
-        ("llm_completion", "cosa.agents.v010.llm_completion"),
-        ("prompt_formatter", "cosa.agents.v010.prompt_formatter"),
-        ("raw_output_formatter", "cosa.agents.v010.raw_output_formatter"),
-        ("runnable_code", "cosa.agents.v010.runnable_code"),
-        ("token_counter", "cosa.agents.v010.token_counter"),
-        ("two_word_id_generator", "cosa.agents.v010.two_word_id_generator"),
+        ("agent_base", "cosa.agents.agent_base"),
+        ("llm_client", "cosa.agents.llm_client"),
+        ("llm_client_factory", "cosa.agents.llm_client_factory"),
+        ("llm_completion", "cosa.agents.llm_completion"),
+        ("prompt_formatter", "cosa.agents.prompt_formatter"),
+        ("raw_output_formatter", "cosa.agents.raw_output_formatter"),
+        ("runnable_code", "cosa.agents.runnable_code"),
+        ("token_counter", "cosa.agents.token_counter"),
+        ("two_word_id_generator", "cosa.agents.two_word_id_generator"),
     ]
     
     results = []
@@ -212,25 +212,25 @@ def scan_v000_dependencies_in_agents():
     
     # All v010 modules to scan
     all_v010_modules = [
-        "cosa.agents.v010.math_agent",
-        "cosa.agents.v010.calendaring_agent",
-        "cosa.agents.v010.weather_agent", 
-        "cosa.agents.v010.todo_list_agent",
-        "cosa.agents.v010.receptionist_agent",
-        "cosa.agents.v010.bug_injector",
-        "cosa.agents.v010.confirmation_dialog",
-        "cosa.agents.v010.date_and_time_agent",
-        "cosa.agents.v010.gister",
-        "cosa.agents.v010.iterative_debugging_agent",
-        "cosa.agents.v010.agent_base",
-        "cosa.agents.v010.llm_client",
-        "cosa.agents.v010.llm_client_factory",
-        "cosa.agents.v010.llm_completion",
-        "cosa.agents.v010.prompt_formatter",
-        "cosa.agents.v010.raw_output_formatter",
-        "cosa.agents.v010.runnable_code",
-        "cosa.agents.v010.token_counter",
-        "cosa.agents.v010.two_word_id_generator"
+        "cosa.agents.math_agent",
+        "cosa.agents.calendaring_agent",
+        "cosa.agents.weather_agent", 
+        "cosa.agents.todo_list_agent",
+        "cosa.agents.receptionist_agent",
+        "cosa.agents.bug_injector",
+        "cosa.agents.confirmation_dialog",
+        "cosa.agents.date_and_time_agent",
+        "cosa.agents.gister",
+        "cosa.agents.iterative_debugging_agent",
+        "cosa.agents.agent_base",
+        "cosa.agents.llm_client",
+        "cosa.agents.llm_client_factory",
+        "cosa.agents.llm_completion",
+        "cosa.agents.prompt_formatter",
+        "cosa.agents.raw_output_formatter",
+        "cosa.agents.runnable_code",
+        "cosa.agents.token_counter",
+        "cosa.agents.two_word_id_generator"
     ]
     
     for module_name in all_v010_modules:

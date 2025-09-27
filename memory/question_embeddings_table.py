@@ -5,6 +5,7 @@ from cosa.config.configuration_manager import ConfigurationManager
 from cosa.utils.util_stopwatch import Stopwatch
 
 import lancedb
+import pyarrow as pa
 from typing import Any
 
 
@@ -55,13 +56,48 @@ class QuestionEmbeddingsTable():
         self._embedding_mgr = EmbeddingManager( debug=debug, verbose=verbose )
         
         uri = du.get_project_root() + self._config_mgr.get( "database_path_wo_root" )
-        
+
         db = lancedb.connect( uri )
-        
+
+        # Create table if it doesn't exist
+        self._create_table_if_needed( db )
+
         self._question_embeddings_tbl = db.open_table( "question_embeddings_tbl" )
         
         print( f"Opened question_embeddings_tbl w/ [{self._question_embeddings_tbl.count_rows()}] rows" )
-        
+
+    def _create_table_if_needed( self, db ) -> None:
+        """
+        Create question_embeddings_tbl if it doesn't exist.
+
+        Requires:
+            - db is a valid lancedb connection
+            - self.debug is set
+
+        Ensures:
+            - Creates table with proper schema if it doesn't exist
+            - Creates FTS index on question field
+            - No-op if table already exists
+
+        Raises:
+            - lancedb errors propagated
+        """
+        if "question_embeddings_tbl" not in db.table_names():
+            if self.debug:
+                print( "Table 'question_embeddings_tbl' doesn't exist, creating it..." )
+
+            schema = pa.schema( [
+                pa.field( "question", pa.string() ),
+                pa.field( "embedding", pa.list_( pa.float32(), 1536 ) )
+            ] )
+
+            self._question_embeddings_tbl = db.create_table( "question_embeddings_tbl", schema=schema, mode="overwrite" )
+            self._question_embeddings_tbl.create_fts_index( "question", replace=True )
+
+            if self.debug:
+                print( f"✓ Created question_embeddings_tbl with schema: {schema}" )
+                print( f"✓ Created FTS index on question field" )
+
     def has( self, question: str ) -> bool:
         """
         Check if a question exists in the embeddings table.

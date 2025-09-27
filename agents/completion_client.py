@@ -6,9 +6,9 @@ import asyncio
 import concurrent.futures
 
 import cosa.utils.util as du
-from cosa.agents.v010.base_llm_client import LlmClientInterface
-from cosa.agents.v010.llm_completion import LlmCompletion
-from cosa.agents.v010.token_counter import TokenCounter
+from cosa.agents.base_llm_client import LlmClientInterface
+from cosa.agents.llm_completion import LlmCompletion
+from cosa.agents.token_counter import TokenCounter
 
 
 def clean_llm_response( response: str ) -> str:
@@ -92,7 +92,7 @@ class CompletionClient( LlmClientInterface ):
         self.verbose         = verbose
         
         # Initialize the LlmCompletion model
-        if self.debug:
+        if self.debug and self.verbose:
             du.print_banner( f"Initializing CompletionClient", prepend_nl=True )
             print( f"Model: {model_name}" )
             print( f"Base URL: {base_url}" )

@@ -129,7 +129,9 @@ class BaseXMLModel( BaseModel ):
         
         try:
             # Parse XML to dictionary
-            xml_dict = xmltodict.parse( xml_string.strip() )
+            # Preserve whitespace in XML text content to maintain code indentation
+            # See: https://github.com/deepily/lupin/issues/5 - Math Agent code generation fails due to stripped indentation
+            xml_dict = xmltodict.parse( xml_string.strip(), strip_whitespace=False )
             
             # Extract data based on root tag
             if root_tag is None:

@@ -6,7 +6,7 @@ output, producing concise, normalized summaries ideal for embedding generation.
 """
 
 import cosa.utils.util as du
-from cosa.agents.v010.gister import Gister
+from cosa.memory.gister import Gister
 from cosa.memory.normalizer import Normalizer
 from threading import Lock
 

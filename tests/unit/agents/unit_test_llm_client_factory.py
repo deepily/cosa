@@ -31,10 +31,10 @@ except ImportError as e:
 
 # Import the modules under test
 try:
-    from cosa.agents.v010.llm_client_factory import LlmClientFactory
-    from cosa.agents.v010.base_llm_client import LlmClientInterface
-    from cosa.agents.v010.chat_client import ChatClient
-    from cosa.agents.v010.completion_client import CompletionClient
+    from cosa.agents.llm_client_factory import LlmClientFactory
+    from cosa.agents.base_llm_client import LlmClientInterface
+    from cosa.agents.chat_client import ChatClient
+    from cosa.agents.completion_client import CompletionClient
 except ImportError as e:
     print( f"Failed to import LLM client modules: {e}" )
     sys.exit( 1 )
@@ -90,7 +90,7 @@ class LlmClientFactoryUnitTests:
         
         try:
             # Mock all dependencies to isolate singleton testing
-            with patch( 'cosa.agents.v010.llm_client_factory.ConfigurationManager' ) as mock_cm_class:
+            with patch( 'cosa.agents.llm_client_factory.ConfigurationManager' ) as mock_cm_class:
                 mock_config = self.mock_mgr.config_manager_mock( {
                     "llm_default_model": "test_model",
                     "api_timeout": 30
@@ -115,7 +115,7 @@ class LlmClientFactoryUnitTests:
                 self.utils.print_test_status( "Singleton identity test passed", "PASS" )
             
             # Test singleton persists across patch contexts
-            with patch( 'cosa.agents.v010.llm_client_factory.ConfigurationManager' ) as mock_cm_class2:
+            with patch( 'cosa.agents.llm_client_factory.ConfigurationManager' ) as mock_cm_class2:
                 mock_config2 = self.mock_mgr.config_manager_mock( {} ).__enter__()
                 mock_cm_class2.return_value = mock_config2
                 
@@ -148,7 +148,7 @@ class LlmClientFactoryUnitTests:
         
         try:
             # Mock dependencies
-            with patch( 'cosa.agents.v010.llm_client_factory.ConfigurationManager' ) as mock_cm_class:
+            with patch( 'cosa.agents.llm_client_factory.ConfigurationManager' ) as mock_cm_class:
                 mock_config = self.mock_mgr.config_manager_mock( {
                     "default_timeout": 30,
                     "max_retries": 3
@@ -174,7 +174,7 @@ class LlmClientFactoryUnitTests:
                 self.utils.print_test_status( "Basic initialization test passed", "PASS" )
             
             # Test that re-initialization doesn't occur
-            with patch( 'cosa.agents.v010.llm_client_factory.ConfigurationManager' ) as mock_cm_class2:
+            with patch( 'cosa.agents.llm_client_factory.ConfigurationManager' ) as mock_cm_class2:
                 mock_config2 = self.mock_mgr.config_manager_mock( {
                     "different_config": "value"
                 } ).__enter__()
@@ -213,7 +213,7 @@ class LlmClientFactoryUnitTests:
         
         try:
             # Mock dependencies and create factory
-            with patch( 'cosa.agents.v010.llm_client_factory.ConfigurationManager' ) as mock_cm_class:
+            with patch( 'cosa.agents.llm_client_factory.ConfigurationManager' ) as mock_cm_class:
                 mock_config = self.mock_mgr.config_manager_mock( {} ).__enter__()
                 mock_cm_class.return_value = mock_config
                 
@@ -282,8 +282,8 @@ class LlmClientFactoryUnitTests:
         
         try:
             # Mock dependencies
-            with patch( 'cosa.agents.v010.llm_client_factory.ConfigurationManager' ) as mock_cm_class, \
-                 patch( 'cosa.agents.v010.llm_client_factory.du.get_api_key' ) as mock_get_api_key, \
+            with patch( 'cosa.agents.llm_client_factory.ConfigurationManager' ) as mock_cm_class, \
+                 patch( 'cosa.agents.llm_client_factory.du.get_api_key' ) as mock_get_api_key, \
                  patch.dict( 'os.environ', {}, clear=True ):
                 
                 mock_config = self.mock_mgr.config_manager_mock( {} ).__enter__()
@@ -344,10 +344,10 @@ class LlmClientFactoryUnitTests:
             # Since the configuration-based approach is complex, let's test vendor-specific creation
             # which is simpler and more straightforward to mock
             
-            with patch( 'cosa.agents.v010.llm_client_factory.ConfigurationManager' ) as mock_cm_class, \
-                 patch( 'cosa.agents.v010.llm_client_factory.ChatClient' ) as mock_chat_client, \
-                 patch( 'cosa.agents.v010.llm_client_factory.CompletionClient' ) as mock_completion_client, \
-                 patch( 'cosa.agents.v010.llm_client_factory.du.get_api_key' ) as mock_get_api_key, \
+            with patch( 'cosa.agents.llm_client_factory.ConfigurationManager' ) as mock_cm_class, \
+                 patch( 'cosa.agents.llm_client_factory.ChatClient' ) as mock_chat_client, \
+                 patch( 'cosa.agents.llm_client_factory.CompletionClient' ) as mock_completion_client, \
+                 patch( 'cosa.agents.llm_client_factory.du.get_api_key' ) as mock_get_api_key, \
                  patch.dict( 'os.environ', {}, clear=True ):
                 
                 # Set up basic mocks
@@ -407,8 +407,8 @@ class LlmClientFactoryUnitTests:
         
         try:
             # Mock dependencies
-            with patch( 'cosa.agents.v010.llm_client_factory.ConfigurationManager' ) as mock_cm_class, \
-                 patch( 'cosa.agents.v010.llm_client_factory.du.get_api_key' ) as mock_get_api_key:
+            with patch( 'cosa.agents.llm_client_factory.ConfigurationManager' ) as mock_cm_class, \
+                 patch( 'cosa.agents.llm_client_factory.du.get_api_key' ) as mock_get_api_key:
                 
                 mock_config = self.mock_mgr.config_manager_mock( {} ).__enter__()
                 mock_cm_class.return_value = mock_config
@@ -463,8 +463,8 @@ class LlmClientFactoryUnitTests:
             factory_timeout = performance_targets[ "timing_targets" ].get( "factory_operation", 0.1 )
             
             # Mock dependencies for performance testing
-            with patch( 'cosa.agents.v010.llm_client_factory.ConfigurationManager' ) as mock_cm_class, \
-                 patch( 'cosa.agents.v010.llm_client_factory.ChatClient' ) as mock_chat_client:
+            with patch( 'cosa.agents.llm_client_factory.ConfigurationManager' ) as mock_cm_class, \
+                 patch( 'cosa.agents.llm_client_factory.ChatClient' ) as mock_chat_client:
                 
                 mock_config = self.mock_mgr.config_manager_mock( {} ).__enter__()
                 mock_cm_class.return_value = mock_config

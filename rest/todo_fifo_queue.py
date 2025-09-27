@@ -2,17 +2,19 @@ import random
 import threading
 from typing import Any, Optional
 
-from cosa.agents.v010.confirmation_dialog import ConfirmationDialogue
+from cosa.agents.confirmation_dialog import ConfirmationDialogue
 from cosa.rest.fifo_queue import FifoQueue
 
-from cosa.agents.v010.date_and_time_agent import DateAndTimeAgent
-from cosa.agents.v010.receptionist_agent import ReceptionistAgent
-from cosa.agents.v010.weather_agent import WeatherAgent
-from cosa.agents.v010.todo_list_agent import TodoListAgent
-from cosa.agents.v010.calendaring_agent import CalendaringAgent
-from cosa.agents.v010.math_agent import MathAgent
-from cosa.agents.v010.llm_client_factory import LlmClientFactory
-from cosa.agents.v010.gister import Gister
+from cosa.agents.date_and_time_agent import DateAndTimeAgent
+from cosa.agents.receptionist_agent import ReceptionistAgent
+from cosa.agents.weather_agent import WeatherAgent
+from cosa.agents.todo_list_agent import TodoListAgent
+from cosa.agents.calendaring_agent import CalendaringAgent
+from cosa.agents.math_agent import MathAgent
+from cosa.agents.llm_client_factory import LlmClientFactory
+from cosa.memory.gister import Gister
+from cosa.memory.gist_normalizer import GistNormalizer
+from cosa.memory.normalizer import Normalizer
 from cosa.tools.search_lupin_v010 import LupinSearch
 
 # from app       import emit_audio
@@ -66,9 +68,15 @@ class TodoFifoQueue( FifoQueue ):
         
         # Initialize LLM client factory for v010 compatibility
         self.llm_factory = LlmClientFactory( debug=debug, verbose=verbose )
-        
-        # Initialize Gister for extracting question gists
+
+        # Initialize Gister for extracting question gists (backward compatibility)
         self.gister = Gister( debug=debug, verbose=verbose )
+
+        # Initialize both text processors for runtime selection
+        self.gist_normalizer = GistNormalizer( debug=debug, verbose=verbose )
+        self.normalizer = Normalizer()
+
+        if self.debug: print( "TodoFifoQueue: Text processors initialized (runtime selection enabled)" )
         
         # Salutations to be stripped by a brute force method until the router parses them off for us
         self.salutations = [ "computer", "little", "buddy", "pal", "ai", "jarvis", "alexa", "siri", "hal", "einstein",
@@ -248,7 +256,19 @@ class TodoFifoQueue( FifoQueue ):
             self.pop_blocking_object()
             
             salutations, question = self.parse_salutations( question )
-            question_gist = self.gister.get_gist( question )
+
+            # Check config AT RUNTIME to decide which processor to use
+            enable_gisting = self.config_mgr.get( "fifo todo queue enable input gisting", default=True, return_type="boolean" )
+
+            # Process the question based on current config setting
+            if enable_gisting:
+                # Use GistNormalizer (LLM + normalization)
+                question_gist = self.gist_normalizer.get_normalized_gist( question )
+                if self.debug: print( f"Gist extracted via GistNormalizer (LLM + normalization): '{question_gist}'" )
+            else:
+                # Use Normalizer only (no LLM, just normalization)
+                question_gist = self.normalizer.normalize( question )
+                if self.debug: print( f"Text normalized (no LLM gisting): '{question_gist}'" )
             # DEMO KLUDGE: if the question doesn't start with "refactor", then we're going to search for similar snapshots
             if not question.lower().strip().startswith( "refactor " ):
                 

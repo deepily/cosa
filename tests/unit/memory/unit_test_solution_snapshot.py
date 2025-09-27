@@ -185,7 +185,7 @@ class TestSolutionSnapshot( unittest.TestCase ):
         """
         with patch( "cosa.memory.solution_snapshot.EmbeddingManager" ) as mock_embedding_mgr_class, \
              patch( "cosa.memory.solution_snapshot.du.get_current_datetime", return_value="2025-08-05-12-00-00" ), \
-             patch.object( SolutionSnapshot, 'write_current_state_to_file' ) as mock_write_file, \
+ \
              patch( "builtins.print" ):
             
             mock_embedding_mgr = Mock()
@@ -276,7 +276,7 @@ class TestSolutionSnapshot( unittest.TestCase ):
         """
         with patch( "cosa.memory.solution_snapshot.EmbeddingManager" ) as mock_embedding_mgr_class, \
              patch( "cosa.memory.solution_snapshot.du.get_current_datetime", return_value="2025-08-05-12-00-00" ), \
-             patch.object( SolutionSnapshot, 'write_current_state_to_file' ) as mock_write_file, \
+ \
              patch( "builtins.print" ):
             
             mock_embedding_mgr = Mock()

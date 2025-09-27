@@ -31,7 +31,7 @@ except ImportError as e:
 
 # Import the module under test
 try:
-    from cosa.agents.v010.agent_base import AgentBase
+    from cosa.agents.agent_base import AgentBase
 except ImportError as e:
     print( f"Failed to import AgentBase: {e}" )
     sys.exit( 1 )
@@ -111,7 +111,7 @@ class AgentBaseUnitTests:
     ======================================
     
     We use unittest.mock.patch to monkey patch the ConfigurationManager import
-    at the module level in cosa.agents.v010.agent_base. This allows us to substitute
+    at the module level in cosa.agents.agent_base. This allows us to substitute
     our mock configuration manager for the real singleton during tests.
     
     This is a TEMPORARY solution. The proper fix would be:
@@ -135,7 +135,7 @@ class AgentBaseUnitTests:
     CURRENT IMPLEMENTATION:
     ======================
     
-    Each test method uses @patch('cosa.agents.v010.agent_base.ConfigurationManager')
+    Each test method uses @patch('cosa.agents.agent_base.ConfigurationManager')
     to intercept the import and substitute our mock. This works but creates coupling
     between test code and internal implementation details.
     
@@ -187,13 +187,13 @@ class AgentBaseUnitTests:
         
         try:
             # MONKEY PATCH: Intercept all external dependencies
-            with patch( 'cosa.agents.v010.agent_base.ConfigurationManager' ) as mock_cm_class, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_file_as_string' ) as mock_get_file, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_project_root' ) as mock_get_root, \
-                 patch( 'cosa.agents.v010.agent_base.ss.SolutionSnapshot.get_timestamp' ) as mock_get_timestamp, \
-                 patch( 'cosa.agents.v010.agent_base.ss.SolutionSnapshot.generate_id_hash' ) as mock_gen_hash, \
-                 patch( 'cosa.agents.v010.agent_base.ss.SolutionSnapshot.remove_non_alphanumerics' ) as mock_remove_non_alpha, \
-                 patch( 'cosa.agents.v010.agent_base.TwoWordIdGenerator' ) as mock_two_word_gen:
+            with patch( 'cosa.agents.agent_base.ConfigurationManager' ) as mock_cm_class, \
+                 patch( 'cosa.agents.agent_base.du.get_file_as_string' ) as mock_get_file, \
+                 patch( 'cosa.agents.agent_base.du.get_project_root' ) as mock_get_root, \
+                 patch( 'cosa.agents.agent_base.ss.SolutionSnapshot.get_timestamp' ) as mock_get_timestamp, \
+                 patch( 'cosa.agents.agent_base.ss.SolutionSnapshot.generate_id_hash' ) as mock_gen_hash, \
+                 patch( 'cosa.agents.agent_base.ss.SolutionSnapshot.remove_non_alphanumerics' ) as mock_remove_non_alpha, \
+                 patch( 'cosa.agents.agent_base.TwoWordIdGenerator' ) as mock_two_word_gen:
                 
                 # Configure the mock configuration manager
                 mock_config = self.mock_mgr.config_manager_mock( {
@@ -250,9 +250,9 @@ class AgentBaseUnitTests:
             
             for scenario in test_scenarios:
                 # MONKEY PATCH: Each scenario needs its own patch context
-                with patch( 'cosa.agents.v010.agent_base.ConfigurationManager' ) as mock_cm_class, \
-                     patch( 'cosa.agents.v010.agent_base.du.get_file_as_string' ) as mock_get_file2, \
-                     patch( 'cosa.agents.v010.agent_base.du.get_project_root' ) as mock_get_root2:
+                with patch( 'cosa.agents.agent_base.ConfigurationManager' ) as mock_cm_class, \
+                     patch( 'cosa.agents.agent_base.du.get_file_as_string' ) as mock_get_file2, \
+                     patch( 'cosa.agents.agent_base.du.get_project_root' ) as mock_get_root2:
                     
                     mock_config = self.mock_mgr.config_manager_mock( {
                         "prompt template for test routing": "/templates/test_template.txt",
@@ -307,9 +307,9 @@ class AgentBaseUnitTests:
         
         try:
             # MONKEY PATCH: Comprehensive configuration test
-            with patch( 'cosa.agents.v010.agent_base.ConfigurationManager' ) as mock_cm_class, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_file_as_string' ) as mock_get_file, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_project_root' ) as mock_get_root:
+            with patch( 'cosa.agents.agent_base.ConfigurationManager' ) as mock_cm_class, \
+                 patch( 'cosa.agents.agent_base.du.get_file_as_string' ) as mock_get_file, \
+                 patch( 'cosa.agents.agent_base.du.get_project_root' ) as mock_get_root:
                 # Test with comprehensive configuration
                 config_values = {
                     "app_debug": True,
@@ -342,9 +342,9 @@ class AgentBaseUnitTests:
                 self.utils.print_test_status( "Configuration access test passed", "PASS" )
             
             # Test with missing configuration values
-            with patch( 'cosa.agents.v010.agent_base.ConfigurationManager' ) as mock_cm_class2, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_file_as_string' ) as mock_get_file2, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_project_root' ) as mock_get_root2:
+            with patch( 'cosa.agents.agent_base.ConfigurationManager' ) as mock_cm_class2, \
+                 patch( 'cosa.agents.agent_base.du.get_file_as_string' ) as mock_get_file2, \
+                 patch( 'cosa.agents.agent_base.du.get_project_root' ) as mock_get_root2:
                 mock_config2 = self.mock_mgr.config_manager_mock( {
                     "prompt template for test routing": "/templates/default.txt",
                     "llm spec key for test routing": "default_spec"
@@ -384,9 +384,9 @@ class AgentBaseUnitTests:
         
         try:
             # MONKEY PATCH: Test with valid prompt template
-            with patch( 'cosa.agents.v010.agent_base.ConfigurationManager' ) as mock_cm_class, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_file_as_string' ) as mock_get_file, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_project_root' ) as mock_get_root:
+            with patch( 'cosa.agents.agent_base.ConfigurationManager' ) as mock_cm_class, \
+                 patch( 'cosa.agents.agent_base.du.get_file_as_string' ) as mock_get_file, \
+                 patch( 'cosa.agents.agent_base.du.get_project_root' ) as mock_get_root:
                 config_with_template = {
                     "prompt template for test routing": "/templates/detailed_template.txt",
                     "llm spec key for test routing": "test_llm_spec",
@@ -411,9 +411,9 @@ class AgentBaseUnitTests:
                 self.utils.print_test_status( "Prompt template test passed", "PASS" )
             
             # Test with empty/missing template
-            with patch( 'cosa.agents.v010.agent_base.ConfigurationManager' ) as mock_cm_class2, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_file_as_string' ) as mock_get_file2, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_project_root' ) as mock_get_root2:
+            with patch( 'cosa.agents.agent_base.ConfigurationManager' ) as mock_cm_class2, \
+                 patch( 'cosa.agents.agent_base.du.get_file_as_string' ) as mock_get_file2, \
+                 patch( 'cosa.agents.agent_base.du.get_project_root' ) as mock_get_root2:
                 mock_config2 = self.mock_mgr.config_manager_mock( {
                     "prompt template for test routing": "/templates/default_template.txt",
                     "llm spec key for test routing": "default_spec"
@@ -452,9 +452,9 @@ class AgentBaseUnitTests:
         
         try:
             # MONKEY PATCH: Test XML response framework setup
-            with patch( 'cosa.agents.v010.agent_base.ConfigurationManager' ) as mock_cm_class, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_file_as_string' ) as mock_get_file, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_project_root' ) as mock_get_root:
+            with patch( 'cosa.agents.agent_base.ConfigurationManager' ) as mock_cm_class, \
+                 patch( 'cosa.agents.agent_base.du.get_file_as_string' ) as mock_get_file, \
+                 patch( 'cosa.agents.agent_base.du.get_project_root' ) as mock_get_root:
                 mock_config = self.mock_mgr.config_manager_mock( {
                     "prompt template for test routing": "/templates/xml_test.txt",
                     "llm spec key for test routing": "xml_test_spec"
@@ -480,9 +480,9 @@ class AgentBaseUnitTests:
             # Test XML processing with test data
             xml_responses = self.fixtures.get_xml_test_responses()
             
-            with patch( 'cosa.agents.v010.agent_base.ConfigurationManager' ) as mock_cm_class2, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_file_as_string' ) as mock_get_file2, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_project_root' ) as mock_get_root2:
+            with patch( 'cosa.agents.agent_base.ConfigurationManager' ) as mock_cm_class2, \
+                 patch( 'cosa.agents.agent_base.du.get_file_as_string' ) as mock_get_file2, \
+                 patch( 'cosa.agents.agent_base.du.get_project_root' ) as mock_get_root2:
                 mock_config2 = self.mock_mgr.config_manager_mock( {
                     "prompt template for test routing": "/templates/xml_processing.txt",
                     "llm spec key for test routing": "xml_proc_spec"
@@ -529,9 +529,9 @@ class AgentBaseUnitTests:
         
         try:
             # MONKEY PATCH: Test agent state management
-            with patch( 'cosa.agents.v010.agent_base.ConfigurationManager' ) as mock_cm_class, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_file_as_string' ) as mock_get_file, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_project_root' ) as mock_get_root:
+            with patch( 'cosa.agents.agent_base.ConfigurationManager' ) as mock_cm_class, \
+                 patch( 'cosa.agents.agent_base.du.get_file_as_string' ) as mock_get_file, \
+                 patch( 'cosa.agents.agent_base.du.get_project_root' ) as mock_get_root:
                 mock_config = self.mock_mgr.config_manager_mock( {
                     "prompt template for test routing": "/templates/state_test.txt",
                     "llm spec key for test routing": "state_test_spec"
@@ -573,9 +573,9 @@ class AgentBaseUnitTests:
             ]
             
             # Test agent initialization with various states
-            with patch( 'cosa.agents.v010.agent_base.ConfigurationManager' ) as mock_cm_class2, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_file_as_string' ) as mock_get_file2, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_project_root' ) as mock_get_root2:
+            with patch( 'cosa.agents.agent_base.ConfigurationManager' ) as mock_cm_class2, \
+                 patch( 'cosa.agents.agent_base.du.get_file_as_string' ) as mock_get_file2, \
+                 patch( 'cosa.agents.agent_base.du.get_project_root' ) as mock_get_root2:
                 mock_config2 = self.mock_mgr.config_manager_mock( {
                     "prompt template for test routing": "/templates/multi_state_test.txt",
                     "llm spec key for test routing": "multi_state_spec"
@@ -625,9 +625,9 @@ class AgentBaseUnitTests:
         
         try:
             # MONKEY PATCH: Test with invalid configuration
-            with patch( 'cosa.agents.v010.agent_base.ConfigurationManager' ) as mock_cm_class, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_file_as_string' ) as mock_get_file, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_project_root' ) as mock_get_root:
+            with patch( 'cosa.agents.agent_base.ConfigurationManager' ) as mock_cm_class, \
+                 patch( 'cosa.agents.agent_base.du.get_file_as_string' ) as mock_get_file, \
+                 patch( 'cosa.agents.agent_base.du.get_project_root' ) as mock_get_root:
                 mock_config = self.mock_mgr.config_manager_mock( {
                     "prompt template for test routing": "/templates/error_test.txt",
                     "llm spec key for test routing": "error_test_spec"
@@ -653,9 +653,9 @@ class AgentBaseUnitTests:
             for question in problematic_questions:
                 try:
                     # MONKEY PATCH: Each problematic question gets its own context
-                    with patch( 'cosa.agents.v010.agent_base.ConfigurationManager' ) as mock_cm_class_prob, \
-                         patch( 'cosa.agents.v010.agent_base.du.get_file_as_string' ) as mock_get_file_prob, \
-                         patch( 'cosa.agents.v010.agent_base.du.get_project_root' ) as mock_get_root_prob:
+                    with patch( 'cosa.agents.agent_base.ConfigurationManager' ) as mock_cm_class_prob, \
+                         patch( 'cosa.agents.agent_base.du.get_file_as_string' ) as mock_get_file_prob, \
+                         patch( 'cosa.agents.agent_base.du.get_project_root' ) as mock_get_root_prob:
                         mock_config_prob = self.mock_mgr.config_manager_mock( {
                             "prompt template for test routing": "/templates/problematic_test.txt",
                             "llm spec key for test routing": "prob_test_spec"
@@ -681,9 +681,9 @@ class AgentBaseUnitTests:
             # Test invalid parameter combinations
             try:
                 # MONKEY PATCH: Test extreme parameter values
-                with patch( 'cosa.agents.v010.agent_base.ConfigurationManager' ) as mock_cm_class_extreme, \
-                     patch( 'cosa.agents.v010.agent_base.du.get_file_as_string' ) as mock_get_file_extreme, \
-                     patch( 'cosa.agents.v010.agent_base.du.get_project_root' ) as mock_get_root_extreme:
+                with patch( 'cosa.agents.agent_base.ConfigurationManager' ) as mock_cm_class_extreme, \
+                     patch( 'cosa.agents.agent_base.du.get_file_as_string' ) as mock_get_file_extreme, \
+                     patch( 'cosa.agents.agent_base.du.get_project_root' ) as mock_get_root_extreme:
                     mock_config_extreme = self.mock_mgr.config_manager_mock( {
                         "prompt template for test routing": "/templates/extreme_test.txt",
                         "llm spec key for test routing": "extreme_test_spec"
@@ -731,9 +731,9 @@ class AgentBaseUnitTests:
             agent_timeout = performance_targets[ "timing_targets" ].get( "agent_response_time", 2.0 )
             
             # MONKEY PATCH: Test single agent creation performance
-            with patch( 'cosa.agents.v010.agent_base.ConfigurationManager' ) as mock_cm_class_perf, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_file_as_string' ) as mock_get_file_perf, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_project_root' ) as mock_get_root_perf:
+            with patch( 'cosa.agents.agent_base.ConfigurationManager' ) as mock_cm_class_perf, \
+                 patch( 'cosa.agents.agent_base.du.get_file_as_string' ) as mock_get_file_perf, \
+                 patch( 'cosa.agents.agent_base.du.get_project_root' ) as mock_get_root_perf:
                 mock_config_perf = self.mock_mgr.config_manager_mock( {
                     "prompt template for test routing": "/templates/performance_test.txt",
                     "llm spec key for test routing": "perf_test_spec"
@@ -751,9 +751,9 @@ class AgentBaseUnitTests:
                 assert result == True, "Agent creation should return True"
             
             # Test multiple agent creation
-            with patch( 'cosa.agents.v010.agent_base.ConfigurationManager' ) as mock_cm_class_multi, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_file_as_string' ) as mock_get_file_multi, \
-                 patch( 'cosa.agents.v010.agent_base.du.get_project_root' ) as mock_get_root_multi:
+            with patch( 'cosa.agents.agent_base.ConfigurationManager' ) as mock_cm_class_multi, \
+                 patch( 'cosa.agents.agent_base.du.get_file_as_string' ) as mock_get_file_multi, \
+                 patch( 'cosa.agents.agent_base.du.get_project_root' ) as mock_get_root_multi:
                 mock_config_multi = self.mock_mgr.config_manager_mock( {
                     "prompt template for test routing": "/templates/multi_performance_test.txt",
                     "llm spec key for test routing": "multi_perf_spec"

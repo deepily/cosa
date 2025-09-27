@@ -12,6 +12,10 @@ This module provides:
 - YesNoResponse: Boolean/confirmation responses  
 - CodeResponse: Code generation responses with thoughts and explanation
 - MathBrainstormResponse: Complex math reasoning with brainstorming
+- VoxCommandResponse: Voice-to-browser command routing
+- AgentRouterResponse: Agent routing command responses
+- GistResponse: Text summarization responses
+- ConfirmationResponse: Yes/no/ambiguous decision responses
 
 All models inherit from BaseXMLModel and include quick_smoke_test() methods.
 """
@@ -2249,6 +2253,415 @@ class WeatherResponse( BaseXMLModel ):
         )
 
 
+class VoxCommandResponse( BaseXMLModel ):
+    """
+    Voice-to-browser command response model.
+    
+    Handles XML responses for voice command routing to browser:
+    <response>
+        <command>search google new tab</command>
+        <args>machine learning tutorials</args>  
+    </response>
+    
+    Used by vox-command-template-completion.txt.
+    """
+    
+    command: str = Field( ..., description="Browser command to execute" )
+    args: str = Field( default="", description="Arguments for the browser command" )
+    
+    @field_validator( 'command' )
+    @classmethod
+    def validate_command( cls, v ):
+        """
+        Validate that command is a known browser command.
+        
+        Args:
+            v: Command value to validate
+            
+        Returns:
+            Validated command
+        """
+        # Allow flexibility for new browser commands
+        return v.strip() if v else ""
+    
+    @classmethod
+    def get_example_for_template( cls ) -> 'VoxCommandResponse':
+        """
+        Get example instance for prompt templates.
+        
+        Returns a browser command response example that matches the expected
+        XML structure for the vox-command-template-completion.txt template.
+        """
+        return cls(
+            command='search google new tab',
+            args='machine learning tutorials'
+        )
+    
+    @classmethod
+    def quick_smoke_test( cls, debug: bool = False ) -> bool:
+        """
+        Quick smoke test for VoxCommandResponse.
+        
+        Args:
+            debug: Enable debug output
+            
+        Returns:
+            True if all tests pass
+        """
+        if debug:
+            print( f"Testing {cls.__name__}..." )
+        
+        try:
+            # Test base functionality
+            if not super().quick_smoke_test( debug=False ):
+                return False
+            
+            # Test creation and validation
+            response = cls( command="search google new tab", args="python tutorials" )
+            assert response.command == "search google new tab"
+            assert response.args == "python tutorials"
+            
+            # Test XML generation
+            xml_str = response.to_xml()
+            assert "<command>search google new tab</command>" in xml_str
+            assert "<args>python tutorials</args>" in xml_str
+            
+            # Test round-trip conversion
+            parsed = cls.from_xml( xml_str )
+            assert parsed.command == response.command
+            assert parsed.args == response.args
+            
+            # Test template example
+            example = cls.get_example_for_template()
+            assert example.command == 'search google new tab'
+            assert example.args == 'machine learning tutorials'
+            
+            if debug:
+                print( f"✓ {cls.__name__} smoke test PASSED" )
+            
+            return True
+            
+        except Exception as e:
+            if debug:
+                print( f"✗ {cls.__name__} smoke test FAILED: {e}" )
+            return False
+
+
+class AgentRouterResponse( BaseXMLModel ):
+    """
+    Agent routing response model.
+    
+    Handles XML responses for agent routing commands:
+    <response>
+        <command>agent router go to math</command>
+        <args>calculate the square root of 144</args>  
+    </response>
+    
+    Used by agent-router-template-completion.txt.
+    """
+    
+    command: str = Field( ..., description="Agent routing command to execute" )
+    args: str = Field( default="", description="Arguments to pass to the selected agent" )
+    
+    @field_validator( 'command' )
+    @classmethod
+    def validate_command( cls, v ):
+        """
+        Validate that command is a known agent routing command.
+        
+        Args:
+            v: Command value to validate
+            
+        Returns:
+            Validated command
+        """
+        valid_commands = [
+            'agent router go to date and time',
+            'agent router go to weather',
+            'agent router go to calendar',
+            'agent router go to receptionist',
+            'agent router go to todo list',
+            'agent router go to math',
+            'none'
+        ]
+        
+        # Allow flexibility but warn about unknown commands
+        if v not in valid_commands:
+            pass  # Don't fail validation, just allow it
+            
+        return v.strip() if v else ""
+    
+    @classmethod
+    def get_example_for_template( cls ) -> 'AgentRouterResponse':
+        """
+        Get example instance for prompt templates.
+        
+        Returns an agent router response example that matches the expected
+        XML structure for the agent-router-template-completion.txt template.
+        """
+        return cls(
+            command='agent router go to math',
+            args='calculate the square root of 144'
+        )
+    
+    @classmethod
+    def quick_smoke_test( cls, debug: bool = False ) -> bool:
+        """
+        Quick smoke test for AgentRouterResponse.
+        
+        Args:
+            debug: Enable debug output
+            
+        Returns:
+            True if all tests pass
+        """
+        if debug:
+            print( f"Testing {cls.__name__}..." )
+        
+        try:
+            # Test base functionality
+            if not super().quick_smoke_test( debug=False ):
+                return False
+            
+            # Test creation and validation
+            response = cls( command="agent router go to math", args="calculate 2+2" )
+            assert response.command == "agent router go to math"
+            assert response.args == "calculate 2+2"
+            
+            # Test XML generation
+            xml_str = response.to_xml()
+            assert "<command>agent router go to math</command>" in xml_str
+            assert "<args>calculate 2+2</args>" in xml_str
+            
+            # Test round-trip conversion
+            parsed = cls.from_xml( xml_str )
+            assert parsed.command == response.command
+            assert parsed.args == response.args
+            
+            # Test template example
+            example = cls.get_example_for_template()
+            assert example.command == 'agent router go to math'
+            assert example.args == 'calculate the square root of 144'
+            
+            if debug:
+                print( f"✓ {cls.__name__} smoke test PASSED" )
+            
+            return True
+            
+        except Exception as e:
+            if debug:
+                print( f"✗ {cls.__name__} smoke test FAILED: {e}" )
+            return False
+
+
+class GistResponse( BaseXMLModel ):
+    """
+    Text summarization/gist response model.
+    
+    Handles XML responses for text summarization:
+    <response>
+        <gist>Calculate the square root of 144</gist>
+    </response>
+    
+    Used by gist.txt template.
+    """
+    
+    gist: str = Field( ..., description="Concise, one-sentence summary of the utterance" )
+    
+    @field_validator( 'gist' )
+    @classmethod
+    def validate_gist( cls, v ):
+        """
+        Validate that gist is not empty.
+        
+        Args:
+            v: Gist value to validate
+            
+        Returns:
+            Validated gist
+            
+        Raises:
+            ValueError: If gist is empty
+        """
+        if not v or not v.strip():
+            raise ValueError( "Gist cannot be empty" )
+        return v.strip()
+    
+    @classmethod
+    def get_example_for_template( cls ) -> 'GistResponse':
+        """
+        Get example instance for prompt templates.
+        
+        Returns a gist response example that matches the expected
+        XML structure for the gist.txt template.
+        """
+        return cls(
+            gist='Calculate the square root of 144'
+        )
+    
+    @classmethod
+    def quick_smoke_test( cls, debug: bool = False ) -> bool:
+        """
+        Quick smoke test for GistResponse.
+        
+        Args:
+            debug: Enable debug output
+            
+        Returns:
+            True if all tests pass
+        """
+        if debug:
+            print( f"Testing {cls.__name__}..." )
+        
+        try:
+            # Test base functionality
+            if not super().quick_smoke_test( debug=False ):
+                return False
+            
+            # Test creation and validation
+            response = cls( gist="This is a test summary" )
+            assert response.gist == "This is a test summary"
+            
+            # Test XML generation
+            xml_str = response.to_xml()
+            assert "<gist>This is a test summary</gist>" in xml_str
+            
+            # Test round-trip conversion
+            parsed = cls.from_xml( xml_str )
+            assert parsed.gist == response.gist
+            
+            # Test validation
+            try:
+                cls( gist="" )
+                assert False, "Should have failed validation"
+            except ValueError:
+                pass  # Expected
+            
+            # Test template example
+            example = cls.get_example_for_template()
+            assert example.gist == 'Calculate the square root of 144'
+            
+            if debug:
+                print( f"✓ {cls.__name__} smoke test PASSED" )
+            
+            return True
+            
+        except Exception as e:
+            if debug:
+                print( f"✗ {cls.__name__} smoke test FAILED: {e}" )
+            return False
+
+
+class ConfirmationResponse( BaseXMLModel ):
+    """
+    Yes/no/ambiguous confirmation response model.
+    
+    Handles XML responses for confirmation decisions:
+    <response>
+        <decision>yes</decision>
+    </response>
+    
+    Used by confirmation-yes-no.txt template.
+    """
+    
+    decision: Literal["yes", "no", "ambiguous"] = Field( 
+        ..., 
+        description="Confirmation decision - must be one of: yes, no, ambiguous" 
+    )
+    
+    @classmethod
+    def get_example_for_template( cls ) -> 'ConfirmationResponse':
+        """
+        Get example instance for prompt templates.
+        
+        Returns a confirmation response example that matches the expected
+        XML structure for the confirmation-yes-no.txt template.
+        
+        Shows all three valid options in XML comments.
+        """
+        return cls(
+            decision='yes'
+        )
+    
+    def to_xml( self ) -> str:
+        """
+        Convert to XML with documentation of valid options.
+        
+        Returns:
+            XML string with examples of all valid responses
+        """
+        base_xml = super().to_xml()
+        
+        # Add documentation comment showing all valid options (for any decision value)
+        if "</response>" in base_xml:
+            base_xml = base_xml.replace(
+                "</response>",
+                """</response>
+
+<!-- Examples of valid responses:
+<response><decision>yes</decision></response>
+<response><decision>no</decision></response>  
+<response><decision>ambiguous</decision></response>
+-->"""
+            )
+        
+        return base_xml
+    
+    @classmethod
+    def quick_smoke_test( cls, debug: bool = False ) -> bool:
+        """
+        Quick smoke test for ConfirmationResponse.
+        
+        Args:
+            debug: Enable debug output
+            
+        Returns:
+            True if all tests pass
+        """
+        if debug:
+            print( f"Testing {cls.__name__}..." )
+        
+        try:
+            # Test base functionality
+            if not super().quick_smoke_test( debug=False ):
+                return False
+            
+            # Test all valid values
+            for decision in ["yes", "no", "ambiguous"]:
+                response = cls( decision=decision )
+                assert response.decision == decision
+                
+                # Test XML generation
+                xml_str = response.to_xml()
+                assert f"<decision>{decision}</decision>" in xml_str
+                assert "Examples of valid responses:" in xml_str  # Documentation comment
+                
+                # Test round-trip conversion
+                parsed = cls.from_xml( xml_str )
+                assert parsed.decision == decision
+            
+            # Test invalid value
+            try:
+                cls( decision="maybe" )
+                assert False, "Should have failed validation"
+            except Exception:
+                pass  # Expected
+            
+            # Test template example
+            example = cls.get_example_for_template()
+            assert example.decision == 'yes'
+            
+            if debug:
+                print( f"✓ {cls.__name__} smoke test PASSED" )
+            
+            return True
+            
+        except Exception as e:
+            if debug:
+                print( f"✗ {cls.__name__} smoke test FAILED: {e}" )
+            return False
+
+
 def quick_smoke_test() -> bool:
     """
     Quick smoke test for all XML models.
@@ -2272,7 +2685,11 @@ def quick_smoke_test() -> bool:
             BugInjectionResponse,
             IterativeDebuggingMinimalistResponse,
             IterativeDebuggingFullResponse,
-            WeatherResponse
+            WeatherResponse,
+            VoxCommandResponse,
+            AgentRouterResponse,
+            GistResponse,
+            ConfirmationResponse
         ]
         
         passed = 0

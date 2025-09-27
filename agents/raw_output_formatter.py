@@ -2,7 +2,7 @@ from cosa.utils import util     as du
 from cosa.utils import util_xml as dux
 
 from cosa.config.configuration_manager   import ConfigurationManager
-from cosa.agents.v010.llm_client_factory import LlmClientFactory
+from cosa.agents.llm_client_factory import LlmClientFactory
 from cosa.agents.io_models.utils.xml_parser_factory import XmlParserFactory
 
 class RawOutputFormatter:

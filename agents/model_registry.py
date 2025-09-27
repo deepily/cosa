@@ -163,7 +163,7 @@ class ModelRegistry:
         self.register_model( ModelConfig(
             name                      = "gpt-4",
             provider                  = LlmProvider.OPENAI,
-            client_class              = "cosa.agents.v010.openai_client.OpenAIClient",
+            client_class              = "cosa.agents.openai_client.OpenAIClient",
             max_tokens                = 8192,
             cost_per_1k_tokens_input  = 0.03,
             cost_per_1k_tokens_output = 0.06
@@ -172,7 +172,7 @@ class ModelRegistry:
         self.register_model( ModelConfig(
             name                      = "gpt-4-turbo",
             provider                  = LlmProvider.OPENAI,
-            client_class              = "cosa.agents.v010.openai_client.OpenAIClient",
+            client_class              = "cosa.agents.openai_client.OpenAIClient",
             max_tokens                = 4096,
             cost_per_1k_tokens_input  = 0.01,
             cost_per_1k_tokens_output = 0.03
@@ -181,7 +181,7 @@ class ModelRegistry:
         self.register_model( ModelConfig(
             name                      = "gpt-3.5-turbo",
             provider                  = LlmProvider.OPENAI,
-            client_class              = "cosa.agents.v010.openai_client.OpenAIClient",
+            client_class              = "cosa.agents.openai_client.OpenAIClient",
             max_tokens                = 4096,
             cost_per_1k_tokens_input  = 0.0005,
             cost_per_1k_tokens_output = 0.0015
@@ -191,7 +191,7 @@ class ModelRegistry:
         self.register_model( ModelConfig(
             name                      = "claude-3-sonnet-20240229",
             provider                  = LlmProvider.ANTHROPIC,
-            client_class              = "cosa.agents.v010.anthropic_client.AnthropicClient",
+            client_class              = "cosa.agents.anthropic_client.AnthropicClient",
             max_tokens                = 4096,
             cost_per_1k_tokens_input  = 0.003,
             cost_per_1k_tokens_output = 0.015
@@ -200,7 +200,7 @@ class ModelRegistry:
         self.register_model( ModelConfig(
             name                      = "claude-3-haiku-20240307",
             provider                  = LlmProvider.ANTHROPIC,
-            client_class              = "cosa.agents.v010.anthropic_client.AnthropicClient",
+            client_class              = "cosa.agents.anthropic_client.AnthropicClient",
             max_tokens                = 4096,
             cost_per_1k_tokens_input  = 0.00025,
             cost_per_1k_tokens_output = 0.00125
@@ -210,7 +210,7 @@ class ModelRegistry:
         self.register_model( ModelConfig(
             name                      = "mixtral-8x7b-32768",
             provider                  = LlmProvider.GROQ,
-            client_class              = "cosa.agents.v010.groq_client.GroqClient",
+            client_class              = "cosa.agents.groq_client.GroqClient",
             max_tokens                = 32768,
             cost_per_1k_tokens_input  = 0.00027,
             cost_per_1k_tokens_output = 0.00027
@@ -219,7 +219,7 @@ class ModelRegistry:
         self.register_model( ModelConfig(
             name                      = "llama2-70b-4096",
             provider                  = LlmProvider.GROQ,
-            client_class              = "cosa.agents.v010.groq_client.GroqClient",
+            client_class              = "cosa.agents.groq_client.GroqClient",
             max_tokens                = 4096,
             cost_per_1k_tokens_input  = 0.00070,
             cost_per_1k_tokens_output = 0.00080
@@ -229,7 +229,7 @@ class ModelRegistry:
         self.register_model( ModelConfig(
             name                      = "gemini-1.5-pro",
             provider                  = LlmProvider.GOOGLE,
-            client_class              = "cosa.agents.v010.google_client.GoogleClient",
+            client_class              = "cosa.agents.google_client.GoogleClient",
             max_tokens                = 2048,
             cost_per_1k_tokens_input  = 0.0035,
             cost_per_1k_tokens_output = 0.0105
@@ -239,7 +239,7 @@ class ModelRegistry:
         self.register_model( ModelConfig(
             name                      = "deepily-llama-7b",
             provider                  = LlmProvider.DEEPILY,
-            client_class              = "cosa.agents.v010.deepily_client.DeepilyClient",
+            client_class              = "cosa.agents.deepily_client.DeepilyClient",
             max_tokens                = 4096,
             cost_per_1k_tokens_input  = 0.0,  # Local inference
             cost_per_1k_tokens_output = 0.0

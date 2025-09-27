@@ -19,7 +19,7 @@ import time
 from typing import Dict, Any
 
 from cosa.config.configuration_manager import ConfigurationManager
-from cosa.agents.v010.confirmation_dialog import ConfirmationDialogue
+from cosa.agents.confirmation_dialog import ConfirmationDialogue
 from cosa.agents.io_models.xml_models import YesNoResponse
 
 
@@ -597,7 +597,7 @@ def quick_smoke_test() -> bool:
         
         # Test 4: Basic ConfirmationDialogue functionality
         print( "  - Testing basic ConfirmationDialogue functionality..." )
-        from cosa.agents.v010.confirmation_dialog import ConfirmationDialogue
+        from cosa.agents.confirmation_dialog import ConfirmationDialogue
         
         dialog = ConfirmationDialogue( debug=False, verbose=False )
         has_pydantic_attr = hasattr( dialog, 'use_pydantic' )

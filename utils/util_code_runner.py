@@ -281,7 +281,7 @@ def assemble_and_run_solution( solution_code: list[str], example_code: str, path
     
     if inject_bugs:
         
-        from cosa.agents.v010.bug_injector import BugInjector
+        from cosa.agents.bug_injector import BugInjector
         
         du.print_banner( "Injecting bugs...", prepend_nl=True, expletive=True, chunk="buggy 🦂 bug injector 💉 " )
         bug_injector  = BugInjector( solution_code, example=example_code, debug=debug, verbose=verbose )
@@ -479,7 +479,7 @@ def quick_smoke_test():
         # Test 5: Bug injection capability (if available)
         print( "Testing bug injection capability..." )
         try:
-            from cosa.agents.v010.bug_injector import BugInjector
+            from cosa.agents.bug_injector import BugInjector
             print( "✓ Bug injection capability available" )
         except ImportError as e:
             print( f"⚠ Bug injection not available: {e}" )

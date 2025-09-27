@@ -187,10 +187,17 @@ async def push(
     
     user_id = current_user["uid"]
     print(f"[API] /api/push called - question: '{question}', websocket_id: {websocket_id}, user_id: {user_id}")
-    
+
     # Push to queue with websocket_id and user_id
-    result = todo_queue.push_job(question, websocket_id, user_id)
-    
+    try:
+        result = todo_queue.push_job(question, websocket_id, user_id)
+        print(f"[API] /api/push successful - result: {result}")
+    except Exception as e:
+        print(f"[API] /api/push failed - error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to push job to queue: {str(e)}")
+
     return {
         "status": "queued",
         "websocket_id": websocket_id,

@@ -7,7 +7,7 @@ import json
 import aiohttp
 
 import cosa.utils.util as du
-from cosa.agents.v010.token_counter import TokenCounter
+from cosa.agents.token_counter import TokenCounter
 from cosa.utils.util_stopwatch import Stopwatch
 
 class LlmCompletion:

@@ -17,7 +17,7 @@ from typing import Dict, Any
 
 from cosa.agents.io_models.xml_models import BugInjectionResponse
 from cosa.agents.io_models.utils.xml_parser_factory import XmlParserFactory
-from cosa.agents.v010.bug_injector import BugInjector
+from cosa.agents.bug_injector import BugInjector
 from cosa.config.configuration_manager import ConfigurationManager
 
 

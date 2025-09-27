@@ -9,7 +9,7 @@ import cosa.utils.util_stopwatch as sw
 import cosa.utils.util as du
 import cosa.utils.util_xml as du_xml
 
-from cosa.agents.v010.llm_client_factory import LlmClientFactory
+from cosa.agents.llm_client_factory import LlmClientFactory
 
 from cosa.config.configuration_manager import ConfigurationManager
 
@@ -1082,7 +1082,6 @@ class MultiModalMunger:
         prompt          = prompt_template.format( voice_command=transcription )
         
         model         = self.config_mgr.get( "router_and_vox_command_model" )
-        # url           = self.config_mgr.get( "router_and_vox_command_url" )
         is_completion = self.config_mgr.get( "router_and_vox_command_is_completion", return_type="boolean", default=False )
         
         factory  = LlmClientFactory( debug=self.debug, verbose=self.verbose )

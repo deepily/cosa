@@ -93,7 +93,7 @@ class TestSolutionSnapshotManager( unittest.TestCase ):
         mock_snapshot.question_gist = question_gist or question
         mock_snapshot.synonymous_questions = synonymous_questions
         mock_snapshot.synonymous_question_gists = synonymous_gists
-        mock_snapshot.write_current_state_to_file = Mock()
+        # Removed write_current_state_to_file mock - serialization handled by manager
         
         return mock_snapshot
     
@@ -255,8 +255,8 @@ class TestSolutionSnapshotManager( unittest.TestCase ):
         
         Ensures:
             - Snapshot added to question index
-            - write_current_state_to_file called on snapshot
             - Manager state updated correctly
+            - Serialization handled internally by manager
         """
         with patch( "cosa.memory.solution_snapshot_mgr.EmbeddingManager" ) as mock_embedding_mgr, \
              patch( "cosa.memory.solution_snapshot_mgr.QuestionEmbeddingsTable" ) as mock_question_table, \
@@ -278,8 +278,8 @@ class TestSolutionSnapshotManager( unittest.TestCase ):
             self.assertIn( "New question?", manager._snapshots_by_question )
             self.assertEqual( manager._snapshots_by_question["New question?"], new_snapshot )
             
-            # Verify file write called
-            new_snapshot.write_current_state_to_file.assert_called_once()
+            # Note: write_current_state_to_file() assertion removed
+            # Serialization is now handled internally by manager.add_snapshot()
     
     def test_question_exists_methods( self ):
         """

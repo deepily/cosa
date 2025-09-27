@@ -6,7 +6,7 @@ from typing import Optional, Any
 
 import cosa.utils.util as du
 import cosa.utils.util_xml as dux
-from cosa.agents.v010 import LlmClientFactory
+from cosa.agents import LlmClientFactory
 from cosa.training.xml_prompt_generator import XmlPromptGenerator
 from cosa.training.xml_response_validator import XmlResponseValidator
 

@@ -1,8 +1,8 @@
-# from cosa.agents.v010.math_refactoring_agent import MathRefactoringAgent
-from cosa.agents.v010.receptionist_agent import ReceptionistAgent
-from cosa.agents.v010.weather_agent import WeatherAgent
+# from cosa.agents.math_refactoring_agent import MathRefactoringAgent
+from cosa.agents.receptionist_agent import ReceptionistAgent
+from cosa.agents.weather_agent import WeatherAgent
 from cosa.rest.fifo_queue import FifoQueue
-from cosa.agents.v010.agent_base import AgentBase
+from cosa.agents.agent_base import AgentBase
 from cosa.memory.input_and_output_table import InputAndOutputTable
 from cosa.memory.solution_snapshot import SolutionSnapshot
 
@@ -137,9 +137,32 @@ class RunningFifoQueue( FifoQueue ):
             
             run_timer = sw.Stopwatch( "Starting job run timer..." )
             
-            # Process based on job type (existing logic)
+            # Process based on job type
             if isinstance( running_job, AgentBase ):
-                running_job = self._handle_base_agent( running_job, truncated_question, run_timer )
+                # NEW: Check cache BEFORE agent execution
+                question = running_job.last_question_asked
+
+                if hasattr( self, 'debug' ) and self.debug:
+                    print( f"[CACHE] Checking cache for question: {question}" )
+
+                # Search for existing snapshot
+                cached_snapshots = self.snapshot_mgr.get_snapshots_by_question( question )
+
+                if cached_snapshots and len( cached_snapshots ) > 0:
+                    # CACHE HIT - Use cached result
+                    cached_snapshot = cached_snapshots[0]  # Use first/best match
+
+                    if hasattr( self, 'debug' ) and self.debug:
+                        print( f"[CACHE] 🎯 CACHE HIT: Found cached solution from {cached_snapshot.run_date}" )
+
+                    # Convert cached snapshot to proper format and use it
+                    running_job = self._format_cached_result( cached_snapshot, truncated_question, run_timer )
+                else:
+                    # CACHE MISS - Continue with normal agent execution
+                    if hasattr( self, 'debug' ) and self.debug:
+                        print( f"[CACHE] ❌ CACHE MISS: Running agent for new question" )
+
+                    running_job = self._handle_base_agent( running_job, truncated_question, run_timer )
             else:
                 running_job = self._handle_solution_snapshot( running_job, truncated_question, run_timer )
                 
@@ -304,9 +327,9 @@ class RunningFifoQueue( FifoQueue ):
         running_job.update_runtime_stats( run_timer )
         du.print_banner( f"Job [{running_job.question}] complete!", prepend_nl=True, end="\n" )
         
-        print( f"Writing job [{running_job.last_question_asked}] to file..." )
-        running_job.write_current_state_to_file()
-        print( f"Writing job [{running_job.last_question_asked}] to file... Done!" )
+        # Note: Snapshot already saved via self.snapshot_mgr.add_snapshot() at line 248
+        # Removed redundant write_current_state_to_file() call as serialization
+        # is now handled by managers, not snapshot objects
         
         du.print_banner( "running_job.runtime_stats", prepend_nl=True )
         pprint.pprint( running_job.runtime_stats )
@@ -315,7 +338,59 @@ class RunningFifoQueue( FifoQueue ):
         self.io_tbl.insert_io_row( input_type=running_job.routing_command, input=running_job.last_question_asked, output_raw=running_job.answer, output_final=running_job.answer_conversational )
         
         return running_job
-    
+
+    def _format_cached_result( self, cached_snapshot: Any, truncated_question: str, run_timer: sw.Stopwatch ) -> Any:
+        """
+        Format cached snapshot result to behave like a freshly executed job.
+
+        Requires:
+            - cached_snapshot is a valid SolutionSnapshot with results
+            - truncated_question is a string for logging
+            - run_timer is a running Stopwatch
+
+        Ensures:
+            - Emits speech for cached result
+            - Updates queues (moves to done queue)
+            - Emits websocket updates
+            - Updates runtime stats
+            - Returns properly formatted cached result
+
+        Raises:
+            - None (handles errors gracefully)
+        """
+        msg = f"Using CACHED result for [{truncated_question}]..."
+        du.print_banner( msg=msg, prepend_nl=True )
+
+        # Emit the cached answer as speech
+        self._emit_speech( cached_snapshot.answer_conversational, job=cached_snapshot )
+
+        # Move job through the queue system properly
+        self.pop()  # Remove from running queue, auto-emits 'run_update'
+        self.jobs_done_queue.push( cached_snapshot )  # Add to done queue, auto-emits 'done_update'
+
+        # Update runtime stats to show this was a cache hit
+        run_timer.print( "CACHE HIT - result retrieved in ", use_millis=True )
+        cached_snapshot.update_runtime_stats( run_timer )
+
+        # Update the run_date to current time to show when it was retrieved
+        cached_snapshot.run_date = cached_snapshot.get_timestamp()
+
+        du.print_banner( f"CACHED Job [{cached_snapshot.question}] complete!", prepend_nl=True, end="\n" )
+
+        if hasattr( self, 'debug' ) and self.debug:
+            du.print_banner( "cached_snapshot.runtime_stats", prepend_nl=True )
+            pprint.pprint( cached_snapshot.runtime_stats )
+
+        # Write to database to track cache hit
+        self.io_tbl.insert_io_row(
+            input_type=cached_snapshot.routing_command,
+            input=cached_snapshot.last_question_asked,
+            output_raw=cached_snapshot.answer,
+            output_final=cached_snapshot.answer_conversational
+        )
+
+        return cached_snapshot
+
     # def _get_audio_url( self, text ):
     #
     #     with self.app.app_context():
@@ -358,10 +433,10 @@ def quick_smoke_test():
         # Test 2: Critical dependency imports
         print( "Testing critical dependency imports..." )
         try:
-            from cosa.agents.v010.receptionist_agent import ReceptionistAgent
-            from cosa.agents.v010.weather_agent import WeatherAgent
+            from cosa.agents.receptionist_agent import ReceptionistAgent
+            from cosa.agents.weather_agent import WeatherAgent
             from cosa.rest.fifo_queue import FifoQueue
-            from cosa.agents.v010.agent_base import AgentBase
+            from cosa.agents.agent_base import AgentBase
             print( "✓ Core agent imports successful" )
         except ImportError as e:
             print( f"✗ Core agent imports failed: {e}" )

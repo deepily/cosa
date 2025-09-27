@@ -20,7 +20,7 @@ import tempfile
 
 from cosa.agents.io_models.xml_models import IterativeDebuggingMinimalistResponse, IterativeDebuggingFullResponse
 from cosa.agents.io_models.utils.xml_parser_factory import XmlParserFactory
-from cosa.agents.v010.iterative_debugging_agent import IterativeDebuggingAgent
+from cosa.agents.iterative_debugging_agent import IterativeDebuggingAgent
 from cosa.config.configuration_manager import ConfigurationManager
 from cosa.utils import util as du
 

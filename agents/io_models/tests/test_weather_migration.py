@@ -21,7 +21,7 @@ from typing import Dict, Any
 
 from cosa.agents.io_models.xml_models import WeatherResponse
 from cosa.agents.io_models.utils.xml_parser_factory import XmlParserFactory
-from cosa.agents.v010.raw_output_formatter import RawOutputFormatter
+from cosa.agents.raw_output_formatter import RawOutputFormatter
 from cosa.config.configuration_manager import ConfigurationManager
 
 
@@ -224,7 +224,7 @@ class TestRawOutputFormatterMigration:
         
         # The formatter should be created with factory integration
         # We can test this by checking that the factory import and initialization work
-        from cosa.agents.v010.raw_output_formatter import RawOutputFormatter
+        from cosa.agents.raw_output_formatter import RawOutputFormatter
         
         # Verify the import and class structure
         assert hasattr( RawOutputFormatter, '__init__' )
@@ -342,7 +342,7 @@ def run_weather_migration_tests():
         print( "Testing RawOutputFormatter integration..." )
         
         # Test the integration without requiring LLM calls
-        from cosa.agents.v010.raw_output_formatter import RawOutputFormatter
+        from cosa.agents.raw_output_formatter import RawOutputFormatter
         from cosa.agents.io_models.utils.xml_parser_factory import XmlParserFactory
         
         # Verify integration components

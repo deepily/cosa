@@ -8,7 +8,7 @@ into FastAPI endpoints to ensure consistent service access across the applicatio
 
 from cosa.config.configuration_manager import ConfigurationManager
 from cosa.memory.solution_snapshot_mgr import SolutionSnapshotManager
-from cosa.agents.v010.two_word_id_generator import TwoWordIdGenerator
+from cosa.agents.two_word_id_generator import TwoWordIdGenerator
 
 # Global instances (initialized once)
 _config_mgr = None

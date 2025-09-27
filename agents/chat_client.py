@@ -7,8 +7,8 @@ import concurrent.futures
 from pydantic_ai import Agent
 
 import cosa.utils.util as du
-from cosa.agents.v010.base_llm_client import LlmClientInterface
-from cosa.agents.v010.token_counter import TokenCounter
+from cosa.agents.base_llm_client import LlmClientInterface
+from cosa.agents.token_counter import TokenCounter
 
 
 class ChatClient( LlmClientInterface ):
