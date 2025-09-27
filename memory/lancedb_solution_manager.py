@@ -430,7 +430,72 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             monitor.stop()
         
         # Initialization complete, no return value needed
-    
+
+    def reload( self ) -> None:
+        """
+        Reload/refresh data from LanceDB database.
+
+        Requires:
+            - Manager has been previously initialized
+            - Database connection is accessible
+
+        Ensures:
+            - Refreshes connection to LanceDB database
+            - Reloads all cached data from persistent storage
+            - Updates internal lookup dictionaries
+            - Can be called multiple times safely
+
+        Raises:
+            - RuntimeError if manager not initialized
+            - ConnectionError if database unavailable
+            - PermissionError if insufficient access rights
+        """
+        if not self._initialized:
+            raise RuntimeError( "LanceDBSolutionManager must be initialized before reload" )
+
+        if self.debug:
+            print( f"Reloading LanceDB solution manager from {self.db_path}..." )
+
+        # Re-use existing initialize logic which handles:
+        # - Database reconnection
+        # - Cache refreshing
+        # - Loading existing data
+        try:
+            # Store previous state for debugging
+            old_count = len( self._question_lookup ) if hasattr( self, '_question_lookup' ) else 0
+
+            # Clear existing caches before reload
+            self._question_lookup.clear()
+            self._id_lookup.clear()
+
+            # Reconnect and reload data (reuse initialize logic)
+            self._db = lancedb.connect( self.db_path )
+            self._table = self._db.open_table( self.table_name )
+
+            # Reload data into caches
+            try:
+                result = self._table.to_pandas()
+                snapshot_count = len( result )
+
+                for _, row in result.iterrows():
+                    question = row["question"]
+                    id_hash = row["id_hash"]
+
+                    self._question_lookup[question] = id_hash
+                    self._id_lookup[id_hash] = dict( row )
+
+                if self.debug:
+                    print( f"✓ Reloaded {snapshot_count} snapshots (was {old_count})" )
+
+            except Exception as cache_error:
+                if self.debug:
+                    print( f"⚠ Cache reload failed (table may be empty): {cache_error}" )
+
+        except Exception as e:
+            if self.debug:
+                print( f"✗ Failed to reload LanceDB manager: {e}" )
+            raise
+
     def add_snapshot( self, snapshot: SolutionSnapshot ) -> bool:
         """
         Add snapshot to LanceDB table using context-aware operations.

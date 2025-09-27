@@ -114,7 +114,7 @@ async def init():
         # Reload snapshots using the global snapshot manager
         if hasattr(main_module, 'snapshot_mgr') and main_module.snapshot_mgr:
             print("Reloading solution snapshots...")
-            main_module.snapshot_mgr.load_snapshots()
+            main_module.snapshot_mgr.reload()
         
         return {
             "status": "success",

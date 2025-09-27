@@ -135,7 +135,7 @@ class LlmClientFactory:
             model_params = self.config_mgr.get( f"{model_config_key}_params", default="{}", return_type="dict" )
             
             model_tokenizer_map = self.config_mgr.get( "model_tokenizer_map", default="{}", return_type="json" )
-            if debug:
+            if debug and verbose:
                 du.print_banner( f"Model params for '{model_config_key}':" )
                 print( json.dumps( model_params, indent=4, sort_keys=True ) )
             
@@ -160,7 +160,7 @@ class LlmClientFactory:
                 else:
                     base_url = f"http://{host_port}/v1"
                 
-                if self.debug: print( f"Creating {'Completion' if completion_mode else 'Chat'} client for {model_name} with base URL {base_url}" )
+                if self.debug and self.verbose: print( f"Creating {'Completion' if completion_mode else 'Chat'} client for {model_name} with base URL {base_url}" )
                 
                 if completion_mode:
                     return CompletionClient(

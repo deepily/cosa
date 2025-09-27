@@ -594,6 +594,37 @@ class FileBasedSolutionManager( SolutionSnapshotManagerInterface ):
             if self.verbose:
                 self._print_snapshots()
 
+    def reload( self ) -> None:
+        """
+        Reload/refresh snapshots from disk storage.
+
+        Requires:
+            - Manager has been previously initialized
+            - Storage path is accessible
+
+        Ensures:
+            - Refreshes all cached data from disk
+            - Updates internal dictionaries with current file contents
+            - Reinitializes embeddings table
+            - Prints debug info if enabled
+
+        Raises:
+            - RuntimeError if manager not initialized
+            - PermissionError if cannot read from storage path
+            - IOError if file operations fail
+        """
+        if not self.is_initialized():
+            raise RuntimeError( "FileBasedSolutionManager must be initialized before reload" )
+
+        if self.debug:
+            print( f"Reloading solution snapshots from {self.path}..." )
+
+        # Use existing load_snapshots method which handles all the reloading logic
+        self.load_snapshots()
+
+        if self.debug:
+            print( f"✓ Reloaded {len( self._snapshots_by_question )} snapshots" )
+
     def _load_snapshots_by_question( self ) -> Dict[str, SolutionSnapshot]:
         """
         Load snapshots indexed by question.

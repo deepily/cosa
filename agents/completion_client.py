@@ -92,7 +92,7 @@ class CompletionClient( LlmClientInterface ):
         self.verbose         = verbose
         
         # Initialize the LlmCompletion model
-        if self.debug:
+        if self.debug and self.verbose:
             du.print_banner( f"Initializing CompletionClient", prepend_nl=True )
             print( f"Model: {model_name}" )
             print( f"Base URL: {base_url}" )

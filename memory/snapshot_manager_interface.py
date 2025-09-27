@@ -171,7 +171,29 @@ class SolutionSnapshotManagerInterface( ABC ):
             - ValueError if configuration invalid
         """
         pass
-    
+
+    @abstractmethod
+    def reload( self ) -> None:
+        """
+        Reload/refresh data from storage backend.
+
+        Requires:
+            - Storage backend is accessible
+            - Manager has been previously initialized
+
+        Ensures:
+            - Refreshes all cached data from storage
+            - Reconnects to storage backend if needed
+            - Updates internal state to reflect current storage contents
+            - Can be called multiple times safely
+
+        Raises:
+            - ConnectionError if storage backend unavailable
+            - PermissionError if insufficient access rights
+            - RuntimeError if manager not initialized
+        """
+        pass
+
     @abstractmethod
     def add_snapshot( self, snapshot: SolutionSnapshot ) -> bool:
         """
