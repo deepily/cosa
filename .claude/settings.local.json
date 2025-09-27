@@ -1,58 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cat:*)",
-      "Bash(find:*)",
-      "Bash(git add:*)",
-      "Bash(git push:*)",
-      "Bash(grep:*)",
-      "Bash(ls:*)",
-      "Bash(mv:*)",
-      "Bash(python:*)",
-      "WebFetchTool(domain:huggingface.co)",
-      "Bash(rg:*)",
-      "WebFetch(domain:github.com)",
-      "Bash(export:*)",
-      "Bash(export PYTHONPATH=\"/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src:$PYTHONPATH\")",
-      "Bash(python -m cosa.memory.embedding_manager)",
-      "Bash(timeout 60 python:*)",
-      "Bash(timeout 120 python:*)",
-      "Bash(timeout:*)",
-      "WebFetch(domain:lancedb.github.io)",
-      "Bash(mkdir:*)",
-      "Bash(chmod:*)",
-      "Bash(./run-cosa-smoke-tests.sh:*)",
-      "Bash(./tests/smoke/scripts/run-cosa-smoke-tests.sh:*)",
-      "Bash(/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh \"[LUPIN] 🚀 Phase 4 at 50%! Completed 4/8 HIGH priority modules. REST auth ✓ FIFO queue ✓ Running queue ✓ Model registry ✓ All testing excellent with 0 v000 deps!\" --type=progress --priority=medium --target-user=ricardo.felipe.ruiz@gmail.com)",
-      "Bash(./tests/unit/scripts/run-cosa-unit-tests.sh:*)",
-      "Bash(/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh:*)",
-      "WebFetch(domain:ai.pydantic.dev)",
-      "Bash(echo:*)",
-      "Read(//home/rruiz/.claude/**)",
-      "Read(//mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/**)",
-      "Bash(for:*)",
-      "Bash(do echo \"=== $file ===\")",
-      "Bash(wc:*)",
-      "Bash(head:*)",
-      "Bash(done)",
-      "Bash(do:*)",
-      "Bash(if [ -f \"$file\" ])",
-      "Bash(then wc -l \"$file\")",
-      "Bash(else echo \"File not found\")",
-      "Bash(fi)",
-      "Bash(if [ -f \"/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh\" ])",
-      "Bash(then:*)",
-      "Bash(else echo \"✓ Notification system not available - proceeding with COSA baseline collection\")",
-      "Bash(LOG_FILE=\"tests/results/logs/baseline_cosa_smoke_20250923_173035.log\")",
-      "Bash(tee:*)",
-      "Bash(./test-bash-commands.sh:*)",
-      "Bash(SCOPE=\"full\")",
-      "Bash(curl:*)",
-      "Bash(git commit -m \"$(cat <<''EOF''\n[COSA] Three-Level Question Architecture Infrastructure + Interface Enhancements\n\nSupport three-level question representation architecture implementation:\n\nINTERFACE FIXES:\n- Add abstract reload() method to snapshot_manager_interface.py\n- Implement reload() in FileBasedSolutionManager and LanceDBSolutionManager  \n- Fix /api/init endpoint to use reload() instead of load_snapshots()\n- Resolve interface violation preventing proper manager abstraction\n\nVERBOSITY OPTIMIZATIONS:\n- Update normalizer.py debug output (require debug AND verbose)\n- Update completion_client.py debug output (require debug AND verbose)\n- Update llm_client_factory.py debug output (require debug AND verbose)\n- Reduce console noise when app_verbose=False but app_debug=True\n\nAddresses critical search failure: \"What time is it?\" returning 0 snapshots\ndue to punctuation normalization inconsistencies. Establishes interface\nfoundation for upcoming three-level architecture implementation.\n\nRelated: Three-Level Question Representation Architecture design\n(see /src/rnd/2025.09.27-three-level-question-representation-architecture.md)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
+      "Bash(gh pr view:*)"
     ],
     "deny": [],
     "additionalDirectories": [
       "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src"
-    ]
+    ],
+    "ask": []
   }
 }
