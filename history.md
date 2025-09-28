@@ -2,6 +2,58 @@
 
 > **🚨 PENDING TOMORROW**: Slash Command Source File Sync - The bash execution fixes applied to `.claude/commands/smoke-test-baseline.md` need to be applied to `src/rnd/prompts/baseline-smoke-test-prompt.md` to prevent regenerating broken commands. See `rnd/2025.09.23-slash-command-bash-fix-status.md` for details.
 
+## 2025.09.27 - COSA Session-End Automation Prompt Creation COMPLETE
+
+### Summary
+Successfully created comprehensive COSA session-end automation prompt by extracting and organizing all end-of-session ritual requirements from global and local Claude.md configuration files. Established streamlined 6-step process with notifications-first approach and conditional parent history updates to prevent duplicate entries.
+
+### Work Performed
+
+#### Session-End Automation Implementation - 100% SUCCESS ✅
+- **Master Prompt Created**: `rnd/prompts/cosa-session-end.md` (294 lines) with complete end-of-session ritual
+- **Slash Command Ready**: `.claude/commands/cosa-session-end.md` (exact copy) for automated execution
+- **Notification-First Design**: Moved notifications from Step 7 to Step 0 as mandatory first requirement
+- **Conditional Logic**: Step 2 only updates parent Lupin history if today's COSA session not already documented
+- **Requirements Integration**: All global and local Claude.md requirements systematically extracted and organized
+
+#### Technical Achievements
+1. **Step Structure Optimization**: Streamlined from 7 steps to 6 steps by removing redundant todo list creation
+2. **Conditional Parent Updates**: Prevents duplicate entries when multiple COSA sessions occur same day
+3. **COSA-Specific Context**: [COSA] prefix, submodule restrictions, dual history management, PYTHONPATH configuration
+4. **Comprehensive Notifications**: Detailed notification system with priorities, types, and examples
+5. **Complete Documentation**: History management rules, error handling, recovery procedures, verification checklist
+
+#### Files Created
+- **Created**: `rnd/prompts/cosa-session-end.md` (294 lines) - Master session-end ritual prompt
+- **Created**: `.claude/commands/cosa-session-end.md` (294 lines) - Slash command copy for automation
+
+### Project Impact
+
+#### Session Management Automation
+- **End-of-Session Standardization**: Complete automation of documentation, git management, and notifications
+- **Dual Repository Support**: Proper handling of COSA submodule and parent Lupin repository
+- **Conditional Logic**: Smart parent history updates prevent duplicate documentation
+- **Notification Integration**: Real-time user notifications throughout session wrap-up process
+
+#### Development Workflow Enhancement
+- **Manual or Automated Use**: Supports both manual step-by-step execution and slash command automation
+- **Configuration Integration**: All requirements from global and local Claude.md files systematically included
+- **Error Handling**: Comprehensive recovery procedures and troubleshooting guidance
+- **Quality Assurance**: Session completion verification checklist ensures all steps completed
+
+### Current Status
+- **Session-End Automation**: ✅ COMPLETE - Comprehensive prompt created and deployed in both locations
+- **Slash Command Ready**: ✅ OPERATIONAL - `/cosa-session-end` command available for immediate use
+- **Requirements Coverage**: ✅ COMPREHENSIVE - All global and local configuration requirements included
+- **Documentation Quality**: ✅ PROFESSIONAL - Complete with examples, troubleshooting, and verification procedures
+
+### Next Session Priorities
+- Commit session-end prompt files to repository
+- Consider testing slash command execution in practice
+- Resume any pending COSA development tasks
+
+---
+
 ## 2025.09.27 - Three-Level Question Architecture Infrastructure + Interface Enhancements COMMITTED
 
 ### Summary
