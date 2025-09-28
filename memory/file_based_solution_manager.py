@@ -1,6 +1,10 @@
 """
 File-based solution snapshot manager implementing the swappable interface.
 
+⚠️ DEPRECATED: This implementation is deprecated in favor of LanceDBSolutionManager.
+This module is retained for backwards compatibility only and will be removed
+in a future release. Please use LanceDBSolutionManager for all new development.
+
 This module provides a complete file-based implementation of the
 SolutionSnapshotManagerInterface with JSON storage, performance monitoring
 and all serialization logic handled internally.
@@ -11,6 +15,7 @@ import json
 import time
 import hashlib
 import glob
+import warnings
 from typing import List, Tuple, Optional, Dict, Any
 
 import cosa.utils.util as du
@@ -28,6 +33,8 @@ class FileBasedSolutionManager( SolutionSnapshotManagerInterface ):
     """
     File-based solution snapshot manager with interface compliance.
 
+    ⚠️ DEPRECATED: This class is deprecated. Use LanceDBSolutionManager instead.
+
     Complete file-based implementation that manages JSON storage directly,
     providing performance monitoring and standardized error handling.
     All serialization logic is handled internally by the manager.
@@ -37,6 +44,8 @@ class FileBasedSolutionManager( SolutionSnapshotManagerInterface ):
         """
         Initialize file-based solution snapshot manager.
 
+        ⚠️ DEPRECATED: This class is deprecated. Use LanceDBSolutionManager instead.
+
         Requires:
             - config["path"] contains valid directory path for JSON files
             - Directory exists or can be created
@@ -45,6 +54,7 @@ class FileBasedSolutionManager( SolutionSnapshotManagerInterface ):
             - Initializes internal data structures
             - Configures performance monitoring
             - Prepares for storage operations
+            - Issues deprecation warning
 
         Args:
             config: Configuration dictionary with "path" key
@@ -56,6 +66,14 @@ class FileBasedSolutionManager( SolutionSnapshotManagerInterface ):
             - ValueError if path is invalid
         """
         super().__init__( config, debug, verbose )
+
+        # Issue deprecation warning
+        warnings.warn(
+            "FileBasedSolutionManager is deprecated and will be removed in a future release. "
+            "Please use LanceDBSolutionManager instead for better performance and features.",
+            DeprecationWarning,
+            stacklevel=2
+        )
 
         # Validate required configuration
         if "path" not in config:
@@ -177,7 +195,48 @@ class FileBasedSolutionManager( SolutionSnapshotManagerInterface ):
             if self.debug:
                 print( f"✗ Failed to add snapshot: {e}" )
             return False
-    
+
+    def get_snapshot_by_id( self, snapshot_id: str ) -> Optional[Any]:
+        """
+        Get snapshot by ID hash.
+
+        Requires:
+            - snapshot_id is a valid ID hash string
+            - Storage backend is initialized
+
+        Ensures:
+            - Returns SolutionSnapshot if found
+            - Returns None if not found
+            - No side effects on storage
+
+        Args:
+            snapshot_id: The ID hash of the snapshot to retrieve
+
+        Returns:
+            SolutionSnapshot instance if found, None otherwise
+        """
+        if not self._initialized:
+            if self.debug:
+                print( f"Manager not initialized, cannot retrieve snapshot {snapshot_id}" )
+            return None
+
+        try:
+            # Search through all snapshots for matching id_hash
+            for snapshot in self.solution_snapshots:
+                if snapshot.id_hash == snapshot_id:
+                    if self.debug:
+                        print( f"Found snapshot {snapshot_id}: {snapshot.question[:50]}..." )
+                    return snapshot
+
+            if self.debug:
+                print( f"No snapshot found with id_hash: {snapshot_id}" )
+            return None
+
+        except Exception as e:
+            if self.debug:
+                print( f"Error retrieving snapshot by id {snapshot_id}: {e}" )
+            return None
+
     def delete_snapshot( self, question: str, delete_physical: bool = False ) -> bool:
         """
         Delete snapshot by question.

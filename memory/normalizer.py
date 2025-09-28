@@ -232,10 +232,6 @@ class Normalizer:
                         sent_tokens.append( token.lemma_ )
                     else:
                         sent_tokens.append( token.text )
-                elif token.is_punct and token.text in '.!?':
-                    # Preserve sentence-ending punctuation
-                    if sent_tokens:  # Only add if there are words before it
-                        sent_tokens[-1] += token.text
                         
             if sent_tokens:
                 normalized_sentences.append( ' '.join( sent_tokens ) )

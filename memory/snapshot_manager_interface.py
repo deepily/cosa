@@ -217,6 +217,28 @@ class SolutionSnapshotManagerInterface( ABC ):
         pass
     
     @abstractmethod
+    def get_snapshot_by_id( self, snapshot_id: str ) -> Optional[Any]:
+        """
+        Get snapshot by ID hash.
+
+        Requires:
+            - snapshot_id is a valid ID hash string
+            - Storage backend is initialized
+
+        Ensures:
+            - Returns SolutionSnapshot if found
+            - Returns None if not found
+            - No side effects on storage
+
+        Args:
+            snapshot_id: The ID hash of the snapshot to retrieve
+
+        Returns:
+            SolutionSnapshot instance if found, None otherwise
+        """
+        pass
+
+    @abstractmethod
     def delete_snapshot( self, question: str, delete_physical: bool = False ) -> bool:
         """
         Delete snapshot by question identifier.

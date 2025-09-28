@@ -15,6 +15,8 @@ from cosa.agents.llm_client_factory import LlmClientFactory
 from cosa.memory.gister import Gister
 from cosa.memory.gist_normalizer import GistNormalizer
 from cosa.memory.normalizer import Normalizer
+from cosa.memory.query_log_table import QueryLogTable
+from cosa.memory.embedding_manager import EmbeddingManager
 from cosa.tools.search_lupin_v010 import LupinSearch
 
 # from app       import emit_audio
@@ -76,7 +78,11 @@ class TodoFifoQueue( FifoQueue ):
         self.gist_normalizer = GistNormalizer( debug=debug, verbose=verbose )
         self.normalizer = Normalizer()
 
-        if self.debug: print( "TodoFifoQueue: Text processors initialized (runtime selection enabled)" )
+        # Initialize three-level architecture components
+        self.query_log = QueryLogTable( debug=debug, verbose=verbose )
+        self.embedding_manager = EmbeddingManager( debug=debug, verbose=verbose )
+
+        if self.debug: print( "TodoFifoQueue: Text processors and three-level architecture components initialized" )
         
         # Salutations to be stripped by a brute force method until the router parses them off for us
         self.salutations = [ "computer", "little", "buddy", "pal", "ai", "jarvis", "alexa", "siri", "hal", "einstein",
@@ -225,7 +231,48 @@ class TodoFifoQueue( FifoQueue ):
                 
             self._notify_rejection( question, websocket_id, reason )
             return f"Job rejected: {reason}"
-        
+
+        # THREE-LEVEL ARCHITECTURE: Generate representations and embeddings early
+        # This needs to be available for all code paths, so do it before conditionals
+        salutations, parsed_question = self.parse_salutations( question )
+
+        # Process the question for gist generation
+        enable_gisting = self.config_mgr.get( "fifo todo queue enable input gisting", default=True, return_type="boolean" )
+        if enable_gisting:
+            question_gist = self.gist_normalizer.get_normalized_gist( parsed_question )
+        else:
+            question_gist = self.normalizer.normalize( parsed_question )
+
+        # Generate three-level representation
+        query_verbatim = question  # Exact user input
+        query_normalized = self.normalizer.normalize( parsed_question )  # Always normalize for consistency
+        query_gist = question_gist  # Use the gist computed above
+
+        # Generate embeddings using cache-first strategy
+        embedding_verbatim = self.embedding_manager.generate_embedding(
+            query_verbatim, normalize_for_cache=False
+        )
+        embedding_normalized = self.embedding_manager.generate_embedding(
+            query_normalized, normalize_for_cache=False
+        )
+        embedding_gist = self.embedding_manager.generate_embedding(
+            query_gist, normalize_for_cache=False
+        )
+
+        # Track cache hits for analytics
+        cache_hits = {
+            'verbatim': len( embedding_verbatim ) > 0,
+            'normalized': len( embedding_normalized ) > 0,
+            'gist': len( embedding_gist ) > 0
+        }
+
+        if self.debug:
+            print( f"Three-level representation:" )
+            print( f"  Verbatim:   '{query_verbatim}'" )
+            print( f"  Normalized: '{query_normalized}'" )
+            print( f"  Gist:       '{query_gist}'" )
+            print( f"Embeddings generated - V:{len(embedding_verbatim)} N:{len(embedding_normalized)} G:{len(embedding_gist)}" )
+
         # check to see if the queue isn't accepting jobs (because it's waiting for response to a previous request)
         if not self.is_accepting_jobs():
             
@@ -245,43 +292,45 @@ class TodoFifoQueue( FifoQueue ):
             
             # update last question asked before we throw it on the queue
             best_snapshot.last_question_asked = last_question_asked
-            
+
+            # Log query with match results (confirmed snapshot)
+            match_result = {
+                'snapshot_id': best_snapshot.id_hash,
+                'type': 'confirmed_match',
+                'confidence': 100.0
+            }
+            embeddings = {
+                'verbatim': embedding_verbatim,
+                'normalized': embedding_normalized,
+                'gist': embedding_gist
+            }
+            self._log_query_with_results(
+                query_verbatim, query_normalized, query_gist,
+                user_id, websocket_id, embeddings, cache_hits, match_result
+            )
+
             self._dump_code( best_snapshot )
             return self._queue_best_snapshot( best_snapshot, best_score, user_id )
                 
         # if we're not running the previous best snapshot, then we need to find a similar one before queuing the job
         else:
-            
+
             # make sure to remove a possible blocking object
             self.pop_blocking_object()
-            
-            salutations, question = self.parse_salutations( question )
-
-            # Check config AT RUNTIME to decide which processor to use
-            enable_gisting = self.config_mgr.get( "fifo todo queue enable input gisting", default=True, return_type="boolean" )
-
-            # Process the question based on current config setting
-            if enable_gisting:
-                # Use GistNormalizer (LLM + normalization)
-                question_gist = self.gist_normalizer.get_normalized_gist( question )
-                if self.debug: print( f"Gist extracted via GistNormalizer (LLM + normalization): '{question_gist}'" )
-            else:
-                # Use Normalizer only (no LLM, just normalization)
-                question_gist = self.normalizer.normalize( question )
-                if self.debug: print( f"Text normalized (no LLM gisting): '{question_gist}'" )
             # DEMO KLUDGE: if the question doesn't start with "refactor", then we're going to search for similar snapshots
             if not question.lower().strip().startswith( "refactor " ):
-                
+
                 # salutations, question = self.parse_salutations( question )
                 # question_gist = self.get_gist( question )
-                
+
                 du.print_banner( f"push_job( '{( salutations + ' ' + question ).strip()}' )", prepend_nl=True )
                 threshold_question = self.config_mgr.get( "similarity_threshold_question",      default=98.0, return_type="float" )
                 threshold_gist     = self.config_mgr.get( "similarity_threshold_question_gist", default=95.0, return_type="float" )
                 print( f"push_job(): Using snapshot similarity threshold of [{threshold_question}] and gist similarity threshold of [{threshold_gist}]" )
-                
+
                 # We're searching for similar snapshots without any salutations prepended to the question.
-                similar_snapshots = self.snapshot_mgr.get_snapshots_by_question( question, question_gist=question_gist, threshold_question=threshold_question, threshold_gist=threshold_gist )
+                # The snapshot manager internally handles hierarchical search (exact matches first, then similarity)
+                similar_snapshots = self.snapshot_mgr.get_snapshots_by_question( parsed_question, question_gist=question_gist, threshold_question=threshold_question, threshold_gist=threshold_gist )
                 print()
             else:
                 print( "push_job(): Skipping snapshot search..." )
@@ -314,6 +363,23 @@ class TodoFifoQueue( FifoQueue ):
                 # update last question asked before we throw it on the queue
                 best_snapshot.last_question_asked = ( salutations + ' ' + question ).strip()
                 self._dump_code( best_snapshot )
+
+                # Log query with match results (snapshot found)
+                match_result = {
+                    'snapshot_id': best_snapshot.id_hash,
+                    'type': 'similarity_match',
+                    'confidence': best_score
+                }
+                embeddings = {
+                    'verbatim': embedding_verbatim,
+                    'normalized': embedding_normalized,
+                    'gist': embedding_gist
+                }
+                self._log_query_with_results(
+                    query_verbatim, query_normalized, query_gist,
+                    user_id, websocket_id, embeddings, cache_hits, match_result
+                )
+
                 return self._queue_best_snapshot( best_snapshot, best_score, user_id )
             
         else:
@@ -395,8 +461,61 @@ class TodoFifoQueue( FifoQueue ):
             
             if self.emit_speech_callback:
                 self.emit_speech_callback( msg, user_id=user_id )
-            
+
+            # Log query with no match results (new agent created)
+            match_result = {
+                'snapshot_id': '',
+                'type': 'no_match_new_agent',
+                'confidence': 0.0
+            }
+            embeddings = {
+                'verbatim': embedding_verbatim,
+                'normalized': embedding_normalized,
+                'gist': embedding_gist
+            }
+            self._log_query_with_results(
+                query_verbatim, query_normalized, query_gist,
+                user_id, websocket_id, embeddings, cache_hits, match_result
+            )
+
             return msg
+
+    def _log_query_with_results( self,
+                               query_verbatim: str,
+                               query_normalized: str,
+                               query_gist: str,
+                               user_id: str,
+                               websocket_id: str,
+                               embeddings: dict,
+                               cache_hits: dict,
+                               match_result: dict = None,
+                               processing_time_ms: int = 0 ) -> None:
+        """
+        Log query with three-level representation and results.
+
+        This is called at the end of push_job to capture the complete query processing
+        including match results and performance metrics.
+        """
+        try:
+            if self.debug:
+                print( f"Logging query: '{du.truncate_string( query_verbatim )}'" )
+
+            self.query_log.log_query(
+                query_verbatim=query_verbatim,
+                query_normalized=query_normalized,
+                query_gist=query_gist,
+                user_id=user_id,
+                session_id=websocket_id,
+                input_type="api",  # Could be enhanced to detect voice vs text
+                embeddings=embeddings,
+                match_result=match_result,
+                processing_time_ms=processing_time_ms,
+                cache_hits=cache_hits
+            )
+
+        except Exception as e:
+            if self.debug:
+                print( f"Error logging query: {e}" )
 
     def _dump_code( self, best_snapshot: SolutionSnapshot ) -> None:
         """

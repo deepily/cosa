@@ -174,6 +174,25 @@ def get_current_time( tz_name: str = "US/Eastern", include_timezone: bool = True
     else:
         return tz_date.strftime( format )
 
+def get_timestamp_ms() -> dt:
+    """
+    Get current timestamp with millisecond precision for LanceDB compatibility.
+
+    Requires:
+        - Nothing
+
+    Ensures:
+        - Returns datetime object with microseconds truncated to millisecond precision
+        - Compatible with PyArrow timestamp('ms') schema fields
+        - Avoids LanceDB casting errors from microsecond to millisecond precision
+
+    Returns:
+        datetime object with millisecond precision
+    """
+    now = dt.now()
+    # Truncate to milliseconds to match LanceDB schema expectations
+    return now.replace( microsecond=( now.microsecond // 1000 ) * 1000 )
+
 def get_name_value_pairs( arg_list: list[str], debug: bool=False, verbose: bool=False ) -> dict[str, str]:
     """
     Parses a list of strings -- name=value -- into dictionary format { "name":"value" }

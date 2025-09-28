@@ -150,13 +150,13 @@ class SolutionSnapshot( RunnableCode ):
         """
         return np.dot( this_embedding, that_embedding ) * 100
     
-    def __init__( self, push_counter: int=-1, question: str="", question_gist: str="", synonymous_questions: OrderedDict=OrderedDict(), synonymous_question_gists: OrderedDict=OrderedDict(), non_synonymous_questions: list=[],
+    def __init__( self, push_counter: int=-1, question: str="", question_normalized: str="", question_gist: str="", synonymous_questions: OrderedDict=OrderedDict(), synonymous_question_gists: OrderedDict=OrderedDict(), non_synonymous_questions: list=[],
                   last_question_asked: str="", answer: str="", answer_conversational: str="", error: str="", routing_command: str="",
                   created_date: str=get_timestamp(), updated_date: str=get_timestamp(), run_date: str=get_timestamp(),
                   runtime_stats: dict=get_default_stats_dict(),
                   id_hash: str="", solution_summary: str="", code: list[str]=[], code_returns: str="", code_example: str="", code_type: str="raw", thoughts: str="",
                   programming_language: str="Python", language_version: str="3.10",
-                  question_embedding: list[float]=[ ], question_gist_embedding: list[float]=[ ], solution_embedding: list[float]=[ ], code_embedding: list[float]=[ ], thoughts_embedding: list[float]=[ ],
+                  question_embedding: list[float]=[ ], question_normalized_embedding: list[float]=[ ], question_gist_embedding: list[float]=[ ], solution_embedding: list[float]=[ ], code_embedding: list[float]=[ ], thoughts_embedding: list[float]=[ ],
                   solution_directory: str="/src/conf/long-term-memory/solutions/", solution_file: Optional[str]=None, user_id: str="ricardo_felipe_ruiz_6bdc", debug: bool=False, verbose: bool=False
                   ) -> None:
         """
@@ -189,6 +189,7 @@ class SolutionSnapshot( RunnableCode ):
         
         self.push_counter          = push_counter
         self.question              = SolutionSnapshot.remove_non_alphanumerics( question )
+        self.question_normalized   = question_normalized
         self.question_gist         = question_gist
         # self.question_gist         = SolutionSnapshot.remove_non_alphanumerics( question_gist )
         self.thoughts              = thoughts
@@ -255,7 +256,14 @@ class SolutionSnapshot( RunnableCode ):
             dirty = True
         else:
             self.question_embedding = question_embedding
-            
+
+        # If the normalized embedding is empty, generate it
+        if question_normalized != "" and not question_normalized_embedding:
+            self.question_normalized_embedding = self._embedding_mgr.generate_embedding( question_normalized, normalize_for_cache=True )
+            dirty = True
+        else:
+            self.question_normalized_embedding = question_normalized_embedding
+
         # If the gist embedding is empty, generate it
         if question_gist != "" and not question_gist_embedding:
             self.question_gist_embedding = self._embedding_mgr.generate_embedding( question_gist, normalize_for_cache=True )
