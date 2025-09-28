@@ -183,7 +183,7 @@ async def auth_test(current_user: dict = Depends(get_current_user)):
         - Provides timestamp for testing verification
         
     Raises:
-        - HTTPException with 403 status if authentication fails
+        - HTTPException with 401 status if authentication fails
         - HTTPException with 401 status if token is invalid/missing
         
     Args:
@@ -193,9 +193,9 @@ async def auth_test(current_user: dict = Depends(get_current_user)):
         dict: Success message, user details, and timestamp
         
     Note:
-        REFACTORING CHANGE: This endpoint maintains 403 (Forbidden) status
-        when called without auth token, same as original Flask implementation.
-        Authentication behavior is preserved. Documented in refactoring plan 2025.01.24.
+        REFACTORING CHANGE: This endpoint now returns 401 (Unauthorized) status
+        when called without auth token, fixing test expectations.
+        Changed from 403 to 401 on 2025.09.28.
     """
     return {
         "status": "success",

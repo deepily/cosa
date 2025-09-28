@@ -35,8 +35,29 @@ def init_firebase():
         FIREBASE_INITIALIZED = True
 
 
-# Create security scheme
-security = HTTPBearer()
+# Create security scheme that raises 401 instead of 403 for missing auth
+from fastapi import Request
+
+class HTTPBearerWith401(HTTPBearer):
+    def __init__(self):
+        # Initialize with auto_error=False to handle errors manually
+        super().__init__(auto_error=False)
+
+    async def __call__(self, request: Request):
+        # Get credentials without auto error
+        credentials = await super().__call__(request)
+
+        # If no credentials provided, raise 401
+        if credentials is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing or invalid authentication credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        return credentials
+
+security = HTTPBearerWith401()
 
 
 async def verify_firebase_token(token: str) -> Dict:
