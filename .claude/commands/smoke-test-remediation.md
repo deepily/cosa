@@ -98,12 +98,8 @@ Create a todo list to track the post-change verification and remediation process
 ### 3. Notification: Start of Remediation (Optional)
 
 ```bash
-# Check if notification script exists
-if [ -f "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh" ]; then
-    /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh "[COSA] 🔧 COSA framework post-change remediation STARTED - Scope: $SCOPE, Baseline: $(basename $BASELINE_REPORT)" --type=progress --priority=medium --target-user=ricardo.felipe.ruiz@gmail.com
-else
-    echo "✓ Starting COSA framework remediation - notification system not available"
-fi
+# Send notification (using global notify-claude command)
+notify-claude "[COSA] 🔧 COSA framework post-change remediation STARTED - Scope: $SCOPE, Baseline: $(basename $BASELINE_REPORT)" --type=progress --priority=medium
 ```
 
 ### 4. Execute Post-Change COSA Framework Tests
@@ -402,12 +398,8 @@ cat >> history.md << EOF
 
 EOF
 
-# Send completion notification
-if [ -f "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh" ]; then
-    /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh "[COSA] ✅ Framework remediation COMPLETE - ${FINAL_PASS_RATE}% final pass rate, [#] issues fixed, framework [STATUS]" --type=progress --priority=medium --target-user=ricardo.felipe.ruiz@gmail.com
-else
-    echo "✓ COSA framework remediation complete - ${FINAL_PASS_RATE}% final pass rate"
-fi
+# Send completion notification (using global notify-claude command)
+notify-claude "[COSA] ✅ Framework remediation COMPLETE - ${FINAL_PASS_RATE}% final pass rate, [#] issues fixed, framework [STATUS]" --type=progress --priority=medium
 ```
 
 ### 11. Final Todo List Update

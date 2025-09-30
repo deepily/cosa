@@ -1,6 +1,92 @@
 # COSA Development History
 
-> **🚨 PENDING TOMORROW**: Slash Command Source File Sync - The bash execution fixes applied to `.claude/commands/smoke-test-baseline.md` need to be applied to `src/rnd/prompts/baseline-smoke-test-prompt.md` to prevent regenerating broken commands. See `rnd/2025.09.23-slash-command-bash-fix-status.md` for details.
+> **🎯 CURRENT ACHIEVEMENT**: 2025.09.29 - Global Notification System Refactor COMPLETE! Eliminated N per-project scripts for single global `notify-claude` command. All documentation and slash commands updated. Backward compatible with deprecation warnings.
+
+> **🚨 PENDING**: Slash Command Source File Sync - The bash execution fixes applied to `.claude/commands/smoke-test-baseline.md` need to be applied to `src/rnd/prompts/baseline-smoke-test-prompt.md` to prevent regenerating broken commands. See `rnd/2025.09.23-slash-command-bash-fix-status.md` for details.
+
+## 2025.09.29 - Global Notification System Refactor COMPLETE SESSION
+
+### Summary
+Successfully refactored the notification system from N per-project scripts to a single global `notify-claude` command. Eliminated maintenance burden of duplicating notify.sh across multiple repositories. Updated all COSA documentation and slash commands to use the new global command. Implemented backward compatibility with deprecation warnings.
+
+### Work Performed
+
+#### Global Notification Infrastructure - COMPLETE ✅
+- **Global Script Created**: `/home/rruiz/.local/bin/notify-claude` with auto-detection of COSA_CLI_PATH
+- **Auto-Detection Logic**: Searches common installation paths if COSA_CLI_PATH not set
+- **Comprehensive Testing**: Tested from multiple directories (COSA, Lupin root, /tmp), all notification types and priorities
+- **Environment Validation**: Confirmed `--validate-env` flag working correctly
+- **Backward Compatibility**: Old per-project scripts redirect to global command with deprecation warnings
+
+#### COSA Documentation Updates - COMPLETE ✅
+- **Slash Commands Updated**: Modified `.claude/commands/cosa-session-end.md`, `smoke-test-baseline.md`, `smoke-test-remediation.md`
+- **Notification References**: Replaced all hardcoded `/mnt/DATA01/.../notify.sh` paths with `notify-claude`
+- **Simplified Examples**: Removed conditional file existence checks, simplified to direct `notify-claude` calls
+- **Total Updates**: 7 notification calls updated across 3 COSA slash command files
+
+#### Deprecation Strategy - COMPLETE ✅
+- **Deprecation Warnings**: Added to both `/src/scripts/notify.sh` and `/src/lupin-mobile/src/scripts/notify.sh`
+- **Backward Compatibility**: Old scripts redirect to `notify-claude` with clear migration messaging
+- **Clear Migration Path**: Deprecation warnings guide users to global command
+- **Testing Validated**: Deprecated script shows warning and still functions correctly
+
+### Technical Achievements
+
+**Global Script Features**:
+```bash
+# Auto-detects COSA installation
+# Works from any directory
+# Validates environment setup
+# Maintains all existing functionality
+# No per-project setup required
+```
+
+**Files Modified**:
+- **Created**: `/home/rruiz/.local/bin/notify-claude` (57 lines) - Global notification command
+- **Modified**: `src/scripts/notify.sh` (18 lines) - Deprecation redirect
+- **Modified**: `src/lupin-mobile/src/scripts/notify.sh` (18 lines) - Deprecation redirect
+- **Modified**: `.claude/commands/cosa-session-end.md` - Updated notification examples
+- **Modified**: `.claude/commands/smoke-test-baseline.md` - Updated 2 notification calls
+- **Modified**: `.claude/commands/smoke-test-remediation.md` - Updated 2 notification calls
+
+**Testing Results**:
+- ✅ Global command works from any directory
+- ✅ All notification types tested (task, progress, alert, custom)
+- ✅ All priority levels tested (low, medium, high, urgent)
+- ✅ Environment validation working
+- ✅ Deprecated scripts show warnings and redirect correctly
+
+### Project Impact
+
+#### Maintenance Improvements
+- **Before**: N separate notify.sh scripts across multiple projects requiring synchronization
+- **After**: Single global command maintained in one location
+- **Benefit**: Eliminates synchronization burden and maintenance complexity
+
+#### Developer Experience
+- **Simplified**: `notify-claude "message" --type=TYPE --priority=PRIORITY`
+- **No Setup**: Works from any directory without project-specific configuration
+- **Auto-Detection**: Finds COSA installation automatically
+- **Clear Migration**: Deprecation warnings guide to new approach
+
+#### Backward Compatibility
+- **Old Scripts Continue Working**: Redirect to global command
+- **Deprecation Warnings**: Clear messaging about migration path
+- **Gradual Transition**: Projects can migrate on their own schedule
+- **Zero Breaking Changes**: All existing functionality preserved
+
+### Current Status
+- **Global Notification System**: ✅ OPERATIONAL - Single global command working perfectly
+- **COSA Documentation**: ✅ UPDATED - All slash commands use new global command
+- **Backward Compatibility**: ✅ MAINTAINED - Old scripts redirect with warnings
+- **Testing**: ✅ COMPLETE - All scenarios validated and working
+
+### Next Session Priorities
+- Remove deprecated per-project scripts after migration period
+- Consider additional notification features (retry logic, offline queuing)
+- Continue with other COSA development tasks
+
+---
 
 ## 2025.09.28 - Session-End Slash Command Execution SESSION
 

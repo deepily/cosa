@@ -24,8 +24,8 @@ This prompt orchestrates the complete end-of-session ritual for the COSA (Collec
 **CRITICAL**: Send notifications after completing each subsequent step to keep user informed of progress.
 
 **Notification Configuration**:
-- **Script Path**: `/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh`
-- **Target**: `ricardo.felipe.ruiz@gmail.com`
+- **Global Command**: `notify-claude` (works from any directory)
+- **Target**: `ricardo.felipe.ruiz@gmail.com` (default, no need to specify)
 - **Format**: `[COSA] [Step Description] - [Status]`
 - **Priorities**:
   - `urgent`: Errors, blocked states
@@ -36,13 +36,13 @@ This prompt orchestrates the complete end-of-session ritual for the COSA (Collec
 **Notification Examples**:
 ```bash
 # Step completion
-/path/to/notify.sh "[COSA] ✅ COSA history.md updated successfully" --type=task --priority=low
+notify-claude "[COSA] ✅ COSA history.md updated successfully" --type=task --priority=low
 
 # Approval needed
-/path/to/notify.sh "[COSA] Commit message ready for approval" --type=task --priority=high
+notify-claude "[COSA] Commit message ready for approval" --type=task --priority=high
 
 # Error encountered
-/path/to/notify.sh "[COSA] Error: Unable to update history file" --type=alert --priority=urgent
+notify-claude "[COSA] Error: Unable to update history file" --type=alert --priority=urgent
 ```
 
 ### Step 1: Update COSA History.md 📝
