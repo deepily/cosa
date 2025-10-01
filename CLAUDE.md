@@ -7,8 +7,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - When working within the COSA directory, only manage this repository (not the parent project)
 - Do not stage, commit, or push changes to the parent repository from here
 - NEVER commit or push changes automatically - ALWAYS wait for user review and explicit approval before committing
-- The global Claude Code Configuration file found in my home directory will direct you to update the parent "Lupin" project history.md file as a part of your end of session ritual.. 
+- The global Claude Code Configuration file found in my home directory will direct you to update the parent "Lupin" project history.md file as a part of your end of session ritual..
 - After updating the Lupin repo, I want you to duplicate your history entry in this repo's history.md
+
+## PROJECT SHORT NAMES
+- This repo's SHORT_PROJECT_PREFIX is [COSA]
 
 ## Commands
 - Run tests: `pytest tests/`
