@@ -312,6 +312,22 @@ class ResetPasswordRequest( BaseModel ):
     )
 
 
+class ChangePasswordRequest( BaseModel ):
+    """Request to change password for authenticated user."""
+    current_password: str = Field(
+        ...,
+        min_length=1,
+        description="Current password for verification",
+        example="OldPass123!"
+    )
+    new_password: str = Field(
+        ...,
+        min_length=8,
+        description="New password (min 8 characters, must include uppercase, lowercase, digit, special char)",
+        example="NewPass123!"
+    )
+
+
 class MessageResponse( BaseModel ):
     """Generic message response."""
     message: str = Field(

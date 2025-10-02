@@ -109,7 +109,7 @@ def authenticate_user( email: str, password: str ) -> Tuple[bool, str, Optional[
 
     Returns:
         tuple: (success: bool, message: str, user_data: Optional[Dict])
-               user_data contains: id, email, roles, email_verified
+               user_data contains: id, email, roles, email_verified, is_active, created_at, last_login_at
     """
     if not email or not password:
         return False, "Email and password required", None
@@ -121,7 +121,7 @@ def authenticate_user( email: str, password: str ) -> Tuple[bool, str, Optional[
         # Fetch user by email
         cursor.execute(
             """
-            SELECT id, email, password_hash, roles, is_active, email_verified
+            SELECT id, email, password_hash, roles, is_active, email_verified, created_at
             FROM users
             WHERE email = ?
             """,
@@ -141,13 +141,14 @@ def authenticate_user( email: str, password: str ) -> Tuple[bool, str, Optional[
             return False, "Invalid email or password", None
 
         # Update last login timestamp
+        last_login_timestamp = datetime.utcnow().isoformat()
         cursor.execute(
             """
             UPDATE users
             SET last_login_at = ?
             WHERE id = ?
             """,
-            ( datetime.utcnow().isoformat(), row["id"] )
+            ( last_login_timestamp, row["id"] )
         )
         conn.commit()
 
@@ -157,7 +158,10 @@ def authenticate_user( email: str, password: str ) -> Tuple[bool, str, Optional[
             "id"              : row["id"],
             "email"           : row["email"],
             "roles"           : json.loads( row["roles"] ) if row["roles"] else ["user"],
-            "email_verified"  : bool( row["email_verified"] )
+            "email_verified"  : bool( row["email_verified"] ),
+            "is_active"       : bool( row["is_active"] ),
+            "created_at"      : row["created_at"],
+            "last_login_at"   : last_login_timestamp
         }
 
         return True, "Authentication successful", user_data

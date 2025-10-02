@@ -17,6 +17,7 @@ from cosa.rest.auth_models import (
     ErrorResponse,
     RequestVerificationRequest, VerifyEmailRequest,
     RequestPasswordResetRequest, ResetPasswordRequest,
+    ChangePasswordRequest,
     MessageResponse
 )
 from cosa.rest.user_service import (
@@ -25,7 +26,8 @@ from cosa.rest.user_service import (
     get_user_by_id,
     get_user_by_email,
     mark_email_verified,
-    reset_password_with_token
+    reset_password_with_token,
+    update_user_password
 )
 from cosa.rest.jwt_service import (
     create_access_token,
@@ -553,6 +555,96 @@ async def get_current_user( authorization: Optional[str] = Header( None ) ) -> U
             status_code = status.HTTP_401_UNAUTHORIZED,
             detail      = f"Token validation failed: {str( e )}"
         )
+
+
+@router.put(
+    "/change-password",
+    response_model  = MessageResponse,
+    status_code     = status.HTTP_200_OK,
+    summary         = "Change password",
+    description     = "Change password for authenticated user. Requires current password verification."
+)
+async def change_password( request: ChangePasswordRequest, authorization: Optional[str] = Header( None ) ) -> MessageResponse:
+    """
+    Change password for authenticated user.
+
+    Requires:
+        - Valid JWT access token in Authorization header
+        - Current password for verification
+        - New password meeting strength requirements
+
+    Ensures:
+        - Current password is verified before change
+        - Password strength validated
+        - Password updated in database
+        - Event logged for audit trail
+
+    Raises:
+        - HTTPException 401 if token missing/invalid
+        - HTTPException 400 if current password incorrect
+        - HTTPException 400 if new password too weak
+        - HTTPException 404 if user not found
+
+    Returns:
+        MessageResponse: Success message
+    """
+    # Validate JWT token and get user
+    if not authorization or not authorization.startswith( "Bearer " ):
+        raise HTTPException(
+            status_code = status.HTTP_401_UNAUTHORIZED,
+            detail      = "Missing or invalid authorization header"
+        )
+
+    token = authorization.replace( "Bearer ", "" )
+
+    try:
+        payload = decode_and_validate_token( token )
+        user_id = payload.get( "sub" )  # JWT standard: "sub" = subject (user_id)
+
+        if not user_id:
+            raise HTTPException(
+                status_code = status.HTTP_401_UNAUTHORIZED,
+                detail      = "Invalid token payload"
+            )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code = status.HTTP_401_UNAUTHORIZED,
+            detail      = f"Token validation failed: {str( e )}"
+        )
+
+    # Update password
+    success, message = update_user_password(
+        user_id          = user_id,
+        old_password     = request.current_password,
+        new_password     = request.new_password
+    )
+
+    if not success:
+        # Determine appropriate error status
+        if "incorrect" in message.lower() or "invalid" in message.lower():
+            status_code = status.HTTP_400_BAD_REQUEST
+        elif "not found" in message.lower():
+            status_code = status.HTTP_404_NOT_FOUND
+        else:
+            status_code = status.HTTP_400_BAD_REQUEST
+
+        raise HTTPException(
+            status_code = status_code,
+            detail      = message
+        )
+
+    # Log password change event (Phase 8)
+    log_auth_event(
+        event_type  = "password_change",
+        user_id     = user_id,
+        email       = payload.get( "email", "unknown" ),
+        ip_address  = "unknown",  # Could extract from request if needed
+        details     = "Password changed successfully",
+        success     = True
+    )
+
+    return MessageResponse( message="Password changed successfully" )
 
 
 # Phase 7: Email Verification & Password Reset Endpoints

@@ -1,8 +1,85 @@
 # COSA Development History
 
-> **🎯 CURRENT ACHIEVEMENT**: 2025.09.29 - Global Notification System Refactor COMPLETE! Eliminated N per-project scripts for single global `notify-claude` command. All documentation and slash commands updated. Backward compatible with deprecation warnings.
+> **🎯 CURRENT ACHIEVEMENT**: 2025.10.01 - Selective .claude/ Directory Tracking COMPLETE! Updated .gitignore to enable team collaboration on slash commands while protecting personal settings. Aligns with 2024-2025 Claude Code best practices.
 
 > **🚨 PENDING**: Slash Command Source File Sync - The bash execution fixes applied to `.claude/commands/smoke-test-baseline.md` need to be applied to `src/rnd/prompts/baseline-smoke-test-prompt.md` to prevent regenerating broken commands. See `rnd/2025.09.23-slash-command-bash-fix-status.md` for details.
+
+## 2025.10.01 - Selective .claude/ Directory Tracking SESSION
+
+### Summary
+Updated COSA repository's .gitignore configuration to enable selective tracking of .claude/ directory contents. This change shifts from blanket exclusion to strategic tracking, allowing team collaboration on custom slash commands while protecting personal settings and cache files. Aligns with 2024-2025 Claude Code best practices from Anthropic.
+
+### Work Performed
+
+#### .gitignore Configuration Update - COMPLETE ✅
+- **Before**: Blanket `.claude/settings.local.json` exclusion only
+- **After**: Selective tracking with three explicit exclusions (settings.local.json, cache/, *.log)
+- **Impact**: Enables version control of .claude/commands/*.md files for team workflow sharing
+- **Philosophy**: "Workflows as code" - slash commands are team assets like CI/CD scripts
+
+#### Team Collaboration Enablement - COMPLETE ✅
+- **Custom Slash Commands**: 3 COSA commands now trackable (cosa-session-end.md, smoke-test-baseline.md, smoke-test-remediation.md)
+- **Knowledge Sharing**: New contributors automatically discover project-specific workflows
+- **Reduced Silos**: Solutions to coding problems shared, not isolated per developer
+- **Onboarding**: Faster team member integration with documented workflows
+
+#### Privacy Protection - COMPLETE ✅
+- **Personal Settings**: `.claude/settings.local.json` remains excluded (contains user-specific overrides)
+- **Cache Files**: `.claude/cache/` remains excluded (runtime artifacts)
+- **Log Files**: `.claude/*.log` remains excluded (debugging output)
+- **Zero Privacy Compromise**: Individual workflow preferences fully protected
+
+### Technical Details
+
+**Files Modified**:
+- **Modified**: `.gitignore` (+3/-1 lines) - Updated Claude Code exclusion pattern
+
+**Git Changes** (commit `ef3bf57`):
+```
+# Claude Code - track team configs, ignore personal overrides
+.claude/settings.local.json
+.claude/cache/
+.claude/*.log
+```
+
+**Already Tracked Commands** (verified via `git ls-files`):
+- `.claude/commands/cosa-session-end.md` (10,246 bytes)
+- `.claude/commands/smoke-test-baseline.md` (8,449 bytes)
+- `.claude/commands/smoke-test-remediation.md` (16,967 bytes)
+
+### Benefits Achieved
+
+#### ✅ Team Collaboration
+- Custom workflows discoverable by all team members
+- Standardized development practices version-controlled
+- Shared solutions to common coding challenges
+- Reduced knowledge silos and duplication
+
+#### ✅ Best Practices Alignment
+- Follows Anthropic's 2024-2025 Claude Code recommendations
+- Implements "workflows as code" philosophy
+- Treats slash commands like other team assets (CI/CD, build scripts)
+- Industry-standard approach for Claude Code team usage
+
+#### ✅ Developer Experience
+- New contributors see available slash commands immediately
+- No manual workflow documentation needed - commands are self-documenting
+- Consistent development experience across team
+- Lower onboarding friction
+
+### Current Status
+- **COSA .gitignore**: ✅ UPDATED - Selective .claude/ tracking enabled
+- **Slash Commands**: ✅ TRACKED - 3 custom commands version-controlled
+- **Privacy**: ✅ PROTECTED - Personal settings and cache excluded
+- **Git State**: ✅ COMMITTED - Changes committed locally (ef3bf57), push pending
+
+### Next Session Priorities
+- Consider applying same pattern to parent Lupin repository
+- Document slash command usage for team members
+- Monitor for additional team workflows to version-control
+- Continue regular COSA development tasks
+
+---
 
 ## 2025.09.29 - Global Notification System Refactor COMPLETE SESSION
 
