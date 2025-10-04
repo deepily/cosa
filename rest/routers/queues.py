@@ -11,10 +11,12 @@ Generated on: 2025-01-24
 from fastapi import APIRouter, Query, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # Import dependencies
 from cosa.rest.auth import get_current_user
+from cosa.rest.queue_auth import authorize_queue_filter
+from cosa.rest.auth_middleware import is_admin
 
 router = APIRouter(prefix="/api", tags=["queues"])
 
@@ -209,89 +211,134 @@ async def push(
 async def get_queue(
     queue_name: str,
     current_user: dict = Depends(get_current_user),
+    user_filter: Optional[str] = Query(
+        None,
+        description="User filter: omit for self, '*' for all (admin), or specific user_id (admin)",
+        example="ricardo_felipe_ruiz_6bdc"
+    ),
     todo_queue = Depends(get_todo_queue),
     running_queue = Depends(get_running_queue),
     done_queue = Depends(get_done_queue),
     dead_queue = Depends(get_dead_queue)
 ):
     """
-    Retrieve jobs for specific queue (todo, run, done, dead) filtered by user.
-    
-    PHASE 2 IMPLEMENTATION: Connected to real COSA queue system with user filtering.
-    
+    Retrieve jobs from queue with role-based user filtering.
+
+    **PHASE 1 IMPLEMENTATION:** User-filtered queue views with role-based access control
+
+    Authorization Rules:
+    - Regular users: Can ONLY query their own jobs (user_filter ignored or must match self)
+    - Admin users: Can query own, specific user's, or all users' jobs
+
+    Query Parameters:
+        - user_filter: Optional[str]
+            - None (omit): Current user's jobs (default for all users)
+            - "*": ALL users' jobs (admin only)
+            - "user_id_xyz": Specific user's jobs (admin only)
+
     Requires:
         - queue_name is one of: 'todo', 'run', 'done', 'dead'
         - current_user is authenticated with valid token containing uid
         - All queue objects (todo, running, done, dead) are initialized
-        - Queue objects have get_html_list() method
-        
+
     Ensures:
-        - Retrieves jobs from specified queue in HTML list format
+        - Retrieves jobs from specified queue filtered by user
         - Applies appropriate sorting (descending for todo/done/dead, ascending for run)
-        - Adds user context to demonstrate filtering (temporary implementation)
         - Returns queue-specific job arrays in expected format
         - Raises 400 for invalid queue names
-        
+        - Raises 403 if regular user attempts admin operations
+
     Raises:
-        - HTTPException with 400 for invalid queue_name parameter
-        - HTTPException if authentication fails
-        
+        - HTTPException 400: Invalid queue_name parameter
+        - HTTPException 403: Unauthorized user filter access
+        - HTTPException 401: Authentication fails
+
     Args:
         queue_name: The queue to retrieve ('todo'|'run'|'done'|'dead')
         current_user: Authenticated user info from token
-        
+        user_filter: Optional filter (None=self, "*"=all, or user_id)
+        todo_queue: Todo queue dependency
+        running_queue: Running queue dependency
+        done_queue: Done queue dependency
+        dead_queue: Dead queue dependency
+
     Returns:
-        dict: Queue data with job arrays filtered by user
+        dict: Queue data with job arrays, metadata, and filtering info
     """
-    user_id = current_user["uid"]
-    
-    # TODO: For now, return all jobs. In production, we need to:
-    # 1. Add user_id field to SolutionSnapshot
-    # 2. Implement get_html_list_for_user(user_id) in FifoQueue
-    # 3. Filter jobs by user_id
-    
-    # For demonstration, we'll add a comment to each job showing it belongs to this user
-    if queue_name == "todo":
-        jobs = todo_queue.get_html_list(descending=True)
-    elif queue_name == "run":
-        jobs = running_queue.get_html_list()
-    elif queue_name == "dead":
-        jobs = dead_queue.get_html_list(descending=True)
-    elif queue_name == "done":
-        # Enhanced done queue response with structured job metadata for replay functionality
-        jobs = done_queue.get_html_list(descending=True)
-        
-        # Extract structured job data from SolutionSnapshot objects in done queue
-        # Apply same descending sort as HTML list for consistency
-        snapshots = list( done_queue.queue_list )
-        snapshots.reverse()  # Apply descending order (most recent first)
-        
+
+    # Step 1: Authorize the filter request
+    try:
+        authorized_filter = authorize_queue_filter(
+            current_user=current_user,
+            filter_user_id=user_filter
+        )
+    except HTTPException:
+        raise  # Re-raise authorization failures
+
+    # Step 2: Map queue name to queue object
+    queue_map = {
+        "todo": todo_queue,
+        "run": running_queue,
+        "done": done_queue,
+        "dead": dead_queue
+    }
+
+    if queue_name not in queue_map:
+        raise HTTPException(status_code=400, detail=f"Invalid queue name: {queue_name}")
+
+    queue = queue_map[queue_name]
+
+    # Step 3: Retrieve jobs based on authorized filter
+    if authorized_filter == "*":
+        # Admin requesting ALL users' jobs
+        jobs = queue.get_all_jobs()
+    else:
+        # Specific user's jobs (could be self or other for admin)
+        jobs = queue.get_jobs_for_user( authorized_filter )
+
+    # Step 4: Apply queue-specific sorting
+    descending = queue_name in ["todo", "done", "dead"]
+    if descending:
+        jobs.reverse()
+
+    # Step 5: Handle done queue special case (metadata + HTML)
+    if queue_name == "done":
+        # Extract structured job data from SolutionSnapshot objects
         structured_jobs = []
-        for snapshot in snapshots:
+        for snapshot in jobs:
             # Generate job metadata from SolutionSnapshot fields
             job_data = {
-                "html": snapshot.get_html().replace("</li>", f" [user: {user_id}]</li>"),
+                "html": snapshot.get_html(),
                 "job_id": snapshot.id_hash,
                 "question_text": snapshot.last_question_asked or snapshot.question,
                 "response_text": snapshot.answer_conversational or snapshot.answer,
                 "timestamp": snapshot.run_date or snapshot.created_date,
-                "user_id": user_id,
+                "user_id": authorized_filter,
                 "has_audio_cache": False  # Will be determined by frontend cache check
             }
             structured_jobs.append( job_data )
-        
+
         # Maintain backward compatibility: return both structured data and HTML list
         return {
             f"{queue_name}_jobs": [job["html"] for job in structured_jobs],
-            f"{queue_name}_jobs_metadata": structured_jobs
+            f"{queue_name}_jobs_metadata": structured_jobs,
+            "filtered_by": authorized_filter,
+            "is_admin_view": is_admin(current_user) and (user_filter is not None),
+            "total_jobs": len(structured_jobs)
         }
-    else:
-        raise HTTPException(status_code=400, detail=f"Invalid queue name: {queue_name}")
-    
-    # Add user context to demonstrate filtering (temporary) - for non-done queues
-    filtered_jobs = [job.replace("</li>", f" [user: {user_id}]</li>") for job in jobs]
-    
-    return {f"{queue_name}_jobs": filtered_jobs}
+
+    # Step 6: Format as HTML for non-done queues
+    html_list = [job.get_html() for job in jobs]
+
+    # Step 7: Return with metadata
+    is_admin_override = is_admin(current_user) and (user_filter is not None)
+
+    return {
+        f"{queue_name}_jobs": html_list,
+        "filtered_by": authorized_filter,
+        "is_admin_view": is_admin_override,
+        "total_jobs": len(html_list)
+    }
 
 @router.post("/reset-queues")
 async def reset_queues(

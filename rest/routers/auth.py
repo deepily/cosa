@@ -687,7 +687,7 @@ async def request_verification( user: Dict = Depends( get_current_user_dependenc
             )
 
         # Generate verification token
-        success, message, token = generate_verification_token( user["id"] )
+        success, message, token = generate_verification_token( user["user_id"] )
 
         if not success:
             raise HTTPException(

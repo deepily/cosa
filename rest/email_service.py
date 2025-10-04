@@ -133,6 +133,12 @@ def _send_email( to_email: str, subject: str, body: str ) -> bool:
         bool: True if email sent, False otherwise
     """
     try:
+        # Check if email sending is enabled (disabled by default for dev/test)
+        send_email_enabled = config_mgr.get( "send email enabled", False, return_type="boolean" )
+        if not send_email_enabled:
+            print( "TO DO: Implement SMTP _send_email(...)" )
+            return True  # Return success without actually sending
+
         # Get SMTP configuration from config manager
         smtp_host     = config_mgr.get( "smtp host", "localhost" )
         smtp_port     = config_mgr.get( "smtp port", 587, return_type="int" )
