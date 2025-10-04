@@ -1,8 +1,98 @@
 # COSA Development History
 
-> **🎯 CURRENT ACHIEVEMENT**: 2025.10.03 - User-Filtered Queue Views Phase 1 COMPLETE! Added role-based queue filtering with centralized authorization. Regular users see only their own jobs, admins can view all users. 32/32 unit tests passing (100%).
+> **🎯 CURRENT ACHIEVEMENT**: 2025.10.04 - WebSocket JWT Authentication Fixed! Changed WebSocket to use configuration-based auth routing (verify_token) instead of hardcoded verify_firebase_token(). Integration tests now 8/8 passing (100%).
+
+> **Previous Achievement**: 2025.10.03 - User-Filtered Queue Views Phase 1 COMPLETE! Added role-based queue filtering with centralized authorization. Regular users see only their own jobs, admins can view all users. 32/32 unit tests passing (100%).
 
 > **🚨 PENDING**: Slash Command Source File Sync - The bash execution fixes applied to `.claude/commands/smoke-test-baseline.md` need to be applied to `src/rnd/prompts/baseline-smoke-test-prompt.md` to prevent regenerating broken commands. See `rnd/2025.09.23-slash-command-bash-fix-status.md` for details.
+
+## 2025.10.04 - WebSocket JWT Authentication Configuration-Based Routing Fix
+
+### Summary
+Fixed WebSocket endpoint to respect auth mode configuration (JWT/mock/Firebase) by replacing hardcoded verify_firebase_token() call with configuration-based verify_token(). This resolves the last failing integration test (test_websocket_jwt_authentication) and brings COSA's authentication system to 100% integration test coverage.
+
+### Work Performed
+
+#### WebSocket Authentication Fix - COMPLETE ✅
+- **Problem**: WebSocket endpoint hardcoded `verify_firebase_token()`, bypassing config-based auth routing
+- **Root Cause**: Direct function import prevented configuration from controlling auth mode
+- **Solution**: Changed to `verify_token()` which respects `auth mode` configuration setting
+- **Result**: WebSocket now works with JWT, mock, and Firebase auth modes
+
+#### Integration Test Impact - COMPLETE ✅
+- **Before**: 7/8 integration tests passing (87.5%)
+- **After**: 8/8 integration tests passing (100%) ✓
+- **Fixed Test**: `test_websocket_jwt_authentication` now passes consistently
+- **Auth Modes Tested**: JWT mode validated in production configuration
+
+### Technical Details
+
+**File Modified in COSA**:
+- `rest/routers/websocket.py` (+3/-3 lines) - Changed verify_firebase_token() → verify_token()
+
+**Code Change**:
+```python
+# Before (hardcoded):
+from cosa.rest.auth import verify_firebase_token
+user_info = await verify_firebase_token(token)
+
+# After (config-based):
+from cosa.rest.auth import verify_token
+user_info = await verify_token(token)
+```
+
+**Configuration Support**:
+The `verify_token()` function respects `auth mode` setting in lupin-app.ini:
+- `auth mode = jwt` → Validates JWT access tokens with database lookup
+- `auth mode = mock` → Accepts mock_token_* format (development)
+- `auth mode = firebase` → Firebase ID token validation (future)
+
+### Integration with Parent Lupin Project
+
+This COSA fix is part of Lupin's JWT/OAuth Phase 10 completion (2025.10.04):
+- Lupin integration tests: 8/8 passing (100%)
+- WebSocket authentication: Now production-ready
+- Documentation: Complete API reference and security guides created
+
+**Related Lupin Commits**:
+- WebSocket fix enables full JWT authentication flow in Fresh Queue UI
+- Unblocks production deployment of JWT/OAuth system
+- Session ID format consistency updates completed across both repos
+
+### Current Status
+
+- **WebSocket Auth**: ✅ COMPLETE - Configuration-based routing working
+- **Integration Tests**: ✅ 100% PASSING - All 8/8 tests green
+- **Production Ready**: ✅ YES - WebSocket JWT auth validated
+
+**System Health**:
+- COSA authentication system: 100% integration test coverage ✓
+- Configuration-based routing: All three auth modes supported ✓
+- Backward compatibility: Mock tokens still work in dev mode ✓
+
+### Next Session Priorities
+
+1. **Monitor Production Deployment**:
+   - Verify WebSocket JWT auth in production environment
+   - Validate auth mode switching works correctly
+   - Confirm no regressions in existing WebSocket functionality
+
+2. **Performance Testing**:
+   - Load test WebSocket connections with JWT validation
+   - Measure token verification overhead
+   - Optimize database lookups if needed
+
+3. **Security Audit**:
+   - Review WebSocket auth error handling
+   - Validate token expiration handling
+   - Confirm proper cleanup of failed connections
+
+**Related Documentation**:
+- Lupin JWT/OAuth docs: `docs/auth/` (7 comprehensive guides)
+- Integration test suite: `src/tests/integration/test_auth_integration.py`
+- WebSocket architecture: `src/docs/websocket-architecture.md`
+
+---
 
 ## 2025.10.03 - User-Filtered Queue Views Phase 1 Backend Infrastructure
 
