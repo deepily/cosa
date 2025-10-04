@@ -335,10 +335,10 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
             await websocket.close()
             return
 
-        # Verify token
-        from cosa.rest.auth import verify_firebase_token
+        # Verify token using configuration-based routing (JWT/mock/Firebase)
+        from cosa.rest.auth import verify_token
         try:
-            user_info = await verify_firebase_token(token)
+            user_info = await verify_token(token)
             user_id = user_info["uid"]
             
             # Extract subscribed events from auth message
