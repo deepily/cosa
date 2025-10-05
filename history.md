@@ -4,6 +4,38 @@
 
 > **Previous Achievement**: 2025.10.03 - User-Filtered Queue Views Phase 1 COMPLETE! Added role-based queue filtering with centralized authorization. Regular users see only their own jobs, admins can view all users. 32/32 unit tests passing (100%).
 
+> **🚨🚨🚨 URGENT TODO**: **repo/branch_change_analysis.py NEEDS COMPLETE REFACTOR** 🚨🚨🚨
+>
+> This quick-and-dirty git diff analysis tool was added but violates EVERY COSA code standard:
+> - ❌ **NO Design by Contract docstrings** (Requires/Ensures/Raises missing from ALL functions)
+> - ❌ **NO error handling** (subprocess calls have no try/catch, no specific exceptions)
+> - ❌ **NO debug/verbose parameters** (can't control output verbosity)
+> - ❌ **NO smoke test** (no `quick_smoke_test()` function or `if __name__` testing)
+> - ❌ **NO du.print_banner()** integration (hardcoded `print()` everywhere)
+> - ❌ **Spacing violations** (no spaces inside parentheses/brackets throughout)
+> - ❌ **NO ConfigurationManager** (hardcoded formatting instead of configurable)
+> - ❌ **NO alignment** (equals signs all over the place, no vertical alignment)
+> - ❌ **NO one-line conditionals** (multi-line ifs for simple checks)
+>
+> **What it does**: Analyzes git diff between current branch and main, categorizes by file type, separates Python/JS code from comments/docstrings, provides statistical breakdown.
+>
+> **Functionality**: ✅ Works perfectly, produces excellent analysis
+> **Code Quality**: 💩 Embarrassing, looks like a first draft from someone who never read CLAUDE.md
+>
+> **Refactor Plan** (Future Session):
+> 1. Add Design by Contract docstrings to ALL functions
+> 2. Add BranchAnalyzer class with debug/verbose parameters
+> 3. Integrate du.print_banner() for output formatting
+> 4. Add proper error handling with specific exceptions
+> 5. Add quick_smoke_test() function
+> 6. Fix ALL spacing violations (spaces inside parens/brackets)
+> 7. Vertical alignment of all equals signs
+> 8. Convert to one-line conditionals where appropriate
+> 9. Make output format configurable via ConfigurationManager
+> 10. Add unit tests for parsing logic
+>
+> **Priority**: Medium (tool works, just ugly as sin)
+
 > **🚨 PENDING**: Slash Command Source File Sync - The bash execution fixes applied to `.claude/commands/smoke-test-baseline.md` need to be applied to `src/rnd/prompts/baseline-smoke-test-prompt.md` to prevent regenerating broken commands. See `rnd/2025.09.23-slash-command-bash-fix-status.md` for details.
 
 ## 2025.10.04 - COSA Infrastructure Improvements Across 5 Lupin Sessions
