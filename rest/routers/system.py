@@ -123,7 +123,7 @@ async def init():
         }
     except Exception as e:
         return {
-            "status": "error", 
+            "status": "error",
             "message": f"Init failed: {str(e)}",
             "timestamp": datetime.now().isoformat()
         }

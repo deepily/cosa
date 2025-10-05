@@ -5,41 +5,73 @@ Handles SQLite database initialization and schema management
 for authentication tables.
 """
 
+import os
 import sqlite3
 from pathlib import Path
 from typing import Optional
 from cosa.config.configuration_manager import ConfigurationManager
+import cosa.utils.util as du
 
 config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
 
 
 def get_auth_db_path() -> Path:
     """
-    Get authentication database path from configuration.
+    Get authentication database path with dual safety validation.
+
+    Dual Safety Mechanism:
+        1. Configuration flag: app_testing=true (from Testing config block)
+        2. Path validation: path must contain "test" if app_testing=true
 
     Requires:
         - Configuration manager initialized
         - auth database path wo root configured
 
     Ensures:
-        - Returns absolute Path object to database file
-        - Creates parent directories if they don't exist
+        - Returns test database only if BOTH safety checks pass
+        - Raises ValueError if safety violation detected
+        - Creates parent directories if needed
 
     Raises:
-        - None
+        - ValueError: Safety check failed
 
     Returns:
         Path: Absolute path to authentication database
     """
-    # Get path from config (relative to project root)
+    # SAFETY CHECK 1: Configuration flag
+    config_test_mode = config_mgr.get( "app_testing", default=False, return_type="boolean" )
+
+    # Get database path from current configuration block
     db_path_rel = config_mgr.get(
         "auth database path wo root",
-        "/src/conf/auth/lupin-auth.db"
+        default="/src/conf/long-term-memory/lupin-auth.db"
     )
 
-    # Convert to absolute path
-    project_root = Path( __file__ ).parent.parent.parent.parent
-    db_path = project_root / db_path_rel.lstrip( "/" )
+    # SAFETY CHECK 2A: If test mode, path MUST contain "test"
+    if config_test_mode and "test" not in str( db_path_rel ).lower():
+        raise ValueError(
+            f"⚠️  SAFETY VIOLATION: app_testing=true but database path missing 'test'\n"
+            f"   Path: {db_path_rel}\n"
+            f"   Config: app_testing={config_test_mode}"
+        )
+
+    # SAFETY CHECK 2B: If path contains "test", MUST be in test mode
+    if "test" in str( db_path_rel ).lower() and not config_test_mode:
+        raise ValueError(
+            f"⚠️  SAFETY VIOLATION: Database path contains 'test' but app_testing=false\n"
+            f"   Path: {db_path_rel}\n"
+            f"   Config: app_testing={config_test_mode}\n"
+            f"   This could destroy test data with production code!"
+        )
+
+    # Audit logging
+    mode_str = "TEST" if config_test_mode else "PRODUCTION"
+    print( f"[AUTH_DB] Mode: {mode_str} (config={config_test_mode})" )
+    print( f"[AUTH_DB] Database: {db_path_rel}" )
+
+    # Convert to absolute path using project root utility
+    project_root = du.get_project_root()
+    db_path = Path( project_root ) / db_path_rel.lstrip( "/" )
 
     # Ensure parent directory exists
     db_path.parent.mkdir( parents=True, exist_ok=True )
