@@ -24,11 +24,11 @@ import websockets
 # Import dependencies
 from openai import OpenAI
 import cosa.utils.util as du
-from lib.clients import lupin_client as gc
+# from lib.clients import lupin_client as gc
 from cosa.rest.websocket_manager import WebSocketManager
 from cosa.memory.input_and_output_table import InputAndOutputTable
 from cosa.rest import multimodal_munger as mmm
-from cosa.config.configuration_manager import ConfigurationManager
+# from cosa.config.configuration_manager import ConfigurationManager
 from cosa.rest.auth import get_current_user_id
 
 router = APIRouter(prefix="/api", tags=["speech"])
@@ -188,7 +188,9 @@ async def upload_and_transcribe_mp3_file(
         body = await request.body()
         decoded_audio = base64.b64decode(body)
         
-        path = gc.docker_path.format("recording.mp3")
+        # path = gc.docker_path.format("recording.mp3")
+        # TODO: replace this with a unique file name to avoid runtime collisions?
+        path = "/var/io/recording.mp3"
         
         if app_debug: 
             print(f"Saving file recorded audio bytes to [{path}]...", end="")

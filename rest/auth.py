@@ -35,13 +35,149 @@ def init_firebase():
         FIREBASE_INITIALIZED = True
 
 
-# Create security scheme
-security = HTTPBearer()
+# Create security scheme that raises 401 instead of 403 for missing auth
+from fastapi import Request
+
+class HTTPBearerWith401(HTTPBearer):
+    def __init__(self):
+        # Initialize with auto_error=False to handle errors manually
+        super().__init__(auto_error=False)
+
+    async def __call__(self, request: Request):
+        # Get credentials without auto error
+        credentials = await super().__call__(request)
+
+        # If no credentials provided, raise 401
+        if credentials is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing or invalid authentication credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        return credentials
+
+security = HTTPBearerWith401()
 
 
-async def verify_firebase_token(token: str) -> Dict:
+async def verify_token(token: str) -> Dict:
     """
-    Verify Firebase ID token and return decoded claims.
+    Unified token verification supporting both JWT and mock tokens.
+
+    Behavior based on 'auth mode' configuration:
+    - 'mock': Accepts mock_token_* format (legacy development mode)
+    - 'jwt': Validates real JWT tokens (production mode)
+    - 'firebase': Firebase ID tokens (future support)
+
+    Requires:
+        - token is a non-empty string
+        - Configuration 'auth mode' is set
+
+    Ensures:
+        - Returns dictionary with user information
+        - Dictionary includes uid, email, name, email_verified, roles fields
+        - Backward compatible with existing mock token system
+        - Production-ready JWT validation when configured
+
+    Raises:
+        - HTTPException with 401 status if token invalid
+        - HTTPException with 401 status if auth mode not supported
+    """
+    from cosa.config.configuration_manager import ConfigurationManager
+
+    config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+    auth_mode = config_mgr.get( "auth mode", default="mock" )
+
+    if auth_mode == "jwt":
+        # JWT mode: Validate real JWT tokens
+        return await verify_jwt_token( token )
+    elif auth_mode == "mock":
+        # Mock mode: Legacy mock token support
+        return await verify_mock_token( token )
+    elif auth_mode == "firebase":
+        # Firebase mode: Future support
+        return await verify_firebase_token( token )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Unsupported auth mode: {auth_mode}"
+        )
+
+
+async def verify_jwt_token(token: str) -> Dict:
+    """
+    Verify JWT access token and return user information.
+
+    Requires:
+        - token is a valid JWT access token string
+        - JWT secret key configured
+        - User exists in database
+
+    Ensures:
+        - Token signature validated
+        - Token not expired
+        - Returns user information dictionary
+        - Compatible with verify_firebase_token return format
+
+    Raises:
+        - HTTPException with 401 status if token invalid/expired
+        - HTTPException with 401 status if user not found
+    """
+    try:
+        from cosa.rest.jwt_service import decode_and_validate_token
+        from cosa.rest.user_service import get_user_by_id
+
+        # Validate JWT token
+        payload = decode_and_validate_token( token, expected_type="access" )
+        user_id = payload.get( "sub" )
+
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token: missing user ID"
+            )
+
+        # Get user from database
+        user_data = get_user_by_id( user_id )
+        if not user_data:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found"
+            )
+
+        # Check if user is active
+        if not user_data.get( "is_active", True ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Account is inactive"
+            )
+
+        # Return in Firebase-compatible format for backward compatibility
+        return {
+            "uid": user_data["id"],
+            "email": user_data["email"],
+            "email_verified": user_data["email_verified"],
+            "name": user_data["email"].split("@")[0],  # Default name from email
+            "roles": user_data["roles"],
+            "picture": None,
+            "iss": "lupin-jwt",
+            "aud": "lupin-api",
+            "auth_time": payload.get("iat"),
+            "user_id": user_data["id"]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Token validation failed: {str(e)}"
+        )
+
+
+async def verify_mock_token(token: str) -> Dict:
+    """
+    Verify mock token (development mode only).
 
     Requires:
         - token is a non-empty string
@@ -124,17 +260,27 @@ async def verify_firebase_token(token: str) -> Dict:
                 "sign_in_provider": "password"
             }
         }
-        
-        print(f"[AUTH] Token verified for user: [{user_data['name']}] ({user_data['uid']})")
+
+        print(f"[AUTH] Mock token verified for user: [{user_data['name']}] ({user_data['uid']})")
         return decoded_token
-        
+
     except Exception as e:
-        print(f"[AUTH] Token verification failed: {e}")
+        print( f"[AUTH] Mock token verification failed: {str( e )}" )
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code = 401,
+            detail      = f"Invalid token: {str( e )}"
         )
+
+
+async def verify_firebase_token(token: str) -> Dict:
+    """
+    Legacy function name for backward compatibility.
+    Redirects to verify_token().
+
+    This function is kept for backward compatibility with existing code
+    that calls verify_firebase_token(). New code should use verify_token().
+    """
+    return await verify_token( token )
 
 
 async def get_current_user(

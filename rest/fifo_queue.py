@@ -359,7 +359,68 @@ class FifoQueue:
             html_list.reverse()
         
         return html_list
-    
+
+    def get_jobs_for_user( self, user_id: str ) -> list[Any]:
+        """
+        Get raw job objects for specific user (NO authorization, NO formatting).
+
+        Pure data access method - performs NO authorization checks.
+        Authorization should be handled by calling code.
+
+        Requires:
+            - user_id is a valid user identifier string
+            - UserJobTracker singleton is initialized
+
+        Ensures:
+            - Returns list of job objects matching user's job IDs
+            - Returns empty list if user has no jobs
+            - Returns raw job objects (NOT HTML formatted)
+            - NO authorization checks performed
+
+        Args:
+            user_id: The user identifier to filter jobs by
+
+        Returns:
+            list[Any]: List of job objects belonging to the user
+
+        Raises:
+            - None (returns empty list for nonexistent users)
+        """
+        # Get job IDs associated with this user
+        user_job_ids = self.user_job_tracker.get_jobs_for_user( user_id )
+
+        # Filter queue_list to only include jobs matching user's job IDs
+        filtered_jobs = [
+            job for job in self.queue_list
+            if hasattr( job, 'id_hash' ) and job.id_hash in user_job_ids
+        ]
+
+        return filtered_jobs
+
+    def get_all_jobs( self ) -> list[Any]:
+        """
+        Get ALL raw job objects (NO authorization, NO formatting).
+
+        Pure data access method - performs NO authorization checks.
+        Authorization should be handled by calling code.
+
+        Requires:
+            - Queue is initialized
+
+        Ensures:
+            - Returns complete copy of queue_list
+            - NO filtering by user
+            - Returns raw job objects (NOT HTML formatted)
+            - NO authorization checks performed
+
+        Returns:
+            list[Any]: Complete list of all job objects in queue
+
+        Raises:
+            - None
+        """
+        return self.queue_list.copy()
+
     def _emit_speech( self, msg: str, user_id: str = None, websocket_id: str = None, job: Any = None ) -> None:
         """
         Unified speech emission with smart routing.

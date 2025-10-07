@@ -12,5 +12,7 @@ __pycache__
 # Skip IDE files
 .idea/
 
-# Skip Claude Code local settings
+# Claude Code - track team configs, ignore personal overrides
 .claude/settings.local.json
+.claude/cache/
+.claude/*.log

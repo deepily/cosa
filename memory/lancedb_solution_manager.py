@@ -75,6 +75,10 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         # Cache for embeddings and quick lookups
         self._question_lookup = {}  # question -> id_hash mapping
         self._id_lookup = {}       # id_hash -> row mapping
+
+        # Initialize components for hierarchical search
+        self._canonical_synonyms = None  # Lazy initialization
+        self._normalizer = None  # Lazy initialization
         
         # Validate database path
         if not os.path.exists( self.db_path ):
@@ -115,6 +119,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             
             # Content fields
             pa.field( "question", pa.string() ),
+            pa.field( "question_normalized", pa.string() ),
             pa.field( "question_gist", pa.string() ),
             pa.field( "answer", pa.string() ),
             pa.field( "answer_conversational", pa.string() ),
@@ -145,6 +150,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             
             # Vector embeddings (1536 dimensions for OpenAI embeddings)
             pa.field( "question_embedding", pa.list_( pa.float32(), 1536 ) ),
+            pa.field( "question_normalized_embedding", pa.list_( pa.float32(), 1536 ) ),
             pa.field( "question_gist_embedding", pa.list_( pa.float32(), 1536 ) ),
             pa.field( "solution_embedding", pa.list_( pa.float32(), 1536 ) ),
             pa.field( "code_embedding", pa.list_( pa.float32(), 1536 ) ),
@@ -202,6 +208,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             
             # Content fields
             "question": snapshot.question,
+            "question_normalized": getattr( snapshot, 'question_normalized', '' ) or '',
             "question_gist": getattr( snapshot, 'question_gist', '' ) or '',
             "answer": getattr( snapshot, 'answer', '' ) or '',
             "answer_conversational": getattr( snapshot, 'answer_conversational', '' ) or '',
@@ -232,6 +239,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             
             # Vector embeddings
             "question_embedding": normalize_embedding( getattr( snapshot, 'question_embedding', [] ) ),
+            "question_normalized_embedding": normalize_embedding( getattr( snapshot, 'question_normalized_embedding', [] ) ),
             "question_gist_embedding": normalize_embedding( getattr( snapshot, 'question_gist_embedding', [] ) ),
             "solution_embedding": normalize_embedding( getattr( snapshot, 'solution_embedding', [] ) ),
             "code_embedding": normalize_embedding( getattr( snapshot, 'code_embedding', [] ) ),
@@ -294,6 +302,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         # Create SolutionSnapshot with required fields
         snapshot = SolutionSnapshot(
             question=record["question"],
+            question_normalized=record.get( "question_normalized", "" ),
             created_date=record.get( "created_date", "" ),
             updated_date=record.get( "updated_date", "" ),
             solution_summary=record.get( "solution_summary", "" ),
@@ -335,6 +344,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         
         # Add embeddings
         snapshot.question_embedding = record.get( "question_embedding", [] )
+        snapshot.question_normalized_embedding = record.get( "question_normalized_embedding", [] )
         snapshot.question_gist_embedding = record.get( "question_gist_embedding", [] )
         snapshot.solution_embedding = record.get( "solution_embedding", [] )
         snapshot.code_embedding = record.get( "code_embedding", [] )
@@ -678,6 +688,53 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                 print( f"  ✗ Merge failed: {e}" )
             raise e
 
+    def get_snapshot_by_id( self, snapshot_id: str ) -> Optional[Any]:
+        """
+        Get snapshot by ID hash.
+
+        Requires:
+            - snapshot_id is a valid ID hash string
+            - Storage backend is initialized
+
+        Ensures:
+            - Returns SolutionSnapshot if found
+            - Returns None if not found
+            - No side effects on storage
+
+        Args:
+            snapshot_id: The ID hash of the snapshot to retrieve
+
+        Returns:
+            SolutionSnapshot instance if found, None otherwise
+        """
+        if not self._initialized:
+            if self.debug:
+                print( f"Manager not initialized, cannot retrieve snapshot {snapshot_id}" )
+            return None
+
+        try:
+            # Search for snapshot by id_hash
+            results = self._table.search().where( f"id_hash = '{snapshot_id}'" ).limit( 1 ).to_list()
+
+            if results and len( results ) > 0:
+                # Convert row data back to SolutionSnapshot
+                row = results[0]
+                snapshot = self._row_to_snapshot( row )
+
+                if self.debug:
+                    print( f"Found snapshot {snapshot_id}: {snapshot.question[:50]}..." )
+
+                return snapshot
+            else:
+                if self.debug:
+                    print( f"No snapshot found with id_hash: {snapshot_id}" )
+                return None
+
+        except Exception as e:
+            if self.debug:
+                print( f"Error retrieving snapshot by id {snapshot_id}: {e}" )
+            return None
+
     def delete_snapshot( self, question: str, delete_physical: bool = False ) -> bool:
         """
         Delete snapshot by question.
@@ -730,55 +787,125 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                 print( f"✗ Failed to delete snapshot: {e}" )
             return False
     
-    def get_snapshots_by_question( self, 
+    def get_snapshots_by_question( self,
                                   question: str,
                                   question_gist: Optional[str] = None,
                                   threshold_question: float = 100.0,
                                   threshold_gist: float = 100.0,
-                                  limit: int = 7, 
+                                  limit: int = 7,
                                   debug: bool = False ) -> List[Tuple[float, Any]]:
         """
-        Search for snapshots by question similarity using LanceDB vector search.
-        
+        Search for snapshots by question using hierarchical exact match then similarity.
+
+        Implements three-level hierarchical search:
+        1. Exact verbatim match (instant, no embeddings)
+        2. Exact normalized match (instant, no embeddings)
+        3. Exact gist match (instant, no embeddings)
+        4. Similarity search (fallback, uses embeddings)
+
         Requires:
             - Manager is initialized
             - question is non-empty string
             - thresholds are between 0.0 and 100.0
-            
+
         Ensures:
             - Returns list of (similarity_score, snapshot) tuples
             - Results sorted by similarity descending
-            - Uses LanceDB's native vector search capabilities
+            - Exact matches return immediately (no embeddings computed)
+            - Falls back to similarity search only if needed
             - Performance metrics included
-            
+
         Raises:
             - RuntimeError if not initialized
             - ValueError if parameters invalid
         """
         if not self.is_initialized():
             raise RuntimeError( "Manager must be initialized before searching" )
-        
+
         if not question:
             raise ValueError( "Question cannot be empty" )
-        
+
         if not (0.0 <= threshold_question <= 100.0) or not (0.0 <= threshold_gist <= 100.0):
             raise ValueError( "Thresholds must be between 0.0 and 100.0" )
-        
+
         monitor = PerformanceMonitor( "get_snapshots_by_question" )
         monitor.start()
-        
+
         try:
-            # First check for exact match in cache
+            # Initialize hierarchical search components if needed
+            if self._canonical_synonyms is None:
+                try:
+                    from cosa.memory.canonical_synonyms_table import CanonicalSynonymsTable
+                    self._canonical_synonyms = CanonicalSynonymsTable( debug=self.debug, verbose=self.verbose )
+                    if self.debug:
+                        print( "Initialized CanonicalSynonyms for hierarchical search" )
+                except Exception as e:
+                    if self.debug:
+                        print( f"Could not initialize CanonicalSynonyms, using direct search: {e}" )
+                    self._canonical_synonyms = False  # Mark as unavailable
+
+            if self._normalizer is None:
+                try:
+                    from cosa.memory.normalizer import Normalizer
+                    self._normalizer = Normalizer()
+                    if self.debug:
+                        print( "Initialized Normalizer for hierarchical search" )
+                except Exception as e:
+                    if self.debug:
+                        print( f"Could not initialize Normalizer: {e}" )
+                    self._normalizer = False
+
+            # HIERARCHICAL SEARCH IMPLEMENTATION
+
+            # Level 1: Exact verbatim match in CanonicalSynonyms
+            if self._canonical_synonyms and self._canonical_synonyms is not False:
+                snapshot_id = self._canonical_synonyms.find_exact_verbatim( question )
+                if snapshot_id:
+                    if self.debug:
+                        print( f"✓ LEVEL 1: Exact verbatim match found for snapshot: {snapshot_id}" )
+                    snapshot = self.get_snapshot_by_id( snapshot_id )
+                    if snapshot:
+                        monitor.stop()
+                        return [(100.0, snapshot)]
+
+                # Level 2: Exact normalized match
+                if self._normalizer and self._normalizer is not False:
+                    question_normalized = self._normalizer.normalize( question )
+                    snapshot_id = self._canonical_synonyms.find_exact_normalized( question_normalized )
+                    if snapshot_id:
+                        if self.debug:
+                            print( f"✓ LEVEL 2: Exact normalized match found for snapshot: {snapshot_id}" )
+                        snapshot = self.get_snapshot_by_id( snapshot_id )
+                        if snapshot:
+                            monitor.stop()
+                            return [(100.0, snapshot)]
+
+                # Level 3: Exact gist match
+                if question_gist:
+                    snapshot_id = self._canonical_synonyms.find_exact_gist( question_gist )
+                    if snapshot_id:
+                        if self.debug:
+                            print( f"✓ LEVEL 3: Exact gist match found for snapshot: {snapshot_id}" )
+                        snapshot = self.get_snapshot_by_id( snapshot_id )
+                        if snapshot:
+                            monitor.stop()
+                            return [(95.0, snapshot)]
+
+            # Check for exact match in local cache (backward compatibility)
             if question in self._question_lookup:
                 if self.debug:
-                    print( f"Found exact match for: {du.truncate_string( question, 50 )}" )
-                
+                    print( f"Found exact match in local cache for: {du.truncate_string( question, 50 )}" )
+
                 id_hash = self._question_lookup[question]
                 record = self._id_lookup[id_hash]
                 snapshot = self._record_to_snapshot( record )
-                
-                monitor.stop()  # Fix: Call stop() before getting metrics
+
+                monitor.stop()
                 return [(100.0, snapshot)]
+
+            # Level 4: Fall back to similarity search
+            if self.debug:
+                print( f"LEVEL 4: No exact matches found, falling back to similarity search..." )
             
             # For similarity search, we need to generate an embedding for the question
             # Since we don't have direct access to embedding generation here,
