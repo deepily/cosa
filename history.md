@@ -1,6 +1,8 @@
 # COSA Development History
 
-> **🎯 CURRENT ACHIEVEMENT**: 2025.10.06 - Branch Analyzer Professional Refactoring COMPLETE! Transformed 261-line quick-and-dirty script into ~2,900-line professional package with full COSA compliance. New features: YAML configuration, multiple output formats (console/JSON/markdown), HEAD resolution, clear comparison context, comprehensive documentation. ✅ All standards met!
+> **🎯 CURRENT ACHIEVEMENT**: 2025.10.08 - Debug/Verbose Output Control + Session Workflow Enhancements COMPLETE! Fixed verbose output leakage across embedding and LLM subsystems (~20 debug checks updated). Added plan-session-start slash command for developer workflow automation. Console output now properly respects verbose flag configuration.
+
+> **Previous Achievement**: 2025.10.06 - Branch Analyzer Professional Refactoring COMPLETE! Transformed 261-line quick-and-dirty script into ~2,900-line professional package with full COSA compliance. New features: YAML configuration, multiple output formats (console/JSON/markdown), HEAD resolution, clear comparison context, comprehensive documentation. ✅ All standards met!
 
 > **Previous Achievement**: 2025.10.04 - Multi-Session Integration Day! WebSocket JWT auth fixed, admin user management backend added, test database dual safety implemented, and canonical path management pattern enforced. Major infrastructure improvements across authentication, testing, and code quality.
 
@@ -27,6 +29,61 @@
 > **Code Quality**: 🏆 Professional, production-ready, exemplary COSA compliance
 
 > **🚨 PENDING**: Slash Command Source File Sync - The bash execution fixes applied to `.claude/commands/smoke-test-baseline.md` need to be applied to `src/rnd/prompts/baseline-smoke-test-prompt.md` to prevent regenerating broken commands. See `rnd/2025.09.23-slash-command-bash-fix-status.md` for details.
+
+## 2025.10.08 - Debug/Verbose Output Control + Session Workflow Enhancements COMPLETE
+
+### Summary
+Implemented consistent debug/verbose flag handling across embedding and LLM streaming subsystems, fixing verbose output leakage. Added plan-session-start slash command for developer workflow automation. Combined two sessions: Oct 8 debug/verbose fixes and Oct 8 notification system documentation review.
+
+### Work Performed
+
+#### Debug/Verbose Output Leakage Fix - COMPLETE ✅
+- **Problem**: Verbose output appearing with Baseline config (`app_debug = True, app_verbose = False`)
+  - Embedding operations showed normalization details, cache HIT/MISS messages
+  - LLM streaming showed "🔄 Streaming from..." headers and complete response chunks
+- **Root Cause**: Inconsistent flag usage mixing `if self.debug:` with `if self.debug and self.verbose:`
+- **Solution**: Standardized all verbose output to require both flags
+
+#### Files Modified (4 files, ~20 debug checks updated)
+- **Modified**: `memory/embedding_manager.py` (+48/-48 lines) - 13 debug checks updated for cache HIT/MISS, normalization timing, API calls
+- **Modified**: `agents/llm_client.py` (+6/-6 lines) - 3 streaming output checks updated (headers, chunk display)
+- **Modified**: `agents/chat_client.py` (+4/-4 lines) - 2 streaming output checks updated
+- **Modified**: `agents/completion_client.py` (+4/-4 lines) - 2 streaming output checks updated
+
+#### Session Workflow Utility - COMPLETE ✅
+- **Session-Start Command**: Added `.claude/commands/plan-session-start.md` slash command
+- **Purpose**: Automates session initialization by loading history.md, showing status, displaying recent TODOs
+- **Integration**: Wraps canonical workflow from planning-is-prompting repository
+- **Benefits**: Faster context loading, consistent session start routine
+
+#### Notification System Documentation Review - COMPLETE ✅
+- **Global Command Analysis**: Reviewed `/home/rruiz/.local/bin/notify-claude` bash script
+- **Python Script Examination**: Analyzed `cosa/cli/notify_user.py` notification delivery system
+- **Flow Documentation**: Created comprehensive walkthrough of notification journey from CLI to email
+- **Educational Content**: Developed detailed explanation of CLI notification flow with examples
+
+### Files Created
+- **Created**: `.claude/commands/plan-session-start.md` - Session initialization slash command
+
+### Impact
+- **Non-verbose debug mode**: Now provides clean logs with only essential information
+- **Verbose mode**: Provides comprehensive debugging output when needed
+- **Pattern established**: All verbose output uses `if self.debug and self.verbose:` consistently
+- **Developer workflow**: Enhanced session initialization with automated slash command
+
+### Current Status
+- **Embedding Subsystem**: ✅ FIXED - Verbose output properly controlled
+- **LLM Streaming**: ✅ FIXED - Streaming headers and chunks properly controlled
+- **Session Workflow**: ✅ ENHANCED - Session-start automation available
+- **Error Handling**: ✅ PRESERVED - All critical messages still visible regardless of verbose setting
+- **Git State**: ✅ READY - All changes committed
+
+### Next Session Priorities
+- Resume regular COSA development tasks
+- Apply notification system knowledge in future development
+- Continue with any pending items from previous sessions (slash command source sync)
+
+---
 
 ## 2025.10.06 - Branch Analyzer Professional Refactoring COMPLETE ✅
 

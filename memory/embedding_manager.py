@@ -150,22 +150,22 @@ class EmbeddingManager:
         Raises:
             - None (handles errors gracefully)
         """
-        if self.debug: timer = sw.Stopwatch( msg=f"Normalizing text: '{du.truncate_string( text )}'" )
-        
+        if self.debug and self.verbose: timer = sw.Stopwatch( msg=f"Normalizing text: '{du.truncate_string( text )}'" )
+
         try:
             # Use GistNormalizer for advanced normalization
             # This will extract the gist and normalize using spaCy
             normalized = self._gist_normalizer.get_normalized_gist( text )
-            
+
             # Check if we should expand symbols to words
             if expand_symbols_to_words is None:
                 # Get from configuration, default to False
                 expand_symbols_to_words = self._config_mgr.get( "expand symbols to words", default=False, return_type="boolean" )
-                if self.debug: print( f"Got expand_symbols_to_words from config: {expand_symbols_to_words}" )
+                if self.debug and self.verbose: print( f"Got expand_symbols_to_words from config: {expand_symbols_to_words}" )
             
             if expand_symbols_to_words:
-                if self.debug: print( "Expanding symbols and numbers to words..." )
-                
+                if self.debug and self.verbose: print( "Expanding symbols and numbers to words..." )
+
                 # Apply reverse mappings to expand symbols/numbers to words
                 # Use sorted() to ensure consistent ordering for deterministic results
                 for symbol, word in sorted( self._reverse_punctuation.items() ):
@@ -185,8 +185,8 @@ class EmbeddingManager:
                 
                 # Clean up extra whitespace
                 normalized = " ".join( normalized.split() )
-            
-            if self.debug:
+
+            if self.debug and self.verbose:
                 timer.print( "Done!", use_millis=True )
                 print( f"Normalized '{text}' → '{normalized}'" )
             
@@ -229,23 +229,23 @@ class EmbeddingManager:
         if normalize_for_cache:
             cache_key = self.normalize_text_for_cache( text )
             text_for_embedding = cache_key  # Generate embedding for normalized text
-            if self.debug:
+            if self.debug and self.verbose:
                 print( f"Using normalized cache key: '{cache_key}'" )
         else:
             cache_key = text
             text_for_embedding = text  # Generate embedding for exact text
-            if self.debug:
+            if self.debug and self.verbose:
                 print( f"Using exact cache key: '{cache_key}'" )
         
         # Check cache first using cache_key
         cached_embedding = self._embedding_cache_table.get_cached_embedding( cache_key )
-        
+
         if cached_embedding:
-            if self.debug:
+            if self.debug and self.verbose:
                 print( f"Cache HIT for key: '{du.truncate_string( cache_key )}'" )
             return cached_embedding
-        
-        if self.debug:
+
+        if self.debug and self.verbose:
             print( f"Cache MISS for key: '{du.truncate_string( cache_key )}', generating new embedding..." )
         
         # Generate embedding for the text_for_embedding (which may be normalized)
@@ -254,8 +254,8 @@ class EmbeddingManager:
         try:
             # Get embedding model name from config - NO FALLBACK
             embedding_model = self._config_mgr.get( "embedding model name" )
-            
-            if self.debug:
+
+            if self.debug and self.verbose:
                 print( f"\nConfiguration details:" )
                 print( f"  Embedding model: {embedding_model}" )
                 print( f"  API key location: {du.get_project_root()}/src/conf/keys/openai" )
@@ -273,8 +273,8 @@ class EmbeddingManager:
             
             # Get API key
             api_key = du.get_api_key( "openai" )
-            
-            if self.debug:
+
+            if self.debug and self.verbose:
                 print( f"  API key (first 10 chars): {api_key[ :10 ] if api_key else 'NOT FOUND'}..." )
                 print( f"  OpenAI client version: {openai.__version__}" )
             
@@ -284,8 +284,8 @@ class EmbeddingManager:
                 api_key=api_key,
                 base_url="https://api.openai.com/v1"  # Force use of OpenAI's API for embeddings
             )
-            
-            if self.debug:
+
+            if self.debug and self.verbose:
                 print( f"\nAttempting to generate embedding with model: {embedding_model}" )
                 print( f"Using OpenAI API endpoint: https://api.openai.com/v1" )
             
@@ -295,13 +295,13 @@ class EmbeddingManager:
                 model=embedding_model
             )
             timer.print( "Done!", use_millis=True )
-            
+
             embedding = response.data[ 0 ].embedding
-            if self.debug: print( f"\nSuccess! Generated embedding with {len( embedding )} dimensions" )
-            
+            if self.debug and self.verbose: print( f"\nSuccess! Generated embedding with {len( embedding )} dimensions" )
+
             # Cache the result using cache_key
             self._embedding_cache_table.cache_embedding( cache_key, embedding )
-            if self.debug: print( f"Cached embedding for key: '{du.truncate_string( cache_key )}'" )
+            if self.debug and self.verbose: print( f"Cached embedding for normalized text: '{du.truncate_string( cache_key )}'" )
             
             return embedding
         

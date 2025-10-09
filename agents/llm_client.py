@@ -158,7 +158,7 @@ class LlmClient:
                 # Stream text as deltas
                 counter = 0
                 async for chunk in result.stream_text( delta=True ):
-                    if self.debug:
+                    if self.debug and self.verbose:
                         print( chunk, end="", flush=True )
                     else:
                         counter += 1
@@ -171,7 +171,7 @@ class LlmClient:
                 # Stream text as deltas
                 async for chunk in result.stream_text( delta=True ):
                     counter = 0
-                    if self.debug:
+                    if self.debug and self.verbose:
                         print( chunk, end="", flush=True )
                     else:
                         counter += 1
@@ -244,7 +244,7 @@ class LlmClient:
         
         # Streaming mode
         output = ""
-        print( f"🔄 Streaming from model: {self.model_name}\n" )
+        if self.debug and self.verbose: print( f"🔄 Streaming from model: {self.model_name}\n" )
         start_time = time.perf_counter()
         
         # Direct async call - no event loop needed here
