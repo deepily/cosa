@@ -132,3 +132,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Standardized Smoke Testing (December 2025)**: All 21 core modules refactored with consistent `quick_smoke_test()` patterns
 - Refactoring to use external LLM services instead of in-memory models
 - Implementing router for directing requests to appropriate LLM endpoints
+
+## Installed Workflows
+
+**Session Management**:
+- `/plan-session-start` - Initialize work session (load history, identify TODOs)
+
+**Planning is Prompting Core**:
+- `/p-is-p-00-start-here` - Entry point with decision matrix and philosophy
+- `/p-is-p-01-planning` - Work planning workflow (classify → pattern → breakdown)
+- `/p-is-p-02-documentation` - Implementation documentation (for large/complex work)
+
+**Testing Workflows**:
+- `/smoke-test-baseline` - Pre-change baseline collection
+- `/smoke-test-remediation` - Post-change verification and remediation
+
+**Custom Workflows**:
+- `/cosa-session-end` - COSA-specific session end workflow
+
+## Planning Workflows
+
+**Entry Point**: See planning-is-prompting → workflow/p-is-p-00-start-here.md
+
+**Two-Step Process**:
+1. **Plan the Work** (planning-is-prompting → workflow/p-is-p-01-planning-the-work.md) - Always required
+2. **Document Implementation** (planning-is-prompting → workflow/p-is-p-02-documenting-the-implementation.md) - Only for Pattern 1, 2, 5
+
+**Decision Matrix**: Use `/p-is-p-00-start-here` to determine which workflows you need

@@ -1,14 +1,132 @@
 # COSA Development History
 
-> **🎯 CURRENT ACHIEVEMENT**: 2025.10.08 - Debug/Verbose Output Control + Session Workflow Enhancements COMPLETE! Fixed verbose output leakage across embedding and LLM subsystems (~20 debug checks updated). Added plan-session-start slash command for developer workflow automation. Console output now properly respects verbose flag configuration.
+> **🎯 CURRENT ACHIEVEMENT**: 2025.10.14 - Planning is Prompting Workflow Installation COMPLETE! Successfully installed Planning is Prompting Core workflows (3 slash commands) via interactive installation wizard. Added `/p-is-p-00-start-here`, `/p-is-p-01-planning`, and `/p-is-p-02-documentation` for structured work planning and documentation. Updated CLAUDE.md with workflow documentation and usage guidance.
+
+> **Previous Achievement**: 2025.10.08 - Debug/Verbose Output Control + Session Workflow Enhancements COMPLETE! Fixed verbose output leakage across embedding and LLM subsystems (~20 debug checks updated). Added plan-session-start slash command for developer workflow automation. Console output now properly respects verbose flag configuration.
 
 > **Previous Achievement**: 2025.10.06 - Branch Analyzer Professional Refactoring COMPLETE! Transformed 261-line quick-and-dirty script into ~2,900-line professional package with full COSA compliance. New features: YAML configuration, multiple output formats (console/JSON/markdown), HEAD resolution, clear comparison context, comprehensive documentation. ✅ All standards met!
 
 > **Previous Achievement**: 2025.10.04 - Multi-Session Integration Day! WebSocket JWT auth fixed, admin user management backend added, test database dual safety implemented, and canonical path management pattern enforced. Major infrastructure improvements across authentication, testing, and code quality.
 
+> **🚨 RESOLVED**: **Slash Command Source File Sync COMPLETE** ✅ (2025.10.11)
+>
+> Applied bash execution fixes to source prompt files (`src/rnd/prompts/baseline-smoke-test-prompt.md` and `src/cosa/rnd/prompts/cosa-baseline-smoke-test-prompt.md`). TIMESTAMP variable persistence issues resolved - source prompts now match working slash commands, preventing regeneration of broken commands.
+
 > **🚨 RESOLVED**: **repo/branch_change_analysis.py COMPLETE REFACTOR** ✅✅✅
 >
 > The quick-and-dirty git diff analysis tool has been completely refactored into a professional package that EXCEEDS all COSA standards:
+
+## 2025.10.14 - Planning is Prompting Workflow Installation COMPLETE
+
+### Summary
+Successfully installed Planning is Prompting Core workflows in COSA repository via interactive installation wizard. Added three slash commands for structured work planning and implementation documentation. Integrated workflows are project-agnostic and ready for immediate use in planning COSA development work.
+
+### Work Performed
+
+#### Planning is Prompting Installation - COMPLETE ✅
+- **Installation Wizard Execution**: Ran complete interactive installation wizard from planning-is-prompting repository
+- **Permission Setup**: Configured auto-approval patterns for global project workflow installation
+- **Workflow Selection**: Selected Planning is Prompting Core (3 workflows) for installation
+- **Configuration**: Confirmed existing [COSA] prefix and project name for workflow integration
+- **Files Installed**: Successfully copied 3 slash commands from canonical planning-is-prompting repository
+
+#### Workflows Installed (3 slash commands)
+1. **/p-is-p-00-start-here**:
+   - Entry point with decision matrix and philosophy explanation
+   - Guides user to appropriate workflow path (01 only vs 01+02)
+   - Use when: Unsure which workflow to use, want to understand philosophy
+
+2. **/p-is-p-01-planning**:
+   - Work planning workflow (classify → pattern → breakdown)
+   - Always required for any new work
+   - Creates TodoWrite lists with [COSA] prefix for progress tracking
+
+3. **/p-is-p-02-documentation**:
+   - Implementation documentation for large/complex projects
+   - Only for Pattern 1, 2, or 5 (multi-phase, research, architecture work)
+   - Creates structured implementation docs in src/rnd/
+
+#### Documentation Updates - COMPLETE ✅
+- **CLAUDE.md Enhancement**: Added "Installed Workflows" section documenting all 6 workflows
+  - Session Management (/plan-session-start)
+  - Planning is Prompting Core (/p-is-p-00/01/02)
+  - Testing Workflows (/smoke-test-baseline, /smoke-test-remediation)
+  - Custom Workflows (/cosa-session-end)
+- **Planning Workflows Section**: Added comprehensive usage guidance with canonical workflow references
+- **Decision Matrix**: Documented when to use each workflow (small vs large projects)
+
+### Files Created
+- **Created**: `.claude/commands/p-is-p-00-start-here.md` (42 lines) - Entry point slash command
+- **Created**: `.claude/commands/p-is-p-01-planning.md` (53 lines) - Planning workflow slash command
+- **Created**: `.claude/commands/p-is-p-02-documentation.md` (58 lines) - Documentation workflow slash command
+
+### Files Modified
+- **Modified**: `CLAUDE.md` (+29 lines) - Added Installed Workflows and Planning Workflows sections
+
+### Workflow Decision Matrix
+
+| Work Type             | Duration  | Workflow Path                          |
+|-----------------------|-----------|----------------------------------------|
+| Small feature         | 1-2 weeks | /p-is-p-01-planning only → history.md |
+| Bug investigation     | 3-5 days  | /p-is-p-01-planning only → history.md |
+| Architecture design   | 4-6 weeks | /p-is-p-01-planning → /p-is-p-02-documentation |
+| Technology research   | 2-3 weeks | /p-is-p-01-planning → /p-is-p-02-documentation |
+| Large implementation  | 8+ weeks  | /p-is-p-01-planning → /p-is-p-02-documentation |
+
+**Quick Rule**: Use Step 1 for small/simple work. Use Step 1 + Step 2 for large/complex work (8+ weeks, multiple phases).
+
+### Installation Process
+
+#### Interactive Wizard Steps Completed
+1. **Permission Setup**: Configured auto-approval for `/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/*/.claude/commands/**`
+2. **State Detection**: Detected existing workflows (/plan-session-start, /smoke-test-*, /cosa-session-end)
+3. **Workflow Catalog**: Presented available workflows with dependencies and descriptions
+4. **User Selection**: Selected [C] Planning is Prompting Core
+5. **Configuration**: Confirmed [COSA] prefix and "CoSA (Collection of Small Agents)" project name
+6. **Installation**: Copied 3 slash commands from planning-is-prompting canonical source
+7. **Validation**: Verified files created, CLAUDE.md updated, git tracking ready
+8. **Summary**: Provided comprehensive usage guidance and decision matrix
+
+### Technical Achievements
+
+#### Workflow Integration ✅
+- **Project-Agnostic Design**: Workflows adapt to any project type automatically
+- **Canonical References**: All slash commands reference planning-is-prompting → workflow/*.md for latest implementation
+- **Single Source of Truth**: Slash commands are thin wrappers around canonical workflows
+- **Auto-Updates**: When canonical workflows improve, slash commands automatically benefit
+
+#### Git Management ✅
+- **Untracked Files**: 3 new slash commands appear as untracked (expected for new files)
+- **Ready to Commit**: Files properly structured in .claude/commands/ for team sharing
+- **Gitignore Compliance**: Existing .gitignore allows tracking of .claude/commands/ for team workflows
+
+### Project Impact
+
+#### Development Workflow Enhancement
+- **Structured Planning**: Systematic approach for classifying and planning COSA development work
+- **Documentation Standardization**: Consistent format for complex implementation plans
+- **Progress Tracking**: TodoWrite integration with [COSA] prefix for clear progress visibility
+- **Team Collaboration**: Workflows version-controlled and shared with team via git
+
+#### Planning Capabilities
+- **Decision Support**: Clear decision matrix for choosing appropriate workflow path
+- **Pattern Recognition**: 5 work patterns (Multi-Phase, Research, Incremental, Maintenance, Architecture)
+- **Scope Guidance**: Helps determine if work needs full documentation or history.md entries only
+- **Time Estimation**: Pattern selection helps estimate project duration and complexity
+
+### Current Status
+- **Planning Workflows**: ✅ INSTALLED - 3 slash commands operational
+- **Documentation**: ✅ UPDATED - CLAUDE.md includes comprehensive workflow guidance
+- **Git Tracking**: ✅ READY - Files prepared for commit with team sharing
+- **Usage Ready**: ✅ OPERATIONAL - Workflows immediately available for COSA development
+
+### Next Session Priorities
+- Use `/p-is-p-00-start-here` when starting new COSA development work to understand philosophy
+- Apply `/p-is-p-01-planning` for planning any new feature, refactoring, or bug investigation
+- Commit workflow installation to git for team collaboration
+- Consider using workflows for upcoming COSA development tasks
+
+---
 > - ✅ **Design by Contract docstrings** - ALL functions have Requires/Ensures/Raises sections
 > - ✅ **Comprehensive error handling** - Custom exception hierarchy, try/catch on all subprocess calls
 > - ✅ **Debug/verbose parameters** - Throughout all classes, proper logging
@@ -28,7 +146,44 @@
 > **Original Preserved**: `cosa/repo/branch_change_analysis.py` (261 lines, untouched reference)
 > **Code Quality**: 🏆 Professional, production-ready, exemplary COSA compliance
 
-> **🚨 PENDING**: Slash Command Source File Sync - The bash execution fixes applied to `.claude/commands/smoke-test-baseline.md` need to be applied to `src/rnd/prompts/baseline-smoke-test-prompt.md` to prevent regenerating broken commands. See `rnd/2025.09.23-slash-command-bash-fix-status.md` for details.
+## 2025.10.11 - Slash Command Source File Sync COMPLETE ✅
+
+### Summary
+Applied bash execution fixes from working slash command to source prompt files, resolving the HIGH PRIORITY pending item from 2025.09.23. Fixed TIMESTAMP variable persistence issues in both Lupin and COSA baseline smoke test source prompts.
+
+### Work Performed
+
+#### Source Prompt File Fixes - COMPLETE ✅
+- **Lupin Source Prompt**: Fixed `src/rnd/prompts/baseline-smoke-test-prompt.md`
+  - Removed TIMESTAMP generation from Step 3 (doesn't persist between bash blocks)
+  - Added TIMESTAMP generation in Step 4 for Lupin tests
+  - Added TIMESTAMP generation in Step 5 for CoSA tests (conditional block)
+- **COSA Source Prompt**: Fixed `src/cosa/rnd/prompts/cosa-baseline-smoke-test-prompt.md`
+  - Removed TIMESTAMP generation from Step 3 (doesn't persist between bash blocks)
+  - Added TIMESTAMP generation in Step 4 for COSA tests
+
+#### Technical Achievement
+- **Root Cause**: Bash variables don't persist between separate code blocks in slash commands
+- **Fixed Pattern**: Each bash block now generates TIMESTAMP internally when needed
+- **Consistency**: Source prompts now match working slash command (`.claude/commands/smoke-test-baseline.md`)
+- **Prevention**: Eliminates risk of regenerating broken slash commands from source files
+
+### Files Modified
+- **Fixed**: `src/rnd/prompts/baseline-smoke-test-prompt.md` - Applied TIMESTAMP bash fixes
+- **Fixed**: `src/cosa/rnd/prompts/cosa-baseline-smoke-test-prompt.md` - Applied TIMESTAMP bash fixes
+
+### Impact
+- **Maintenance**: Source documentation now matches working implementation
+- **Consistency**: No risk of propagating bugs back into slash commands
+- **Quality**: All bash execution patterns validated and working
+- **Completion**: HIGH PRIORITY item from 2025.09.23 fully resolved
+
+### Current Status
+- **Source Prompts**: ✅ SYNCED - Both Lupin and COSA prompts fixed
+- **Slash Commands**: ✅ WORKING - No changes needed (already fixed 2025.09.23)
+- **Maintenance Debt**: ✅ CLEARED - Pending item resolved
+
+---
 
 ## 2025.10.08 - Debug/Verbose Output Control + Session Workflow Enhancements COMPLETE
 

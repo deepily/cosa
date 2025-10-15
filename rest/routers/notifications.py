@@ -15,7 +15,6 @@ from typing import Dict, Any, Optional
 import zoneinfo
 
 # Import dependencies and services
-from ..user_id_generator import email_to_system_id
 from ..notification_fifo_queue import NotificationFifoQueue
 from ..websocket_manager import WebSocketManager
 
@@ -186,11 +185,25 @@ async def notify_user(
     
     # Log notification (existing logging system)
     print(f"[NOTIFY] Claude Code notification: {type}/{priority} - {message}")
-    
+
     try:
-        # Convert target email to system ID for user-specific routing
-        target_system_id = email_to_system_id(target_user)
-        
+        # Look up user in JWT auth database to get their UUID user_id
+        # This replaces the old email_to_system_id() which used email-hash format
+        from cosa.rest.user_service import get_user_by_email
+
+        user_data = get_user_by_email(target_user)
+        if not user_data:
+            # User doesn't exist in auth database
+            print(f"[NOTIFY] ❌ User not found in auth database: {target_user}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"User not found: {target_user}"
+            )
+
+        # Use UUID from auth database (matches WebSocket authentication)
+        target_system_id = user_data["id"]
+        print(f"[NOTIFY] Resolved user {target_user} → UUID {target_system_id}")
+
         # Add to notification queue with state tracking and io_tbl logging
         notification_item = notification_queue.push_notification(
             message=message.strip(),
@@ -199,10 +212,12 @@ async def notify_user(
             source="claude_code",
             user_id=target_system_id
         )
-        
+
         # Check if user is available before attempting to send
         is_connected = ws_manager.is_user_connected(target_system_id)
         connection_count = ws_manager.get_user_connection_count(target_system_id)
+
+        print(f"[NOTIFY] WebSocket connection check: is_connected={is_connected}, count={connection_count}")
         
         if not is_connected:
             # User not available - log and return appropriate response

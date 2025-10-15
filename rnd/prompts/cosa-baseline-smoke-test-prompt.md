@@ -47,10 +47,6 @@ cd /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa
 mkdir -p tests/results/logs
 mkdir -p tests/results/reports
 
-# Generate timestamp for unique log files
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-echo "COSA baseline collection timestamp: ${TIMESTAMP}"
-
 # Set up COSA framework environment
 export PYTHONPATH="/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src:$PYTHONPATH"
 echo "✓ COSA PYTHONPATH configured"
@@ -64,6 +60,10 @@ python -c "import cosa; print('✓ COSA framework import successful')" || echo "
 Run comprehensive COSA framework tests with full logging:
 
 ```bash
+# Generate timestamp for unique log files
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+echo "COSA baseline collection timestamp: ${TIMESTAMP}"
+
 LOG_FILE="tests/results/logs/baseline_cosa_smoke_${TIMESTAMP}.log"
 echo "Starting COSA framework baseline smoke test collection at $(date)" | tee "${LOG_FILE}"
 echo "===========================================" | tee -a "${LOG_FILE}"
