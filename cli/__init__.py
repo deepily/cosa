@@ -2,11 +2,11 @@
 CoSA CLI Package - Command Line Interface tools for Claude Code integration
 
 This package provides CLI scripts for Claude Code to communicate with the 
-Genie-in-the-Box FastAPI application through notifications and future 
+Lupin FastAPI application through notifications and future
 bidirectional communication.
 
 Main Components:
-- notify_user: Send notifications to user via Genie-in-the-Box API
+- notify_user: Send notifications to user via Lupin API
 - notification_types: Constants and enums for notification types
 - test_notifications: End-to-end testing suite
 """

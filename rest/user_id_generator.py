@@ -2,7 +2,7 @@
 User ID Generator Utility
 
 This module provides the single source of truth for converting email addresses
-to system IDs used throughout the Genie-in-the-Box application.
+to system IDs used throughout the Lupin application.
 
 The algorithm ensures:
 - Collision-resistant IDs through email-based hashing

@@ -116,7 +116,7 @@ async def notify_user(
     Claude Code notification endpoint for user communication.
     
     This endpoint allows Claude Code and other agents to send notifications
-    to users through the Genie-in-the-Box application. Notifications are
+    to users through the Lupin application. Notifications are
     delivered via WebSocket and converted to audio using HybridTTS.
     
     Requires:

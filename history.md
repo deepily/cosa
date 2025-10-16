@@ -1,6 +1,8 @@
 # COSA Development History
 
-> **🎯 CURRENT ACHIEVEMENT**: 2025.10.14 - Planning is Prompting Workflow Installation COMPLETE! Successfully installed Planning is Prompting Core workflows (3 slash commands) via interactive installation wizard. Added `/p-is-p-00-start-here`, `/p-is-p-01-planning`, and `/p-is-p-02-documentation` for structured work planning and documentation. Updated CLAUDE.md with workflow documentation and usage guidance.
+> **🎯 CURRENT ACHIEVEMENT**: 2025.10.15 - Branding Updates + Authentication Debug Logging COMPLETE! Updated CLI documentation from Genie-in-the-Box to Lupin branding. Added comprehensive debug logging to authentication system for troubleshooting JWT token validation failures. Enhanced visibility into authorization header issues, token expiration, signature validation, and user lookup failures.
+
+> **Previous Achievement**: 2025.10.14 - Planning is Prompting Workflow Installation COMPLETE! Successfully installed Planning is Prompting Core workflows (3 slash commands) via interactive installation wizard. Added `/p-is-p-00-start-here`, `/p-is-p-01-planning`, and `/p-is-p-02-documentation` for structured work planning and documentation. Updated CLAUDE.md with workflow documentation and usage guidance.
 
 > **Previous Achievement**: 2025.10.08 - Debug/Verbose Output Control + Session Workflow Enhancements COMPLETE! Fixed verbose output leakage across embedding and LLM subsystems (~20 debug checks updated). Added plan-session-start slash command for developer workflow automation. Console output now properly respects verbose flag configuration.
 
@@ -145,6 +147,81 @@ Successfully installed Planning is Prompting Core workflows in COSA repository v
 > **New Implementation**: `cosa/repo/branch_analyzer/` package (10 modules, ~2,900 lines)
 > **Original Preserved**: `cosa/repo/branch_change_analysis.py` (261 lines, untouched reference)
 > **Code Quality**: 🏆 Professional, production-ready, exemplary COSA compliance
+
+## 2025.10.15 - Branding Updates + Authentication Debug Logging COMPLETE
+
+### Summary
+Updated CLI package documentation from Genie-in-the-Box to Lupin branding, maintaining consistency with parent project renaming. Added comprehensive debug logging to authentication system for troubleshooting JWT token validation failures, enhancing operational visibility into authentication issues.
+
+### Work Performed
+
+#### CLI Branding Updates - COMPLETE ✅
+- **CLI Package Documentation**: Updated `cli/__init__.py` with Lupin branding
+  - Changed "Genie-in-the-Box FastAPI application" → "Lupin FastAPI application"
+  - Maintained consistency with 2025.06.29 parent project renaming effort
+- **Documentation Consistency**: Updated component descriptions from Genie to Lupin
+- **Branding Alignment**: Ensured all CLI package references reflect current Lupin naming
+
+#### Authentication Debug Logging Enhancement - COMPLETE ✅
+- **HTTPBearerWith401 Enhancement**: Added debug logging for missing/invalid Authorization headers
+  - Logs authorization header presence and format issues
+  - Captures client host information for security auditing
+  - Provides early detection of authentication credential issues
+- **JWT Token Validation Enhancement**: Added comprehensive error categorization
+  - **Expired Token Detection**: Specific logging for token expiration failures
+  - **Signature Validation**: Logs invalid signature errors
+  - **Malformed Token Detection**: Identifies corrupted or improperly formatted tokens
+  - **Generic Fallback**: Captures unexpected validation errors
+- **User Lookup Debugging**: Added logging for missing user_id in token payload and database lookup failures
+- **Production Debugging Support**: Enhanced operational visibility without exposing sensitive token data
+
+#### Technical Achievements
+
+##### Debug Logging Pattern ✅
+1. **Non-Intrusive**: Debug logs only appear during authentication failures (does not impact successful operations)
+2. **Security-Aware**: Logs authorization header prefix only (first 20 chars), protecting full token values
+3. **Categorized Errors**: Clear error categorization (EXPIRED, INVALID signature, MALFORMED, Missing user ID, User not found)
+4. **Actionable Information**: Provides sufficient context for operational debugging without exposing credentials
+
+##### Branding Consistency ✅
+- **Package Documentation**: CLI package properly references Lupin throughout
+- **Component Descriptions**: All notify_user references updated to reflect Lupin API
+- **Historical Continuity**: Aligns with 2025.06.29 parent project renaming completion
+
+### Files Modified
+- **Modified**: `cli/__init__.py` (+2/-2 lines) - Updated Lupin branding in package documentation
+- **Modified**: `cli/notify_user.py` (+5/-5 lines) - Updated component description references
+- **Modified**: `cli/test_notifications.py` (+2/-2 lines) - Updated test documentation
+- **Modified**: `rest/auth.py` (+25/-1 lines) - Added comprehensive authentication debug logging
+- **Modified**: `rest/routers/notifications.py` (+1/-1 lines) - Minor branding update
+- **Modified**: `rest/user_id_generator.py` (+1/-1 lines) - Minor branding update
+- **Modified**: `tests/unit/cli/unit_test_notify_user.py` (+1/-1 lines) - Test documentation update
+
+### Project Impact
+
+#### Operational Debugging Enhancement
+- **Authentication Troubleshooting**: Comprehensive logging enables rapid diagnosis of JWT token issues
+- **Error Categorization**: Clear distinction between expired tokens, invalid signatures, malformed tokens, and user lookup failures
+- **Security Auditing**: Client host logging provides security audit trail for authentication attempts
+- **Production Visibility**: Enhanced operational visibility without exposing sensitive credential data
+
+#### Branding Consistency
+- **Documentation Accuracy**: CLI package documentation accurately reflects current Lupin branding
+- **Developer Clarity**: Clear component descriptions prevent confusion about project identity
+- **Historical Alignment**: Completes branding updates from 2025.06.29 parent project renaming
+
+### Current Status
+- **Authentication Debug Logging**: ✅ ENHANCED - Comprehensive error categorization and client visibility
+- **CLI Branding**: ✅ UPDATED - Full consistency with Lupin project identity
+- **Documentation**: ✅ ACCURATE - All CLI package references reflect current branding
+- **Operational Support**: ✅ IMPROVED - Enhanced debugging capabilities for authentication issues
+
+### Next Session Priorities
+- Monitor authentication debug logs in production for actionable insights
+- Consider adding similar debug logging to other authentication-related endpoints
+- Continue regular COSA development and maintenance tasks
+
+---
 
 ## 2025.10.11 - Slash Command Source File Sync COMPLETE ✅
 

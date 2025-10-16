@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Claude Code notification script for Genie-in-the-Box communication
+Claude Code notification script for Lupin communication
 
 This script allows Claude Code to send notifications to users through the 
-Genie-in-the-Box FastAPI application. Notifications are delivered via 
+Lupin FastAPI application. Notifications are delivered via
 WebSocket and converted to audio using the HybridTTS system.
 
 Usage:
@@ -38,7 +38,7 @@ def notify_user(
     timeout: int = 5
 ) -> bool:
     """
-    Send notification to user via Genie-in-the-Box API.
+    Send notification to user via Lupin API.
     
     Requires:
         - message is a non-empty string
@@ -123,7 +123,7 @@ def notify_user(
             
     except requests.exceptions.ConnectionError:
         print( f"✗ Connection error: Cannot reach server at {base_url}" )
-        print( f"  Check that Genie-in-the-Box is running and {ENV_SERVER_URL} is correct" )
+        print( f"  Check that Lupin is running and {ENV_SERVER_URL} is correct" )
         return False
         
     except requests.exceptions.Timeout:
@@ -208,7 +208,7 @@ def main():
     """
     
     parser = argparse.ArgumentParser(
-        description="Send notification to Genie-in-the-Box",
+        description="Send notification to Lupin",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

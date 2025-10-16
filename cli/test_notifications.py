@@ -4,7 +4,7 @@ End-to-end test script for Claude Code notification system
 
 This script runs comprehensive tests of the notification pipeline to verify
 that Claude Code can successfully communicate with users through the 
-Genie-in-the-Box application.
+Lupin application.
 
 Usage:
     python3 test_notifications.py
@@ -367,7 +367,7 @@ class NotificationTestSuite:
             print( "✅ MOSTLY SUCCESSFUL! Minor issues detected." )
             return True
         else:
-            print( "❌ TESTS FAILED! Check Genie-in-the-Box API status and configuration." )
+            print( "❌ TESTS FAILED! Check Lupin API status and configuration." )
             return False
 
 

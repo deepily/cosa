@@ -49,6 +49,13 @@ class HTTPBearerWith401(HTTPBearer):
 
         # If no credentials provided, raise 401
         if credentials is None:
+            # Enhanced logging for debugging
+            auth_header = request.headers.get( "Authorization" )
+            if auth_header:
+                print( f"[AUTH-DEBUG] Authorization header present but invalid format: '{auth_header[:20]}...'" )
+            else:
+                print( f"[AUTH-DEBUG] No Authorization header in request from {request.client.host}" )
+
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Missing or invalid authentication credentials",
@@ -128,10 +135,25 @@ async def verify_jwt_token(token: str) -> Dict:
         from cosa.rest.user_service import get_user_by_id
 
         # Validate JWT token
-        payload = decode_and_validate_token( token, expected_type="access" )
+        try:
+            payload = decode_and_validate_token( token, expected_type="access" )
+        except Exception as e:
+            # Enhanced logging for token validation failures
+            error_str = str( e ).lower()
+            if "expired" in error_str:
+                print( f"[AUTH-DEBUG] Token validation failed: EXPIRED token" )
+            elif "signature" in error_str:
+                print( f"[AUTH-DEBUG] Token validation failed: INVALID signature" )
+            elif "malformed" in error_str or "invalid" in error_str:
+                print( f"[AUTH-DEBUG] Token validation failed: MALFORMED token" )
+            else:
+                print( f"[AUTH-DEBUG] Token validation failed: {e}" )
+            raise
+
         user_id = payload.get( "sub" )
 
         if not user_id:
+            print( f"[AUTH-DEBUG] Token validation failed: Missing user ID in payload" )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token: missing user ID"
@@ -140,6 +162,7 @@ async def verify_jwt_token(token: str) -> Dict:
         # Get user from database
         user_data = get_user_by_id( user_id )
         if not user_data:
+            print( f"[AUTH-DEBUG] Token validation failed: User {user_id} not found in database" )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User not found"
