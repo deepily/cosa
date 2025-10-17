@@ -1,6 +1,8 @@
 # COSA Development History
 
-> **🎯 CURRENT ACHIEVEMENT**: 2025.10.15 - Branding Updates + Authentication Debug Logging COMPLETE! Updated CLI documentation from Genie-in-the-Box to Lupin branding. Added comprehensive debug logging to authentication system for troubleshooting JWT token validation failures. Enhanced visibility into authorization header issues, token expiration, signature validation, and user lookup failures.
+> **🎯 CURRENT ACHIEVEMENT**: 2025.10.17 - Client Configuration API Endpoint COMPLETE! Added new `/api/config/client` endpoint to system router providing authenticated clients with timing parameters for JWT token refresh logic and WebSocket heartbeat intervals. Supports centralized configuration management for frontend timing coordination.
+
+> **Previous Achievement**: 2025.10.15 - Branding Updates + Authentication Debug Logging COMPLETE! Updated CLI documentation from Genie-in-the-Box to Lupin branding. Added comprehensive debug logging to authentication system for troubleshooting JWT token validation failures. Enhanced visibility into authorization header issues, token expiration, signature validation, and user lookup failures.
 
 > **Previous Achievement**: 2025.10.14 - Planning is Prompting Workflow Installation COMPLETE! Successfully installed Planning is Prompting Core workflows (3 slash commands) via interactive installation wizard. Added `/p-is-p-00-start-here`, `/p-is-p-01-planning`, and `/p-is-p-02-documentation` for structured work planning and documentation. Updated CLAUDE.md with workflow documentation and usage guidance.
 
@@ -17,6 +19,79 @@
 > **🚨 RESOLVED**: **repo/branch_change_analysis.py COMPLETE REFACTOR** ✅✅✅
 >
 > The quick-and-dirty git diff analysis tool has been completely refactored into a professional package that EXCEEDS all COSA standards:
+
+## 2025.10.17 - Client Configuration API Endpoint COMPLETE
+
+### Summary
+Added authenticated `/api/config/client` endpoint to system router providing centralized timing configuration for frontend JWT token refresh logic and WebSocket heartbeat coordination. Enables clients to dynamically fetch timing parameters from server configuration rather than hardcoding values.
+
+### Work Performed
+
+#### Client Configuration Endpoint - COMPLETE ✅
+- **New Endpoint**: `GET /api/config/client` with JWT authentication requirement
+- **Authentication**: Uses `get_current_user_id` dependency to validate JWT tokens
+- **Configuration Source**: Reads from lupin-app.ini via ConfigurationManager
+- **Unit Conversion**: Automatically converts server config units to client-appropriate units
+  - Minutes → milliseconds for setInterval timing
+  - Minutes → seconds for JWT expiration comparison
+  - Seconds → milliseconds for deduplication window
+  - Seconds preserved for heartbeat reference value
+
+#### Configuration Parameters Exposed
+1. **token_refresh_check_interval_ms**: How often to check if token needs refresh (default: 10 mins = 600000ms)
+2. **token_expiry_threshold_secs**: When to consider token "about to expire" (default: 5 mins = 300s)
+3. **token_refresh_dedup_window_ms**: Prevent duplicate refresh attempts (default: 60s = 60000ms)
+4. **websocket_heartbeat_interval_secs**: Reference heartbeat interval (default: 30s)
+
+#### Technical Achievements
+
+##### Design by Contract Documentation ✅
+- **Comprehensive Docstring**: Full Requires/Ensures/Raises specification
+- **Usage Examples**: Complete example request/response in documentation
+- **Authentication Notes**: Clear explanation of dependency injection pattern
+- **Default Values**: All parameters have sensible fallbacks
+
+##### Import Enhancement ✅
+- **Added Import**: `get_current_user_id` to auth imports for authentication dependency
+- **Clean Integration**: Uses existing ConfigurationManager and authentication patterns
+- **No Breaking Changes**: Additive change, no modifications to existing endpoints
+
+### Files Modified
+- **Modified**: `rest/routers/system.py` (+81/-1 lines) - Added /api/config/client endpoint with authentication
+
+### Project Impact
+
+#### Frontend Configuration Management
+- **Centralized Timing**: Frontend no longer needs hardcoded timing values
+- **Environment-Specific**: Different timing for dev (fast) vs production (slower)
+- **Configuration-Driven**: All timing parameters managed through lupin-app.ini
+- **Dynamic Updates**: Server restart applies new timing to all clients
+
+#### Authentication Enhancement
+- **JWT Token Refresh**: Supports frontend token refresh logic implementation
+- **Deduplication**: Prevents race conditions in token refresh operations
+- **Threshold Detection**: Enables proactive token refresh before expiration
+- **Client Coordination**: Standardizes timing across all frontend components
+
+#### Development Workflow
+- **Debug-Friendly**: Fast refresh intervals for development (configurable)
+- **Production-Ready**: Conservative intervals for production stability
+- **Single Source of Truth**: Server configuration controls all timing parameters
+- **Maintainable**: No frontend code changes needed to adjust timing
+
+### Current Status
+- **Client Config Endpoint**: ✅ COMPLETE - Authenticated endpoint with full documentation
+- **Unit Conversion**: ✅ WORKING - All timing units properly converted for client use
+- **Authentication**: ✅ INTEGRATED - Uses existing get_current_user_id dependency
+- **Documentation**: ✅ COMPREHENSIVE - Design by Contract with examples
+
+### Next Session Priorities
+- Test `/api/config/client` endpoint with authenticated requests
+- Integrate endpoint into frontend token refresh logic
+- Consider adding configuration validation (min/max ranges)
+- Monitor timing parameter effectiveness in production
+
+---
 
 ## 2025.10.14 - Planning is Prompting Workflow Installation COMPLETE
 
