@@ -137,18 +137,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Session Management**:
 - `/plan-session-start` - Initialize work session (load history, identify TODOs)
+- `/plan-session-end` - Complete end-of-session ritual (history, commits, notifications)
+
+**History Management**:
+- `/plan-history-management` - Archive, check, and analyze history.md token health (4 modes)
 
 **Planning is Prompting Core**:
 - `/p-is-p-00-start-here` - Entry point with decision matrix and philosophy
 - `/p-is-p-01-planning` - Work planning workflow (classify → pattern → breakdown)
 - `/p-is-p-02-documentation` - Implementation documentation (for large/complex work)
 
-**Testing Workflows**:
-- `/smoke-test-baseline` - Pre-change baseline collection
-- `/smoke-test-remediation` - Post-change verification and remediation
+**Installation Management**:
+- `/plan-about` - View installed workflows with version comparison
+- `/plan-install-wizard` - Run installation wizard to add/update workflows
+- `/plan-uninstall-wizard` - Remove workflows safely with confirmation
 
-**Custom Workflows**:
-- `/cosa-session-end` - COSA-specific session end workflow
+**Testing Workflows** (Planning is Prompting):
+- `/plan-test-baseline` - Establish pre-change baseline (COSA: smoke + unit tests)
+- `/plan-test-remediation` - Post-change verification and remediation
+- `/plan-test-harness-update` - Test maintenance planning (analyze changes, identify missing tests)
+
+**Legacy Testing Workflows** (old naming convention - preserved):
+- `/smoke-test-baseline` - Pre-change baseline collection (legacy)
+- `/smoke-test-remediation` - Post-change verification (legacy)
+
+**Backup Infrastructure**:
+- `/plan-backup-check` - Check backup script version against canonical
+- `/plan-backup` - Dry-run backup preview (safe default)
+- `/plan-backup-write` - Execute actual backup (explicit write mode)
+- Script: `src/scripts/backup.sh` - Configured for COSA → DATA02
+- Config: `src/scripts/conf/rsync-exclude.txt` - Exclusion patterns
+
+**Meta-Workflow Tools**:
+- `/plan-workflow-audit` - Execution compliance audit with automatic remediation
+
+**Custom Workflows** (legacy - preserved):
+- `/cosa-session-end` - COSA-specific session end workflow (legacy)
 
 ## Planning Workflows
 
