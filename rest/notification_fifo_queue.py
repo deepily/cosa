@@ -12,34 +12,48 @@ class NotificationItem:
     Replaces SolutionSnapshot for lightweight notification management.
     """
     
-    def __init__( self, message: str, type: str = "task", priority: str = "medium", 
-                 source: str = "claude_code", user_id: Optional[str] = None ) -> None:
+    def __init__( self, message: str, type: str = "task", priority: str = "medium",
+                 source: str = "claude_code", user_id: Optional[str] = None,
+                 id: Optional[str] = None, title: Optional[str] = None,
+                 response_requested: bool = False, response_type: Optional[str] = None,
+                 response_default: Optional[str] = None, timeout_seconds: Optional[int] = None ) -> None:
         """
         Initialize a notification item.
-        
+
         Requires:
             - message is a non-empty string
             - type is a valid notification type
             - priority is a valid priority level
-            
+
         Ensures:
-            - Creates unique id_hash for queue compatibility
+            - Creates unique id_hash for queue compatibility (backward compat)
+            - Uses provided id if available (Phase 2.2 database ID)
             - Sets timestamp to current time
             - Initializes tracking fields
-            
+            - Stores Phase 2.2 response-required fields
+
         Raises:
             - None
         """
-        self.id_hash     = str( uuid.uuid4() )
-        self.message     = message
-        self.type        = type
-        self.priority    = priority
-        self.source      = source
-        self.user_id     = user_id
-        self.timestamp   = self._get_local_timestamp()
-        self.played      = False
-        self.play_count  = 0
-        self.last_played = None
+        # Use database ID if provided, otherwise generate for backward compatibility
+        self.id                 = id if id else str( uuid.uuid4() )
+        self.id_hash            = self.id  # Maintain id_hash for backward compatibility
+        self.message            = message
+        self.title              = title
+        self.type               = type
+        self.priority           = priority
+        self.source             = source
+        self.user_id            = user_id
+        self.timestamp          = self._get_local_timestamp()
+        self.played             = False
+        self.play_count         = 0
+        self.last_played        = None
+
+        # Phase 2.2 response-required fields
+        self.response_requested = response_requested
+        self.response_type      = response_type
+        self.response_default   = response_default
+        self.timeout_seconds    = timeout_seconds
         
     def _get_local_timestamp( self ) -> str:
         """Get timezone-aware timestamp using configured timezone from ConfigurationManager"""
@@ -69,16 +83,23 @@ class NotificationItem:
     def to_dict( self ) -> Dict[str, Any]:
         """Convert notification to dictionary for JSON serialization."""
         return {
-            "id_hash"     : self.id_hash,
-            "message"     : self.message,
-            "type"        : self.type,
-            "priority"    : self.priority,
-            "source"      : self.source,
-            "user_id"     : self.user_id,
-            "timestamp"   : self.timestamp,
-            "played"      : self.played,
-            "play_count"  : self.play_count,
-            "last_played" : self.last_played
+            "id"                 : self.id,
+            "id_hash"            : self.id_hash,  # Backward compatibility
+            "message"            : self.message,
+            "title"              : self.title,
+            "type"               : self.type,
+            "priority"           : self.priority,
+            "source"             : self.source,
+            "user_id"            : self.user_id,
+            "timestamp"          : self.timestamp,
+            "played"             : self.played,
+            "play_count"         : self.play_count,
+            "last_played"        : self.last_played,
+            # Phase 2.2 response-required fields
+            "response_requested" : self.response_requested,
+            "response_type"      : self.response_type,
+            "response_default"   : self.response_default,
+            "timeout_seconds"    : self.timeout_seconds
         }
 
 
@@ -163,32 +184,42 @@ class NotificationFifoQueue( FifoQueue ):
         if self.debug:
             print( f"Pushed notification {notification.id_hash} with enhanced WebSocket emission" )
     
-    def push_notification( self, message: str, type: str = "task", priority: str = "medium", 
-                         source: str = "claude_code", user_id: Optional[str] = None ) -> NotificationItem:
+    def push_notification( self, message: str, type: str = "task", priority: str = "medium",
+                         source: str = "claude_code", user_id: Optional[str] = None,
+                         id: Optional[str] = None, title: Optional[str] = None,
+                         response_requested: bool = False, response_type: Optional[str] = None,
+                         response_default: Optional[str] = None, timeout_seconds: Optional[int] = None ) -> NotificationItem:
         """
         Push a notification with priority handling and io_tbl logging.
-        
+
         Requires:
             - message is non-empty string
             - type is valid notification type (task, progress, alert, custom)
             - priority is valid priority level (urgent, high, medium, low)
-            
+
         Ensures:
-            - Creates NotificationItem with unique ID
+            - Creates NotificationItem with unique ID (or uses provided database ID)
             - Inserts at correct position based on priority
             - Logs to InputAndOutputTable for persistence
             - Auto-emits WebSocket event via parent class
-            
+            - Includes Phase 2.2 response-required fields if provided
+
         Raises:
             - None (handles errors gracefully)
         """
-        # Create notification item
+        # Create notification item with Phase 2.2 fields
         notification = NotificationItem(
-            message=message,
-            type=type,
-            priority=priority,
-            source=source,
-            user_id=user_id
+            message            = message,
+            type               = type,
+            priority           = priority,
+            source             = source,
+            user_id            = user_id,
+            id                 = id,
+            title              = title,
+            response_requested = response_requested,
+            response_type      = response_type,
+            response_default   = response_default,
+            timeout_seconds    = timeout_seconds
         )
         
         # Priority handling - urgent/high go to front, but after other urgent/high
