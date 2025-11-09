@@ -362,6 +362,10 @@ async def notify_user(
             "response_data" : None
         }
 
+        # DEBUG: Log the response_default value before pushing to queue
+        print(f"[DEBUG] Creating notification with response_default: '{response_default}'")
+        print(f"[DEBUG] Response type: {response_type}, Timeout: {timeout_seconds}s")
+
         # Push notification to WebSocket for UI rendering (Phase 2.2 with full fields)
         notification_item = notification_queue.push_notification(
             message            = message.strip(),
@@ -376,6 +380,11 @@ async def notify_user(
             response_default   = response_default,
             timeout_seconds    = timeout_seconds
         )
+
+        # DEBUG: Log the notification_item after creation
+        print(f"[DEBUG] Notification item created: {notification_item}")
+        print(f"[DEBUG] Notification item.response_default: '{notification_item.response_default}'")
+        print(f"[DEBUG] Notification item to_dict(): {notification_item.to_dict()}")
 
         print(f"[NOTIFY] Pushed notification {notification_id} via WebSocket, starting SSE stream...")
 
