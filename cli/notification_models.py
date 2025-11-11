@@ -168,12 +168,13 @@ class NotificationRequest(BaseModel):
                     )
         return v
 
-    def to_api_params( self, api_key: str ) -> dict:
+    def to_api_params( self ) -> dict:
         """
         Convert to API query parameters for /api/notify endpoint.
 
+        Phase 2.5: API key authentication moved to X-API-Key header.
+
         Requires:
-            - api_key is a non-empty string
             - All model fields are validated
 
         Ensures:
@@ -181,9 +182,7 @@ class NotificationRequest(BaseModel):
             - Converts enums to string values
             - Includes optional parameters if set
             - Excludes None values for cleaner API calls
-
-        Args:
-            api_key: API key for authentication
+            - Does NOT include api_key (moved to headers in Phase 2.5)
 
         Returns:
             dict: Query parameters for requests.post()
@@ -193,7 +192,6 @@ class NotificationRequest(BaseModel):
             "type"               : self.notification_type.value,
             "priority"           : self.priority.value,
             "target_user"        : self.target_user,
-            "api_key"            : api_key,
             "response_requested" : "true",
             "response_type"      : self.response_type.value,
             "timeout_seconds"    : self.timeout_seconds
@@ -430,31 +428,29 @@ class AsyncNotificationRequest(BaseModel):
             raise ValueError( 'Message cannot be empty or whitespace-only' )
         return stripped
 
-    def to_api_params( self, api_key: str ) -> dict:
+    def to_api_params( self ) -> dict:
         """
         Convert to API query parameters for /api/notify endpoint.
 
+        Phase 2.5: API key authentication moved to X-API-Key header.
+
         Requires:
-            - api_key is a non-empty string
             - All model fields are validated
 
         Ensures:
             - Returns dict with all required parameters
             - Converts enums to string values
             - Does NOT include response_requested (fire-and-forget mode)
-
-        Args:
-            api_key: API key for authentication
+            - Does NOT include api_key (moved to headers in Phase 2.5)
 
         Returns:
             dict: Query parameters for requests.post()
         """
         return {
-            "message"   : self.message,
-            "type"      : self.notification_type.value,
-            "priority"  : self.priority.value,
-            "target_user" : self.target_user,
-            "api_key"   : api_key
+            "message"     : self.message,
+            "type"        : self.notification_type.value,
+            "priority"    : self.priority.value,
+            "target_user" : self.target_user
         }
 
 

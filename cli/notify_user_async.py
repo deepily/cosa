@@ -32,9 +32,11 @@ from cosa.cli.notification_models import (
     NotificationPriority
 )
 
-# Import constants
+# Import config loader for dynamic configuration (Phase 2.5)
+from cosa.utils.config_loader import get_api_config, load_api_key
+
+# Import constants (fallbacks)
 from cosa.cli.notification_types import (
-    DEFAULT_API_KEY,
     DEFAULT_SERVER_URL,
     ENV_SERVER_URL
 )
@@ -73,25 +75,52 @@ def notify_user_async(
         AsyncNotificationResponse: Structured response with success, status, details
     """
 
-    # Determine server URL
-    base_url = server_url or os.getenv( ENV_SERVER_URL, DEFAULT_SERVER_URL )
-    base_url = base_url.rstrip( '/' )
+    # Load configuration (Phase 2.5 - dynamic multi-environment config)
+    try:
+        # Determine environment (default: local)
+        env = os.getenv( 'LUPIN_ENV', 'local' )
+
+        # Load config for environment (precedence: env vars > file > defaults)
+        config = get_api_config( env )
+
+        # Load API key from configured file
+        api_key = load_api_key( config['api_key_file'] )
+
+        # Use configured API URL (can be overridden by server_url parameter)
+        base_url = server_url or config['api_url']
+        base_url = base_url.rstrip( '/' )
+
+    except Exception as e:
+        # Fallback to environment variables/defaults if config loading fails
+        if debug:
+            print( f"[DEBUG] Config loading failed, using fallback: {e}", file=sys.stderr )
+        base_url = server_url or os.getenv( ENV_SERVER_URL, DEFAULT_SERVER_URL )
+        base_url = base_url.rstrip( '/' )
+        api_key = None  # Will cause authentication error (intentional - forces user to fix config)
 
     try:
         url = f"{base_url}/api/notify"
 
-        # Convert request to API params (model method)
-        params = request.to_api_params( api_key=DEFAULT_API_KEY )
+        # Convert request to API params (Phase 2.5 - api_key moved to headers)
+        params = request.to_api_params()
+
+        # Create headers with API key authentication (Phase 2.5)
+        headers = {
+            'X-API-Key': api_key
+        }
 
         if debug:
             print( f"[DEBUG] Sending notification to: {url}", file=sys.stderr )
+            print( f"[DEBUG] Environment: {env if 'env' in locals() else 'fallback'}", file=sys.stderr )
             print( f"[DEBUG] Request model: {request.model_dump_json( indent=2 )}", file=sys.stderr )
             print( f"[DEBUG] API params: {params}", file=sys.stderr )
+            print( f"[DEBUG] API key: {api_key[:20]}...{api_key[-10:] if api_key else 'None'}", file=sys.stderr )
 
         # Send notification (fire-and-forget - no SSE streaming)
         response = requests.post(
             url,
             params  = params,
+            headers = headers,
             timeout = request.timeout
         )
 

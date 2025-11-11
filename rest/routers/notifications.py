@@ -11,7 +11,7 @@ Generated on: 2025-01-24
 from fastapi import APIRouter, Query, HTTPException, Depends, Body
 from fastapi.responses import JSONResponse, StreamingResponse
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Annotated
 import zoneinfo
 import asyncio
 import json
@@ -21,6 +21,7 @@ import uuid
 from ..notification_fifo_queue import NotificationFifoQueue
 from ..websocket_manager import WebSocketManager
 from ..notifications_database import NotificationsDatabase
+from ..middleware.api_key_auth import require_api_key
 
 router = APIRouter(prefix="/api", tags=["notifications"])
 
@@ -130,11 +131,11 @@ def get_local_timestamp():
 
 @router.post("/notify")
 async def notify_user(
+    authenticated_user_id: Annotated[str, Depends(require_api_key)],
     message: str = Query(..., description="Notification message text"),
     type: str = Query("custom", description="Notification type (task, progress, alert, custom)"),
     priority: str = Query("medium", description="Priority level (low, medium, high, urgent)"),
     target_user: str = Query("ricardo.felipe.ruiz@gmail.com", description="Target user EMAIL ADDRESS (server converts to system ID internally)"),
-    api_key: str = Query(..., description="Simple API key for authentication"),
     response_requested: bool = Query(False, description="Whether notification requires user response (Phase 2.1)"),
     response_type: Optional[str] = Query(None, description="Response type: yes_no or open_ended (Phase 2.1)"),
     timeout_seconds: int = Query(30, description="Timeout in seconds for response-required notifications (Phase 2.2 - reduced for testing)"),
@@ -162,7 +163,7 @@ async def notify_user(
     - Supports offline detection (immediate default return)
 
     Requires:
-        - api_key matches "claude_code_simple_key"
+        - Valid API key in X-API-Key header (validated by require_api_key middleware)
         - message is non-empty after stripping whitespace
         - type is one of: task, progress, alert, custom
         - priority is one of: low, medium, high, urgent
@@ -178,17 +179,17 @@ async def notify_user(
         - Logs all notification attempts and results
 
     Raises:
-        - HTTPException with 401 for invalid API key
+        - HTTPException with 401 for invalid/missing API key (via middleware)
         - HTTPException with 400 for invalid parameters
         - HTTPException with 503 for offline user without default
         - HTTPException with 500 for delivery failures
 
     Args:
+        authenticated_user_id: Service account user ID (from API key validation)
         message: The notification message text
         type: Type of notification (task, progress, alert, custom)
         priority: Priority level (low, medium, high, urgent)
         target_user: Target user email address
-        api_key: Simple API key for authentication
         response_requested: Whether notification requires response (Phase 2.1)
         response_type: Response type (yes_no, open_ended) for Phase 2.1
         timeout_seconds: Timeout for response-required notifications (Phase 2.1)
@@ -198,10 +199,8 @@ async def notify_user(
     Returns:
         dict (fire-and-forget) or StreamingResponse (SSE for response-required)
     """
-    # Validate API key (Phase 1: Simple hardcoded key)
-    if api_key != "claude_code_simple_key":
-        print(f"[AUTH] Invalid API key attempt: {api_key}")
-        raise HTTPException(status_code=401, detail="Invalid API key")
+    # API key validation handled by require_api_key middleware
+    # authenticated_user_id contains the validated service account user ID
 
     # Validate notification type
     valid_types = ["task", "progress", "alert", "custom"]

@@ -249,6 +249,26 @@ def init_auth_database() -> None:
         cursor.execute( "CREATE INDEX IF NOT EXISTS idx_auth_audit_log_event_type ON auth_audit_log( event_type )" )
         cursor.execute( "CREATE INDEX IF NOT EXISTS idx_auth_audit_log_event_time ON auth_audit_log( event_time )" )
 
+        # Create api_keys table (Phase 2.5 - Notification Authentication)
+        cursor.execute( """
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                key_hash TEXT NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_used_at TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """ )
+
+        # Create indexes for api_keys
+        cursor.execute( "CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys( key_hash )" )
+        cursor.execute( "CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys( user_id )" )
+        cursor.execute( "CREATE INDEX IF NOT EXISTS idx_api_keys_is_active ON api_keys( is_active )" )
+        cursor.execute( "CREATE INDEX IF NOT EXISTS idx_api_keys_user_active ON api_keys( user_id, is_active )" )
+
         # Commit changes
         conn.commit()
 
