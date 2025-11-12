@@ -11,6 +11,7 @@ Section: Config Loading Mechanism (lines 725-901)
 
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Dict, Optional
 from configparser import ConfigParser
@@ -26,20 +27,24 @@ def get_api_config( env: Optional[str] = None ) -> Dict[str, str]:
         - env is optional environment name (overrides default)
 
     Ensures:
-        - returns dict with 'api_url' and 'api_key_file' keys
+        - returns dict with 'api_url' and 'api_key_file' keys (required)
+        - returns 'global_notification_recipient' key if configured (optional)
         - precedence: env vars > config file > hardcoded defaults
         - raises ValueError if config invalid or missing
 
     Precedence Order:
-        1. Environment variables (LUPIN_API_URL, LUPIN_API_KEY_FILE)
-        2. Config file (~/.lupin/config) with LUPIN_ENV or 'env' parameter
+        1. Environment variables (LUPIN_API_URL, LUPIN_API_KEY_FILE, LUPIN_NOTIFICATION_RECIPIENT)
+        2. Config file (~/.notifications/config or deprecated ~/.lupin/config) with LUPIN_ENV or 'env' parameter
         3. Hardcoded defaults (localhost:7999, dev key)
+
+    NOTE: Config uses 'global_notification_recipient' but API/CLI use 'target_user'
+          for backward compatibility. This naming mismatch is intentional.
 
     Args:
         env: Optional environment name to use (overrides LUPIN_ENV and config default)
 
     Returns:
-        dict: {'api_url': str, 'api_key_file': str}
+        dict: {'api_url': str, 'api_key_file': str, 'global_notification_recipient': str (optional)}
 
     Raises:
         ValueError: If config invalid (malformed URL, missing key file, etc.)
@@ -48,16 +53,44 @@ def get_api_config( env: Optional[str] = None ) -> Dict[str, str]:
     api_url = os.getenv( 'LUPIN_API_URL' )
     api_key_file = os.getenv( 'LUPIN_API_KEY_FILE' )
 
+    # Support both new and old environment variable names
+    notification_recipient = os.getenv( 'LUPIN_NOTIFICATION_RECIPIENT' )
+    if not notification_recipient:
+        notification_recipient = os.getenv( 'LUPIN_TARGET_USER' )  # Deprecated fallback
+        if notification_recipient:
+            print( f"⚠️  DEPRECATED: LUPIN_TARGET_USER env var is deprecated", file=sys.stderr )
+            print( f"   Please use LUPIN_NOTIFICATION_RECIPIENT instead", file=sys.stderr )
+            print( f"   Support for LUPIN_TARGET_USER will be removed in a future version.", file=sys.stderr )
+
     if api_url and api_key_file:
-        # Both env vars set - use them
-        return {
+        # Both required env vars set - use them
+        result = {
             'api_url': api_url,
             'api_key_file': api_key_file
         }
+        # Add global_notification_recipient if configured
+        if notification_recipient:
+            result['global_notification_recipient'] = notification_recipient
+        return result
 
-    # Priority 2: Check config file
-    config_path = Path.home() / '.lupin' / 'config'
-    if config_path.exists():
+    # Priority 2: Check config file (both old and new locations)
+    new_config_path = Path.home() / '.notifications' / 'config'
+    old_config_path = Path.home() / '.lupin' / 'config'
+
+    # Try new location first, fallback to old location
+    config_path = None
+    using_deprecated_path = False
+
+    if new_config_path.exists():
+        config_path = new_config_path
+    elif old_config_path.exists():
+        config_path = old_config_path
+        using_deprecated_path = True
+        print( f"⚠️  DEPRECATED: Using old config location: {old_config_path}", file=sys.stderr )
+        print( f"   Please migrate to: {new_config_path}", file=sys.stderr )
+        print( f"   The old location will be removed in a future version.", file=sys.stderr )
+
+    if config_path and config_path.exists():
         config = _load_config_file( config_path )
 
         # Determine which environment to use
@@ -83,10 +116,27 @@ def get_api_config( env: Optional[str] = None ) -> Dict[str, str]:
         if 'api_key_file' not in env_config:
             raise ValueError( f"Missing 'api_key_file' in environment '{env_name}' ({config_path})" )
 
-        return {
+        # Support both old and new config keys
+        global_recipient = env_config.get( 'global_notification_recipient' )
+
+        if not global_recipient:
+            # Fallback to old key name
+            global_recipient = env_config.get( 'target_user' )
+            if global_recipient:
+                print( f"⚠️  DEPRECATED: Config key 'target_user' is deprecated", file=sys.stderr )
+                print( f"   Please rename to 'global_notification_recipient' in {config_path}", file=sys.stderr )
+                print( f"   Support for 'target_user' will be removed in a future version.", file=sys.stderr )
+
+        result = {
             'api_url': env_config['api_url'],
             'api_key_file': env_config['api_key_file']
         }
+
+        # Add global_notification_recipient if configured
+        if global_recipient:
+            result['global_notification_recipient'] = global_recipient
+
+        return result
 
     # Priority 3: Hardcoded defaults (local development)
     project_root = cu.get_project_root()

@@ -129,13 +129,17 @@ def get_local_timestamp():
         if app_debug: print(f"[TIMEZONE] Warning: Invalid timezone '{timezone_name}', falling back to UTC: {e}")
         return datetime.now().isoformat()
 
+# NOTE: API parameter is 'target_user' for backward compatibility and simplicity.
+# Internally, the config system uses 'global_notification_recipient' to support
+# future multi-recipient routing. This naming mismatch is intentional.
+# API stability takes precedence over naming consistency.
 @router.post("/notify")
 async def notify_user(
     authenticated_user_id: Annotated[str, Depends(require_api_key)],
     message: str = Query(..., description="Notification message text"),
     type: str = Query("custom", description="Notification type (task, progress, alert, custom)"),
     priority: str = Query("medium", description="Priority level (low, medium, high, urgent)"),
-    target_user: str = Query("ricardo.felipe.ruiz@gmail.com", description="Target user EMAIL ADDRESS (server converts to system ID internally)"),
+    target_user: str = Query(..., description="Target user email address (required - configure in CLI config or pass explicitly)"),
     response_requested: bool = Query(False, description="Whether notification requires user response (Phase 2.1)"),
     response_type: Optional[str] = Query(None, description="Response type: yes_no or open_ended (Phase 2.1)"),
     timeout_seconds: int = Query(30, description="Timeout in seconds for response-required notifications (Phase 2.2 - reduced for testing)"),

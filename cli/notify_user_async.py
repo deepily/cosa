@@ -253,6 +253,18 @@ def main():
         - SystemExit with appropriate exit code
     """
 
+    # Load config early to get global_notification_recipient default (Phase 2.5.4)
+    try:
+        env = os.getenv( 'LUPIN_ENV', 'local' )
+        config = get_api_config( env )
+        # NOTE: Config key is 'global_notification_recipient' but CLI flag is '--target-user'
+        # for backward compatibility. This naming mismatch is intentional.
+        # TODO: Future version should rename CLI flag to --notification-recipient
+        default_target_user = config.get( 'global_notification_recipient' )
+    except Exception:
+        # Config loading failed - no default target_user
+        default_target_user = None
+
     parser = argparse.ArgumentParser(
         description="Send fire-and-forget notification to Lupin (Phase 2.4 with Pydantic)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -268,7 +280,9 @@ Exit Codes:
   1  Error (validation, network, user not found)
 
 Environment Variables:
-  COSA_APP_SERVER_URL   Server URL (default: http://localhost:7999)
+  COSA_APP_SERVER_URL            Server URL (default: http://localhost:7999)
+  LUPIN_ENV                      Environment name (default: local)
+  LUPIN_NOTIFICATION_RECIPIENT   Global notification recipient email (overrides config file)
         """
     )
 
@@ -291,10 +305,18 @@ Environment Variables:
         help="Priority level (default: medium)"
     )
 
+    # Use configured global_notification_recipient if available, otherwise require explicit --target-user
+    target_user_help = "Target user email address"
+    if default_target_user:
+        target_user_help += f" (default from config: {default_target_user})"
+    else:
+        target_user_help += " (required - configure in ~/.notifications/config or use --target-user)"
+
     parser.add_argument(
         "--target-user",
-        default="ricardo.felipe.ruiz@gmail.com",
-        help="Target user email address (default: ricardo.felipe.ruiz@gmail.com)"
+        default=default_target_user,
+        required=(default_target_user is None),
+        help=target_user_help
     )
 
     parser.add_argument(

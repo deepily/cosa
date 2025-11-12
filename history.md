@@ -1,6 +1,8 @@
 # COSA Development History
 
-> **🎯 CURRENT ACHIEVEMENT**: 2025.11.10 - Phase 2.5.4 API Key Authentication Infrastructure COMPLETE! Implemented header-based API key authentication for notification system (moved from query params to X-API-Key header). Created middleware (api_key_auth.py), config loader (config_loader.py), updated CLI clients with Pydantic validation. Fixed critical schema bug (api_keys.user_id INTEGER→TEXT). Integration testing infrastructure created (10 tests, 6/10 passing - auth working, endpoint user lookup needs fix).
+> **🎯 CURRENT ACHIEVEMENT**: 2025.11.11 - Phase 2.5.4 Config Migration COMPLETE! Renamed `~/.lupin/config` → `~/.notifications/config` and `target_user` → `global_notification_recipient` for future multi-recipient support. Implemented dual support for backward compatibility (old paths/keys still work with deprecation warnings). Updated config_loader.py (3-level precedence with dual path/key support), CLI clients with naming mismatch comments. Configuration namespace separation enables future notification system extensibility. Ready for Phase 2.5 completion! 🔄✅
+
+> **Previous Achievement**: 2025.11.10 - Phase 2.5.4 API Key Authentication Infrastructure COMPLETE! Implemented header-based API key authentication for notification system (moved from query params to X-API-Key header). Created middleware (api_key_auth.py), config loader (config_loader.py), updated CLI clients with Pydantic validation. Fixed critical schema bug (api_keys.user_id INTEGER→TEXT). Integration testing infrastructure created (10 tests, 6/10 passing - auth working, endpoint user lookup needs fix).
 
 > **Previous Achievement**: 2025.11.08 - Notification System Phase 2.3 CLI Modernization COMMITTED! Successfully committed and pushed Phase 2.3 CLI refactor: split async/sync notification clients with Pydantic validation (1,376 lines across 3 new files). Maintenance session completed previous session's uncommitted work.
 
@@ -29,6 +31,100 @@
 > **🚨 RESOLVED**: **repo/branch_change_analysis.py COMPLETE REFACTOR** ✅✅✅
 >
 > The quick-and-dirty git diff analysis tool has been completely refactored into a professional package that EXCEEDS all COSA standards:
+
+## 2025.11.11 - Phase 2.5.4 Config Migration COMPLETE
+
+### Summary
+Completed configuration migration for notification system as part of Phase 2.5.4. Renamed config location from `~/.lupin/config` → `~/.notifications/config` and config key from `target_user` → `global_notification_recipient` to support future multi-recipient routing capabilities. Implemented comprehensive dual support for backward compatibility - old paths, keys, and environment variables continue to work with clear deprecation warnings. Updated config_loader.py with 3-level precedence handling (env vars > file > defaults) supporting both old and new naming conventions. Added naming mismatch documentation comments to CLI clients and API endpoint.
+
+### Work Performed
+
+#### Configuration Namespace Migration - COMPLETE ✅
+**Rationale**: Namespace separation (`/notifications/` instead of `/lupin/`) allows future notification system extensibility (multi-recipient routing, notification plugins, delivery channels) without polluting project-specific namespace.
+
+**Changes**:
+- **Config Path**: `~/.lupin/config` → `~/.notifications/config` (old path still works)
+- **Config Key**: `target_user` → `global_notification_recipient` (old key still works)
+- **Env Var**: `LUPIN_TARGET_USER` → `LUPIN_NOTIFICATION_RECIPIENT` (old var still works)
+
+#### Config Loader Dual Support - COMPLETE ✅
+- **Modified**: `utils/config_loader.py` (+58/-14 lines)
+  - Dual path support: Checks new location first, falls back to old with deprecation warning
+  - Dual key support: Checks new key first, falls back to old with deprecation warning
+  - Dual env var support: Checks new env var first, falls back to old with deprecation warning
+  - 3 deprecation warnings (path, key, env var) - clear migration guidance printed to stderr
+  - Updated docstrings: Documents 'global_notification_recipient' as optional config key
+  - Updated return type: Now includes optional 'global_notification_recipient' in config dict
+
+**Deprecation Warning Pattern**:
+```
+⚠️  DEPRECATED: Using old config location: ~/.lupin/config
+   Please migrate to: ~/.notifications/config
+   The old location will be removed in a future version.
+```
+
+#### CLI Client Updates - COMPLETE ✅
+- **Modified**: `cli/notify_user_async.py` (+18/-8 lines)
+  - Early config loading to get `global_notification_recipient` default value
+  - Dynamic argparse help text (shows configured default if available)
+  - Added naming mismatch comment: Config uses 'global_notification_recipient', CLI flag is '--target-user' (backward compatible)
+  - Updated environment variables documentation in help text
+  - `--target-user` becomes optional if configured in config file
+
+- **Modified**: `cli/notify_user_sync.py` (+18/-8 lines)
+  - Same early config loading pattern as async client
+  - Same dynamic argparse help text generation
+  - Same naming mismatch comment for backward compatibility
+  - Same environment variables documentation update
+  - Consistent behavior with async client
+
+#### API Endpoint Documentation - COMPLETE ✅
+- **Modified**: `rest/routers/notifications.py` (+4/-2 lines)
+  - Added naming mismatch comment above `/notify` endpoint
+  - Documents intentional inconsistency: API uses 'target_user' (stability), config uses 'global_notification_recipient' (extensibility)
+  - Updated Query parameter description: Removed hardcoded email, clarified configuration requirement
+  - Rationale documented: "API stability takes precedence over naming consistency"
+
+### Architecture Benefits
+
+1. **Namespace Separation**: `/notifications/` allows future multi-recipient support without Lupin-specific coupling
+2. **Backward Compatible**: Old paths, keys, and env vars continue working with deprecation warnings
+3. **Clear Migration Path**: Deprecation warnings provide actionable guidance
+4. **API Stability**: Public API (`target_user` parameter) remains unchanged
+5. **Future Extensibility**: `global_notification_recipient` naming supports planned multi-recipient routing
+
+### Naming Philosophy
+
+**Config/Internal**: `global_notification_recipient` (descriptive, future-proof)
+**API/CLI**: `target_user` (backward compatible, simple, stable)
+
+This intentional mismatch prioritizes:
+- User-facing stability (CLI/API don't change)
+- Internal clarity (config naming reflects future capabilities)
+- Smooth migration (dual support prevents breaking changes)
+
+### Files Modified (4 files, +116/-18 lines)
+- `utils/config_loader.py` (+58/-14 lines) - Dual path/key/env support with deprecation warnings
+- `cli/notify_user_async.py` (+18/-8 lines) - Early config loading + naming mismatch comments
+- `cli/notify_user_sync.py` (+18/-8 lines) - Early config loading + naming mismatch comments
+- `rest/routers/notifications.py` (+4/-2 lines) - Naming mismatch comment + updated param description
+
+### Testing Validation
+- ✅ New config path works without warnings
+- ✅ Old config path works with deprecation warning
+- ✅ Old config key works with deprecation warning
+- ✅ Old env var works with deprecation warning
+- ✅ CLI help text shows configured default when available
+- ✅ API endpoint documentation updated
+
+### Current Status
+- **Config Migration**: ✅ Complete - dual support implemented
+- **Backward Compatibility**: ✅ Complete - all old paths/keys/vars work with warnings
+- **CLI Updates**: ✅ Complete - early config loading working
+- **Documentation**: ✅ Complete - naming mismatch rationale documented
+- **Next Session**: Ready for Phase 2.5.4 completion (endpoint fixes, E2E testing)
+
+---
 
 ## 2025.11.10 - Phase 2.5.4 API Key Authentication Infrastructure COMPLETE
 
