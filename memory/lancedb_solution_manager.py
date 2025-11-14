@@ -36,42 +36,48 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
     
     def __init__( self, config: Dict[str, Any], debug: bool = False, verbose: bool = False ) -> None:
         """
-        Initialize LanceDB solution snapshot manager.
-        
+        Initialize LanceDB solution snapshot manager with multi-backend support.
+
         Requires:
-            - config["db_path"] contains valid LanceDB database path
             - config["table_name"] contains target table name
-            - Database exists or can be created
-            
+            - config["storage_backend"] is "local" or "gcs" (defaults to "local")
+            - If backend=local: config["db_path"] must exist or be creatable
+            - If backend=gcs: config["gcs_uri"] must be valid gs:// URI
+
         Ensures:
-            - Configures connection to LanceDB database
+            - Configures connection to LanceDB database (local or GCS)
             - Prepares table schema for solution snapshots
             - Sets up performance monitoring
-            
+            - Validates backend-specific configuration
+
         Args:
-            config: Configuration dictionary with db_path and table_name
+            config: Configuration dictionary with backend, path, and table settings
             debug: Enable debug output
             verbose: Enable verbose output
-            
+
         Raises:
             - KeyError if required config keys missing
-            - ValueError if database path invalid
+            - ValueError if database path invalid or backend misconfigured
         """
         super().__init__( config, debug, verbose )
-        
-        # Validate required configuration
-        required_keys = ["db_path", "table_name"]
+
+        # Validate required configuration (db_path/gcs_uri validated in _resolve_db_path)
+        required_keys = ["table_name"]
         missing_keys = [key for key in required_keys if key not in config]
         if missing_keys:
             raise KeyError( f"LanceDBSolutionManager requires {missing_keys} in configuration" )
-        
-        self.db_path = config["db_path"]
+
+        # Store backend type and table name
+        self.storage_backend = config.get( "storage_backend", "local" )
         self.table_name = config["table_name"]
-        
+
+        # Resolve database path based on backend (local filesystem or GCS)
+        self.db_path = self._resolve_db_path( config )
+
         # LanceDB connection and table objects
         self._db = None
         self._table = None
-        
+
         # Cache for embeddings and quick lookups
         self._question_lookup = {}  # question -> id_hash mapping
         self._id_lookup = {}       # id_hash -> row mapping
@@ -79,24 +85,96 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         # Initialize components for hierarchical search
         self._canonical_synonyms = None  # Lazy initialization
         self._normalizer = None  # Lazy initialization
-        
-        # Validate database path
-        if not os.path.exists( self.db_path ):
-            try:
-                # Try with project root prefix
-                full_path = du.get_project_root() + self.db_path
-                if os.path.exists( full_path ):
-                    self.db_path = full_path
-                else:
-                    raise ValueError( f"Database path does not exist: {self.db_path}" )
-            except Exception as e:
-                raise ValueError( f"Invalid database path: {self.db_path}. Error: {e}" )
-        
+
         if self.debug:
             print( f"LanceDBSolutionManager configured:" )
-            print( f"  Database: {self.db_path}" )
-            print( f"     Table: {self.table_name}" )
-    
+            print( f"       Backend: {self.storage_backend}" )
+            print( f"      Database: {self.db_path}" )
+            print( f"         Table: {self.table_name}" )
+
+    def _resolve_db_path( self, config: Dict[str, Any] ) -> str:
+        """
+        Resolve database path based on storage backend configuration.
+
+        Requires:
+            - config["storage_backend"] is "local" or "gcs"
+            - If backend=gcs: config["gcs_uri"] must be valid GCS URI
+            - If backend=local: config["db_path"] must exist or be creatable
+
+        Ensures:
+            - Returns fully qualified database path for lancedb.connect()
+            - Local paths have project root prefix applied if relative
+            - GCS URIs validated for correct format (gs:// prefix)
+            - Clear error messages for misconfiguration
+
+        Args:
+            config: Configuration dictionary with backend and path settings
+
+        Returns:
+            str: Resolved database path (local absolute path or GCS URI)
+
+        Raises:
+            ValueError: If backend unknown, required keys missing, or validation fails
+        """
+        backend = config.get( "storage_backend", "local" )
+
+        if backend == "gcs":
+            # GCS backend - use cloud storage URI
+            gcs_uri = config.get( "gcs_uri" )
+
+            if not gcs_uri:
+                raise ValueError(
+                    "storage_backend=gcs requires 'gcs_uri' config key. "
+                    "Example: solution snapshots lancedb gcs uri = gs://bucket/path/db.lancedb"
+                )
+
+            if not gcs_uri.startswith( "gs://" ):
+                raise ValueError(
+                    f"GCS URI must start with 'gs://', got: {gcs_uri}. "
+                    f"Example: gs://lupin-lancedb-prod/lupin.lancedb"
+                )
+
+            if self.debug:
+                print( f"[GCS Backend] Using GCS URI: {gcs_uri}" )
+
+            return gcs_uri
+
+        elif backend == "local":
+            # Local backend - use filesystem path
+            db_path = config.get( "db_path" )
+
+            if not db_path:
+                raise ValueError(
+                    "storage_backend=local requires 'db_path' config key. "
+                    "Example: solution snapshots lancedb path = /src/conf/long-term-memory/lupin.lancedb"
+                )
+
+            # Apply project root prefix if path is relative
+            if db_path.startswith( "/src/" ):
+                full_path = du.get_project_root() + db_path
+            else:
+                full_path = db_path
+
+            # Validate path exists (or parent directory exists for creation)
+            if not os.path.exists( full_path ):
+                parent_dir = os.path.dirname( full_path )
+                if not os.path.exists( parent_dir ):
+                    raise ValueError(
+                        f"Local database path parent directory does not exist: {parent_dir}. "
+                        f"Full path: {full_path}"
+                    )
+
+            if self.debug:
+                print( f"[Local Backend] Using local path: {full_path}" )
+
+            return full_path
+
+        else:
+            raise ValueError(
+                f"Unknown storage_backend: '{backend}'. Must be 'local' or 'gcs'. "
+                f"Check your configuration file [config_block] section."
+            )
+
     def _get_schema( self ) -> pa.Schema:
         """
         Get PyArrow schema for solution snapshots table.

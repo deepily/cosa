@@ -1,6 +1,8 @@
 # COSA Development History
 
-> **🎯 CURRENT ACHIEVEMENT**: 2025.11.11 - Phase 2.5.4 Config Migration COMPLETE! Renamed `~/.lupin/config` → `~/.notifications/config` and `target_user` → `global_notification_recipient` for future multi-recipient support. Implemented dual support for backward compatibility (old paths/keys still work with deprecation warnings). Updated config_loader.py (3-level precedence with dual path/key support), CLI clients with naming mismatch comments. Configuration namespace separation enables future notification system extensibility. Ready for Phase 2.5 completion! 🔄✅
+> **🎯 CURRENT ACHIEVEMENT**: 2025.11.13 - LanceDB Multi-Backend Storage Infrastructure COMPLETE! Implemented factory pattern for LanceDB solution manager enabling seamless switching between local filesystem (development) and Google Cloud Storage (test/production deployment). Added `_resolve_db_path()` method with smart backend detection, configuration validation, and clear error messages. Updated factory for backend-aware manager creation. **Architecture**: Storage backend configurable via `storage_backend=local|gcs` config key with separate paths (`db_path` for local, `gcs_uri` for GCS). **Backward Compatible**: Defaults to local backend, preserves existing dev workflow. Ready for Cloud Run test deployment with GCS backend! 🏗️✅
+
+> **Previous Achievement**: 2025.11.11 - Phase 2.5.4 Config Migration COMPLETE! Renamed `~/.lupin/config` → `~/.notifications/config` and `target_user` → `global_notification_recipient` for future multi-recipient support. Implemented dual support for backward compatibility (old paths/keys still work with deprecation warnings). Updated config_loader.py (3-level precedence with dual path/key support), CLI clients with naming mismatch comments. Configuration namespace separation enables future notification system extensibility. Ready for Phase 2.5 completion! 🔄✅
 
 > **Previous Achievement**: 2025.11.10 - Phase 2.5.4 API Key Authentication Infrastructure COMPLETE! Implemented header-based API key authentication for notification system (moved from query params to X-API-Key header). Created middleware (api_key_auth.py), config loader (config_loader.py), updated CLI clients with Pydantic validation. Fixed critical schema bug (api_keys.user_id INTEGER→TEXT). Integration testing infrastructure created (10 tests, 6/10 passing - auth working, endpoint user lookup needs fix).
 
@@ -31,6 +33,140 @@
 > **🚨 RESOLVED**: **repo/branch_change_analysis.py COMPLETE REFACTOR** ✅✅✅
 >
 > The quick-and-dirty git diff analysis tool has been completely refactored into a professional package that EXCEEDS all COSA standards:
+
+## 2025.11.13 - LanceDB Multi-Backend Storage Infrastructure COMPLETE
+
+### Summary
+Implemented multi-backend storage factory pattern for LanceDB solution snapshot manager to enable Cloud Run deployment with Google Cloud Storage. Added intelligent path resolution logic that switches between local filesystem (development/testing) and GCS (production) based on configuration. Updated both `LanceDBSolutionManager` and `SolutionSnapshotManagerFactory` to support backend-aware initialization with comprehensive validation and error handling. This infrastructure enables seamless deployment to Cloud Run test environment for colleague evaluation while preserving local development workflow.
+
+### Work Performed
+
+#### Core Path Resolution Logic - COMPLETE ✅
+**File**: `memory/lancedb_solution_manager.py` (+82 lines, -32 lines)
+
+**New Method**: `_resolve_db_path(config: Dict[str, Any]) -> str`
+- **Purpose**: Resolve database path based on `storage_backend` configuration
+- **Backends Supported**:
+  - `local`: Filesystem storage with project root prefix applied (e.g., `/full/path/to/lupin.lancedb`)
+  - `gcs`: Google Cloud Storage with URI validation (e.g., `gs://lupin-lancedb-test/lupin.lancedb`)
+- **Validation**:
+  - GCS: Validates `gs://` prefix, requires `gcs_uri` config key
+  - Local: Applies project root prefix if path starts with `/src/`, validates parent directory exists
+  - Clear error messages with examples for misconfiguration
+- **Debug Output**: Shows backend type and resolved path when debug enabled
+
+**Updated Constructor**: `__init__(config, debug, verbose)`
+- Removed hardcoded `db_path` validation from constructor
+- Added `storage_backend` attribute (defaults to "local")
+- Calls `_resolve_db_path()` to get backend-appropriate path
+- Updated docstring: Documents backend requirements and configuration keys
+- Enhanced debug output: Shows backend type alongside database path
+
+**Architecture Benefits**:
+- Single manager class handles both local and GCS storage
+- Configuration-driven backend selection (no code changes needed)
+- Backward compatible: Existing local configs continue working
+- Extensible: Easy to add new backends (S3, Azure Blob, etc.)
+
+#### Factory Pattern Updates - COMPLETE ✅
+**File**: `memory/solution_manager_factory.py` (+38 lines, -14 lines)
+
+**Method Updated**: `create_from_config_mgr(config_mgr, debug, verbose)`
+
+**Changes**:
+- Reads `storage_backend` config key (defaults to "local")
+- Builds backend-specific configuration dictionary:
+  - **GCS Backend**: Includes `gcs_uri` from config key `"solution snapshots lancedb gcs uri"`
+  - **Local Backend**: Includes `db_path` from config key `"solution snapshots lancedb path"`
+- Validates required keys based on backend type
+- Clear error messages specify which config key is missing for which backend
+
+**Configuration Contract**:
+```python
+# Local backend
+{
+    "storage_backend": "local",
+    "db_path": "/src/conf/long-term-memory/lupin.lancedb",
+    "table_name": "solution_snapshots"
+}
+
+# GCS backend
+{
+    "storage_backend": "gcs",
+    "gcs_uri": "gs://lupin-lancedb-test/lupin.lancedb",
+    "table_name": "solution_snapshots"
+}
+```
+
+**Updated Docstring**: Documents all backend-specific config keys and their purposes
+
+#### Backward Compatibility Preserved - COMPLETE ✅
+- **Default Behavior**: `storage_backend` defaults to `"local"` if not specified
+- **Existing Configs**: All existing local-only configurations continue working unchanged
+- **Development Workflow**: No impact on current development process
+- **Migration Path**: Opt-in to GCS by adding `storage_backend=gcs` config
+
+### Files Modified
+
+**COSA Repository**:
+1. `memory/lancedb_solution_manager.py` (+82/-32 lines)
+   - Added `_resolve_db_path()` method with backend validation
+   - Updated `__init__()` for multi-backend support
+   - Enhanced docstrings and debug output
+
+2. `memory/solution_manager_factory.py` (+38/-14 lines)
+   - Added backend-aware configuration building
+   - Updated validation for backend-specific required keys
+   - Enhanced docstrings with backend documentation
+
+**Total Impact**: 2 files modified, +120 insertions, -46 deletions
+
+### Configuration Integration (Parent Lupin Repository)
+
+**Note**: Configuration blocks created in parent Lupin's `lupin-app.ini` (not committed in this COSA session):
+
+```ini
+[Lupin: Development]
+storage_backend = local
+solution snapshots lancedb path = /src/conf/long-term-memory/lupin.lancedb
+
+[Lupin: Testing-GCS]
+inherits = Lupin: Testing
+storage_backend = gcs
+solution snapshots lancedb gcs uri = gs://lupin-lancedb-test/test-lupin.lancedb
+
+[Lupin: Production]
+storage_backend = gcs
+solution snapshots lancedb gcs uri = gs://lupin-lancedb-prod/lupin.lancedb
+enable_lancedb_warmup = true
+```
+
+### Testing Status
+- **Unit Tests**: Not yet created (Phase 4 of parent implementation plan)
+- **Integration Tests**: Not yet created (Phase 4 of parent implementation plan)
+- **Manual Testing**: Pending Cloud Run deployment (Phase 2 remaining tasks)
+
+### Current Status
+- **Multi-Backend Infrastructure**: ✅ COMPLETE - Both local and GCS backends supported
+- **Configuration Integration**: ✅ COMPLETE - Config blocks created in parent repo
+- **Path Resolution Logic**: ✅ COMPLETE - Smart backend detection with validation
+- **Factory Updates**: ✅ COMPLETE - Backend-aware manager creation
+- **Testing**: ⏳ PENDING - Unit and integration tests planned for Phase 4
+- **Deployment**: ⏳ PENDING - Dockerfile and Cloud Run configuration updates needed
+
+### Next Session Priorities
+1. **Read Critical Correction**: Review `2025.11.13-CRITICAL-CORRECTION.md` in parent repo (test vs production clarification)
+2. **Dockerfile Update**: Use `Lupin:+Testing-GCS` config block (NOT Production)
+3. **Deploy to Cloud Run**: Test GCS backend with colleague evaluation environment
+4. **Create Tests**: Unit tests for `_resolve_db_path()`, integration tests for GCS connectivity
+5. **Migration Tools**: Build Phase 3 tooling (backup, upload, warm-up) based on real deployment needs
+
+### Related Documentation (Parent Lupin Repository)
+- `src/rnd/2025.11.13-lancedb-gcs-factory-implementation.md` - Complete architecture design (~500 lines)
+- `src/rnd/2025.11.13-lancedb-gcs-factory-status.md` - Session progress tracking (9/28 tasks, 32%)
+- `src/rnd/2025.11.13-CRITICAL-CORRECTION.md` - Test vs production environment clarification
+
+---
 
 ## 2025.11.11 - Phase 2.5.4 Config Migration COMPLETE
 

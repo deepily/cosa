@@ -207,9 +207,11 @@ class SolutionSnapshotManagerFactory:
             
         Expected Config Keys:
             - "solution snapshots manager type": "file_based" or "lancedb"
-            - "solution snapshots file based path": Path for file-based storage
-            - "solution snapshots lancedb path": Database path for LanceDB
-            - "solution snapshots lancedb table": Table name for LanceDB
+            - "solution snapshots file based path": Path for file-based storage (file_based only)
+            - "storage_backend": "local" or "gcs" (lancedb only, defaults to "local")
+            - "solution snapshots lancedb path": Local DB path (lancedb with backend=local)
+            - "solution snapshots lancedb gcs uri": GCS URI (lancedb with backend=gcs)
+            - "solution snapshots lancedb table": Table name (lancedb only)
             
         Raises:
             - ValueError if manager type not configured or invalid
@@ -235,22 +237,32 @@ class SolutionSnapshotManagerFactory:
                 raise KeyError( "Configuration key 'solution snapshots file based path' not found" )
                 
         elif manager_type == ManagerType.LANCEDB:
+            # Read storage backend configuration
+            storage_backend = config_mgr.get( "storage_backend", default="local" )
+
             config = {
-                "db_path": config_mgr.get( "solution snapshots lancedb path" ),
+                "storage_backend": storage_backend,
                 "table_name": config_mgr.get( "solution snapshots lancedb table" ),
-                "enable_performance_monitoring": config_mgr.get( 
+                "enable_performance_monitoring": config_mgr.get(
                     "solution snapshots enable performance monitoring", default=True, return_type="boolean"
                 )
             }
-            
-            missing_keys = []
-            if not config["db_path"]:
-                missing_keys.append( "solution snapshots lancedb path" )
+
+            # Add backend-specific configuration keys
+            if storage_backend == "gcs":
+                config["gcs_uri"] = config_mgr.get( "solution snapshots lancedb gcs uri" )
+
+                if not config["gcs_uri"]:
+                    raise KeyError( "Configuration key 'solution snapshots lancedb gcs uri' required for GCS backend" )
+            else:  # local
+                config["db_path"] = config_mgr.get( "solution snapshots lancedb path" )
+
+                if not config["db_path"]:
+                    raise KeyError( "Configuration key 'solution snapshots lancedb path' required for local backend" )
+
+            # Validate table name
             if not config["table_name"]:
-                missing_keys.append( "solution snapshots lancedb table" )
-                
-            if missing_keys:
-                raise KeyError( f"Missing required configuration keys: {missing_keys}" )
+                raise KeyError( "Configuration key 'solution snapshots lancedb table' is required" )
         
         if debug:
             print( f"Creating {manager_type.value} manager from ConfigurationManager" )
