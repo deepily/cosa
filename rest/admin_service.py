@@ -11,7 +11,7 @@ import string
 from typing import Optional, List, Dict, Tuple
 from datetime import datetime
 
-from cosa.rest.auth_database import get_auth_db_connection
+from cosa.rest.sqlite_database import get_auth_db_connection
 from cosa.rest.user_service import get_user_by_id, get_user_by_email
 from cosa.rest.password_service import hash_password, validate_password_strength
 from cosa.rest.refresh_token_service import revoke_all_user_tokens

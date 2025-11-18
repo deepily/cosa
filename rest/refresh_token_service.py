@@ -10,7 +10,7 @@ import sqlite3
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Tuple
 
-from cosa.rest.auth_database import get_auth_db_connection
+from cosa.rest.sqlite_database import get_auth_db_connection
 from cosa.rest.jwt_service import create_refresh_token, decode_and_validate_token
 from cosa.config.configuration_manager import ConfigurationManager
 
@@ -434,7 +434,7 @@ def quick_smoke_test():
         - None (catches all exceptions)
     """
     import cosa.utils.util as du
-    from cosa.rest.auth_database import init_auth_database
+    from cosa.rest.sqlite_database import init_auth_database
     from cosa.rest.user_service import create_user
 
     du.print_banner( "Refresh Token Service Smoke Test", prepend_nl=True )

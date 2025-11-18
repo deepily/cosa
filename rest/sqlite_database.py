@@ -1,8 +1,10 @@
 """
-Authentication Database Management.
+SQLite Authentication Database Layer.
 
-Handles SQLite database initialization and schema management
-for authentication tables.
+Handles SQLite-specific database operations using raw SQL for authentication.
+Uses sqlite3 module with direct SQL statements (no ORM).
+
+For PostgreSQL ORM models, see postgres_models.py.
 """
 
 import os

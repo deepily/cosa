@@ -27,7 +27,7 @@ from typing import Optional, Annotated
 from datetime import datetime
 from fastapi import Header, HTTPException, status
 
-from cosa.rest.auth_database import get_auth_db_connection
+from cosa.rest.sqlite_database import get_auth_db_connection
 
 
 async def validate_api_key( api_key: str ) -> Optional[str]:

@@ -10,7 +10,7 @@ Provides failed login tracking and account lockout functionality:
 
 from datetime import datetime, timedelta
 from typing import Tuple, Optional
-from cosa.rest.auth_database import get_auth_db_connection
+from cosa.rest.sqlite_database import get_auth_db_connection
 from cosa.config.configuration_manager import ConfigurationManager
 
 
@@ -270,7 +270,7 @@ def quick_smoke_test():
         - None (catches all exceptions)
     """
     import cosa.utils.util as du
-    from cosa.rest.auth_database import init_auth_database
+    from cosa.rest.sqlite_database import init_auth_database
 
     du.print_banner( "Rate Limiter Smoke Test", prepend_nl=True )
 

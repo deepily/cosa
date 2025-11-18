@@ -11,7 +11,7 @@ Tokens are cryptographically secure and stored in SQLite database.
 import secrets
 from datetime import datetime, timedelta
 from typing import Tuple, Optional
-from cosa.rest.auth_database import get_auth_db_connection
+from cosa.rest.sqlite_database import get_auth_db_connection
 
 
 def generate_verification_token( user_id: str ) -> Tuple[bool, str, Optional[str]]:
@@ -336,7 +336,7 @@ def quick_smoke_test():
         - None (catches all exceptions)
     """
     import cosa.utils.util as du
-    from cosa.rest.auth_database import init_auth_database
+    from cosa.rest.sqlite_database import init_auth_database
     from cosa.rest.user_service import create_user
 
     du.print_banner( "Email Token Service Smoke Test", prepend_nl=True )

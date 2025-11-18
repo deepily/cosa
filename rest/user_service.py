@@ -10,7 +10,7 @@ import sqlite3
 from datetime import datetime
 from typing import Optional, Dict, List, Tuple
 
-from cosa.rest.auth_database import get_auth_db_connection
+from cosa.rest.sqlite_database import get_auth_db_connection
 from cosa.rest.password_service import hash_password, verify_password, validate_password_strength
 
 
@@ -553,7 +553,7 @@ def quick_smoke_test():
         - None (catches all exceptions)
     """
     import cosa.utils.util as du
-    from cosa.rest.auth_database import init_auth_database
+    from cosa.rest.sqlite_database import init_auth_database
 
     du.print_banner( "User Service Smoke Test", prepend_nl=True )
 

@@ -12,7 +12,7 @@ Provides security event logging for:
 
 from datetime import datetime
 from typing import Optional
-from cosa.rest.auth_database import get_auth_db_connection
+from cosa.rest.sqlite_database import get_auth_db_connection
 
 
 def log_auth_event(
@@ -306,7 +306,7 @@ def get_suspicious_activity( hours: int = 24, threshold: int = 5 ) -> list:
 def quick_smoke_test():
     """Quick smoke test for auth audit logging."""
     import cosa.utils.util as du
-    from cosa.rest.auth_database import init_auth_database
+    from cosa.rest.sqlite_database import init_auth_database
     from cosa.rest.user_service import create_user
 
     du.print_banner( "Auth Audit Smoke Test", prepend_nl=True )
