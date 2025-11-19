@@ -52,22 +52,27 @@ class SolutionSnapshot( RunnableCode ):
     @staticmethod
     def remove_non_alphanumerics( input: str, replacement_char: str="" ) -> str:
         """
+        DEPRECATED: Use Normalizer.normalize() instead for consistent normalization.
+
         Remove non-alphanumeric characters from input.
-        
+
+        This method is preserved for backward compatibility but should not be used
+        for new code. Use cosa.memory.normalizer.Normalizer.normalize() instead.
+
         Requires:
             - input is a string
             - replacement_char is a string
-            
+
         Ensures:
             - Returns lowercase string with non-alphanumeric chars replaced
             - Preserves spaces
-            
+
         Raises:
             - None
         """
         regex = re.compile( "[^a-zA-Z0-9 ]" )
         cleaned_output = regex.sub( replacement_char, input ).lower()
-        
+
         return cleaned_output
     
     @staticmethod
@@ -180,15 +185,20 @@ class SolutionSnapshot( RunnableCode ):
         """
         
         super().__init__( debug=debug, verbose=verbose )
-        
+
         # Initialize embedding manager
         self._embedding_mgr = EmbeddingManager( debug=debug, verbose=verbose )
-        
+
+        # Initialize normalizer for consistent question normalization
+        from cosa.memory.normalizer import Normalizer
+        self._normalizer = Normalizer()
+
         # track updates to internal state as the object is instantiated
         dirty                      = False
-        
+
         self.push_counter          = push_counter
-        self.question              = SolutionSnapshot.remove_non_alphanumerics( question )
+        # Use Normalizer for consistent normalization across all components
+        self.question              = self._normalizer.normalize( question ) if question else ""
         self.question_normalized   = question_normalized
         self.question_gist         = question_gist
         # self.question_gist         = SolutionSnapshot.remove_non_alphanumerics( question_gist )

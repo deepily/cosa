@@ -8,11 +8,16 @@ Provides security event logging for:
 - Email verification
 - Token operations
 - Other authentication events
+
+Now using PostgreSQL repository pattern.
 """
 
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 from typing import Optional
-from cosa.rest.sqlite_database import get_auth_db_connection
+
+from cosa.rest.db.database import get_db
+from cosa.rest.db.repositories import AuthAuditLogRepository
 
 
 def log_auth_event(
@@ -64,37 +69,26 @@ def log_auth_event(
         )
     """
     try:
-        conn = get_auth_db_connection()
-        cursor = conn.cursor()
+        # Convert user_id to UUID if provided
+        user_uuid = None
+        if user_id:
+            try:
+                user_uuid = uuid.UUID( user_id )
+            except ValueError:
+                print( f"Invalid user_id format: {user_id}" )
+                # Continue logging anyway, just without user_id
 
-        event_time = datetime.utcnow().isoformat()
+        with get_db() as session:
+            audit_repo = AuthAuditLogRepository( session )
 
-        cursor.execute(
-            """
-            INSERT INTO auth_audit_log (
-                event_type,
-                user_id,
-                email,
-                ip_address,
-                details,
-                success,
-                event_time
+            audit_repo.log_event(
+                event_type = event_type,
+                user_id    = user_uuid,
+                email      = email or "unknown",
+                ip_address = ip_address or "unknown",
+                details    = {"message": details} if isinstance( details, str ) else details or {},
+                success    = success
             )
-            VALUES ( ?, ?, ?, ?, ?, ?, ? )
-            """,
-            (
-                event_type,
-                user_id,
-                email,
-                ip_address,
-                details,
-                1 if success else 0,
-                event_time
-            )
-        )
-
-        conn.commit()
-        conn.close()
 
     except Exception as e:
         print( f"Failed to log auth event: {str( e )}" )
@@ -123,43 +117,30 @@ def get_user_audit_log( user_id: str, limit: int = 50 ) -> list:
             print( f"{entry['event_time']}: {entry['event_type']}" )
     """
     try:
-        conn = get_auth_db_connection()
-        cursor = conn.cursor()
+        # Convert user_id to UUID
+        user_uuid = uuid.UUID( user_id )
 
-        cursor.execute(
-            """
-            SELECT
-                event_type,
-                user_id,
-                email,
-                ip_address,
-                details,
-                success,
-                event_time
-            FROM auth_audit_log
-            WHERE user_id = ?
-            ORDER BY event_time DESC
-            LIMIT ?
-            """,
-            (user_id, limit)
-        )
+        with get_db() as session:
+            audit_repo = AuthAuditLogRepository( session )
 
-        rows = cursor.fetchall()
-        conn.close()
+            logs = audit_repo.get_by_user( user_uuid, limit=limit )
 
-        return [
-            {
-                "event_type"  : row[0],
-                "user_id"     : row[1],
-                "email"       : row[2],
-                "ip_address"  : row[3],
-                "details"     : row[4],
-                "success"     : bool( row[5] ),
-                "event_time"  : row[6]
-            }
-            for row in rows
-        ]
+            return [
+                {
+                    "event_type"  : log.event_type,
+                    "user_id"     : str( log.user_id ) if log.user_id else None,
+                    "email"       : log.email,
+                    "ip_address"  : log.ip_address,
+                    "details"     : log.details.get( "message", str( log.details ) ) if isinstance( log.details, dict ) else str( log.details ),
+                    "success"     : log.success,
+                    "event_time"  : log.event_time.isoformat() if log.event_time else None
+                }
+                for log in logs
+            ]
 
+    except ValueError:
+        print( f"Invalid user_id format: {user_id}" )
+        return []
     except Exception as e:
         print( f"Failed to get user audit log: {str( e )}" )
         return []
@@ -188,61 +169,28 @@ def get_failed_logins( email: Optional[str] = None, limit: int = 50 ) -> list:
             print( f"{failure['event_time']}: {failure['ip_address']}" )
     """
     try:
-        conn = get_auth_db_connection()
-        cursor = conn.cursor()
+        with get_db() as session:
+            audit_repo = AuthAuditLogRepository( session )
 
-        if email:
-            cursor.execute(
-                """
-                SELECT
-                    event_type,
-                    user_id,
-                    email,
-                    ip_address,
-                    details,
-                    success,
-                    event_time
-                FROM auth_audit_log
-                WHERE event_type = 'login_failure' AND email = ?
-                ORDER BY event_time DESC
-                LIMIT ?
-                """,
-                (email, limit)
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT
-                    event_type,
-                    user_id,
-                    email,
-                    ip_address,
-                    details,
-                    success,
-                    event_time
-                FROM auth_audit_log
-                WHERE event_type = 'login_failure'
-                ORDER BY event_time DESC
-                LIMIT ?
-                """,
-                (limit,)
-            )
+            # Get failed login events
+            failed_logs = audit_repo.get_failed_events( hours=24*365, limit=limit )  # Get all in last year
 
-        rows = cursor.fetchall()
-        conn.close()
+            # Filter by email if provided
+            if email:
+                failed_logs = [log for log in failed_logs if log.email and log.email.lower() == email.lower()]
 
-        return [
-            {
-                "event_type"  : row[0],
-                "user_id"     : row[1],
-                "email"       : row[2],
-                "ip_address"  : row[3],
-                "details"     : row[4],
-                "success"     : bool( row[5] ),
-                "event_time"  : row[6]
-            }
-            for row in rows
-        ]
+            return [
+                {
+                    "event_type"  : log.event_type,
+                    "user_id"     : str( log.user_id ) if log.user_id else None,
+                    "email"       : log.email,
+                    "ip_address"  : log.ip_address,
+                    "details"     : log.details.get( "message", str( log.details ) ) if isinstance( log.details, dict ) else str( log.details ),
+                    "success"     : log.success,
+                    "event_time"  : log.event_time.isoformat() if log.event_time else None
+                }
+                for log in failed_logs[:limit]
+            ]
 
     except Exception as e:
         print( f"Failed to get failed logins: {str( e )}" )
@@ -272,31 +220,27 @@ def get_suspicious_activity( hours: int = 24, threshold: int = 5 ) -> list:
             print( f"{email}: {count} failed attempts" )
     """
     try:
-        from datetime import timedelta
+        with get_db() as session:
+            audit_repo = AuthAuditLogRepository( session )
 
-        conn = get_auth_db_connection()
-        cursor = conn.cursor()
+            # Get failed events in time window
+            failed_logs = audit_repo.get_failed_events( hours=hours, limit=10000 )
 
-        window_start = (datetime.utcnow() - timedelta( hours=hours )).isoformat()
+            # Group by email and count
+            email_counts = {}
+            for log in failed_logs:
+                if log.email:
+                    email_counts[log.email] = email_counts.get( log.email, 0 ) + 1
 
-        cursor.execute(
-            """
-            SELECT email, COUNT(*) as failure_count
-            FROM auth_audit_log
-            WHERE event_type = 'login_failure'
-                AND event_time >= ?
-                AND email IS NOT NULL
-            GROUP BY email
-            HAVING failure_count >= ?
-            ORDER BY failure_count DESC
-            """,
-            (window_start, threshold)
-        )
+            # Filter by threshold and sort
+            suspicious = [
+                (email, count)
+                for email, count in email_counts.items()
+                if count >= threshold
+            ]
+            suspicious.sort( key=lambda x: x[1], reverse=True )
 
-        rows = cursor.fetchall()
-        conn.close()
-
-        return [(row[0], row[1]) for row in rows]
+            return suspicious
 
     except Exception as e:
         print( f"Failed to get suspicious activity: {str( e )}" )
@@ -304,24 +248,20 @@ def get_suspicious_activity( hours: int = 24, threshold: int = 5 ) -> list:
 
 
 def quick_smoke_test():
-    """Quick smoke test for auth audit logging."""
+    """Quick smoke test for auth audit logging (PostgreSQL)."""
     import cosa.utils.util as du
-    from cosa.rest.sqlite_database import init_auth_database
     from cosa.rest.user_service import create_user
 
-    du.print_banner( "Auth Audit Smoke Test", prepend_nl=True )
+    du.print_banner( "Auth Audit Smoke Test (PostgreSQL)", prepend_nl=True )
 
     try:
-        print( "Initializing database..." )
-        init_auth_database()
-        print( "✓ Database initialized" )
-
         # Create test user
+        print( "Creating test user..." )
         success, msg, user_id = create_user( "audit_test@example.com", "TestPass123!" )
         if not success:
             print( f"✗ Failed to create user: {msg}" )
             return False
-        print( "✓ Test user created" )
+        print( f"✓ Test user created: {user_id}" )
 
         # Test logging various events
         print( "Testing event logging..." )
@@ -347,6 +287,17 @@ def quick_smoke_test():
         else:
             print( "✗ Expected at least 1 failed login" )
             return False
+
+        # Cleanup: Delete test user
+        print( "Cleanup: Deleting test user..." )
+        from cosa.rest.db.database import get_db
+        from cosa.rest.db.repositories import UserRepository
+        with get_db() as session:
+            user_repo = UserRepository( session )
+            user_uuid = uuid.UUID( user_id )
+            deleted = user_repo.delete( user_uuid )
+            if deleted:
+                print( "✓ Test user deleted" )
 
         print( "\n✓ All auth audit tests passed!" )
         return True

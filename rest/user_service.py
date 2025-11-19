@@ -2,15 +2,17 @@
 User Service for Authentication.
 
 Handles user registration, authentication, and management operations
-including database interactions for user accounts.
+using PostgreSQL repository pattern.
 """
 
 import uuid
-import sqlite3
 from datetime import datetime
 from typing import Optional, Dict, List, Tuple
 
-from cosa.rest.sqlite_database import get_auth_db_connection
+from sqlalchemy.exc import IntegrityError
+
+from cosa.rest.db.database import get_db
+from cosa.rest.db.repositories import UserRepository
 from cosa.rest.password_service import hash_password, verify_password, validate_password_strength
 
 
@@ -53,38 +55,28 @@ def create_user( email: str, password: str, roles: Optional[List[str]] = None ) 
     except Exception as e:
         return False, f"Password hashing failed: {e}", None
 
-    # Generate user ID
-    user_id = str( uuid.uuid4() )
-
     # Set default roles
     if roles is None:
         roles = ["user"]
 
-    # Store in database
-    conn = get_auth_db_connection()
-    cursor = conn.cursor()
-
+    # Store in database using repository
     try:
-        import json
-        cursor.execute(
-            """
-            INSERT INTO users ( id, email, password_hash, created_at, roles )
-            VALUES ( ?, ?, ?, ?, ? )
-            """,
-            ( user_id, email, password_hash, datetime.utcnow().isoformat(), json.dumps( roles ) )
-        )
-        conn.commit()
-        return True, "User created successfully", user_id
+        with get_db() as session:
+            user_repo = UserRepository( session )
 
-    except sqlite3.IntegrityError:
+            user = user_repo.create_user(
+                email = email,
+                password_hash = password_hash,
+                roles = roles
+            )
+
+            return True, "User created successfully", str( user.id )
+
+    except IntegrityError:
         return False, "Email already registered", None
 
     except Exception as e:
-        conn.rollback()
         return False, f"Database error: {e}", None
-
-    finally:
-        conn.close()
 
 
 def authenticate_user( email: str, password: str ) -> Tuple[bool, str, Optional[Dict]]:
@@ -97,7 +89,7 @@ def authenticate_user( email: str, password: str ) -> Tuple[bool, str, Optional[
         - Database is initialized
 
     Ensures:
-        - Email lookup is case-sensitive
+        - Email lookup is case-insensitive
         - Password is verified using bcrypt
         - Inactive users are rejected
         - Returns (success, message, user_data)
@@ -114,63 +106,42 @@ def authenticate_user( email: str, password: str ) -> Tuple[bool, str, Optional[
     if not email or not password:
         return False, "Email and password required", None
 
-    conn = get_auth_db_connection()
-    cursor = conn.cursor()
-
     try:
-        # Fetch user by email
-        cursor.execute(
-            """
-            SELECT id, email, password_hash, roles, is_active, email_verified, created_at
-            FROM users
-            WHERE email = ?
-            """,
-            ( email, )
-        )
-        row = cursor.fetchone()
+        with get_db() as session:
+            user_repo = UserRepository( session )
 
-        if not row:
-            return False, "Invalid email or password", None
+            # Fetch user by email
+            user = user_repo.get_by_email( email )
 
-        # Check if account is active
-        if not row["is_active"]:
-            return False, "Account is inactive", None
+            if not user:
+                return False, "Invalid email or password", None
 
-        # Verify password
-        if not verify_password( password, row["password_hash"] ):
-            return False, "Invalid email or password", None
+            # Check if account is active
+            if not user.is_active:
+                return False, "Account is inactive", None
 
-        # Update last login timestamp
-        last_login_timestamp = datetime.utcnow().isoformat()
-        cursor.execute(
-            """
-            UPDATE users
-            SET last_login_at = ?
-            WHERE id = ?
-            """,
-            ( last_login_timestamp, row["id"] )
-        )
-        conn.commit()
+            # Verify password
+            if not verify_password( password, user.password_hash ):
+                return False, "Invalid email or password", None
 
-        # Build user data
-        import json
-        user_data = {
-            "id"              : row["id"],
-            "email"           : row["email"],
-            "roles"           : json.loads( row["roles"] ) if row["roles"] else ["user"],
-            "email_verified"  : bool( row["email_verified"] ),
-            "is_active"       : bool( row["is_active"] ),
-            "created_at"      : row["created_at"],
-            "last_login_at"   : last_login_timestamp
-        }
+            # Update last login timestamp
+            user_repo.update_last_login( user.id )
 
-        return True, "Authentication successful", user_data
+            # Build user data dictionary
+            user_data = {
+                "id"              : str( user.id ),
+                "email"           : user.email,
+                "roles"           : user.roles if user.roles else ["user"],
+                "email_verified"  : user.email_verified,
+                "is_active"       : user.is_active,
+                "created_at"      : user.created_at.isoformat() if user.created_at else None,
+                "last_login_at"   : datetime.utcnow().isoformat()  # Just updated
+            }
+
+            return True, "Authentication successful", user_data
 
     except Exception as e:
         return False, f"Authentication error: {e}", None
-
-    finally:
-        conn.close()
 
 
 def get_user_by_id( user_id: str ) -> Optional[Dict]:
@@ -195,41 +166,31 @@ def get_user_by_id( user_id: str ) -> Optional[Dict]:
     if not user_id:
         return None
 
-    conn = get_auth_db_connection()
-    cursor = conn.cursor()
-
     try:
-        cursor.execute(
-            """
-            SELECT id, email, roles, email_verified, is_active, created_at, last_login_at
-            FROM users
-            WHERE id = ?
-            """,
-            ( user_id, )
-        )
-        row = cursor.fetchone()
+        # Convert string to UUID
+        user_uuid = uuid.UUID( user_id )
 
-        if not row:
-            return None
+        with get_db() as session:
+            user_repo = UserRepository( session )
+            user = user_repo.get_by_id( user_uuid )
 
-        import json
-        user_data = {
-            "id"              : row["id"],
-            "email"           : row["email"],
-            "roles"           : json.loads( row["roles"] ) if row["roles"] else ["user"],
-            "email_verified"  : bool( row["email_verified"] ),
-            "is_active"       : bool( row["is_active"] ),
-            "created_at"      : row["created_at"],
-            "last_login_at"   : row["last_login_at"]
-        }
+            if not user:
+                return None
 
-        return user_data
+            user_data = {
+                "id"              : str( user.id ),
+                "email"           : user.email,
+                "roles"           : user.roles if user.roles else ["user"],
+                "email_verified"  : user.email_verified,
+                "is_active"       : user.is_active,
+                "created_at"      : user.created_at.isoformat() if user.created_at else None,
+                "last_login_at"   : user.last_login_at.isoformat() if user.last_login_at else None
+            }
 
-    except Exception:
+            return user_data
+
+    except (ValueError, Exception):
         return None
-
-    finally:
-        conn.close()
 
 
 def get_user_by_email( email: str ) -> Optional[Dict]:
@@ -254,41 +215,28 @@ def get_user_by_email( email: str ) -> Optional[Dict]:
     if not email:
         return None
 
-    conn = get_auth_db_connection()
-    cursor = conn.cursor()
-
     try:
-        cursor.execute(
-            """
-            SELECT id, email, roles, email_verified, is_active, created_at, last_login_at
-            FROM users
-            WHERE email = ?
-            """,
-            ( email, )
-        )
-        row = cursor.fetchone()
+        with get_db() as session:
+            user_repo = UserRepository( session )
+            user = user_repo.get_by_email( email )
 
-        if not row:
-            return None
+            if not user:
+                return None
 
-        import json
-        user_data = {
-            "id"              : row["id"],
-            "email"           : row["email"],
-            "roles"           : json.loads( row["roles"] ) if row["roles"] else ["user"],
-            "email_verified"  : bool( row["email_verified"] ),
-            "is_active"       : bool( row["is_active"] ),
-            "created_at"      : row["created_at"],
-            "last_login_at"   : row["last_login_at"]
-        }
+            user_data = {
+                "id"              : str( user.id ),
+                "email"           : user.email,
+                "roles"           : user.roles if user.roles else ["user"],
+                "email_verified"  : user.email_verified,
+                "is_active"       : user.is_active,
+                "created_at"      : user.created_at.isoformat() if user.created_at else None,
+                "last_login_at"   : user.last_login_at.isoformat() if user.last_login_at else None
+            }
 
-        return user_data
+            return user_data
 
     except Exception:
         return None
-
-    finally:
-        conn.close()
 
 
 def update_user_password( user_id: str, old_password: str, new_password: str ) -> Tuple[bool, str]:
@@ -321,50 +269,37 @@ def update_user_password( user_id: str, old_password: str, new_password: str ) -
     if not is_valid:
         return False, error_msg
 
-    conn = get_auth_db_connection()
-    cursor = conn.cursor()
-
     try:
-        # Fetch current password hash
-        cursor.execute(
-            """
-            SELECT password_hash
-            FROM users
-            WHERE id = ?
-            """,
-            ( user_id, )
-        )
-        row = cursor.fetchone()
+        # Convert string to UUID
+        user_uuid = uuid.UUID( user_id )
 
-        if not row:
-            return False, "User not found"
+        with get_db() as session:
+            user_repo = UserRepository( session )
 
-        # Verify old password
-        if not verify_password( old_password, row["password_hash"] ):
-            return False, "Current password is incorrect"
+            # Fetch user
+            user = user_repo.get_by_id( user_uuid )
+            if not user:
+                return False, "User not found"
 
-        # Hash new password
-        new_password_hash = hash_password( new_password )
+            # Verify old password
+            if not verify_password( old_password, user.password_hash ):
+                return False, "Current password is incorrect"
 
-        # Update password
-        cursor.execute(
-            """
-            UPDATE users
-            SET password_hash = ?
-            WHERE id = ?
-            """,
-            ( new_password_hash, user_id )
-        )
-        conn.commit()
+            # Hash new password
+            new_password_hash = hash_password( new_password )
 
-        return True, "Password updated successfully"
+            # Update password using repository
+            updated_user = user_repo.update_password( user_uuid, new_password_hash )
 
+            if not updated_user:
+                return False, "Password update failed"
+
+            return True, "Password updated successfully"
+
+    except ValueError:
+        return False, "Invalid user ID format"
     except Exception as e:
-        conn.rollback()
         return False, f"Password update failed: {e}"
-
-    finally:
-        conn.close()
 
 
 def deactivate_user( user_id: str ) -> Tuple[bool, str]:
@@ -376,7 +311,7 @@ def deactivate_user( user_id: str ) -> Tuple[bool, str]:
         - Database is initialized
 
     Ensures:
-        - Sets is_active to 0 (False)
+        - Sets is_active to False
         - Does not delete user record
         - Returns (success, message)
 
@@ -389,31 +324,25 @@ def deactivate_user( user_id: str ) -> Tuple[bool, str]:
     if not user_id:
         return False, "User ID required"
 
-    conn = get_auth_db_connection()
-    cursor = conn.cursor()
-
     try:
-        cursor.execute(
-            """
-            UPDATE users
-            SET is_active = 0
-            WHERE id = ?
-            """,
-            ( user_id, )
-        )
-        conn.commit()
+        # Convert string to UUID
+        user_uuid = uuid.UUID( user_id )
 
-        if cursor.rowcount == 0:
-            return False, "User not found"
+        with get_db() as session:
+            user_repo = UserRepository( session )
 
-        return True, "User deactivated successfully"
+            # Deactivate user using repository
+            updated_user = user_repo.deactivate( user_uuid )
 
+            if not updated_user:
+                return False, "User not found"
+
+            return True, "User deactivated successfully"
+
+    except ValueError:
+        return False, "Invalid user ID format"
     except Exception as e:
-        conn.rollback()
         return False, f"Deactivation failed: {e}"
-
-    finally:
-        conn.close()
 
 
 def mark_email_verified( user_id: str ) -> Tuple[bool, str]:
@@ -425,7 +354,7 @@ def mark_email_verified( user_id: str ) -> Tuple[bool, str]:
         - Database is initialized
 
     Ensures:
-        - Sets email_verified to 1 (True)
+        - Sets email_verified to True
         - Returns (success, message)
 
     Raises:
@@ -442,31 +371,25 @@ def mark_email_verified( user_id: str ) -> Tuple[bool, str]:
     if not user_id:
         return False, "User ID required"
 
-    conn = get_auth_db_connection()
-    cursor = conn.cursor()
-
     try:
-        cursor.execute(
-            """
-            UPDATE users
-            SET email_verified = 1
-            WHERE id = ?
-            """,
-            ( user_id, )
-        )
-        conn.commit()
+        # Convert string to UUID
+        user_uuid = uuid.UUID( user_id )
 
-        if cursor.rowcount == 0:
-            return False, "User not found"
+        with get_db() as session:
+            user_repo = UserRepository( session )
 
-        return True, "Email verified successfully"
+            # Mark email verified using repository
+            updated_user = user_repo.mark_email_verified( user_uuid )
 
+            if not updated_user:
+                return False, "User not found"
+
+            return True, "Email verified successfully"
+
+    except ValueError:
+        return False, "Invalid user ID format"
     except Exception as e:
-        conn.rollback()
         return False, f"Email verification failed: {e}"
-
-    finally:
-        conn.close()
 
 
 def reset_password_with_token( user_id: str, new_password: str ) -> Tuple[bool, str]:
@@ -502,35 +425,28 @@ def reset_password_with_token( user_id: str, new_password: str ) -> Tuple[bool, 
     if not is_valid:
         return False, error_msg
 
-    conn = get_auth_db_connection()
-    cursor = conn.cursor()
-
     try:
+        # Convert string to UUID
+        user_uuid = uuid.UUID( user_id )
+
         # Hash new password
         new_password_hash = hash_password( new_password )
 
-        # Update password
-        cursor.execute(
-            """
-            UPDATE users
-            SET password_hash = ?
-            WHERE id = ?
-            """,
-            ( new_password_hash, user_id )
-        )
-        conn.commit()
+        with get_db() as session:
+            user_repo = UserRepository( session )
 
-        if cursor.rowcount == 0:
-            return False, "User not found"
+            # Update password using repository
+            updated_user = user_repo.update_password( user_uuid, new_password_hash )
 
-        return True, "Password reset successfully"
+            if not updated_user:
+                return False, "User not found"
 
+            return True, "Password reset successfully"
+
+    except ValueError:
+        return False, "Invalid user ID format"
     except Exception as e:
-        conn.rollback()
         return False, f"Password reset failed: {e}"
-
-    finally:
-        conn.close()
 
 
 def quick_smoke_test():
@@ -538,7 +454,7 @@ def quick_smoke_test():
     Quick smoke test for user service.
 
     Requires:
-        - Database initialized
+        - PostgreSQL database initialized
         - All dependencies available
 
     Ensures:
@@ -553,20 +469,14 @@ def quick_smoke_test():
         - None (catches all exceptions)
     """
     import cosa.utils.util as du
-    from cosa.rest.sqlite_database import init_auth_database
 
-    du.print_banner( "User Service Smoke Test", prepend_nl=True )
+    du.print_banner( "User Service Smoke Test (PostgreSQL)", prepend_nl=True )
 
     try:
-        # Initialize database
-        print( "Initializing database..." )
-        init_auth_database()
-        print( "✓ Database initialized" )
-
         # Test 1: User registration
         print( "Testing user registration..." )
         success, message, user_id = create_user(
-            email    = "test@example.com",
+            email    = "test_service@example.com",
             password = "TestPass123!",
             roles    = ["user", "tester"]
         )
@@ -579,7 +489,7 @@ def quick_smoke_test():
         # Test 2: Duplicate email rejection
         print( "Testing duplicate email rejection..." )
         success2, message2, _ = create_user(
-            email    = "test@example.com",
+            email    = "test_service@example.com",
             password = "AnotherPass123!"
         )
         if not success2 and "already registered" in message2.lower():
@@ -591,7 +501,7 @@ def quick_smoke_test():
         # Test 3: User authentication (correct password)
         print( "Testing authentication (correct password)..." )
         success, message, user_data = authenticate_user(
-            email    = "test@example.com",
+            email    = "test_service@example.com",
             password = "TestPass123!"
         )
         if success and user_data:
@@ -603,7 +513,7 @@ def quick_smoke_test():
         # Test 4: User authentication (wrong password)
         print( "Testing authentication (wrong password)..." )
         success, message, _ = authenticate_user(
-            email    = "test@example.com",
+            email    = "test_service@example.com",
             password = "WrongPassword123!"
         )
         if not success and "invalid" in message.lower():
@@ -615,7 +525,7 @@ def quick_smoke_test():
         # Test 5: Get user by ID
         print( "Testing get user by ID..." )
         retrieved_user = get_user_by_id( user_id )
-        if retrieved_user and retrieved_user["email"] == "test@example.com":
+        if retrieved_user and retrieved_user["email"] == "test_service@example.com":
             print( "✓ User retrieved by ID" )
         else:
             print( "✗ User retrieval by ID failed" )
@@ -623,7 +533,7 @@ def quick_smoke_test():
 
         # Test 6: Get user by email
         print( "Testing get user by email..." )
-        retrieved_user = get_user_by_email( "test@example.com" )
+        retrieved_user = get_user_by_email( "test_service@example.com" )
         if retrieved_user and retrieved_user["id"] == user_id:
             print( "✓ User retrieved by email" )
         else:
@@ -646,7 +556,7 @@ def quick_smoke_test():
         # Test 8: Verify new password works
         print( "Testing authentication with new password..." )
         success, message, _ = authenticate_user(
-            email    = "test@example.com",
+            email    = "test_service@example.com",
             password = "NewTestPass456!"
         )
         if success:
@@ -667,7 +577,7 @@ def quick_smoke_test():
         # Test 10: Verify deactivated user cannot login
         print( "Testing deactivated user login..." )
         success, message, _ = authenticate_user(
-            email    = "test@example.com",
+            email    = "test_service@example.com",
             password = "NewTestPass456!"
         )
         if not success and "inactive" in message.lower():
@@ -675,6 +585,15 @@ def quick_smoke_test():
         else:
             print( "✗ Deactivated user was able to login!" )
             return False
+
+        # Cleanup: Delete test user
+        print( "Cleanup: Deleting test user..." )
+        with get_db() as session:
+            user_repo = UserRepository( session )
+            user_uuid = uuid.UUID( user_id )
+            deleted = user_repo.delete( user_uuid )
+            if deleted:
+                print( "✓ Test user deleted" )
 
         print( "\n✓ All user service tests passed!" )
         return True

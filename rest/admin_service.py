@@ -3,15 +3,20 @@ Admin Service for User Management.
 
 Provides administrative functions for managing users, roles, and account status.
 All functions include audit logging and self-protection rules.
+
+Now using PostgreSQL repository pattern.
 """
 
-import json
+import uuid
 import secrets
 import string
 from typing import Optional, List, Dict, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 
-from cosa.rest.sqlite_database import get_auth_db_connection
+from sqlalchemy import func
+
+from cosa.rest.db.database import get_db
+from cosa.rest.db.repositories import UserRepository, AuthAuditLogRepository, FailedLoginAttemptRepository
 from cosa.rest.user_service import get_user_by_id, get_user_by_email
 from cosa.rest.password_service import hash_password, validate_password_strength
 from cosa.rest.refresh_token_service import revoke_all_user_tokens
@@ -52,71 +57,53 @@ def list_users(
     # Validate and cap limit
     limit = min( limit, 1000 )
 
-    conn = get_auth_db_connection()
-    cursor = conn.cursor()
-
     try:
-        # Build WHERE clause
-        where_clauses = []
-        params = []
+        with get_db() as session:
+            user_repo = UserRepository( session )
+            from cosa.rest.postgres_models import User
 
-        # Email search filter
-        if search:
-            where_clauses.append( "email LIKE ?" )
-            params.append( f"%{search}%" )
+            # Build query with filters
+            query = session.query( User )
 
-        # Role filter
-        if role_filter and role_filter in ['admin', 'user']:
-            where_clauses.append( "roles LIKE ?" )
-            params.append( f'%"{role_filter}"%' )
+            # Email search filter
+            if search:
+                query = query.filter( User.email.ilike( f"%{search}%" ) )
 
-        # Status filter
-        if status_filter:
-            if status_filter == 'active':
-                where_clauses.append( "is_active = 1" )
-            elif status_filter == 'inactive':
-                where_clauses.append( "is_active = 0" )
+            # Role filter
+            if role_filter and role_filter in ['admin', 'user']:
+                query = query.filter( User.roles.contains( [role_filter] ) )
 
-        # Construct WHERE clause
-        where_sql = " AND ".join( where_clauses ) if where_clauses else "1=1"
+            # Status filter
+            if status_filter:
+                if status_filter == 'active':
+                    query = query.filter( User.is_active == True )
+                elif status_filter == 'inactive':
+                    query = query.filter( User.is_active == False )
 
-        # Get total count
-        count_query = f"SELECT COUNT(*) FROM users WHERE {where_sql}"
-        cursor.execute( count_query, params )
-        total_count = cursor.fetchone()[0]
+            # Get total count
+            total_count = query.count()
 
-        # Get users
-        query = f"""
-            SELECT id, email, roles, email_verified, is_active, created_at, last_login_at
-            FROM users
-            WHERE {where_sql}
-            ORDER BY created_at DESC
-            LIMIT ? OFFSET ?
-        """
-        cursor.execute( query, params + [limit, offset] )
-        rows = cursor.fetchall()
+            # Get users with pagination
+            users_objs = query.order_by( User.created_at.desc() ).limit( limit ).offset( offset ).all()
 
-        users = [
-            {
-                "id"              : row["id"],
-                "email"           : row["email"],
-                "roles"           : json.loads( row["roles"] ) if row["roles"] else ["user"],
-                "email_verified"  : bool( row["email_verified"] ),
-                "is_active"       : bool( row["is_active"] ),
-                "created_at"      : row["created_at"],
-                "last_login_at"   : row["last_login_at"]
-            }
-            for row in rows
-        ]
+            users = [
+                {
+                    "id"              : str( user.id ),
+                    "email"           : user.email,
+                    "roles"           : user.roles if user.roles else ["user"],
+                    "email_verified"  : user.email_verified,
+                    "is_active"       : user.is_active,
+                    "created_at"      : user.created_at.isoformat() if user.created_at else None,
+                    "last_login_at"   : user.last_login_at.isoformat() if user.last_login_at else None
+                }
+                for user in users_objs
+            ]
 
-        return users, total_count
+            return users, total_count
 
     except Exception as e:
         print( f"Error listing users: {e}" )
         return [], 0
-
-    finally:
-        conn.close()
 
 
 def get_user_details( user_id: str ) -> Optional[Dict]:
@@ -143,53 +130,52 @@ def get_user_details( user_id: str ) -> Optional[Dict]:
     if not user_id:
         return None
 
-    conn = get_auth_db_connection()
-    cursor = conn.cursor()
-
     try:
-        # Get user with stats
-        cursor.execute(
-            """
-            SELECT
-                u.id,
-                u.email,
-                u.roles,
-                u.email_verified,
-                u.is_active,
-                u.created_at,
-                u.last_login_at,
-                (SELECT COUNT(*) FROM auth_audit_log WHERE user_id = u.id) as audit_count,
-                (SELECT COUNT(*) FROM failed_login_attempts WHERE email = u.email) as failed_login_count
-            FROM users u
-            WHERE u.id = ?
-            """,
-            ( user_id, )
-        )
-        row = cursor.fetchone()
+        # Convert user_id to UUID
+        user_uuid = uuid.UUID( user_id )
 
-        if not row:
-            return None
+        with get_db() as session:
+            user_repo = UserRepository( session )
+            audit_repo = AuthAuditLogRepository( session )
+            failed_repo = FailedLoginAttemptRepository( session )
 
-        user_details = {
-            "id"                  : row["id"],
-            "email"               : row["email"],
-            "roles"               : json.loads( row["roles"] ) if row["roles"] else ["user"],
-            "email_verified"      : bool( row["email_verified"] ),
-            "is_active"           : bool( row["is_active"] ),
-            "created_at"          : row["created_at"],
-            "last_login_at"       : row["last_login_at"],
-            "audit_log_count"     : row["audit_count"],
-            "failed_login_count"  : row["failed_login_count"]
-        }
+            # Get user
+            user = user_repo.get_by_id( user_uuid )
+            if not user:
+                return None
 
-        return user_details
+            # Get audit log count
+            from cosa.rest.postgres_models import AuthAuditLog
+            audit_count = session.query( AuthAuditLog ).filter(
+                AuthAuditLog.user_id == user_uuid
+            ).count()
 
+            # Get failed login count
+            from cosa.rest.postgres_models import FailedLoginAttempt
+            failed_login_count = session.query( FailedLoginAttempt ).filter(
+                FailedLoginAttempt.email == user.email
+            ).count()
+
+            user_details = {
+                "id"                  : str( user.id ),
+                "email"               : user.email,
+                "roles"               : user.roles if user.roles else ["user"],
+                "email_verified"      : user.email_verified,
+                "is_active"           : user.is_active,
+                "created_at"          : user.created_at.isoformat() if user.created_at else None,
+                "last_login_at"       : user.last_login_at.isoformat() if user.last_login_at else None,
+                "audit_log_count"     : audit_count,
+                "failed_login_count"  : failed_login_count
+            }
+
+            return user_details
+
+    except ValueError:
+        print( f"Invalid user_id format: {user_id}" )
+        return None
     except Exception as e:
         print( f"Error getting user details: {e}" )
         return None
-
-    finally:
-        conn.close()
 
 
 def update_user_roles(
@@ -239,9 +225,6 @@ def update_user_roles(
     if admin_user_id == target_user_id and "admin" not in new_roles:
         return False, "Cannot remove your own admin role", None
 
-    conn = get_auth_db_connection()
-    cursor = conn.cursor()
-
     try:
         # Get current user data
         target_user = get_user_by_id( target_user_id )
@@ -250,16 +233,19 @@ def update_user_roles(
 
         old_roles = target_user["roles"]
 
-        # Update roles
-        cursor.execute(
-            """
-            UPDATE users
-            SET roles = ?
-            WHERE id = ?
-            """,
-            ( json.dumps( new_roles ), target_user_id )
-        )
-        conn.commit()
+        # Convert target_user_id to UUID
+        target_uuid = uuid.UUID( target_user_id )
+
+        with get_db() as session:
+            user_repo = UserRepository( session )
+
+            # Get and update user
+            user = user_repo.get_by_id( target_uuid )
+            if not user:
+                return False, "User not found", None
+
+            user.roles = new_roles
+            session.flush()
 
         # Log to audit
         log_auth_event(
@@ -276,12 +262,10 @@ def update_user_roles(
 
         return True, "User roles updated successfully", updated_user
 
+    except ValueError:
+        return False, "Invalid UUID format", None
     except Exception as e:
-        conn.rollback()
         return False, f"Role update failed: {e}", None
-
-    finally:
-        conn.close()
 
 
 def toggle_user_status(
@@ -325,25 +309,25 @@ def toggle_user_status(
     if admin_user_id == target_user_id and not is_active:
         return False, "Cannot deactivate your own account", None
 
-    conn = get_auth_db_connection()
-    cursor = conn.cursor()
-
     try:
         # Get current user data
         target_user = get_user_by_id( target_user_id )
         if not target_user:
             return False, "User not found", None
 
-        # Update status
-        cursor.execute(
-            """
-            UPDATE users
-            SET is_active = ?
-            WHERE id = ?
-            """,
-            ( 1 if is_active else 0, target_user_id )
-        )
-        conn.commit()
+        # Convert target_user_id to UUID
+        target_uuid = uuid.UUID( target_user_id )
+
+        with get_db() as session:
+            user_repo = UserRepository( session )
+
+            # Get and update user
+            user = user_repo.get_by_id( target_uuid )
+            if not user:
+                return False, "User not found", None
+
+            user.is_active = is_active
+            session.flush()
 
         # Revoke all tokens if deactivating
         if not is_active:
@@ -366,12 +350,10 @@ def toggle_user_status(
         message = f"User {status_text} successfully"
         return True, message, updated_user
 
+    except ValueError:
+        return False, "Invalid UUID format", None
     except Exception as e:
-        conn.rollback()
         return False, f"Status update failed: {e}", None
-
-    finally:
-        conn.close()
 
 
 def admin_reset_password(
@@ -438,20 +420,18 @@ def admin_reset_password(
     except Exception as e:
         return False, f"Password hashing failed: {e}", None
 
-    conn = get_auth_db_connection()
-    cursor = conn.cursor()
-
     try:
-        # Update password
-        cursor.execute(
-            """
-            UPDATE users
-            SET password_hash = ?
-            WHERE id = ?
-            """,
-            ( password_hash, target_user_id )
-        )
-        conn.commit()
+        # Convert target_user_id to UUID
+        target_uuid = uuid.UUID( target_user_id )
+
+        with get_db() as session:
+            user_repo = UserRepository( session )
+
+            # Update password using repository
+            updated_user = user_repo.update_password( target_uuid, password_hash )
+
+            if not updated_user:
+                return False, "Password update failed", None
 
         # Log to audit
         audit_details = f"Admin password reset for {target_user['email']}"
@@ -469,9 +449,7 @@ def admin_reset_password(
 
         return True, "Password reset successfully", temp_password
 
+    except ValueError:
+        return False, "Invalid UUID format", None
     except Exception as e:
-        conn.rollback()
         return False, f"Password reset failed: {e}", None
-
-    finally:
-        conn.close()

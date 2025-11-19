@@ -970,11 +970,17 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                             return [(95.0, snapshot)]
 
             # Check for exact match in local cache (backward compatibility)
-            if question in self._question_lookup:
-                if self.debug:
-                    print( f"Found exact match in local cache for: {du.truncate_string( question, 50 )}" )
+            # IMPORTANT: Cache stores normalized questions, so we must normalize the query
+            if self._normalizer and self._normalizer is not False:
+                question_normalized_for_cache = self._normalizer.normalize( question )
+            else:
+                question_normalized_for_cache = question.lower()  # Fallback if normalizer unavailable
 
-                id_hash = self._question_lookup[question]
+            if question_normalized_for_cache in self._question_lookup:
+                if self.debug:
+                    print( f"Found exact match in local cache for: {du.truncate_string( question_normalized_for_cache, 50 )}" )
+
+                id_hash = self._question_lookup[question_normalized_for_cache]
                 record = self._id_lookup[id_hash]
                 snapshot = self._record_to_snapshot( record )
 
