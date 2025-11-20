@@ -102,7 +102,7 @@ def store_refresh_token(
                 token_hash = token_hash,
                 expires_at = expires_at,
                 user_agent = user_agent or "Unknown",
-                ip_address = ip_address or "Unknown"
+                ip_address = ip_address  # PostgreSQL inet type requires valid IP or NULL
             )
 
             return True, "Refresh token stored successfully"

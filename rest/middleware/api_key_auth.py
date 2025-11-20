@@ -24,10 +24,11 @@ Usage:
 import re
 import bcrypt
 from typing import Optional, Annotated
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import Header, HTTPException, status
 
-from cosa.rest.sqlite_database import get_auth_db_connection
+from cosa.rest.db.database import get_db
+from cosa.rest.db.repositories import ApiKeyRepository
 
 
 async def validate_api_key( api_key: str ) -> Optional[str]:
@@ -56,45 +57,24 @@ async def validate_api_key( api_key: str ) -> Optional[str]:
         - None (returns None on error)
     """
     try:
-        conn = get_auth_db_connection()
-        cursor = conn.cursor()
+        with get_db() as session:
+            api_key_repo = ApiKeyRepository( session )
 
-        # Query all active keys (indexed lookup on is_active)
-        cursor.execute(
-            """
-            SELECT id, user_id, key_hash
-            FROM api_keys
-            WHERE is_active = 1
-            """
-        )
+            # Query all active keys (indexed lookup on is_active)
+            active_keys = api_key_repo.get_active_keys()
 
-        rows = cursor.fetchall()
+            # Check each key (timing-safe bcrypt comparison)
+            for key_obj in active_keys:
+                # Bcrypt comparison (timing-safe)
+                if bcrypt.checkpw( api_key.encode( 'utf-8' ), key_obj.key_hash.encode( 'utf-8' ) ):
+                    # Valid key found - update last_used_at
+                    key_obj.last_used_at = datetime.now( timezone.utc )
+                    # Session will auto-commit on context exit
 
-        # Check each key (timing-safe bcrypt comparison)
-        for row in rows:
-            key_id = row['id']
-            user_id = row['user_id']
-            key_hash = row['key_hash']
+                    return str( key_obj.user_id )
 
-            # Bcrypt comparison (timing-safe)
-            if bcrypt.checkpw( api_key.encode( 'utf-8' ), key_hash.encode( 'utf-8' ) ):
-                # Valid key found - update last_used_at
-                cursor.execute(
-                    """
-                    UPDATE api_keys
-                    SET last_used_at = ?
-                    WHERE id = ?
-                    """,
-                    ( datetime.utcnow().isoformat(), key_id )
-                )
-                conn.commit()
-                conn.close()
-
-                return user_id
-
-        # No matching key found
-        conn.close()
-        return None
+            # No matching key found
+            return None
 
     except Exception as e:
         # Log error but don't expose details to client

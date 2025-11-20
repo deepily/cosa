@@ -179,6 +179,31 @@ class FailedLoginAttemptRepository(BaseRepository[FailedLoginAttempt]):
             FailedLoginAttempt.attempt_time >= cutoff_time
         ).count()
 
+    def delete_by_email( self, email: str ) -> int:
+        """
+        Delete all failed login attempts for an email address.
+
+        Requires:
+            - email: Email address to clear attempts for
+
+        Ensures:
+            - All failed attempts for email are deleted
+            - Case-insensitive email matching
+
+        Returns:
+            Number of attempts deleted
+
+        Example:
+            # Clear failed attempts after successful login
+            deleted = attempt_repo.delete_by_email( "test@example.com" )
+        """
+        result = self.session.query( FailedLoginAttempt ).filter(
+            FailedLoginAttempt.email == email.lower()
+        ).delete( synchronize_session=False )
+
+        self.session.flush()
+        return result
+
     def cleanup_old( self, days_old: int = 30 ) -> int:
         """
         Delete old failed login attempts.

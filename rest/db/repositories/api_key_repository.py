@@ -220,3 +220,28 @@ class ApiKeyRepository(BaseRepository[ApiKey]):
             ApiKey.user_id == user_id,
             ApiKey.is_active == True
         ).count()
+
+    def get_active_keys( self ) -> List[ApiKey]:
+        """
+        Get all active API keys for authentication middleware.
+
+        Requires:
+            - Database connection available
+
+        Ensures:
+            - Returns only active keys (is_active = True)
+            - Used by middleware to validate incoming API keys
+
+        Returns:
+            List of all active ApiKey instances
+
+        Example:
+            # Middleware authentication
+            active_keys = api_key_repo.get_active_keys()
+            for key in active_keys:
+                if bcrypt.checkpw( incoming_key, key.key_hash ):
+                    # Valid key found
+        """
+        return self.session.query( ApiKey ).filter(
+            ApiKey.is_active == True
+        ).all()

@@ -30,12 +30,12 @@ class CanonicalSynonymsTable:
     with exact matching at verbatim, normalized, and gist levels.
     """
 
-    def __init__( self, debug: bool = False, verbose: bool = False ) -> None:
+    def __init__( self, db_path: Optional[str] = None, debug: bool = False, verbose: bool = False ) -> None:
         """
         Initialize the canonical synonyms table.
 
         Requires:
-            - LUPIN_CONFIG_MGR_CLI_ARGS environment variable is set
+            - If db_path not provided: LUPIN_CONFIG_MGR_CLI_ARGS environment variable is set
             - Database path is valid in configuration
 
         Ensures:
@@ -51,14 +51,19 @@ class CanonicalSynonymsTable:
 
         self.debug   = debug
         self.verbose = verbose
-        self._config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
 
         # Initialize text processors
         self._normalizer = Normalizer()
         self._embedding_manager = EmbeddingManager( debug=debug, verbose=verbose )
 
-        # Get database path from config
-        uri = du.get_project_root() + self._config_mgr.get( "database_path_wo_root" )
+        # Get database path from parameter or config
+        if db_path:
+            # Use provided path (for testing or custom scenarios)
+            uri = db_path
+        else:
+            # Load from configuration (production use)
+            self._config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+            uri = du.get_project_root() + self._config_mgr.get( "database_path_wo_root" )
 
         if self.debug:
             print( f"Connecting to LanceDB at: {uri}" )

@@ -8,9 +8,10 @@ Provides failed login tracking and account lockout functionality:
 - Cleanup of old attempts
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Tuple, Optional
-from cosa.rest.sqlite_database import get_auth_db_connection
+from cosa.rest.db.database import get_db
+from cosa.rest.db.repositories import FailedLoginAttemptRepository
 from cosa.config.configuration_manager import ConfigurationManager
 
 
@@ -37,21 +38,9 @@ def record_failed_login( email: str, ip_address: Optional[str] = None ) -> None:
         record_failed_login( "user@example.com", "192.168.1.1" )
     """
     try:
-        conn = get_auth_db_connection()
-        cursor = conn.cursor()
-
-        attempt_time = datetime.utcnow().isoformat()
-
-        cursor.execute(
-            """
-            INSERT INTO failed_login_attempts ( email, ip_address, attempt_time )
-            VALUES ( ?, ?, ? )
-            """,
-            (email, ip_address, attempt_time)
-        )
-
-        conn.commit()
-        conn.close()
+        with get_db() as session:
+            attempt_repo = FailedLoginAttemptRepository( session )
+            attempt_repo.record_attempt( email, ip_address or "0.0.0.0" )
 
     except Exception as e:
         print( f"Failed to record failed login: {str( e )}" )
@@ -84,39 +73,24 @@ def check_account_lockout( email: str ) -> Tuple[bool, Optional[str]]:
         max_attempts = config_mgr.get( "auth max failed attempts", 5, return_type="int" )
         lockout_minutes = config_mgr.get( "auth lockout duration minutes", 15, return_type="int" )
 
-        conn = get_auth_db_connection()
-        cursor = conn.cursor()
+        with get_db() as session:
+            attempt_repo = FailedLoginAttemptRepository( session )
 
-        # Calculate lockout window (now - lockout_minutes)
-        lockout_window_start = (datetime.utcnow() - timedelta( minutes=lockout_minutes )).isoformat()
+            # Count attempts in lockout window
+            attempt_count = attempt_repo.count_recent_by_email( email, minutes=lockout_minutes )
 
-        # Count attempts in lockout window
-        cursor.execute(
-            """
-            SELECT COUNT(*), MAX( attempt_time )
-            FROM failed_login_attempts
-            WHERE email = ? AND attempt_time >= ?
-            """,
-            (email, lockout_window_start)
-        )
+            # Check if locked
+            if attempt_count >= max_attempts:
+                # Get most recent attempt to calculate unlock time
+                recent_attempts = attempt_repo.get_recent_attempts_by_email( email, minutes=lockout_minutes )
 
-        row = cursor.fetchone()
-        conn.close()
+                if recent_attempts:
+                    last_attempt_time = recent_attempts[0].attempt_time
+                    unlock_time = last_attempt_time + timedelta( minutes=lockout_minutes )
 
-        if not row:
-            return False, None
-
-        attempt_count, last_attempt_time = row
-
-        # Check if locked
-        if attempt_count >= max_attempts:
-            # Calculate unlock time
-            last_attempt = datetime.fromisoformat( last_attempt_time )
-            unlock_time = last_attempt + timedelta( minutes=lockout_minutes )
-
-            # Check if still locked
-            if datetime.utcnow() < unlock_time:
-                return True, unlock_time.isoformat()
+                    # Check if still locked
+                    if datetime.now( timezone.utc ) < unlock_time:
+                        return True, unlock_time.isoformat()
 
         return False, None
 
@@ -143,19 +117,9 @@ def clear_failed_attempts( email: str ) -> None:
         clear_failed_attempts( "user@example.com" )
     """
     try:
-        conn = get_auth_db_connection()
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            DELETE FROM failed_login_attempts
-            WHERE email = ?
-            """,
-            (email,)
-        )
-
-        conn.commit()
-        conn.close()
+        with get_db() as session:
+            attempt_repo = FailedLoginAttemptRepository( session )
+            attempt_repo.delete_by_email( email )
 
     except Exception as e:
         print( f"Failed to clear failed attempts: {str( e )}" )
@@ -181,23 +145,12 @@ def cleanup_old_attempts( hours: int = 24 ) -> int:
         print( f"Cleaned up {deleted} old attempts" )
     """
     try:
-        conn = get_auth_db_connection()
-        cursor = conn.cursor()
+        with get_db() as session:
+            attempt_repo = FailedLoginAttemptRepository( session )
 
-        cutoff_time = (datetime.utcnow() - timedelta( hours=hours )).isoformat()
-
-        cursor.execute(
-            """
-            DELETE FROM failed_login_attempts
-            WHERE attempt_time < ?
-            """,
-            (cutoff_time,)
-        )
-
-        deleted_count = cursor.rowcount
-
-        conn.commit()
-        conn.close()
+            # Convert hours to days for cleanup_old() method
+            days = hours / 24.0
+            deleted_count = attempt_repo.cleanup_old( days_old=int( days ) if days >= 1 else 1 )
 
         return deleted_count
 
@@ -227,24 +180,11 @@ def get_failed_attempts_count( email: str, minutes: int = 15 ) -> int:
         print( f"{count} failed attempts in last 15 minutes" )
     """
     try:
-        conn = get_auth_db_connection()
-        cursor = conn.cursor()
+        with get_db() as session:
+            attempt_repo = FailedLoginAttemptRepository( session )
+            count = attempt_repo.count_recent_by_email( email, minutes=minutes )
 
-        window_start = (datetime.utcnow() - timedelta( minutes=minutes )).isoformat()
-
-        cursor.execute(
-            """
-            SELECT COUNT(*)
-            FROM failed_login_attempts
-            WHERE email = ? AND attempt_time >= ?
-            """,
-            (email, window_start)
-        )
-
-        row = cursor.fetchone()
-        conn.close()
-
-        return row[0] if row else 0
+        return count
 
     except Exception as e:
         print( f"Failed to get failed attempts count: {str( e )}" )
