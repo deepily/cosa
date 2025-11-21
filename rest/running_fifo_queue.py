@@ -53,6 +53,8 @@ class RunningFifoQueue( FifoQueue ):
         
         self.auto_debug          = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
         self.inject_bugs         = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
+        self.debug               = False if config_mgr is None else config_mgr.get( "app_debug",   default=False, return_type="boolean" )
+        self.verbose             = False if config_mgr is None else config_mgr.get( "app_verbose", default=False, return_type="boolean" )
         self.io_tbl              = InputAndOutputTable()
     
     
@@ -237,8 +239,8 @@ class RunningFifoQueue( FifoQueue ):
             formatted_output    = running_job.do_all()
         
         except Exception as e:
-            
-            du.print_stack_trace( e, explanation="do_all() failed", caller="RunningFifoQueue._handle_base_agent()" )
+
+            du.print_stack_trace( e, explanation="do_all() failed", caller="RunningFifoQueue._handle_base_agent()", debug=self.debug )
             running_job = self._handle_error_case( code_response, running_job, truncated_question )
         
         du.print_banner( f"Job [{running_job.last_question_asked}] complete...", prepend_nl=True, end="\n" )

@@ -197,9 +197,12 @@ class SolutionSnapshot( RunnableCode ):
         dirty                      = False
 
         self.push_counter          = push_counter
-        # Use Normalizer for consistent normalization across all components
-        self.question              = self._normalizer.normalize( question ) if question else ""
-        self.question_normalized   = question_normalized
+        # Store verbatim question (don't normalize - that destroys original operators like +, -, etc.)
+        self.question              = question if question else ""
+        # Populate normalized version (with operators preserved via MATH_OPERATORS in Normalizer)
+        self.question_normalized   = question_normalized if question_normalized else (
+            self._normalizer.normalize( question ) if question else ""
+        )
         self.question_gist         = question_gist
         # self.question_gist         = SolutionSnapshot.remove_non_alphanumerics( question_gist )
         self.thoughts              = thoughts
@@ -282,7 +285,7 @@ class SolutionSnapshot( RunnableCode ):
             self.question_gist_embedding = question_gist_embedding
         
         # If the code embedding is empty, generate it
-        if code and not code_embedding:
+        if len( code ) > 0 and not code_embedding:
             self.code_embedding = self._embedding_mgr.generate_embedding( " ".join( code ), normalize_for_cache=False )
             dirty = True
         else:
@@ -347,23 +350,33 @@ class SolutionSnapshot( RunnableCode ):
     def create( cls, agent: Any ) -> 'SolutionSnapshot':
         """
         Create snapshot from agent instance.
-        
+
         Requires:
             - agent has required attributes (question, code, etc.)
             - agent.prompt_response_dict is populated
-            
+
         Ensures:
             - Returns new SolutionSnapshot with agent data
             - Copies all relevant fields from agent
-            
+            - Populates all three question representations (verbatim, normalized, gist)
+
         Raises:
             - AttributeError if agent missing required fields
         """
         print( "(create_solution_snapshot) TODO: Reconcile how we're going to get a dynamic path to the solution file's directory" )
-        
+
+        # Get normalizer to create normalized representation
+        from cosa.memory.normalizer import Normalizer
+        normalizer = Normalizer()
+
+        # Extract all three question representations
+        verbatim_question = agent.last_question_asked  # Original user input
+        normalized_question = normalizer.normalize( verbatim_question )  # Normalized with operators preserved
+
         # Instantiate a new SolutionSnapshot object using the contents of the calendaring or function mapping agent
         return SolutionSnapshot(
-                         question=agent.question,
+                         question=verbatim_question,
+               question_normalized=normalized_question,
                     question_gist=agent.question_gist,
               last_question_asked=agent.last_question_asked,
                   routing_command=agent.routing_command,

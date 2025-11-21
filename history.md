@@ -1,6 +1,8 @@
 # COSA Development History
 
-> **📝 CURRENT**: 2025.11.19 - PostgreSQL Repository Migration (Phase 2.6.3) COMPLETE! Migrated 8 COSA service layer files from direct SQLite database calls to PostgreSQL repository pattern, aligning with parent Lupin's infrastructure evolution. **Services Migrated**: email_token_service.py (-113 lines), rate_limiter.py (-82 lines), api_key_auth.py middleware (-29 lines), refresh_token_service.py (-1 line). **Repository Integration**: ApiKeyRepository, FailedLoginAttemptRepository, EmailVerificationTokenRepository, PasswordResetTokenRepository. **Timezone Modernization**: All datetime operations migrated from `datetime.utcnow()` → `datetime.now(timezone.utc)` (Python 3.12+ best practice). **Testing Infrastructure**: CanonicalSynonymsTable updated with optional db_path parameter for test isolation (-6 lines). **Total Impact**: 8 files modified, +186 insertions/-291 deletions (net -105 lines), cleaner abstraction layer. ✅ Ready for integration testing! 🐘🔄
+> **📝 CURRENT**: 2025.11.20 - Parent Lupin Sync: Test Infrastructure & Code Quality Improvements! Synced 7 files from parent Lupin repository with improvements from 100% Test Adherence achievement (2025.11.20). **Configuration Manager**: Enhanced docstrings with Testing/Notes sections documenting atomic `_reset_singleton=True` pattern for test isolation. **Normalizer**: Added MATH_OPERATORS preservation ({+, -, *, /, =, >, <} etc.) for mathematical query support. **Solution Snapshot**: Improved question handling (verbatim storage + normalized indexing), fixed field mapping bug (code_returns → code). **Error Handling**: Enhanced `print_stack_trace()` with optional debug flag (always shows exception type/message, full trace only if debug=True). **Defensive Programming**: Added directory creation guard in util_code_runner for Docker environments, added debug/verbose flags to RunningFifoQueue. **Total Impact**: 7 files modified, +95 insertions/-29 deletions (net +66 lines). ✅ Improved test reliability and error diagnostics! 🔧✨
+
+> **Previous Achievement**: 2025.11.19 - PostgreSQL Repository Migration (Phase 2.6.3) COMPLETE! Migrated 8 COSA service layer files from direct SQLite database calls to PostgreSQL repository pattern, aligning with parent Lupin's infrastructure evolution. **Services Migrated**: email_token_service.py (-113 lines), rate_limiter.py (-82 lines), api_key_auth.py middleware (-29 lines), refresh_token_service.py (-1 line). **Repository Integration**: ApiKeyRepository, FailedLoginAttemptRepository, EmailVerificationTokenRepository, PasswordResetTokenRepository. **Timezone Modernization**: All datetime operations migrated from `datetime.utcnow()` → `datetime.now(timezone.utc)` (Python 3.12+ best practice). **Testing Infrastructure**: CanonicalSynonymsTable updated with optional db_path parameter for test isolation (-6 lines). **Total Impact**: 8 files modified, +186 insertions/-291 deletions (net -105 lines), cleaner abstraction layer. ✅ Ready for integration testing! 🐘🔄
 
 > **Previous Achievement**: 2025.11.18 - LanceDB GCS Multi-Backend Testing & Normalization Fix COMPLETE! Test-driven development approach (Option B) achieved 100% test pass rate across all backends. **Testing Infrastructure**: Created GCS test bucket (gs://lupin-lancedb-test/), configured ADC authentication, validated Testing-GCS config block. **Unit Tests**: 11/11 PASS (path resolution). **Critical Bug Fixed**: Normalization mismatch between insert/query operations (50%→100% pass rate). Root cause: `SolutionSnapshot.__init__()` used deprecated `remove_non_alphanumerics()` vs `Normalizer.normalize()` in queries. **Solution**: Unified all components to use `Normalizer.normalize()`, fixed cache lookup normalization. **Final Results**: Local backend 3/3 PASS, GCS backend 3/3 PASS, unit tests 11/11 PASS. **Deployment Status**: Testing complete (100% pass rate), deployment script verified. ⏳ **NEXT STEP**: Cloud Run test deployment (not yet deployed). 🎯✅
 
@@ -39,6 +41,184 @@
 > **🚨 RESOLVED**: **repo/branch_change_analysis.py COMPLETE REFACTOR** ✅✅✅
 >
 > The quick-and-dirty git diff analysis tool has been completely refactored into a professional package that EXCEEDS all COSA standards:
+
+## 2025.11.20 - Parent Lupin Sync: Test Infrastructure & Code Quality Improvements COMPLETE
+
+### Summary
+Synced 7 COSA files with improvements from parent Lupin repository's 100% Test Adherence achievement (2025.11.20). Updates focus on test infrastructure reliability, mathematical query support, error diagnostics, and defensive programming for Docker environments. Changes originated from parent Lupin sessions solving ConfigurationManager singleton reset issues, Docker network mismatches, and test coverage improvements (77/77 tests passing, 0 failures, 0 skips).
+
+### Work Performed
+
+#### Configuration Manager Documentation Enhancement - COMPLETE ✅
+**File**: `config/configuration_manager.py` (+32/-6 lines, net +26 lines)
+
+**Changes**:
+- Enhanced singleton decorator docstring with Testing and Notes sections
+- Documented atomic `_reset_singleton=True` pattern for test isolation
+- Clarified two-step vs atomic reset approaches
+- Added usage examples for test scenarios
+
+**Benefits**:
+- Clear guidance for test authors on proper singleton reset
+- Atomic pattern prevents race conditions in test setup
+- Underscore prefix signals "special testing hook, not normal API"
+
+#### Normalizer Mathematical Operators Support - COMPLETE ✅
+**File**: `memory/normalizer.py` (+20/-4 lines, net +16 lines)
+
+**Changes**:
+- Added MATH_OPERATORS constant: `{'+', '-', '*', '/', '=', '>', '<', '>=', '<=', '!=', '==', '%', '^', '(', ')'}`
+- Modified normalization logic to preserve operators even though they're punctuation
+- Added regex spacing normalization: `"2+2"` → `"2 + 2"` for consistent formatting
+
+**Rationale**:
+- Mathematical queries need operators preserved (e.g., "what is 2+2" vs "what is two and two")
+- SpaCy treats operators as punctuation, but they carry semantic meaning
+- Enables LanceDB similarity search for mathematical/code questions
+
+**Impact**:
+- Improved search accuracy for math/programming queries
+- Consistent operator spacing enhances embedding quality
+
+#### Solution Snapshot Question Handling Improvements - COMPLETE ✅
+**File**: `memory/solution_snapshot.py` (+29/-8 lines, net +21 lines)
+
+**Changes**:
+- **Verbatim Storage**: Store original question without normalization (preserves operators)
+- **Normalized Indexing**: Populate `question_normalized` using new MATH_OPERATORS-aware normalizer
+- **Three Question Representations**: verbatim (user input), normalized (indexing), gist (summary)
+- **Field Mapping Bug Fix**: Changed `code_returns` → `code` in `_record_to_snapshot()` (correct field name)
+
+**Before/After**:
+```python
+# BEFORE (destroys operators)
+self.question = self._normalizer.normalize( question )  # "2+2" → "2 2"
+
+# AFTER (preserves original)
+self.question = question  # "2+2" → "2+2"
+self.question_normalized = self._normalizer.normalize( question )  # "2 + 2"
+```
+
+**Benefits**:
+- Users see their original question verbatim in results
+- Normalized version used for similarity search (with operators preserved)
+- Fixed bug where code field was loaded from wrong column name
+
+#### LanceDB Solution Manager Debug Output - COMPLETE ✅
+**File**: `memory/lancedb_solution_manager.py` (+6/-2 lines, net +4 lines)
+
+**Changes**:
+- Show verbatim question in debug output instead of normalized version
+- Uses `snapshot.last_question_asked` or `snapshot.question` for clarity
+- Helps developers understand what user actually typed
+
+**Impact**:
+- Clearer debug output for troubleshooting search issues
+
+#### Error Handling Improvements - COMPLETE ✅
+**File**: `utils/util.py` (+27/-7 lines, net +20 lines)
+
+**Changes**:
+- Added optional `debug` parameter to `print_stack_trace()` (default: False)
+- **Always Print**: Exception type and message (key improvement!)
+- **Conditional Print**: Full stack trace only if `debug=True`
+- Uses `traceback.format_exception_only()` for clean exception display
+
+**Before/After**:
+```python
+# BEFORE (always verbose)
+def print_stack_trace(exception, explanation, caller, prepend_nl=True):
+    # Always prints full stack trace (noisy in production)
+
+# AFTER (configurable verbosity)
+def print_stack_trace(exception, explanation, caller, prepend_nl=True, debug=False):
+    # Always: exception type and message
+    # Optional: full stack trace if debug=True
+```
+
+**Benefits**:
+- Production: Clean error messages without verbose stack traces
+- Development: Full diagnostic info when `debug=True`
+- Better error visibility (exception message always shown)
+
+#### Running FIFO Queue Debug Integration - COMPLETE ✅
+**File**: `rest/running_fifo_queue.py` (+6/-2 lines, net +4 lines)
+
+**Changes**:
+- Added `self.debug` and `self.verbose` flags from ConfigurationManager
+- Passes `debug` flag to `print_stack_trace()` calls
+- Respects app-level debug configuration
+
+**Impact**:
+- Error output verbosity controlled by `app_debug` config key
+- Cleaner production logs, verbose debugging when needed
+
+#### Defensive Programming for Docker - COMPLETE ✅
+**File**: `utils/util_code_runner.py` (+4 lines)
+
+**Changes**:
+- Added `os.makedirs( os.path.dirname( code_path ), exist_ok=True )`
+- Creates `/io/` directory if it doesn't exist before writing code
+
+**Rationale**:
+- Docker containers may not have `/io/` directory pre-created
+- Prevents "No such file or directory" errors during code execution
+- Defensive programming pattern for container environments
+
+### Files Modified
+
+**COSA Repository** (7 files modified, 0 files created):
+
+1. `config/configuration_manager.py` (+32/-6 lines) - Enhanced testing documentation
+2. `memory/normalizer.py` (+20/-4 lines) - Mathematical operator preservation
+3. `memory/solution_snapshot.py` (+29/-8 lines) - Verbatim/normalized question handling
+4. `memory/lancedb_solution_manager.py` (+6/-2 lines) - Debug output clarity
+5. `rest/running_fifo_queue.py` (+6/-2 lines) - Debug flag integration
+6. `utils/util.py` (+27/-7 lines) - Conditional stack trace verbosity
+7. `utils/util_code_runner.py` (+4 lines) - Docker directory guard
+
+**Total Impact**: 7 files modified, +95 insertions/-29 deletions (net +66 lines)
+
+### Integration with Parent Lupin
+
+**Parent Session Context** (2025.11.20):
+- Fixed ConfigurationManager singleton reset issues (atomic `_reset_singleton=True` pattern)
+- Fixed Docker network mismatch (PostgreSQL DNS resolution)
+- Enabled 11 skipped tests (GCS integration, multi-device sync, CLI tests)
+- Achieved 77/77 tests passing (100% test adherence)
+
+**COSA Benefit**:
+- Inherits improved testing patterns from parent repository
+- Mathematical query support enables richer LanceDB search
+- Better error diagnostics for production debugging
+- Docker compatibility improvements
+
+### Current Status
+
+- **Testing Infrastructure**: ✅ ENHANCED - ConfigurationManager atomic reset pattern documented
+- **Normalizer**: ✅ IMPROVED - Mathematical operators preserved in queries
+- **Solution Snapshot**: ✅ FIXED - Verbatim question storage + field mapping bug resolved
+- **Error Handling**: ✅ IMPROVED - Configurable stack trace verbosity
+- **Docker Compatibility**: ✅ ENHANCED - Defensive directory creation
+
+### Next Session Priorities
+
+1. **Integration Testing**: Validate mathematical query support with LanceDB
+   - Test queries like "what is 2+2", "calculate 10/5", "compare x > y"
+   - Verify operator preservation through normalization pipeline
+   - Validate verbatim vs normalized question display
+
+2. **PostgreSQL Migration Continuation**: Monitor parent Lupin Phase 2.6.3+ progress
+   - Additional repository implementations
+   - Migration of remaining SQLite dependencies
+   - UserRepository layer integration
+
+3. **Error Handling Testing**: Validate debug flag behavior
+   - Test production mode (debug=False): clean error messages
+   - Test development mode (debug=True): full stack traces
+   - Verify RunningFifoQueue respects app_debug config
+
+---
 
 ## 2025.11.19 - PostgreSQL Repository Migration (Phase 2.6.3) COMPLETE
 

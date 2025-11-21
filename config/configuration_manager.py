@@ -10,16 +10,27 @@ import cosa.utils.util as du
 def singleton( cls: type ) -> Callable[..., Any]:
     """
     Decorator that implements the Singleton pattern.
-    
+
     Requires:
         - cls is a valid class type
-        
+
     Ensures:
         - Only one instance of cls is created
         - All calls return the same instance
         - Prints messages about instance creation/reuse
         - Provides a reset method for testing
-        
+
+    Testing:
+        - Use _reset_singleton=True parameter for atomic reset+recreate:
+            obj = ConfigurationManager(env_var_name="...", _reset_singleton=True)
+        - Use reset_for_testing() method for explicit reset:
+            ConfigurationManager.reset_for_testing()
+
+    Notes:
+        - _reset_singleton parameter is intercepted by decorator (never reaches class)
+        - Underscore prefix signals "special testing hook, not normal API"
+        - Atomic reset pattern (_reset_singleton=True) preferred over two-step reset
+
     Raises:
         - None
     """
@@ -72,12 +83,12 @@ class ConfigurationManager():
 
         """
         Initialize the configuration manager.
-        
+
         Requires:
             - If env_var_name is provided, the environment variable must exist and contain valid config info
             - Either env_var_name OR (config_path and splainer_path) must be provided
             - config_path and splainer_path must be valid file paths if provided
-            
+
         Ensures:
             - Singleton instance is created or reused
             - Configuration is loaded from explicitly provided filepaths or specified by an environment variable
@@ -85,7 +96,16 @@ class ConfigurationManager():
             - Default values are applied
             - CLI overrides are processed
             - Splainer definitions are loaded
-            
+
+        Testing:
+            - To reset singleton in tests, use _reset_singleton=True parameter:
+                config_mgr = ConfigurationManager(
+                    env_var_name="TEST_ENV_VAR",
+                    _reset_singleton=True  # Atomic reset for clean test state
+                )
+            - This parameter is intercepted by @singleton decorator and never reaches __init__
+            - Preferred over ConfigurationManager.reset_for_testing() for atomic operation
+
         Raises:
             - ValueError if env_var_name is provided but not found in environment
             - ValueError if no initialization parameters are provided (zero-argument case)

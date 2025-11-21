@@ -301,6 +301,10 @@ def assemble_and_run_solution( solution_code: list[str], example_code: str, path
         code_file_path = "/io/code_execution.py"
         
     code_path = du.get_project_root() + code_file_path
+
+    # Create directory if it doesn't exist (defensive programming for Docker environments)
+    os.makedirs( os.path.dirname( code_path ), exist_ok=True )
+
     du.write_lines_to_file( code_path, solution_code )
     
     # Stash current working directory, so we can return to it after code has finished executing

@@ -384,7 +384,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             created_date=record.get( "created_date", "" ),
             updated_date=record.get( "updated_date", "" ),
             solution_summary=record.get( "solution_summary", "" ),
-            code=record.get( "code_returns", "" ),  # Map to code field
+            code=record.get( "code", [] ),  # Load actual code list from correct field
             programming_language=record.get( "programming_language", "python" ),
             language_version=record.get( "language_version", "3.10" )
         )
@@ -620,7 +620,9 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             if not exists:
                 # Brand new snapshot - use direct INSERT
                 if self.debug:
-                    print( f"Inserting new snapshot for: {du.truncate_string( question, 50 )}" )
+                    # Show verbatim question for clarity (not normalized version)
+                    verbatim = snapshot.last_question_asked or snapshot.question or question
+                    print( f"Inserting new snapshot for: {du.truncate_string( verbatim, 50 )}" )
                 return self._insert_new_snapshot( snapshot )
             else:
                 # Existing snapshot - determine best update approach

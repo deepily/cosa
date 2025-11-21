@@ -81,7 +81,11 @@ class Normalizer:
         "how's": "how is",
         "ain't": "am not"  # or "is not" depending on context
     }
-    
+
+    # Math and comparison operators that should be preserved during normalization
+    # These are punctuation in spaCy but carry semantic meaning in queries
+    MATH_OPERATORS = {'+', '-', '*', '/', '=', '>', '<', '>=', '<=', '!=', '==', '%', '^', '(', ')'}
+
     def __new__( cls ):
         """
         Create or return singleton instance.
@@ -226,8 +230,13 @@ class Normalizer:
             sent_tokens = []
             
             for token in sent:
-                if token.text.lower() not in self.FILLER_WORDS and not token.is_punct:
-                    # Use lemma for content words, original for function words
+                # Preserve math operators even though they're punctuation
+                is_math_operator = token.text in self.MATH_OPERATORS
+                should_keep = (token.text.lower() not in self.FILLER_WORDS and
+                               (not token.is_punct or is_math_operator))
+
+                if should_keep:
+                    # Use lemma for content words, original for function words and operators
                     if token.pos_ in ['NOUN', 'VERB', 'ADJ', 'ADV']:
                         sent_tokens.append( token.lemma_ )
                     else:
@@ -235,8 +244,11 @@ class Normalizer:
                         
             if sent_tokens:
                 normalized_sentences.append( ' '.join( sent_tokens ) )
-        
+
         result = ' '.join( normalized_sentences )
+
+        # Ensure consistent spacing around math operators (handles cases like "2+2" -> "2 + 2")
+        result = re.sub( r'(\d)([+\-*/=<>])(\d)', r'\1 \2 \3', result )
 
         if self.debug and self.verbose: du.print_banner( f"Normalized result: {result}" )
 

@@ -856,28 +856,41 @@ def print_list(list_to_print: list[Any], end: str = "\n") -> None:
 
 
 def print_stack_trace(exception: Exception, explanation: str = "Unknown reason",
-                      caller: str = "Unknown caller", prepend_nl: bool = True) -> None:
+                      caller: str = "Unknown caller", prepend_nl: bool = True,
+                      debug: bool = False) -> None:
     """
     Print a formatted stack trace for an exception.
-    
+
     Requires:
         - exception is an Exception object with a traceback
         - explanation and caller are strings describing the error context
-        
+
     Ensures:
         - Prints a banner with error message
-        - Prints the full stack trace from the exception
-        
+        - Prints exception type and message (always)
+        - Prints full stack trace if debug=True
+
     Args:
         exception: The exception to print stack trace for
         explanation: Description of what went wrong (default: "Unknown reason")
         caller: Name of the function/method where exception occurred (default: "Unknown caller")
         prepend_nl: Whether to add a newline before the banner (default: True)
+        debug: Whether to print full stack trace (default: False)
     """
     msg = f"ERROR: {explanation} in {caller}"
     print_banner(msg, prepend_nl=prepend_nl, expletive=True)
-    stack_trace = traceback.format_tb(exception.__traceback__)
-    for line in stack_trace: print(line)
+
+    # ALWAYS print exception type and message (the key improvement!)
+    exception_info = traceback.format_exception_only( type( exception ), exception )
+    for line in exception_info:
+        print( line.rstrip() )
+
+    # Print full stack trace only if debug=True
+    if debug:
+        print( "\nFull stack trace:" )
+        stack_trace = traceback.format_tb( exception.__traceback__ )
+        for line in stack_trace:
+            print( line.rstrip() )
 
 
 def sanity_check_file_path(file_path: str, silent: bool = False) -> None:
