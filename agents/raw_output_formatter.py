@@ -45,10 +45,12 @@ class RawOutputFormatter:
         else:
             self.code = ""
         self.raw_output  = raw_output.replace( "<?xml version='1.0' encoding='utf-8'?>", "" )
-        
+
         self.config_mgr            = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS", debug=self.debug, verbose=self.verbose, silent=True )
 
-        self.routing_command       = routing_command
+        # Store both agent routing and formatter routing commands
+        self.routing_command       = routing_command  # For config lookups (e.g., "agent router go to math")
+        self.formatter_routing_command = f"formatter for {routing_command}"  # For XML parsing (e.g., "formatter for agent router go to math")
         template_path              = self.config_mgr.get( f"formatter template for {routing_command}" )
         model_name                 = self.config_mgr.get( f"formatter llm spec for {routing_command}" )
 
@@ -79,13 +81,25 @@ class RawOutputFormatter:
             - XML parsing errors if response malformed
         """
 
+        # Debug logging: Show complete prompt being sent to formatter LLM
+        if self.debug and self.verbose:
+            du.print_banner( "FORMATTER LLM PROMPT", prepend_nl=True )
+            print( self.prompt )
+            print()
+
         response = self.llm.run( self.prompt )
-        
+
+        # Debug logging: Show raw XML response from formatter LLM (before parsing)
+        if self.debug and self.verbose:
+            du.print_banner( "FORMATTER LLM RAW RESPONSE", prepend_nl=True )
+            print( response )
+            print()
+
         # Use factory-based XML parsing with fallback to baseline
         try:
             parsed_response = self.xml_parser_factory.parse_agent_response(
                 response,
-                self.routing_command,
+                self.formatter_routing_command,  # Use formatter routing, not agent routing
                 [ "rephrased-answer" ],
                 debug=self.debug,
                 verbose=self.verbose

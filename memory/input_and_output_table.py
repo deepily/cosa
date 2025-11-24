@@ -40,7 +40,14 @@ class InputAndOutputTable():
         self.verbose        = verbose
         self._config_mgr    = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         self._embedding_mgr = EmbeddingManager( debug=debug, verbose=verbose )
-        
+
+        # Read nprobes configuration for vector search performance tuning
+        self._nprobes = self._config_mgr.get(
+            "solution snapshots lancedb nprobes",
+            default=20,
+            return_type="int"
+        )
+
         self.db = lancedb.connect( du.get_project_root() + self._config_mgr.get( "database_path_wo_root" ) )
 
         # Create table if it doesn't exist
@@ -254,7 +261,7 @@ class InputAndOutputTable():
         
         # Perform vector similarity search
         search_query = self._input_and_output_tbl.search( search_terms_embedding, vector_column_name="input_embedding" )
-        search_results = search_query.metric( "dot" ).limit( k ).select( [ "input", "output_final", "input_embedding" ] )
+        search_results = search_query.metric( "dot" ).nprobes( self._nprobes ).limit( k ).select( [ "input", "output_final", "input_embedding" ] )
         
         # Convert to list format, handling potential PyArrow Table results
         try:

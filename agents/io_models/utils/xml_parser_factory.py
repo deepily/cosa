@@ -24,9 +24,10 @@ import cosa.utils.util_xml as dux
 from cosa.config.configuration_manager import ConfigurationManager
 from cosa.agents.io_models.utils.util_xml_pydantic import BaseXMLModel
 from cosa.agents.io_models.xml_models import (
-    ReceptionistResponse, SimpleResponse, CommandResponse, 
+    ReceptionistResponse, SimpleResponse, CommandResponse,
     YesNoResponse, CodeResponse, CalendarResponse, CodeBrainstormResponse, BugInjectionResponse,
-    IterativeDebuggingMinimalistResponse, IterativeDebuggingFullResponse, WeatherResponse
+    IterativeDebuggingMinimalistResponse, IterativeDebuggingFullResponse, WeatherResponse,
+    FormatterResponse
 )
 
 
@@ -134,6 +135,7 @@ class PydanticXmlParsingStrategy( XmlParsingStrategy ):
         """
         # Map agent routing commands to their corresponding Pydantic models
         self.agent_model_map = {
+            # Agent code generation schemas
             "agent router go to receptionist": ReceptionistResponse,
             "agent router go to todo list": CodeResponse,
             "agent router go to calendar": CalendarResponse,
@@ -141,9 +143,17 @@ class PydanticXmlParsingStrategy( XmlParsingStrategy ):
             "agent router go to math": CodeBrainstormResponse,
             "agent router go to bug injector": BugInjectionResponse,
             "agent router go to debugger": self._get_debugging_model,  # Dynamic model selection based on mode
-            "agent router go to weather": WeatherResponse,  # For RawOutputFormatter weather responses
+            "agent router go to weather": WeatherResponse,  # For RawOutputFormatter weather responses (backward compat)
+
+            # Formatter schemas (universal FormatterResponse for all agent formatters)
+            "formatter for agent router go to math": FormatterResponse,
+            "formatter for agent router go to calendar": FormatterResponse,
+            "formatter for agent router go to date and time": FormatterResponse,
+            "formatter for agent router go to receptionist": FormatterResponse,
+            "formatter for agent router go to todo list": FormatterResponse,
+            "formatter for agent router go to weather": FormatterResponse,  # Could also use WeatherResponse
+
             # Future mappings will be added as more agents are migrated
-            # etc.
         }
     
     def _get_debugging_model( self, xml_tag_names: list[str] ):
@@ -203,9 +213,15 @@ class PydanticXmlParsingStrategy( XmlParsingStrategy ):
             
         if debug and verbose:
             print( f"  Using Pydantic model: {model_class.__name__}" )
-            
+
         # Parse XML using the Pydantic model
         try:
+            # Debug logging: Show XML before Pydantic parsing
+            if debug and verbose:
+                print( f"  XML to be parsed:" )
+                print( f"  {xml_response}" )
+                print()
+
             model_instance = model_class.from_xml( xml_response )
             result_dict = model_instance.model_dump()
             

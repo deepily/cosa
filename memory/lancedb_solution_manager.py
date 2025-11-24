@@ -9,7 +9,6 @@ while maintaining 100% API compatibility with the file-based implementation.
 import os
 import json
 import time
-import hashlib
 from typing import List, Tuple, Optional, Dict, Any
 
 import lancedb
@@ -208,6 +207,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             
             # Code execution data
             pa.field( "code", pa.list_( pa.string() ) ),
+            pa.field( "code_gist", pa.string() ),  # Gist of code explanation
             pa.field( "code_returns", pa.string() ),
             pa.field( "code_example", pa.string() ),
             pa.field( "code_type", pa.string() ),
@@ -259,9 +259,9 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         """
         if not snapshot or not snapshot.question:
             raise ValueError( "Invalid snapshot: question cannot be empty" )
-        
-        # Generate unique ID hash for this snapshot
-        question_hash = hashlib.md5( snapshot.question.encode( 'utf-8' ) ).hexdigest()
+
+        # Preserve original snapshot ID hash (SHA256 of timestamp)
+        id_hash = snapshot.id_hash
         
         # Helper function to ensure vector is proper format
         def normalize_embedding( embedding ):
@@ -281,7 +281,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         
         record = {
             # Primary identifiers
-            "id_hash": question_hash,
+            "id_hash": id_hash,
             "user_id": getattr( snapshot, 'user_id', 'default_user' ),
             
             # Content fields
@@ -297,6 +297,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             
             # Code execution data - ensure code is always a list for LanceDB schema compatibility
             "code": self._ensure_list( getattr( snapshot, 'code', [] ) ),
+            "code_gist": getattr( snapshot, 'code_gist', '' ) or '',  # Gist of code explanation
             "code_returns": getattr( snapshot, 'code_returns', '' ) or '',
             "code_example": getattr( snapshot, 'code_example', '' ) or '',
             "code_type": getattr( snapshot, 'code_type', '' ) or '',
@@ -352,82 +353,86 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         elif isinstance( value, list ):
             return value
         else:
-            # For other types, try to convert to list
+            # For other types (including NumPy arrays from LanceDB), try to convert to list
+            # Note: Cannot use 'if value' check here - NumPy arrays raise ValueError in boolean context
             try:
-                return list( value ) if value else []
+                return list( value )
             except (TypeError, ValueError):
                 return []
     
     def _record_to_snapshot( self, record: Dict[str, Any] ) -> SolutionSnapshot:
         """
         Convert LanceDB record back to SolutionSnapshot.
-        
+
         Requires:
             - record contains all required fields
             - Vector fields are in proper format
-            
+
         Ensures:
             - Returns valid SolutionSnapshot instance
             - Handles JSON deserialization
             - Preserves all original data
-            
+            - CRITICAL: Passes embeddings to constructor to prevent regeneration (977ms savings)
+
         Args:
             record: LanceDB record dictionary
-            
+
         Returns:
             Reconstructed SolutionSnapshot
         """
-        # Create SolutionSnapshot with required fields
+        # Deserialize JSON fields first for constructor
+        try:
+            synonymous_questions = json.loads( record.get( "synonymous_questions", "{}" ) )
+        except:
+            synonymous_questions = {}
+
+        try:
+            synonymous_question_gists = json.loads( record.get( "synonymous_question_gists", "{}" ) )
+        except:
+            synonymous_question_gists = {}
+
+        try:
+            runtime_stats = json.loads( record.get( "runtime_stats", "{}" ) )
+        except:
+            runtime_stats = {}
+
+        # Create SolutionSnapshot with ALL fields INCLUDING embeddings
+        # CRITICAL: Passing embeddings to constructor prevents 977ms regeneration
         snapshot = SolutionSnapshot(
             question=record["question"],
             question_normalized=record.get( "question_normalized", "" ),
+            question_gist=record.get( "question_gist", "" ),
+            answer=record.get( "answer", "" ),
+            answer_conversational=record.get( "answer_conversational", "" ),
+            thoughts=record.get( "thoughts", "" ),
+            error=record.get( "error", "" ),
+            routing_command=record.get( "routing_command", "" ),
+            synonymous_questions=synonymous_questions,
+            synonymous_question_gists=synonymous_question_gists,
+            non_synonymous_questions=record.get( "non_synonymous_questions", [] ),
+            last_question_asked=record.get( "last_question_asked", "" ),
             created_date=record.get( "created_date", "" ),
             updated_date=record.get( "updated_date", "" ),
+            run_date=record.get( "run_date", "" ),
+            runtime_stats=runtime_stats,
+            id_hash=record["id_hash"],  # CRITICAL: Preserve existing hash from database
             solution_summary=record.get( "solution_summary", "" ),
-            code=record.get( "code", [] ),  # Load actual code list from correct field
+            code=self._ensure_list( record.get( "code", [] ) ),  # Ensure code is list, not NumPy array
+            code_gist=record.get( "code_gist", "" ),  # Gist of code explanation
+            code_returns=record.get( "code_returns", "" ),
+            code_example=record.get( "code_example", "" ),
+            code_type=record.get( "code_type", "" ),
             programming_language=record.get( "programming_language", "python" ),
-            language_version=record.get( "language_version", "3.10" )
+            language_version=record.get( "language_version", "3.10" ),
+            # CRITICAL: Pass embeddings to constructor to prevent regeneration
+            question_embedding=self._ensure_list( record.get( "question_embedding", [] ) ),
+            question_normalized_embedding=self._ensure_list( record.get( "question_normalized_embedding", [] ) ),
+            question_gist_embedding=self._ensure_list( record.get( "question_gist_embedding", [] ) ),
+            solution_embedding=self._ensure_list( record.get( "solution_embedding", [] ) ),
+            code_embedding=self._ensure_list( record.get( "code_embedding", [] ) ),
+            thoughts_embedding=self._ensure_list( record.get( "thoughts_embedding", [] ) )
         )
-        
-        # Add additional fields
-        snapshot.question_gist = record.get( "question_gist", "" )
-        snapshot.answer = record.get( "answer", "" )
-        snapshot.answer_conversational = record.get( "answer_conversational", "" )
-        snapshot.thoughts = record.get( "thoughts", "" )
-        snapshot.error = record.get( "error", "" )
-        snapshot.routing_command = record.get( "routing_command", "" )
-        snapshot.code_returns = record.get( "code_returns", "" )
-        snapshot.code_example = record.get( "code_example", "" )
-        snapshot.code_type = record.get( "code_type", "" )
-        snapshot.run_date = record.get( "run_date", "" )
-        snapshot.last_question_asked = record.get( "last_question_asked", "" )
-        
-        # Deserialize JSON fields
-        try:
-            snapshot.synonymous_questions = json.loads( record.get( "synonymous_questions", "{}" ) )
-        except:
-            snapshot.synonymous_questions = {}
-            
-        try:
-            snapshot.synonymous_question_gists = json.loads( record.get( "synonymous_question_gists", "{}" ) )
-        except:
-            snapshot.synonymous_question_gists = {}
-            
-        try:
-            snapshot.runtime_stats = json.loads( record.get( "runtime_stats", "{}" ) )
-        except:
-            snapshot.runtime_stats = {}
-        
-        snapshot.non_synonymous_questions = record.get( "non_synonymous_questions", [] )
-        
-        # Add embeddings
-        snapshot.question_embedding = record.get( "question_embedding", [] )
-        snapshot.question_normalized_embedding = record.get( "question_normalized_embedding", [] )
-        snapshot.question_gist_embedding = record.get( "question_gist_embedding", [] )
-        snapshot.solution_embedding = record.get( "solution_embedding", [] )
-        snapshot.code_embedding = record.get( "code_embedding", [] )
-        snapshot.thoughts_embedding = record.get( "thoughts_embedding", [] )
-        
+
         return snapshot
     
     def initialize( self ) -> None:
@@ -682,7 +687,10 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             
             if self.debug:
                 print( f"  ✓ Inserted new snapshot with id_hash: {id_hash[:8]}..." )
-                
+
+            # Update canonical synonyms table for hierarchical search
+            self._update_canonical_synonyms( snapshot )
+
             return True
             
         except Exception as e:
@@ -760,13 +768,65 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             
             if self.debug:
                 print( f"  ✓ Merge completed for id_hash: {id_hash[:8]}..." )
-                
+
+            # Update canonical synonyms table for hierarchical search
+            self._update_canonical_synonyms( snapshot )
+
             return True
             
         except Exception as e:
             if self.debug:
                 print( f"  ✗ Merge failed: {e}" )
             raise e
+
+    def _update_canonical_synonyms( self, snapshot: SolutionSnapshot ) -> None:
+        """
+        Update CanonicalSynonyms table with questions from snapshot.
+
+        Ensures all three representations (verbatim, normalized, gist) are indexed
+        for fast exact-match lookups in hierarchical search (Levels 1-3).
+
+        Requires:
+            - snapshot is a valid SolutionSnapshot instance
+            - snapshot.id_hash is set
+
+        Ensures:
+            - Adds verbatim question to canonical_synonyms table
+            - Adds all synonymous questions from snapshot
+            - Each entry gets normalized + gist variants auto-generated
+            - No-op if canonical_synonyms not available
+
+        Args:
+            snapshot: The SolutionSnapshot to extract questions from
+        """
+        # Check if CanonicalSynonyms is available
+        if not self._canonical_synonyms or self._canonical_synonyms is False:
+            if self.debug and self.verbose:
+                print( "  ⓘ CanonicalSynonyms not available, skipping synonym update" )
+            return
+
+        # Add the primary question (last_question_asked)
+        if snapshot.last_question_asked:
+            try:
+                self._canonical_synonyms.add_synonym(
+                    snapshot_id=snapshot.id_hash,
+                    question_verbatim=snapshot.last_question_asked,
+                    confidence_score=100.0,
+                    source="runtime"
+                )
+                if self.debug:
+                    print( f"  ✓ Added primary question to canonical synonyms: '{snapshot.last_question_asked[:50]}...'" )
+            except Exception as e:
+                if self.debug:
+                    print( f"  ⚠ Failed to add primary question to synonyms: {e}" )
+
+        # Skip synonymous_questions - contains historical corruption from deprecated remove_non_alphanumerics()
+        # The deprecated method stripped math operators: "What's 2+2?" → "whats 22"
+        # Future synonyms will be added correctly now that add_synonymous_question() uses Normalizer.normalize()
+        # Canonical table will rebuild with correct normalization as users ask questions
+        if self.debug and self.verbose:
+            if hasattr( snapshot, 'synonymous_questions' ) and snapshot.synonymous_questions:
+                print( f"  ⓘ Skipping {len( snapshot.synonymous_questions )} synonymous questions (legacy corrupted data)" )
 
     def get_snapshot_by_id( self, snapshot_id: str ) -> Optional[Any]:
         """
@@ -799,7 +859,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             if results and len( results ) > 0:
                 # Convert row data back to SolutionSnapshot
                 row = results[0]
-                snapshot = self._row_to_snapshot( row )
+                snapshot = self._record_to_snapshot( row )
 
                 if self.debug:
                     print( f"Found snapshot {snapshot_id}: {snapshot.question[:50]}..." )

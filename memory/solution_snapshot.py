@@ -17,6 +17,7 @@ from cosa.agents.raw_output_formatter import RawOutputFormatter
 
 import numpy as np
 from cosa.memory.embedding_manager import EmbeddingManager
+from cosa.memory.normalizer import Normalizer
 
 class SolutionSnapshot( RunnableCode ):
     """
@@ -159,7 +160,7 @@ class SolutionSnapshot( RunnableCode ):
                   last_question_asked: str="", answer: str="", answer_conversational: str="", error: str="", routing_command: str="",
                   created_date: str=get_timestamp(), updated_date: str=get_timestamp(), run_date: str=get_timestamp(),
                   runtime_stats: dict=get_default_stats_dict(),
-                  id_hash: str="", solution_summary: str="", code: list[str]=[], code_returns: str="", code_example: str="", code_type: str="raw", thoughts: str="",
+                  id_hash: str="", solution_summary: str="", code: list[str]=[], code_gist: str="", code_returns: str="", code_example: str="", code_type: str="raw", thoughts: str="",
                   programming_language: str="Python", language_version: str="3.10",
                   question_embedding: list[float]=[ ], question_normalized_embedding: list[float]=[ ], question_gist_embedding: list[float]=[ ], solution_embedding: list[float]=[ ], code_embedding: list[float]=[ ], thoughts_embedding: list[float]=[ ],
                   solution_directory: str="/src/conf/long-term-memory/solutions/", solution_file: Optional[str]=None, user_id: str="ricardo_felipe_ruiz_6bdc", debug: bool=False, verbose: bool=False
@@ -204,7 +205,6 @@ class SolutionSnapshot( RunnableCode ):
             self._normalizer.normalize( question ) if question else ""
         )
         self.question_gist         = question_gist
-        # self.question_gist         = SolutionSnapshot.remove_non_alphanumerics( question_gist )
         self.thoughts              = thoughts
         
         self.answer                = answer
@@ -242,8 +242,9 @@ class SolutionSnapshot( RunnableCode ):
         self.last_question_asked   = last_question_asked
         
         self.solution_summary      = solution_summary
-        
+
         self.code                  = code
+        self.code_gist             = code_gist  # Gist of code explanation (generated after first successful execution)
         self.code_returns          = code_returns
         self.code_example          = code_example
         self.code_type             = code_type
@@ -272,14 +273,14 @@ class SolutionSnapshot( RunnableCode ):
 
         # If the normalized embedding is empty, generate it
         if question_normalized != "" and not question_normalized_embedding:
-            self.question_normalized_embedding = self._embedding_mgr.generate_embedding( question_normalized, normalize_for_cache=True )
+            self.question_normalized_embedding = self._embedding_mgr.generate_embedding( question_normalized, normalize_for_cache=False )
             dirty = True
         else:
             self.question_normalized_embedding = question_normalized_embedding
 
         # If the gist embedding is empty, generate it
         if question_gist != "" and not question_gist_embedding:
-            self.question_gist_embedding = self._embedding_mgr.generate_embedding( question_gist, normalize_for_cache=True )
+            self.question_gist_embedding = self._embedding_mgr.generate_embedding( question_gist, normalize_for_cache=False )
             dirty = True
         else:
             self.question_gist_embedding = question_gist_embedding
@@ -417,8 +418,10 @@ class SolutionSnapshot( RunnableCode ):
             self.last_question_asked = salutation + " " + question
         else:
             self.last_question_asked = question
-        
-        question = SolutionSnapshot.remove_non_alphanumerics( question )
+
+        # Use correct Normalizer that preserves math operators (not deprecated remove_non_alphanumerics)
+        normalizer = Normalizer()
+        question = normalizer.normalize( question )
         
         if question not in self.synonymous_questions:
             self.synonymous_questions[ question ] = score
@@ -796,12 +799,10 @@ class SolutionSnapshot( RunnableCode ):
         """
         # du.print_banner( f"Formatting output for {self.routing_command}" )
         formatter                  = RawOutputFormatter( self.last_question_asked, self.answer, self.routing_command, debug=self.debug, verbose=self.verbose )
-        self.answer_conversational = formatter.run_formatter()
-        
-        if self.debug and self.verbose: print( f" PRE self.answer_conversational: [{self.answer_conversational}]" )
-        self.answer_conversational = dux.get_value_by_xml_tag_name( self.answer_conversational, "rephrased-answer", default_value=self.answer_conversational )
-        if self.debug and self.verbose: print( f"POST self.answer_conversational: [{self.answer_conversational}]" )
-        
+        self.answer_conversational = formatter.run_formatter()  # Already returns extracted string via Pydantic XML parsing
+
+        if self.debug and self.verbose: print( f"self.answer_conversational: [{self.answer_conversational}]" )
+
         return self.answer_conversational
     
     def formatter_ran_to_completion( self ) -> bool:
