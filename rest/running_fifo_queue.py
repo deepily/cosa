@@ -144,25 +144,22 @@ class RunningFifoQueue( FifoQueue ):
                 # NEW: Check cache BEFORE agent execution
                 question = running_job.last_question_asked
 
-                if hasattr( self, 'debug' ) and self.debug:
-                    print( f"[CACHE] Checking cache for question: {question}" )
+                if self.debug: print( f"[CACHE] Checking cache for question: {question}" )
 
                 # Search for existing snapshot
                 cached_snapshots = self.snapshot_mgr.get_snapshots_by_question( question )
 
                 if cached_snapshots and len( cached_snapshots ) > 0:
-                    # CACHE HIT - Use cached result
+                    # CACHE HIT - Use the cached result
                     cached_snapshot = cached_snapshots[0]  # Use first/best match
 
-                    if hasattr( self, 'debug' ) and self.debug:
-                        print( f"[CACHE] 🎯 CACHE HIT: Found cached solution from {cached_snapshot.run_date}" )
+                    if self.debug: print( f"[CACHE] 🎯 CACHE HIT: Found cached solution from {cached_snapshot.run_date}" )
 
                     # Convert cached snapshot to proper format and use it
                     running_job = self._format_cached_result( cached_snapshot, truncated_question, run_timer )
                 else:
                     # CACHE MISS - Continue with normal agent execution
-                    if hasattr( self, 'debug' ) and self.debug:
-                        print( f"[CACHE] ❌ CACHE MISS: Running agent for new question" )
+                    if self.debug: print( f"[CACHE] ❌ CACHE MISS: Running agent for new question" )
 
                     running_job = self._handle_base_agent( running_job, truncated_question, run_timer )
             else:
@@ -316,7 +313,7 @@ class RunningFifoQueue( FifoQueue ):
         timer = sw.Stopwatch( msg=msg )
         _ = running_job.run_code()
         timer.print( "Done!", use_millis=True )
-        
+
         formatted_output = running_job.run_formatter()
         print( formatted_output )
         self._emit_speech( running_job.answer_conversational, job=running_job )
@@ -370,7 +367,7 @@ class RunningFifoQueue( FifoQueue ):
             - Updates queues (moves to done queue)
             - Emits websocket updates
             - Updates runtime stats
-            - Returns properly formatted cached result
+            - Returns a properly formatted cached result
 
         Raises:
             - None (handles errors gracefully)
@@ -394,7 +391,7 @@ class RunningFifoQueue( FifoQueue ):
 
         du.print_banner( f"CACHED Job [{cached_snapshot.question}] complete!", prepend_nl=True, end="\n" )
 
-        if hasattr( self, 'debug' ) and self.debug:
+        if self.debug:
             du.print_banner( "cached_snapshot.runtime_stats", prepend_nl=True )
             pprint.pprint( cached_snapshot.runtime_stats )
 
@@ -407,14 +404,6 @@ class RunningFifoQueue( FifoQueue ):
         )
 
         return cached_snapshot
-
-    # def _get_audio_url( self, text ):
-    #
-    #     with self.app.app_context():
-    #         url = url_for( 'get_tts_audio' ) + f"?tts_text={text}"
-    #
-    #     return url
-
 
 def quick_smoke_test():
     """

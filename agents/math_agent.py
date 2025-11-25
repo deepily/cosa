@@ -31,10 +31,10 @@ class MathAgent( AgentBase ):
         """
         
         super().__init__( df_path_key=None, question=question, question_gist=question_gist, last_question_asked=last_question_asked, routing_command=routing_command, push_counter=push_counter, user_id=user_id, debug=debug, verbose=verbose, auto_debug=auto_debug, inject_bugs=inject_bugs )
-        
+
         # du.print_banner( "MathAgent.__init__()" )
-        print( "¡OJO! MathAgent is using last_question_asked because it wants all the specificity contained within the voice to text transcription" )
-        
+        if self.debug and self.verbose: print( "¡OJO! MathAgent is using last_question_asked because it wants all the specificity contained within the voice to text transcription" )
+
         self.prompt = self.prompt_template.format( question=self.last_question_asked )
         self.xml_response_tag_names   = [ "thoughts", "brainstorm", "evaluation", "code", "example", "returns", "explanation" ]
     
@@ -44,51 +44,93 @@ class MathAgent( AgentBase ):
     def restore_from_serialized_state( self, file_path: str ) -> None:
         """
         Restore math agent state from JSON file.
-        
+
         Requires:
             - file_path points to valid JSON file
-            
+
         Ensures:
             - Raises NotImplementedError (not implemented)
-            
+
         Raises:
             - NotImplementedError always
         """
-        
+
         raise NotImplementedError( "MathAgent.restore_from_serialized_state() not implemented" )
-    
+
+    @staticmethod
+    def apply_formatting( raw_output: str, config_mgr, debug: bool = False, verbose: bool = False ):
+        """
+        Apply math-specific formatting logic.
+
+        This method contains the core formatting decision for math outputs.
+        Both MathAgent instances and SolutionSnapshot replays use this logic
+        to ensure consistent formatting behavior.
+
+        Requires:
+            - raw_output is the raw computational result (e.g., "4")
+            - config_mgr has 'formatter_prompt_for_math_terse' setting
+
+        Ensures:
+            - Returns raw output if terse mode enabled
+            - Returns None if should use default LLM formatter (verbose mode)
+
+        Args:
+            raw_output: Raw result from code execution (e.g., "4", "99")
+            config_mgr: ConfigurationManager instance for accessing settings
+            debug: Debug flag for logging
+            verbose: Verbose flag for detailed logging
+
+        Returns:
+            - str: Formatted output if terse mode (returns raw_output as-is)
+            - None: Signal to use default LLM formatter (verbose mode)
+        """
+        terse_output = config_mgr.get( "formatter_prompt_for_math_terse", default=False, return_type="boolean" )
+
+        if terse_output:
+            # Terse mode: Return raw output directly, skip LLM formatting
+            if debug and verbose:
+                print( "MathAgent.apply_formatting: terse_output=True. Returning raw output without LLM formatting." )
+            return raw_output
+        else:
+            # Verbose mode: Signal caller to use default LLM formatter
+            if debug and verbose:
+                print( "MathAgent.apply_formatting: terse_output=False. Signaling to use default LLM formatter." )
+            return None
+
     def run_formatter( self ) -> str:
         """
-        Format math output based on configuration.
-        
+        Format math output using agent-specific formatting logic.
+
         Requires:
             - self.code_response_dict contains 'output' field
             - Config has 'formatter_prompt_for_math_terse' setting
-            
+
         Ensures:
             - Returns formatted answer
             - If terse_output=True, returns raw output
-            - Otherwise uses parent formatter
+            - Otherwise uses parent formatter (default LLM formatter)
             - Updates self.answer_conversational
-            
+
         Raises:
             - KeyError if output missing from response
         """
-        
-        """
-        Format the output based on the configuration for math agent.
 
-        If 'formatter_prompt_for_math_terse' is True, set the answer as the output from 'code_response_dict'.
-        Otherwise, call the superclass method 'run_formatter' and set the answer accordingly.
-        """
-        terse_output = self.config_mgr.get( "formatter_prompt_for_math_terse", default=False, return_type="boolean" )
-        
-        if terse_output:
-            if self.debug: print( "MathAgent.run_formatter() terse_output=True. NOT consulting with a formatter before returning an answer." )
-            self.answer_conversational = self.code_response_dict[ "output" ]
+        # Use static formatting logic (shared with SolutionSnapshot)
+        raw_output = self.code_response_dict[ "output" ]
+        formatted = MathAgent.apply_formatting(
+            raw_output,
+            self.config_mgr,
+            self.debug,
+            self.verbose
+        )
+
+        if formatted is not None:
+            # Terse mode: Use raw output directly
+            self.answer_conversational = formatted
         else:
+            # Verbose mode: Use default LLM formatter
             super().run_formatter()
-            
+
         return self.answer_conversational
 
 def quick_smoke_test():

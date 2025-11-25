@@ -104,6 +104,8 @@ class SnapshotDetailResponse( BaseModel ):
     question_gist: str
     answer: str
     answer_conversational: str
+    runtime_stats: dict
+    code: List[str]
     created_date: str
     user_id: str
 
@@ -480,12 +482,16 @@ def _get_snapshot_manager():
                 "table_name"      : table_name
             }
 
+        # Get debug and verbose flags from configuration
+        debug_mode = config_mgr.get( "app_debug", default=False )
+        verbose_mode = config_mgr.get( "app_verbose", default=False )
+
         # Create and initialize manager
         manager = SolutionSnapshotManagerFactory.create_manager(
             manager_type = manager_type,
             config       = config,
-            debug        = False,
-            verbose      = False
+            debug        = debug_mode,
+            verbose      = verbose_mode
         )
 
         if not manager.is_initialized():
@@ -635,6 +641,8 @@ async def get_snapshot_details(
             question_gist         = snapshot.question_gist,
             answer                = snapshot.answer,
             answer_conversational = snapshot.answer_conversational,
+            runtime_stats         = snapshot.runtime_stats,
+            code                  = snapshot.code,
             created_date          = snapshot.created_date,
             user_id               = snapshot.user_id
         )
@@ -680,9 +688,11 @@ async def delete_snapshot(
         MessageResponse: Success or error message
     """
     try:
+        print( f"[ADMIN-SNAPSHOTS] DELETE request for snapshot ID: {id_hash}" )
         manager = _get_snapshot_manager()
 
         # Get snapshot first to retrieve the question
+        print( f"[ADMIN-SNAPSHOTS] Retrieving snapshot for deletion..." )
         snapshot = manager.get_snapshot_by_id( id_hash )
 
         if not snapshot:
@@ -692,6 +702,10 @@ async def delete_snapshot(
                 detail      = "Snapshot not found"
             )
 
+        print( f"[ADMIN-SNAPSHOTS] Found snapshot, question: '{snapshot.question[:50]}...'" )
+        print( f"[ADMIN-SNAPSHOTS] Question length: {len(snapshot.question)} chars" )
+        print( f"[ADMIN-SNAPSHOTS] Attempting physical deletion..." )
+
         # Delete snapshot using question (LanceDB delete requires question)
         success = manager.delete_snapshot(
             question        = snapshot.question,
@@ -699,10 +713,12 @@ async def delete_snapshot(
         )
 
         if success:
+            print( f"[ADMIN-SNAPSHOTS] Successfully deleted snapshot {id_hash}" )
             return MessageResponse(
                 message = f"Snapshot deleted successfully: {id_hash}"
             )
         else:
+            print( f"[ADMIN-SNAPSHOTS] Delete operation returned False for {id_hash}" )
             raise HTTPException(
                 status_code = status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail      = "Failed to delete snapshot"
@@ -712,6 +728,8 @@ async def delete_snapshot(
         raise
     except Exception as e:
         print( f"[ADMIN-SNAPSHOTS] Delete failed for snapshot {id_hash}: {e}" )
+        print( f"[ADMIN-SNAPSHOTS] Exception type: {type( e ).__name__}" )
+        print( f"[ADMIN-SNAPSHOTS] Exception details: {str( e )}" )
         traceback.print_exc()
         raise HTTPException(
             status_code = status.HTTP_500_INTERNAL_SERVER_ERROR,

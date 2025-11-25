@@ -204,7 +204,8 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             pa.field( "thoughts", pa.string() ),
             pa.field( "error", pa.string() ),
             pa.field( "routing_command", pa.string() ),
-            
+            pa.field( "agent_class_name", pa.string() ),  # e.g., "MathAgent", "CalendarAgent"
+
             # Code execution data
             pa.field( "code", pa.list_( pa.string() ) ),
             pa.field( "code_gist", pa.string() ),  # Gist of code explanation
@@ -294,7 +295,8 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             "thoughts": getattr( snapshot, 'thoughts', '' ) or '',
             "error": getattr( snapshot, 'error', '' ) or '',
             "routing_command": getattr( snapshot, 'routing_command', '' ) or '',
-            
+            "agent_class_name": getattr( snapshot, 'agent_class_name', '' ) or '',
+
             # Code execution data - ensure code is always a list for LanceDB schema compatibility
             "code": self._ensure_list( getattr( snapshot, 'code', [] ) ),
             "code_gist": getattr( snapshot, 'code_gist', '' ) or '',  # Gist of code explanation
@@ -407,6 +409,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             thoughts=record.get( "thoughts", "" ),
             error=record.get( "error", "" ),
             routing_command=record.get( "routing_command", "" ),
+            agent_class_name=record.get( "agent_class_name", None ),
             synonymous_questions=synonymous_questions,
             synonymous_question_gists=synonymous_question_gists,
             non_synonymous_questions=record.get( "non_synonymous_questions", [] ),
@@ -470,7 +473,17 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             if self.table_name in existing_tables:
                 # Open existing table
                 self._table = self._db.open_table( self.table_name )
-                
+
+                # Ensure scalar index exists on id_hash (safe if already present)
+                # Critical for merge_insert performance and correctness
+                try:
+                    self._table.create_scalar_index( "id_hash", replace=True )
+                    if self.debug:
+                        print( f"✓ Verified/created scalar index on id_hash" )
+                except Exception as idx_error:
+                    if self.debug:
+                        print( f"⚠ Could not create index (may already exist): {idx_error}" )
+
                 if self.debug:
                     print( f"✓ Opened existing table: {self.table_name}" )
             else:
@@ -479,15 +492,21 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                 
                 # Create table with explicit schema - this ensures correct list item types
                 self._table = self._db.create_table( self.table_name, schema=schema )
-                
+
+                # Create scalar index on id_hash for merge_insert operations
+                # LanceDB merge_insert requires scalar index for reliable matching
+                self._table.create_scalar_index( "id_hash", replace=True )
+
                 if self.debug:
                     print( f"✓ Created new table: {self.table_name}" )
+                    print( f"✓ Created scalar index on id_hash column" )
             
             # Load existing data for caching
             snapshot_count = 0
             try:
                 # Get count of existing records
-                result = self._table.to_pandas()
+                # Get all rows using to_arrow() - efficient full table access in LanceDB 0.23.0
+                result = self._table.to_arrow().to_pandas()
                 snapshot_count = len( result )
                 
                 # Build lookup caches
@@ -752,7 +771,26 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         """
         try:
             record = self._snapshot_to_record( snapshot )
-            
+            id_hash = record["id_hash"]
+
+            # DEBUG: Print pre-merge stats
+            if self.debug:
+                pre_stats = snapshot.runtime_stats
+                print( f"[STATS DEBUG] PRE-MERGE for {id_hash[:8]}...:" )
+                print( f"  run_count = {pre_stats.get('run_count', -1)}" )
+                print( f"  last_run_ms = {pre_stats.get('last_run_ms', 0)}" )
+                print( f"  total_ms = {pre_stats.get('total_ms', 0)}" )
+
+            # Invalidate cache BEFORE merge to force fresh DB read after
+            # This prevents cache from masking persistence failures
+            if id_hash in self._id_lookup:
+                del self._id_lookup[id_hash]
+            if snapshot.question in self._question_lookup:
+                del self._question_lookup[snapshot.question]
+
+            if self.debug:
+                print( f"[CACHE DEBUG] Invalidated cache for {id_hash[:8]}... before merge" )
+
             # Use proper LanceDB merge_insert for atomic upsert
             (
                 self._table.merge_insert( "id_hash" )
@@ -760,12 +798,47 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                 .when_not_matched_insert_all()
                 .execute( [record] )
             )
-            
-            # Update cache
-            id_hash = record["id_hash"]
-            self._question_lookup[snapshot.question] = id_hash
-            self._id_lookup[id_hash] = record
-            
+
+            # DEBUG: Verify stats persisted by reading back from database
+            if self.debug:
+                fresh_records = self._table.search().where( f"id_hash = '{id_hash}'" ).limit( 1 ).to_list()
+                if fresh_records:
+                    import json
+                    post_stats = json.loads( fresh_records[0]["runtime_stats"] )
+                    print( f"[STATS DEBUG] POST-MERGE from DB:" )
+                    print( f"  run_count = {post_stats.get('run_count', -1)}" )
+                    print( f"  last_run_ms = {post_stats.get('last_run_ms', 0)}" )
+                    print( f"  total_ms = {post_stats.get('total_ms', 0)}" )
+
+                    if post_stats.get("run_count") != pre_stats.get("run_count"):
+                        print( f"[STATS DEBUG] ⚠️ STATS NOT PERSISTED!" )
+                        print( f"  Expected run_count: {pre_stats.get('run_count')}" )
+                        print( f"  Got run_count: {post_stats.get('run_count')}" )
+                    else:
+                        print( f"[STATS DEBUG] ✓ Stats successfully persisted to database" )
+
+            # Repopulate cache from fresh DB read (not stale in-memory record)
+            # This ensures cache reflects actual persisted data
+            fresh_records = self._table.search().where( f"id_hash = '{id_hash}'" ).limit( 1 ).to_list()
+            if fresh_records:
+                fresh_record = fresh_records[0]
+                self._id_lookup[id_hash] = dict( fresh_record )
+                self._question_lookup[snapshot.question] = id_hash
+
+                if self.debug:
+                    print( f"[CACHE DEBUG] Repopulated cache from DB with fresh data" )
+            else:
+                # Fallback: use in-memory record if DB read fails (should not happen)
+                self._id_lookup[id_hash] = record
+                self._question_lookup[snapshot.question] = id_hash
+
+                if self.debug:
+                    print( f"[CACHE DEBUG] ⚠ DB read failed, using in-memory record" )
+
+            # Verify cache consistency in debug mode
+            if self.debug:
+                self._verify_cache_consistency( id_hash )
+
             if self.debug:
                 print( f"  ✓ Merge completed for id_hash: {id_hash[:8]}..." )
 
@@ -778,6 +851,66 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             if self.debug:
                 print( f"  ✗ Merge failed: {e}" )
             raise e
+
+    def _verify_cache_consistency( self, id_hash: str ) -> bool:
+        """
+        Verify cache entry matches database for given id_hash.
+
+        Requires:
+            - id_hash is valid hash string
+            - Manager is initialized
+
+        Ensures:
+            - Returns True if cache matches DB
+            - Returns False if mismatch detected
+            - Logs discrepancies in debug mode
+
+        Args:
+            id_hash: The snapshot ID hash to verify
+
+        Returns:
+            True if consistent, False if mismatch
+        """
+        try:
+            # Read from database
+            db_records = self._table.search().where( f"id_hash = '{id_hash}'" ).limit( 1 ).to_list()
+
+            if not db_records:
+                if self.debug:
+                    print( f"[CONSISTENCY] ⚠ DB has no record for {id_hash[:8]}... but cache does" )
+                return False
+
+            db_record = db_records[0]
+
+            # Compare with cache
+            if id_hash not in self._id_lookup:
+                if self.debug:
+                    print( f"[CONSISTENCY] ⚠ Cache missing entry for {id_hash[:8]}... but DB has it" )
+                return False
+
+            cached_record = self._id_lookup[id_hash]
+
+            # Compare critical fields
+            import json
+            db_stats = json.loads( db_record.get( "runtime_stats", "{}" ) )
+            cached_stats = json.loads( cached_record.get( "runtime_stats", "{}" ) )
+
+            if db_stats.get( "run_count" ) != cached_stats.get( "run_count" ):
+                if self.debug:
+                    print( f"[CONSISTENCY] ✗ MISMATCH for {id_hash[:8]}...:" )
+                    print( f"  DB run_count: {db_stats.get('run_count')}" )
+                    print( f"  Cache run_count: {cached_stats.get('run_count')}" )
+                return False
+
+            if self.debug:
+                print( f"[CONSISTENCY] ✓ Cache consistent with DB for {id_hash[:8]}..." )
+
+            return True
+
+        except Exception as e:
+            if self.debug:
+                print( f"[CONSISTENCY] Error during verification: {e}" )
+            return False
 
     def _update_canonical_synonyms( self, snapshot: SolutionSnapshot ) -> None:
         """
@@ -899,22 +1032,27 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             raise ValueError( "Question cannot be empty" )
         
         try:
-            # Normalize question case for consistent lookup (SolutionSnapshot stores lowercase)
-            normalized_question = question.lower()
-            
-            if normalized_question not in self._question_lookup:
+            # Use verbatim question for lookup (cache stores original case)
+            if self.debug:
+                print( f"[DELETE-DEBUG] Looking up question: '{question}'" )
+                print( f"[DELETE-DEBUG] Cache size: {len(self._question_lookup)} questions" )
+                print( f"[DELETE-DEBUG] First 3 cache keys: {list(self._question_lookup.keys())[:3]}" )
+                print( f"[DELETE-DEBUG] Exact match found? {question in self._question_lookup}" )
+
+            if question not in self._question_lookup:
                 if self.debug:
+                    print( f"[DELETE-DEBUG] Lookup failed - cache key not found" )
                     print( f"Snapshot not found for: {du.truncate_string( question, 50 )}" )
                 return False
-            
-            # Get ID hash for deletion using normalized question
-            id_hash = self._question_lookup[normalized_question]
+
+            # Get ID hash for deletion using verbatim question
+            id_hash = self._question_lookup[question]
             
             # Delete from table
             self._table.delete( f"id_hash = '{id_hash}'" )
-            
-            # Update cache using normalized question
-            del self._question_lookup[normalized_question]
+
+            # Update cache using verbatim question
+            del self._question_lookup[question]
             del self._id_lookup[id_hash]
             
             if self.debug:

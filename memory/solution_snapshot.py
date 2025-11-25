@@ -157,7 +157,7 @@ class SolutionSnapshot( RunnableCode ):
         return np.dot( this_embedding, that_embedding ) * 100
     
     def __init__( self, push_counter: int=-1, question: str="", question_normalized: str="", question_gist: str="", synonymous_questions: OrderedDict=OrderedDict(), synonymous_question_gists: OrderedDict=OrderedDict(), non_synonymous_questions: list=[],
-                  last_question_asked: str="", answer: str="", answer_conversational: str="", error: str="", routing_command: str="",
+                  last_question_asked: str="", answer: str="", answer_conversational: str="", error: str="", routing_command: str="", agent_class_name: Optional[str]=None,
                   created_date: str=get_timestamp(), updated_date: str=get_timestamp(), run_date: str=get_timestamp(),
                   runtime_stats: dict=get_default_stats_dict(),
                   id_hash: str="", solution_summary: str="", code: list[str]=[], code_gist: str="", code_returns: str="", code_example: str="", code_type: str="raw", thoughts: str="",
@@ -211,6 +211,7 @@ class SolutionSnapshot( RunnableCode ):
         self.answer_conversational = answer_conversational
         self.error                 = error
         self.routing_command       = routing_command
+        self.agent_class_name      = agent_class_name  # e.g., "MathAgent", "CalendarAgent", etc.
         self.user_id               = user_id
         
         # Is there is no synonymous questions to be found then just recycle the current question
@@ -374,6 +375,9 @@ class SolutionSnapshot( RunnableCode ):
         verbatim_question = agent.last_question_asked  # Original user input
         normalized_question = normalizer.normalize( verbatim_question )  # Normalized with operators preserved
 
+        # Capture the agent's class name for formatting logic preservation
+        agent_class_name = type( agent ).__name__  # e.g., "MathAgent", "CalendarAgent", etc.
+
         # Instantiate a new SolutionSnapshot object using the contents of the calendaring or function mapping agent
         return SolutionSnapshot(
                          question=verbatim_question,
@@ -381,6 +385,7 @@ class SolutionSnapshot( RunnableCode ):
                     question_gist=agent.question_gist,
               last_question_asked=agent.last_question_asked,
                   routing_command=agent.routing_command,
+               agent_class_name=agent_class_name,  # NEW: Preserve agent type for formatting
              synonymous_questions=OrderedDict( { agent.question: 100.0 } ),
         synonymous_question_gists=OrderedDict( { agent.question_gist: 100.0 } ),
                             error=agent.prompt_response_dict.get( "error", "" ),
@@ -784,24 +789,72 @@ class SolutionSnapshot( RunnableCode ):
     
     def run_formatter( self ) -> str:
         """
-        Format raw output for conversational response.
-        
+        Format raw output using the same logic as the original agent.
+
+        This method preserves agent-specific formatting behavior during replay.
+        For example, MathAgent's terse mode skips LLM formatting to prevent
+        hallucination of mathematical facts.
+
         Requires:
             - last_question_asked, answer, routing_command are set
-            
+            - agent_class_name may be set (for agent-specific formatting)
+
         Ensures:
-            - Creates formatted conversational answer
-            - Extracts rephrased answer if available
-            - Returns formatted string
-            
+            - Uses agent-specific formatting logic if agent_class_name is set
+            - Falls back to default LLM formatter if not set or on error
+            - Returns formatted conversational answer
+            - Updates self.answer_conversational
+
         Raises:
-            - None
+            - None (handles errors gracefully with fallback)
         """
-        # du.print_banner( f"Formatting output for {self.routing_command}" )
-        formatter                  = RawOutputFormatter( self.last_question_asked, self.answer, self.routing_command, debug=self.debug, verbose=self.verbose )
+
+        # Try agent-specific formatting if we know the agent type
+        if self.agent_class_name == "MathAgent":
+            try:
+                # Import MathAgent to use its formatting logic
+                from cosa.agents.math_agent import MathAgent
+                from cosa.config.configuration_manager import ConfigurationManager
+
+                # Create config manager to check terse flag
+                config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+
+                # Use MathAgent's formatting logic (checks terse flag)
+                formatted = MathAgent.apply_formatting(
+                    self.answer,  # Raw output like "4" or "99"
+                    config_mgr,
+                    self.debug,
+                    self.verbose
+                )
+
+                if formatted is not None:
+                    # Terse mode: Use raw output directly, skip LLM formatting
+                    self.answer_conversational = formatted
+                    if self.debug and self.verbose:
+                        print( f"SolutionSnapshot: Used MathAgent terse formatting. Result: [{self.answer_conversational}]" )
+                    return self.answer_conversational
+
+                # Verbose mode: Fall through to default LLM formatter
+                if self.debug and self.verbose:
+                    print( "SolutionSnapshot: MathAgent signaled to use default LLM formatter." )
+
+            except Exception as e:
+                if self.debug:
+                    print( f"⚠ Failed to apply MathAgent formatting: {e}" )
+                    print( "  Falling back to default LLM formatter" )
+
+        # Default LLM formatter (for unknown agents, non-terse mode, or errors)
+        formatter = RawOutputFormatter(
+            self.last_question_asked,
+            self.answer,
+            self.routing_command,
+            debug=self.debug,
+            verbose=self.verbose
+        )
         self.answer_conversational = formatter.run_formatter()  # Already returns extracted string via Pydantic XML parsing
 
-        if self.debug and self.verbose: print( f"self.answer_conversational: [{self.answer_conversational}]" )
+        if self.debug and self.verbose:
+            print( f"SolutionSnapshot: Used default LLM formatter. Result: [{self.answer_conversational}]" )
 
         return self.answer_conversational
     

@@ -1,6 +1,8 @@
 # COSA Development History
 
-> **📝 CURRENT**: 2025.11.20 - Parent Lupin Sync: Test Infrastructure & Code Quality Improvements! Synced 7 files from parent Lupin repository with improvements from 100% Test Adherence achievement (2025.11.20). **Configuration Manager**: Enhanced docstrings with Testing/Notes sections documenting atomic `_reset_singleton=True` pattern for test isolation. **Normalizer**: Added MATH_OPERATORS preservation ({+, -, *, /, =, >, <} etc.) for mathematical query support. **Solution Snapshot**: Improved question handling (verbatim storage + normalized indexing), fixed field mapping bug (code_returns → code). **Error Handling**: Enhanced `print_stack_trace()` with optional debug flag (always shows exception type/message, full trace only if debug=True). **Defensive Programming**: Added directory creation guard in util_code_runner for Docker environments, added debug/verbose flags to RunningFifoQueue. **Total Impact**: 7 files modified, +95 insertions/-29 deletions (net +66 lines). ✅ Improved test reliability and error diagnostics! 🔧✨
+> **📝 CURRENT**: 2025.11.24 - Parent Lupin Sync: Math Agent Debugging + Admin Snapshots API + LanceDB Optimizations! Synced 10 files from parent Lupin repository with improvements from 4 math agent debugging sessions (Sessions 5-9). **Math Agent Enhancements**: Added static `apply_formatting()` method enabling SolutionSnapshot replay to use same formatting logic as original agent execution, preventing formatter hallucination in terse mode. **Gist Caching System**: NEW `GistCacheTable` class (536 lines) providing LanceDB-backed persistent cache for LLM-generated gists (~500ms savings per cache hit, 70-80% expected hit rate). Two-tier lookup: verbatim → normalized. **LanceDB Optimizations**: Added scalar index on id_hash for merge_insert performance, pre-merge cache invalidation, fresh DB read after merge, comprehensive stats debugging (`[STATS DEBUG]`, `[CACHE DEBUG]`, `[CONSISTENCY]` prefixes), fixed DELETE bug (removed .lower() normalization causing cache key mismatch). **Solution Snapshot Agent Tracking**: NEW `agent_class_name` field persists which agent created snapshot, enabling correct formatting logic during replay. **Debug/Verbose Output Cleanup**: 15+ locations updated to `debug and verbose` pattern (agents, REST routers, queue). **Admin API**: Added runtime_stats/code fields to detail endpoint, comprehensive DELETE debugging. **Total Impact**: 11 files (10 modified, 1 created), +423 insertions/-127 deletions (net +296 lines). ✅ Math agent cache hit formatting now consistent with original execution! 🧮🔧
+
+> **Previous Achievement**: 2025.11.20 - Parent Lupin Sync: Test Infrastructure & Code Quality Improvements! Synced 7 files from parent Lupin repository with improvements from 100% Test Adherence achievement (2025.11.20). **Configuration Manager**: Enhanced docstrings with Testing/Notes sections documenting atomic `_reset_singleton=True` pattern for test isolation. **Normalizer**: Added MATH_OPERATORS preservation ({+, -, *, /, =, >, <} etc.) for mathematical query support. **Solution Snapshot**: Improved question handling (verbatim storage + normalized indexing), fixed field mapping bug (code_returns → code). **Error Handling**: Enhanced `print_stack_trace()` with optional debug flag (always shows exception type/message, full trace only if debug=True). **Defensive Programming**: Added directory creation guard in util_code_runner for Docker environments, added debug/verbose flags to RunningFifoQueue. **Total Impact**: 7 files modified, +95 insertions/-29 deletions (net +66 lines). ✅ Improved test reliability and error diagnostics! 🔧✨
 
 > **Previous Achievement**: 2025.11.19 - PostgreSQL Repository Migration (Phase 2.6.3) COMPLETE! Migrated 8 COSA service layer files from direct SQLite database calls to PostgreSQL repository pattern, aligning with parent Lupin's infrastructure evolution. **Services Migrated**: email_token_service.py (-113 lines), rate_limiter.py (-82 lines), api_key_auth.py middleware (-29 lines), refresh_token_service.py (-1 line). **Repository Integration**: ApiKeyRepository, FailedLoginAttemptRepository, EmailVerificationTokenRepository, PasswordResetTokenRepository. **Timezone Modernization**: All datetime operations migrated from `datetime.utcnow()` → `datetime.now(timezone.utc)` (Python 3.12+ best practice). **Testing Infrastructure**: CanonicalSynonymsTable updated with optional db_path parameter for test isolation (-6 lines). **Total Impact**: 8 files modified, +186 insertions/-291 deletions (net -105 lines), cleaner abstraction layer. ✅ Ready for integration testing! 🐘🔄
 
@@ -41,6 +43,210 @@
 > **🚨 RESOLVED**: **repo/branch_change_analysis.py COMPLETE REFACTOR** ✅✅✅
 >
 > The quick-and-dirty git diff analysis tool has been completely refactored into a professional package that EXCEEDS all COSA standards:
+
+## 2025.11.24 - Parent Lupin Sync: Math Agent Debugging + Admin Snapshots API + LanceDB Optimizations COMPLETE
+
+### Summary
+Synced 10 files from parent Lupin repository with improvements from 4 math agent debugging sessions (Sessions 5-9, Nov 22-24). Work focused on resolving cache hit formatting inconsistencies, adding gist caching infrastructure, fixing LanceDB persistence issues, and enhancing admin API debugging capabilities. Major architectural improvement: SolutionSnapshot now preserves agent class name to replay with identical formatting logic.
+
+### Work Performed
+
+#### Math Agent Static Formatting Method - COMPLETE ✅
+**File**: `agents/math_agent.py` (+51/-29 lines, net +22 lines)
+
+**Changes**:
+- NEW `apply_formatting()` static method (40 lines) encapsulating terse/verbose formatting decision
+- Both MathAgent.run_formatter() and SolutionSnapshot.run_formatter() use same logic
+- Debug/verbose conditionals updated throughout (4 locations)
+
+**Architecture**:
+```python
+@staticmethod
+def apply_formatting( raw_output: str, config_mgr, debug: bool, verbose: bool ):
+    """
+    Returns: str (terse mode) or None (signal to use LLM formatter)
+    """
+    terse_output = config_mgr.get( "formatter_prompt_for_math_terse", default=False )
+    if terse_output:
+        return raw_output  # Skip LLM, prevent hallucination
+    return None  # Signal: use default LLM formatter
+```
+
+**Problem Solved**: Cache hits were using LLM formatter even when original execution used terse mode, causing "2+2=4" to become verbose explanations.
+
+#### Gist Cache Table - NEW FILE ✅
+**File**: `memory/gist_cache_table.py` (536 lines, NEW)
+
+**Purpose**: LanceDB-backed persistent cache for LLM-generated gists (~500ms savings per hit).
+
+**Key Features**:
+- Two-tier lookup: verbatim → normalized (catches "What's" vs "What is" variations)
+- FTS indexes on both question_verbatim and question_normalized
+- Expected 70-80% hit rate, ~5ms lookup vs ~525ms LLM call
+- Statistics tracking (access_count, last_accessed)
+- Comprehensive smoke test included
+
+**Schema**:
+```
+question_verbatim | question_normalized | question_gist | created_date | access_count | last_accessed
+```
+
+#### Gister Cache Integration - COMPLETE ✅
+**File**: `memory/gister.py` (+56/-6 lines, net +50 lines)
+
+**Changes**:
+- Integrated GistCacheTable for automatic caching
+- NEW config keys: `gister cache enabled`, `gister cache table name`
+- Cache check before LLM call, cache store after successful generation
+- Extracted `_generate_gist_via_llm()` helper method
+
+**Flow**:
+```
+get_gist(utterance)
+  → Single word? Return directly
+  → Check cache (5ms)
+  → Cache hit? Return cached gist
+  → Cache miss: Generate via LLM (500ms)
+  → Store in cache (25ms)
+  → Return gist
+```
+
+#### LanceDB Solution Manager Optimizations - COMPLETE ✅
+**File**: `memory/lancedb_solution_manager.py` (+119/-36 lines, net +83 lines)
+
+**Changes**:
+1. **Scalar Index on id_hash**: Added `create_scalar_index("id_hash", replace=True)` for merge_insert reliability
+2. **Pre-Merge Cache Invalidation**: Clear cache BEFORE merge_insert to prevent stale reads
+3. **Fresh DB Read After Merge**: Repopulate cache from DB, not in-memory record
+4. **Comprehensive Debug Logging**: `[STATS DEBUG]`, `[CACHE DEBUG]`, `[CONSISTENCY]` prefixes
+5. **NEW `_verify_cache_consistency()`**: Validates cache matches DB after operations
+6. **DELETE Bug Fix**: Removed `.lower()` normalization causing cache key mismatch
+7. **NEW `agent_class_name` Field**: Added to schema for formatting logic preservation
+
+**Debug Output Example**:
+```
+[STATS DEBUG] PRE-MERGE for abc123...:
+  run_count = 3
+[CACHE DEBUG] Invalidated cache for abc123... before merge
+[STATS DEBUG] POST-MERGE from DB:
+  run_count = 3
+[STATS DEBUG] ✓ Stats successfully persisted to database
+[CONSISTENCY] ✓ Cache consistent with DB for abc123...
+```
+
+#### Solution Snapshot Agent Tracking - COMPLETE ✅
+**File**: `memory/solution_snapshot.py` (+60/-19 lines, net +41 lines)
+
+**Changes**:
+- NEW `agent_class_name` field (Optional[str]) stores originating agent class
+- `from_agent()` captures `type(agent).__name__` (e.g., "MathAgent", "CalendarAgent")
+- `run_formatter()` checks agent_class_name and delegates to agent-specific formatting
+- Enables correct terse/verbose behavior during cache hit replay
+
+**Replay Logic**:
+```python
+def run_formatter(self):
+    if self.agent_class_name == "MathAgent":
+        formatted = MathAgent.apply_formatting(self.answer, config_mgr, ...)
+        if formatted is not None:  # Terse mode
+            self.answer_conversational = formatted
+            return
+    # Fall through to default LLM formatter
+```
+
+#### Agent Debug/Verbose Output Cleanup - COMPLETE ✅
+**Files**: `agents/agent_base.py` (+2/-2), `agents/iterative_debugging_agent.py` (+1/-1)
+
+**Changes**:
+- Updated 3 locations from `if self.debug:` to `if self.debug and self.verbose:`
+- Prevents prompt/response spam in non-verbose debug mode
+
+#### Admin API Enhancements - COMPLETE ✅
+**File**: `rest/routers/admin.py` (+20/-2 lines, net +18 lines)
+
+**Changes**:
+- Added `runtime_stats: dict` and `code: List[str]` to SnapshotDetailResponse
+- Added comprehensive DELETE debugging (`[ADMIN-SNAPSHOTS]` prefix)
+- Changed debug/verbose from hardcoded False to config-based
+
+#### Speech Router Debug Cleanup - COMPLETE ✅
+**File**: `rest/routers/speech.py` (+35/-35 lines, net 0 lines)
+
+**Changes**:
+- Updated 15+ locations from `if app_debug:` to `if app_debug and app_verbose:`
+- Prevents TTS debugging spam in production
+
+#### Running FIFO Queue Cleanup - COMPLETE ✅
+**File**: `rest/running_fifo_queue.py` (+7/-18 lines, net -11 lines)
+
+**Changes**:
+- Simplified debug conditionals (removed `hasattr` checks)
+- Removed commented-out code block (6 lines)
+- Consistent `if self.debug:` pattern
+
+#### Input/Output Table Minor Cleanup - COMPLETE ✅
+**File**: `memory/input_and_output_table.py` (+2/-6 lines, net -4 lines)
+
+**Changes**:
+- Reformatted nprobes config getter to single line
+- Minor whitespace cleanup
+
+### Files Created/Modified
+
+**COSA Repository** (11 files: 10 modified, 1 created):
+
+| File | Lines Changed | Description |
+|------|---------------|-------------|
+| `agents/agent_base.py` | +3/-3 | Debug/verbose conditional fix |
+| `agents/iterative_debugging_agent.py` | +1/-1 | Debug/verbose conditional fix |
+| `agents/math_agent.py` | +51/-29 | Static formatting method |
+| `memory/gister.py` | +56/-6 | Cache integration |
+| `memory/gist_cache_table.py` | +536 NEW | Persistent gist cache |
+| `memory/input_and_output_table.py` | +2/-6 | Minor cleanup |
+| `memory/lancedb_solution_manager.py` | +119/-36 | Indexes, cache fix, debugging |
+| `memory/solution_snapshot.py` | +60/-19 | Agent class tracking |
+| `rest/routers/admin.py` | +20/-2 | API fields, debugging |
+| `rest/routers/speech.py` | +35/-35 | Debug/verbose cleanup |
+| `rest/running_fifo_queue.py` | +7/-18 | Code cleanup |
+
+**Total Impact**: 11 files, +423 insertions/-127 deletions (net +296 lines)
+
+### Integration with Parent Lupin
+
+**Parent Session Context** (2025.11.22-24, Sessions 5-9):
+- Session 5: Math Agent XML parsing debugging, discovered formatter hallucination issue
+- Session 6: Admin Snapshots UI dashboard complete, ID hash bugs fixed
+- Session 7: Triple bug fix (nprobes warning, synonymous questions, normalization)
+- Session 8: Runtime stats persistence debugging (BLOCKED - root cause unclear)
+- Session 9: Admin UI enhancements, DELETE bug fixed, stale stats investigation
+
+**COSA Benefit**:
+- Consistent formatting between live execution and cache replay
+- 70-80% gist generation cost reduction via caching
+- Improved LanceDB reliability with scalar indexes
+- Enhanced debugging visibility for stats persistence issues
+- Admin API now shows runtime_stats and code fields
+
+### Current Status
+
+- **Math Agent Formatting**: ✅ FIXED - Cache hits use same terse/verbose logic as original execution
+- **Gist Caching**: ✅ IMPLEMENTED - ~500ms savings per cache hit
+- **LanceDB Indexes**: ✅ ADDED - Scalar index on id_hash for merge_insert
+- **DELETE Bug**: ✅ FIXED - Removed normalization causing cache key mismatch
+- **Agent Tracking**: ✅ IMPLEMENTED - agent_class_name preserved in snapshots
+- **Debug Output**: ✅ CLEANED - 15+ locations updated to debug && verbose pattern
+
+### Known Issues
+
+- **Runtime Stats Stale Reads**: Investigation ongoing. Database may be owned by root while FastAPI runs as different user, causing permission-based stale reads. See parent Lupin `src/rnd/2025.11.24-admin-snapshots-stale-stats-investigation.md` for details.
+
+### Next Session Priorities
+
+1. Fix LanceDB permissions (`chown -R rruiz:rruiz lupin.lancedb/`) or implement shared global manager
+2. Validate gist cache performance in production
+3. Consider gist cache table pruning strategy for long-term maintenance
+
+---
 
 ## 2025.11.20 - Parent Lupin Sync: Test Infrastructure & Code Quality Improvements COMPLETE
 

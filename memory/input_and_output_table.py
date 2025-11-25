@@ -42,11 +42,7 @@ class InputAndOutputTable():
         self._embedding_mgr = EmbeddingManager( debug=debug, verbose=verbose )
 
         # Read nprobes configuration for vector search performance tuning
-        self._nprobes = self._config_mgr.get(
-            "solution snapshots lancedb nprobes",
-            default=20,
-            return_type="int"
-        )
+        self._nprobes = self._config_mgr.get( "solution snapshots lancedb nprobes", default=20, return_type="int" )
 
         self.db = lancedb.connect( du.get_project_root() + self._config_mgr.get( "database_path_wo_root" ) )
 
@@ -313,7 +309,7 @@ class InputAndOutputTable():
             - None
         """
         timer = Stopwatch( msg=f"get_all_io( max_rows={max_rows} ) called..." )
-        
+
         results = self._input_and_output_tbl.search().select( [ "date", "time", "input_type", "input", "output_final" ] ).limit( max_rows ).to_list()
         row_count = len( results )
         timer.print( f"Done! Returning [{row_count}] rows", use_millis=True )
@@ -341,7 +337,7 @@ class InputAndOutputTable():
             - None
         """
         timer = Stopwatch( msg=f"get_io_stats_by_input_type( max_rows={max_rows} ) called..." )
-        
+
         stats_df = self._input_and_output_tbl.search().select( [ "input_type" ] ).limit( max_rows ).to_pandas()
         row_count = len( stats_df )
         timer.print( f"Done! Returning [{row_count}] rows for summarization", use_millis=True )
