@@ -158,7 +158,7 @@ class SolutionSnapshot( RunnableCode ):
     
     def __init__( self, push_counter: int=-1, question: str="", question_normalized: str="", question_gist: str="", synonymous_questions: OrderedDict=OrderedDict(), synonymous_question_gists: OrderedDict=OrderedDict(), non_synonymous_questions: list=[],
                   last_question_asked: str="", answer: str="", answer_conversational: str="", error: str="", routing_command: str="", agent_class_name: Optional[str]=None,
-                  created_date: str=get_timestamp(), updated_date: str=get_timestamp(), run_date: str=get_timestamp(),
+                  created_date: str=None, updated_date: str=None, run_date: str=None,
                   runtime_stats: dict=get_default_stats_dict(),
                   id_hash: str="", solution_summary: str="", code: list[str]=[], code_gist: str="", code_returns: str="", code_example: str="", code_type: str="raw", thoughts: str="",
                   programming_language: str="Python", language_version: str="3.10",
@@ -251,9 +251,12 @@ class SolutionSnapshot( RunnableCode ):
         self.code_type             = code_type
         
         # metadata surrounding the question and the solution
-        self.updated_date          = updated_date
-        self.created_date          = created_date
-        self.run_date              = run_date
+        # NOTE: These timestamps use None defaults to avoid Python's mutable default argument bug
+        # where get_timestamp() would be evaluated ONCE at module load time, causing all snapshots
+        # to share the same timestamp and generate identical id_hash values (collision bug).
+        self.updated_date          = updated_date if updated_date else self.get_timestamp()
+        self.created_date          = created_date if created_date else self.get_timestamp()
+        self.run_date              = run_date if run_date else self.get_timestamp( microseconds=True )
         self.runtime_stats         = runtime_stats
         
         if id_hash == "":
@@ -404,16 +407,16 @@ class SolutionSnapshot( RunnableCode ):
     def add_synonymous_question( self, question: str, salutation: str="", score: float=100.0 ) -> None:
         """
         Add a synonymous question to the snapshot.
-        
+
         Requires:
             - question is a non-empty string
             - score is between 0 and 100
-            
+
         Ensures:
             - Adds question to synonymous_questions if not present
             - Updates last_question_asked with full text
             - Updates timestamp if question added
-            
+
         Raises:
             - None
         """
@@ -427,7 +430,7 @@ class SolutionSnapshot( RunnableCode ):
         # Use correct Normalizer that preserves math operators (not deprecated remove_non_alphanumerics)
         normalizer = Normalizer()
         question = normalizer.normalize( question )
-        
+
         if question not in self.synonymous_questions:
             self.synonymous_questions[ question ] = score
             self.updated_date = self.get_timestamp()

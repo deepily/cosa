@@ -265,10 +265,10 @@ class RunningFifoQueue( FifoQueue ):
                 
                 running_job.update_runtime_stats( agent_timer )
                 
-                # Adding this snapshot to the snapshot manager serializes it to the local filesystem
-                print( f"Adding job [{truncated_question}] to snapshot manager..." )
-                self.snapshot_mgr.add_snapshot( running_job )
-                print( f"Adding job [{truncated_question}] to snapshot manager... Done!" )
+                # Save snapshot to manager (inserts new or updates existing)
+                print( f"Saving job [{truncated_question}] to snapshot manager..." )
+                self.snapshot_mgr.save_snapshot( running_job )
+                print( f"Saving job [{truncated_question}] to snapshot manager... Done!" )
                 
                 du.print_banner( "running_job.runtime_stats", prepend_nl=True )
                 pprint.pprint( running_job.runtime_stats )
@@ -341,9 +341,9 @@ class RunningFifoQueue( FifoQueue ):
         du.print_banner( f"Job [{running_job.question}] complete!", prepend_nl=True, end="\n" )
 
         # Persist updated runtime stats to LanceDB
-        print( f"Updating snapshot with runtime stats for [{truncated_question}]..." )
-        self.snapshot_mgr.add_snapshot( running_job )
-        print( f"Updating snapshot with runtime stats for [{truncated_question}]... Done!" )
+        print( f"Saving snapshot with runtime stats for [{truncated_question}]..." )
+        self.snapshot_mgr.save_snapshot( running_job )
+        print( f"Saving snapshot with runtime stats for [{truncated_question}]... Done!" )
 
         du.print_banner( "running_job.runtime_stats", prepend_nl=True )
         pprint.pprint( running_job.runtime_stats )
@@ -385,6 +385,9 @@ class RunningFifoQueue( FifoQueue ):
         # Update runtime stats to show this was a cache hit
         run_timer.print( "CACHE HIT - result retrieved in ", use_millis=True )
         cached_snapshot.update_runtime_stats( run_timer )
+
+        # Persist updated runtime stats to LanceDB (fixes runtime stats not persisting on cache hits)
+        self.snapshot_mgr.save_snapshot( cached_snapshot )
 
         # Update the run_date to current time to show when it was retrieved
         cached_snapshot.run_date = cached_snapshot.get_timestamp()

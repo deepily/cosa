@@ -271,7 +271,7 @@ class TodoFifoQueue( FifoQueue ):
             print( f"  Verbatim:   '{query_verbatim}'" )
             print( f"  Normalized: '{query_normalized}'" )
             print( f"  Gist:       '{query_gist}'" )
-            print( f"Embeddings generated - V:{len(embedding_verbatim)} N:{len(embedding_normalized)} G:{len(embedding_gist)}" )
+            print( f"Embeddings generated - V:{len( embedding_verbatim )} N:{len( embedding_normalized )} G:{len( embedding_gist )}" )
 
         # check to see if the queue isn't accepting jobs (because it's waiting for response to a previous request)
         if not self.is_accepting_jobs():

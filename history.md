@@ -1,6 +1,8 @@
 # COSA Development History
 
-> **📝 CURRENT**: 2025.11.25 - Parent Lupin Sync: LanceDB Query Fix + Method Rename + Dependency Injection! Synced 6 files from parent Lupin Session 10 with critical bug fixes and architectural improvements. **LanceDB Query Pattern Bug Fix**: Fixed critical bug where exact match lookups returned WRONG snapshots (e.g., "What's the square root of 144?" returned "What's 2+2?" answer). Root cause: LanceDB's `table.search().where(filter)` without a vector query returns **arbitrary rows**, not filtered results. Fixed all three `find_exact_*` methods in canonical_synonyms_table.py to use pandas filtering instead. **Method Rename**: `add_snapshot()` → `save_snapshot()` across 4 files (22 call sites) for semantic clarity - the method is actually an upsert (INSERT or UPDATE), not just "add". **Stale Stats Fix**: FastAPI dependency injection pattern - added `get_snapshot_manager()` dependency function that retrieves global singleton from `fastapi_app.main` module, ensuring cache consistency between math agent writes and admin reads. **Admin API Enhancement**: Added `synonymous_questions` and `synonymous_question_gists` fields to SnapshotDetailResponse. **Total Impact**: 6 files, +108 insertions/-143 deletions (net -35 lines). ✅ All Session 10 fixes synced! 🐛🔧
+> **📝 CURRENT**: 2025.11.26 - Parent Lupin Sync: Snapshot ID Hash Collision Bug Fix + Diagnostic Cleanup! Synced critical bug fix from parent Lupin session. **ROOT CAUSE IDENTIFIED**: Classic Python mutable default argument bug in `solution_snapshot.py:161` where `run_date: str=get_timestamp()` was evaluated ONCE at module load time instead of per-instantiation. All snapshots created without explicit `run_date` shared the SAME frozen timestamp, generating IDENTICAL SHA256 `id_hash` values. This caused "sqrt(122)" to find existing record with that hash (sqrt(100)), add "sqrt(122)" synonym to wrong snapshot, returning "10" instead of ~11.045. **FIX**: Changed default parameters from function calls to `None` (line 161), then call `self.get_timestamp()` (with `microseconds=True` for run_date) in function body when values are None (lines 257-259). **DIAGNOSTIC CLEANUP**: Removed ~200 lines of verbose diagnostic logging from investigation phase across 4 files. **LanceDB Query Fix**: Previous session's pandas filtering fix for exact match queries (3 methods). **Method Rename**: `add_snapshot()` → `save_snapshot()` for semantic clarity. **Total Impact**: 8 files, +151/-185 lines (net -34 lines). ✅ Hash collision bug fixed! 🐛✅🧹
+
+> **Previous Achievement**: 2025.11.25 - Parent Lupin Sync: LanceDB Query Fix + Method Rename + Dependency Injection! Synced 6 files from parent Lupin Session 10 with critical bug fixes and architectural improvements. **LanceDB Query Pattern Bug Fix**: Fixed critical bug where exact match lookups returned WRONG snapshots (e.g., "What's the square root of 144?" returned "What's 2+2?" answer). Root cause: LanceDB's `table.search().where(filter)` without a vector query returns **arbitrary rows**, not filtered results. Fixed all three `find_exact_*` methods in canonical_synonyms_table.py to use pandas filtering instead. **Method Rename**: `add_snapshot()` → `save_snapshot()` across 4 files (22 call sites) for semantic clarity - the method is actually an upsert (INSERT or UPDATE), not just "add". **Stale Stats Fix**: FastAPI dependency injection pattern - added `get_snapshot_manager()` dependency function that retrieves global singleton from `fastapi_app.main` module, ensuring cache consistency between math agent writes and admin reads. **Admin API Enhancement**: Added `synonymous_questions` and `synonymous_question_gists` fields to SnapshotDetailResponse. **Total Impact**: 6 files, +108 insertions/-143 deletions (net -35 lines). ✅ All Session 10 fixes synced! 🐛🔧
 
 > **Previous Achievement**: 2025.11.24 - Parent Lupin Sync: Math Agent Debugging + Admin Snapshots API + LanceDB Optimizations! Synced 10 files from parent Lupin repository with improvements from 4 math agent debugging sessions (Sessions 5-9). **Math Agent Enhancements**: Added static `apply_formatting()` method enabling SolutionSnapshot replay to use same formatting logic as original agent execution, preventing formatter hallucination in terse mode. **Gist Caching System**: NEW `GistCacheTable` class (536 lines) providing LanceDB-backed persistent cache for LLM-generated gists (~500ms savings per cache hit, 70-80% expected hit rate). **LanceDB Optimizations**: Added scalar index on id_hash for merge_insert performance, pre-merge cache invalidation, fresh DB read after merge, comprehensive stats debugging. **Total Impact**: 11 files (10 modified, 1 created), +423 insertions/-127 deletions (net +296 lines). ✅ Math agent cache hit formatting now consistent with original execution! 🧮🔧
 
@@ -17,6 +19,85 @@
 > **Previous Achievement**: 2025.11.10 - Phase 2.5.4 API Key Authentication Infrastructure COMPLETE! Header-based API key authentication (X-API-Key header) implemented. Fixed critical schema bug (api_keys.user_id INTEGER→TEXT). Integration testing infrastructure created (10 tests).
 
 > **Previous Achievement**: 2025.11.08 - Notification System Phase 2.3 CLI Modernization COMMITTED! Split async/sync notification clients with Pydantic validation (1,376 lines across 3 new files).
+
+---
+
+## 2025.11.26 - Parent Lupin Sync: Snapshot ID Hash Collision Bug Fix + Diagnostic Cleanup COMPLETE
+
+### Summary
+Synced critical bug fix and diagnostic cleanup from parent Lupin session. Root cause of wrong math agent answers finally identified: Python's mutable default argument anti-pattern causing all snapshots to share identical timestamps and thus identical SHA256 `id_hash` values.
+
+### Work Performed
+
+#### Snapshot ID Hash Collision Bug Fix - COMPLETE ✅
+**File**: `memory/solution_snapshot.py` (+19/-11 lines)
+
+**The Bug**: All snapshots created without explicit `run_date` parameter shared the SAME frozen timestamp ("2025-11-26 @ 08:30:00 PST"), generating IDENTICAL SHA256 `id_hash` values. When "sqrt(122)" was saved, it found existing record with that hash (sqrt(100)), added "sqrt(122)" synonym to wrong snapshot, causing future queries to return "10" instead of ~11.045.
+
+**Root Cause**: Classic Python mutable default argument bug at line 161:
+```python
+# BEFORE (broken - evaluated ONCE at module load)
+def __init__( self, ..., run_date: str=get_timestamp(), ... ):
+
+# AFTER (correct - evaluated per call)
+def __init__( self, ..., run_date: str=None, ... ):
+    self.run_date = run_date if run_date else self.get_timestamp( microseconds=True )
+```
+
+**Fix Applied**:
+- Changed `created_date`, `updated_date`, `run_date` defaults from function calls to `None`
+- Added conditional assignment in function body (lines 257-259)
+- Added `microseconds=True` for `run_date` to ensure uniqueness even for rapid succession calls
+- Added explanatory comment documenting the bug for future developers
+
+#### Diagnostic Logging Cleanup - COMPLETE ✅
+Removed ~200 lines of verbose diagnostic logging added during investigation phase:
+
+| File | Lines Removed | What Was Removed |
+|------|---------------|------------------|
+| `rest/todo_fifo_queue.py` | -14 | Query entry block diagnostics |
+| `memory/lancedb_solution_manager.py` | -78 | Hierarchical search logging (Levels 1-4) |
+| `memory/canonical_synonyms_table.py` | -54 | Synonym audit logging + `_get_synonyms_for_snapshot()` helper |
+| `memory/solution_snapshot.py` | -33 | State mutation tracking |
+
+**Retained**: Core debug logging guarded by `if self.debug:` conditions (non-verbose).
+
+#### Previous Session Fixes (Still in Diff) - COMPLETE ✅
+- **LanceDB Query Fix**: Pandas filtering for exact match queries (3 methods in canonical_synonyms_table.py)
+- **Method Rename**: `add_snapshot()` → `save_snapshot()` for semantic clarity
+- **Cache Lookup Fix**: Use verbatim questions for cache lookup (matching delete_snapshot behavior)
+
+### Files Modified
+
+**COSA Repository** (8 files):
+
+| File | Lines Changed | Description |
+|------|---------------|-------------|
+| `memory/solution_snapshot.py` | +19/-11 | ID hash collision fix (None defaults + microseconds) |
+| `memory/canonical_synonyms_table.py` | +32/-30 | LanceDB query fix + diagnostic cleanup |
+| `memory/lancedb_solution_manager.py` | +32/-32 | Method rename + cache fix + diagnostic cleanup |
+| `memory/snapshot_manager_interface.py` | +9/-5 | Abstract method rename |
+| `memory/solution_snapshot_mgr.py` | +11/-5 | File-based manager rename + return type |
+| `rest/routers/admin.py` | +71/-71 | Dependency injection + cleanup |
+| `rest/running_fifo_queue.py` | +9/-8 | Call site renames + cache hit save |
+| `rest/todo_fifo_queue.py` | +1/-1 | Minor formatting |
+
+**Total Impact**: 8 files, +151 insertions/-185 deletions (net -34 lines)
+
+### Current Status
+
+- **ID Hash Collision**: ✅ FIXED - Each snapshot gets unique timestamp with microseconds
+- **LanceDB Query Fix**: ✅ COMPLETE - Exact matches use pandas filtering
+- **Method Rename**: ✅ COMPLETE - `save_snapshot()` across all files
+- **Diagnostic Cleanup**: ✅ COMPLETE - ~200 lines removed
+
+### Testing Required
+
+1. Delete LanceDB database to clear corrupted data
+2. Restart server
+3. Test "sqrt(100)" → should return 10
+4. Test "sqrt(122)" → should return ~11.045 (NOT 10!)
+5. Verify unique `id_hash` values in admin snapshots view
 
 ---
 

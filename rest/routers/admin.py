@@ -18,9 +18,34 @@ from cosa.rest.admin_service import (
     toggle_user_status,
     admin_reset_password
 )
-from cosa.config.configuration_manager import ConfigurationManager
-from cosa.memory.solution_manager_factory import SolutionSnapshotManagerFactory
 import cosa.utils.util as du
+
+
+# ============================================================================
+# Dependencies
+# ============================================================================
+
+def get_snapshot_manager():
+    """
+    Dependency to get snapshot manager from main module.
+
+    Uses the global singleton to ensure cache consistency between
+    math agent writes and admin reads.
+
+    Requires:
+        - fastapi_app.main module is available
+        - main_module has snapshot_mgr attribute
+
+    Ensures:
+        - Returns the global snapshot manager instance
+        - Provides access to cached snapshots (same cache as math agent)
+
+    Raises:
+        - ImportError if main module not available
+        - AttributeError if snapshot_mgr not found
+    """
+    import fastapi_app.main as main_module
+    return main_module.snapshot_mgr
 
 
 # ============================================================================
@@ -106,6 +131,8 @@ class SnapshotDetailResponse( BaseModel ):
     answer_conversational: str
     runtime_stats: dict
     code: List[str]
+    synonymous_questions: Dict[str, float] = {}       # question → similarity score
+    synonymous_question_gists: Dict[str, float] = {}  # gist → similarity score
     created_date: str
     user_id: str
 
@@ -441,73 +468,6 @@ async def reset_user_password(
 # Solution Snapshots Endpoints
 # ============================================================================
 
-def _get_snapshot_manager():
-    """
-    Helper function to create and initialize LanceDB solution manager.
-
-    Requires:
-        - Configuration manager environment variable set
-        - LanceDB configuration present in lupin-app.ini
-
-    Ensures:
-        - Returns initialized LanceDB manager
-        - Manager is ready for queries
-
-    Raises:
-        - HTTPException 500 if initialization fails
-    """
-    try:
-        # Get configuration
-        config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-
-        # Extract LanceDB configuration
-        manager_type   = config_mgr.get( "solution snapshots manager type" )
-        storage_backend = config_mgr.get( "storage_backend" )
-        table_name     = config_mgr.get( "solution snapshots lancedb table" )
-
-        # Get path or URI based on backend
-        if storage_backend == "gcs":
-            db_path_or_uri = config_mgr.get( "solution snapshots lancedb gcs uri" )
-            config = {
-                "storage_backend" : storage_backend,
-                "gcs_uri"         : db_path_or_uri,
-                "table_name"      : table_name
-            }
-        else:
-            db_path = config_mgr.get( "solution snapshots lancedb path" )
-            db_path_full = du.get_project_root() + db_path
-            config = {
-                "storage_backend" : storage_backend,
-                "db_path"         : db_path_full,
-                "table_name"      : table_name
-            }
-
-        # Get debug and verbose flags from configuration
-        debug_mode = config_mgr.get( "app_debug", default=False )
-        verbose_mode = config_mgr.get( "app_verbose", default=False )
-
-        # Create and initialize manager
-        manager = SolutionSnapshotManagerFactory.create_manager(
-            manager_type = manager_type,
-            config       = config,
-            debug        = debug_mode,
-            verbose      = verbose_mode
-        )
-
-        if not manager.is_initialized():
-            manager.initialize()
-
-        return manager
-
-    except Exception as e:
-        print( f"[ADMIN-SNAPSHOTS] Failed to initialize snapshot manager: {e}" )
-        traceback.print_exc()
-        raise HTTPException(
-            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail      = "Snapshot search is temporarily unavailable"
-        )
-
-
 @router.get(
     "/snapshots/search",
     response_model  = SearchSnapshotsResponse,
@@ -518,7 +478,8 @@ def _get_snapshot_manager():
 async def search_snapshots(
     q: str,
     limit: int = 50,
-    admin_user: Dict = Depends( require_admin )
+    admin_user: Dict = Depends( require_admin ),
+    snapshot_mgr = Depends( get_snapshot_manager )
 ) -> SearchSnapshotsResponse:
     """
     Search solution snapshots using vector similarity search.
@@ -554,10 +515,8 @@ async def search_snapshots(
         )
 
     try:
-        manager = _get_snapshot_manager()
-
         # Search snapshots using vector similarity
-        results = manager.get_snapshots_by_question(
+        results = snapshot_mgr.get_snapshots_by_question(
             question    = q,
             limit       = limit,
             debug       = False
@@ -601,7 +560,8 @@ async def search_snapshots(
 )
 async def get_snapshot_details(
     id_hash: str,
-    admin_user: Dict = Depends( require_admin )
+    admin_user: Dict = Depends( require_admin ),
+    snapshot_mgr = Depends( get_snapshot_manager )
 ) -> SnapshotDetailResponse:
     """
     Get complete snapshot data for display in detail modal.
@@ -622,10 +582,8 @@ async def get_snapshot_details(
         SnapshotDetailResponse: Complete snapshot information
     """
     try:
-        manager = _get_snapshot_manager()
-
         # Get snapshot by ID
-        snapshot = manager.get_snapshot_by_id( id_hash )
+        snapshot = snapshot_mgr.get_snapshot_by_id( id_hash )
 
         if not snapshot:
             print( f"[ADMIN-SNAPSHOTS] Snapshot not found: {id_hash}" )
@@ -635,16 +593,18 @@ async def get_snapshot_details(
             )
 
         return SnapshotDetailResponse(
-            id_hash               = snapshot.id_hash,
-            question              = snapshot.question,
-            question_normalized   = snapshot.question_normalized,
-            question_gist         = snapshot.question_gist,
-            answer                = snapshot.answer,
-            answer_conversational = snapshot.answer_conversational,
-            runtime_stats         = snapshot.runtime_stats,
-            code                  = snapshot.code,
-            created_date          = snapshot.created_date,
-            user_id               = snapshot.user_id
+            id_hash                   = snapshot.id_hash,
+            question                  = snapshot.question,
+            question_normalized       = snapshot.question_normalized,
+            question_gist             = snapshot.question_gist,
+            answer                    = snapshot.answer,
+            answer_conversational     = snapshot.answer_conversational,
+            runtime_stats             = snapshot.runtime_stats,
+            code                      = snapshot.code,
+            synonymous_questions      = dict( snapshot.synonymous_questions ),
+            synonymous_question_gists = dict( snapshot.synonymous_question_gists ),
+            created_date              = snapshot.created_date,
+            user_id                   = snapshot.user_id
         )
 
     except HTTPException:
@@ -667,7 +627,8 @@ async def get_snapshot_details(
 )
 async def delete_snapshot(
     id_hash: str,
-    admin_user: Dict = Depends( require_admin )
+    admin_user: Dict = Depends( require_admin ),
+    snapshot_mgr = Depends( get_snapshot_manager )
 ) -> MessageResponse:
     """
     Delete snapshot with physical removal from LanceDB.
@@ -689,11 +650,10 @@ async def delete_snapshot(
     """
     try:
         print( f"[ADMIN-SNAPSHOTS] DELETE request for snapshot ID: {id_hash}" )
-        manager = _get_snapshot_manager()
 
         # Get snapshot first to retrieve the question
         print( f"[ADMIN-SNAPSHOTS] Retrieving snapshot for deletion..." )
-        snapshot = manager.get_snapshot_by_id( id_hash )
+        snapshot = snapshot_mgr.get_snapshot_by_id( id_hash )
 
         if not snapshot:
             print( f"[ADMIN-SNAPSHOTS] Snapshot not found for deletion: {id_hash}" )
@@ -707,7 +667,7 @@ async def delete_snapshot(
         print( f"[ADMIN-SNAPSHOTS] Attempting physical deletion..." )
 
         # Delete snapshot using question (LanceDB delete requires question)
-        success = manager.delete_snapshot(
+        success = snapshot_mgr.delete_snapshot(
             question        = snapshot.question,
             delete_physical = True
         )

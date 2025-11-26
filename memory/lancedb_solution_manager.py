@@ -608,39 +608,39 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                 print( f"✗ Failed to reload LanceDB manager: {e}" )
             raise
 
-    def add_snapshot( self, snapshot: SolutionSnapshot ) -> bool:
+    def save_snapshot( self, snapshot: SolutionSnapshot ) -> bool:
         """
-        Add snapshot to LanceDB table using context-aware operations.
-        
-        Uses appropriate LanceDB operation based on whether this is a new snapshot
-        or an update to existing data. This fixes the persistence issue by using
-        proper LanceDB APIs instead of manual delete/add operations.
-        
+        Save snapshot to LanceDB table using context-aware upsert operations.
+
+        Performs INSERT for new snapshots or UPDATE for existing ones. This is
+        the primary method for persisting snapshot state including runtime_stats.
+
         Requires:
             - Manager is initialized
             - snapshot is valid SolutionSnapshot
             - snapshot.question is not empty
-            
+
         Ensures:
-            - Snapshot is stored in LanceDB table using optimal operation
-            - Cache is updated with new snapshot
+            - New snapshots are inserted using table.add()
+            - Existing snapshots are updated using merge_insert
+            - Cache is updated with snapshot data
             - Returns True if successful
-            
+
         Raises:
             - RuntimeError if not initialized
             - ValueError if snapshot invalid
         """
         if not self.is_initialized():
-            raise RuntimeError( "Manager must be initialized before adding snapshots" )
-        
+            raise RuntimeError( "Manager must be initialized before saving snapshots" )
+
         if not snapshot or not snapshot.question:
             raise ValueError( "Invalid snapshot: question cannot be empty" )
-        
+
         try:
             # Check if snapshot already exists
             question = snapshot.question
             exists = self._check_snapshot_exists( question )
-            
+
             if not exists:
                 # Brand new snapshot - use direct INSERT
                 if self.debug:
@@ -653,10 +653,10 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                 if self.debug:
                     print( f"Updating existing snapshot for: {du.truncate_string( question, 50 )}" )
                 return self._update_existing_snapshot( snapshot )
-                
+
         except Exception as e:
             if self.debug:
-                print( f"✗ Failed to add snapshot: {e}" )
+                print( f"✗ Failed to save snapshot: {e}" )
             return False
     
     def _check_snapshot_exists( self, question: str ) -> bool:
@@ -1170,17 +1170,13 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                             return [(95.0, snapshot)]
 
             # Check for exact match in local cache (backward compatibility)
-            # IMPORTANT: Cache stores normalized questions, so we must normalize the query
-            if self._normalizer and self._normalizer is not False:
-                question_normalized_for_cache = self._normalizer.normalize( question )
-            else:
-                question_normalized_for_cache = question.lower()  # Fallback if normalizer unavailable
-
-            if question_normalized_for_cache in self._question_lookup:
+            # NOTE: Cache stores VERBATIM questions, so use verbatim lookup for consistency
+            # This matches the behavior of delete_snapshot() and cache population during init
+            if question in self._question_lookup:
                 if self.debug:
-                    print( f"Found exact match in local cache for: {du.truncate_string( question_normalized_for_cache, 50 )}" )
+                    print( f"Found exact match in local cache for: {du.truncate_string( question, 50 )}" )
 
-                id_hash = self._question_lookup[question_normalized_for_cache]
+                id_hash = self._question_lookup[question]
                 record = self._id_lookup[id_hash]
                 snapshot = self._record_to_snapshot( record )
 
@@ -1190,35 +1186,35 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             # Level 4: Fall back to similarity search
             if self.debug:
                 print( f"LEVEL 4: No exact matches found, falling back to similarity search..." )
-            
+
             # For similarity search, we need to generate an embedding for the question
             # Since we don't have direct access to embedding generation here,
             # we'll implement a simple text similarity for now
             # In a full implementation, this would use the EmbeddingManager
-            
+
             if self.debug:
                 print( f"Performing similarity search for: {du.truncate_string( question, 50 )}" )
-            
+
             # Simple implementation: check all questions for text similarity
             similar_snapshots = []
-            
+
             for cached_question, id_hash in self._question_lookup.items():
                 # Simple text similarity (this would be replaced with vector search)
                 similarity = self._calculate_text_similarity( question, cached_question )
                 similarity_percent = similarity * 100
-                
+
                 if similarity_percent >= threshold_question:
                     record = self._id_lookup[id_hash]
                     snapshot = self._record_to_snapshot( record )
                     similar_snapshots.append( (similarity_percent, snapshot) )
-            
+
             # Sort by similarity descending
             similar_snapshots.sort( key=lambda x: x[0], reverse=True )
-            
+
             # Limit results
             if limit > 0:
                 similar_snapshots = similar_snapshots[:limit]
-            
+
             if self.debug:
                 print( f"Found {len( similar_snapshots )} similar snapshots" )
             

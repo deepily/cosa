@@ -192,23 +192,27 @@ class SolutionSnapshotManager:
         print()
         return snapshots_by_synomymous_questions
     
-    def add_snapshot( self, snapshot: ss.SolutionSnapshot ) -> None:
+    def save_snapshot( self, snapshot: ss.SolutionSnapshot ) -> bool:
         """
-        Add a new snapshot to the manager.
-        
+        Save snapshot to file-based storage using upsert semantics.
+
+        Performs INSERT for new snapshots or UPDATE for existing ones.
+
         Requires:
             - snapshot is a valid SolutionSnapshot
             - snapshot.question is set
-            
+
         Ensures:
-            - Adds snapshot to question index
+            - Adds/updates snapshot in question index
             - Writes snapshot to file
-            
+            - Returns True if successful
+
         Raises:
             - None
         """
         self._snapshots_by_question[ snapshot.question ] = snapshot
         snapshot.write_current_state_to_file()
+        return True
     
     def _question_exists( self, question: str ) -> bool:
         """
