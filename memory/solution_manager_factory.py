@@ -238,11 +238,12 @@ class SolutionSnapshotManagerFactory:
                 
         elif manager_type == ManagerType.LANCEDB:
             # Read storage backend configuration
-            storage_backend = config_mgr.get( "storage_backend", default="local" )
+            storage_backend = config_mgr.get( "storage_backend", default="development" )
 
             config = {
                 "storage_backend": storage_backend,
                 "table_name": config_mgr.get( "solution snapshots lancedb table" ),
+                "nprobes": config_mgr.get( "solution snapshots lancedb nprobes", default=20, return_type="int" ),
                 "enable_performance_monitoring": config_mgr.get(
                     "solution snapshots enable performance monitoring", default=True, return_type="boolean"
                 )

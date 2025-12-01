@@ -1,6 +1,8 @@
 # COSA Development History
 
-> **📝 CURRENT**: 2025.11.26 - Parent Lupin Sync: Snapshot ID Hash Collision Bug Fix + Diagnostic Cleanup! Synced critical bug fix from parent Lupin session. **ROOT CAUSE IDENTIFIED**: Classic Python mutable default argument bug in `solution_snapshot.py:161` where `run_date: str=get_timestamp()` was evaluated ONCE at module load time instead of per-instantiation. All snapshots created without explicit `run_date` shared the SAME frozen timestamp, generating IDENTICAL SHA256 `id_hash` values. This caused "sqrt(122)" to find existing record with that hash (sqrt(100)), add "sqrt(122)" synonym to wrong snapshot, returning "10" instead of ~11.045. **FIX**: Changed default parameters from function calls to `None` (line 161), then call `self.get_timestamp()` (with `microseconds=True` for run_date) in function body when values are None (lines 257-259). **DIAGNOSTIC CLEANUP**: Removed ~200 lines of verbose diagnostic logging from investigation phase across 4 files. **LanceDB Query Fix**: Previous session's pandas filtering fix for exact match queries (3 methods). **Method Rename**: `add_snapshot()` → `save_snapshot()` for semantic clarity. **Total Impact**: 8 files, +151/-185 lines (net -34 lines). ✅ Hash collision bug fixed! 🐛✅🧹
+> **📝 CURRENT**: 2025.11.30 - Parent Lupin Sync: LanceDB Part 6 Complete + Config-Driven Design! Synced 6 files from parent Lupin Session 12. **IMPORT FIX**: Fixed wrong ConfigurationManager import path (`cosa.app` → `cosa.config`) in admin.py causing ModuleNotFoundError. **CONFIG-DRIVEN DESIGN**: User-emphasized improvements throughout: replaced hardcoded `debug=False` with `_config_mgr.get("app_debug")`, replaced hardcoded `storage_backend="local"` default with `"development"`. **NEW CONFIG KEY**: `similarity_threshold_admin_search = 80.0` for admin search (lower than queue's 95% to enable discovery/exploration). **THRESHOLD SEPARATION**: Queue uses 95% (precision), admin uses 80% (recall), function defaults changed 100%→90%. **VECTOR SEARCH FIX**: lancedb_solution_manager.py Level 4 now uses proper LanceDB vector similarity search via QuestionEmbeddingsTable instead of placeholder text similarity. **NORMALIZER CLEANUP**: Replaced `du.print_banner()` with simple `print()` for verbose output (13 checks updated). **RETRY LOGIC**: notify_user_async.py now has adaptive retry intervals for WebSocket auth timing. **MULTIMODAL TOKENIZATION**: New `_tokenize()` method and rewritten `munge_text_punctuation()` using tokenization approach for reliable word-level replacement. **Total Impact**: 6 files, +325/-146 lines (net +179 lines). ✅ LanceDB Part 6 Complete! 🔧✅
+
+> **Previous Achievement**: 2025.11.26 - Parent Lupin Sync: Snapshot ID Hash Collision Bug Fix + Diagnostic Cleanup! Synced critical bug fix from parent Lupin session. **ROOT CAUSE IDENTIFIED**: Classic Python mutable default argument bug in `solution_snapshot.py:161` where `run_date: str=get_timestamp()` was evaluated ONCE at module load time instead of per-instantiation. All snapshots created without explicit `run_date` shared the SAME frozen timestamp, generating IDENTICAL SHA256 `id_hash` values. This caused "sqrt(122)" to find existing record with that hash (sqrt(100)), add "sqrt(122)" synonym to wrong snapshot, returning "10" instead of ~11.045. **FIX**: Changed default parameters from function calls to `None` (line 161), then call `self.get_timestamp()` (with `microseconds=True` for run_date) in function body when values are None (lines 257-259). **DIAGNOSTIC CLEANUP**: Removed ~200 lines of verbose diagnostic logging from investigation phase across 4 files. **LanceDB Query Fix**: Previous session's pandas filtering fix for exact match queries (3 methods). **Method Rename**: `add_snapshot()` → `save_snapshot()` for semantic clarity. **Total Impact**: 8 files, +151/-185 lines (net -34 lines). ✅ Hash collision bug fixed! 🐛✅🧹
 
 > **Previous Achievement**: 2025.11.25 - Parent Lupin Sync: LanceDB Query Fix + Method Rename + Dependency Injection! Synced 6 files from parent Lupin Session 10 with critical bug fixes and architectural improvements. **LanceDB Query Pattern Bug Fix**: Fixed critical bug where exact match lookups returned WRONG snapshots (e.g., "What's the square root of 144?" returned "What's 2+2?" answer). Root cause: LanceDB's `table.search().where(filter)` without a vector query returns **arbitrary rows**, not filtered results. Fixed all three `find_exact_*` methods in canonical_synonyms_table.py to use pandas filtering instead. **Method Rename**: `add_snapshot()` → `save_snapshot()` across 4 files (22 call sites) for semantic clarity - the method is actually an upsert (INSERT or UPDATE), not just "add". **Stale Stats Fix**: FastAPI dependency injection pattern - added `get_snapshot_manager()` dependency function that retrieves global singleton from `fastapi_app.main` module, ensuring cache consistency between math agent writes and admin reads. **Admin API Enhancement**: Added `synonymous_questions` and `synonymous_question_gists` fields to SnapshotDetailResponse. **Total Impact**: 6 files, +108 insertions/-143 deletions (net -35 lines). ✅ All Session 10 fixes synced! 🐛🔧
 
@@ -19,6 +21,138 @@
 > **Previous Achievement**: 2025.11.10 - Phase 2.5.4 API Key Authentication Infrastructure COMPLETE! Header-based API key authentication (X-API-Key header) implemented. Fixed critical schema bug (api_keys.user_id INTEGER→TEXT). Integration testing infrastructure created (10 tests).
 
 > **Previous Achievement**: 2025.11.08 - Notification System Phase 2.3 CLI Modernization COMMITTED! Split async/sync notification clients with Pydantic validation (1,376 lines across 3 new files).
+
+---
+
+## 2025.11.30 - Parent Lupin Sync: LanceDB Part 6 Complete + Config-Driven Design
+
+### Summary
+Synced 6 files from parent Lupin Session 12 (2025.11.30). Major theme: config-driven design improvements. Fixed ConfigurationManager import bug, implemented proper LanceDB vector similarity search, added adaptive retry logic for notifications, and rewrote multimodal text processing with tokenization approach.
+
+### Work Performed
+
+#### ConfigurationManager Import Fix - COMPLETE ✅
+**File**: `rest/routers/admin.py` (+9/-2 lines)
+
+**Problem**: ModuleNotFoundError when accessing admin endpoints - wrong import path.
+
+**Fix**: Changed import from `cosa.app` to `cosa.config`:
+```python
+from cosa.config.configuration_manager import ConfigurationManager
+```
+
+Added module-level config manager for threshold access with config-driven values:
+- `threshold = _config_mgr.get( "similarity_threshold_admin_search", default=80.0 )`
+- `debug = _config_mgr.get( "app_debug", default=False )`
+
+#### LanceDB Vector Search Implementation - COMPLETE ✅
+**File**: `memory/lancedb_solution_manager.py` (+87/-87 lines, net 0)
+
+**Problem**: Level 4 similarity search used placeholder text-based similarity (`_calculate_text_similarity()`) instead of actual vector search.
+
+**Fix**: Implemented proper LanceDB vector similarity search:
+- Added `QuestionEmbeddingsTable` import for embedding generation
+- Initialize `self._question_embeddings_tbl` and `self._nprobes` in constructor
+- Level 4 now generates query embedding via `_question_embeddings_tbl.get_embedding()`
+- Performs actual vector search: `self._table.search( query_embedding, vector_column_name="question_embedding" ).metric( "dot" ).nprobes( self._nprobes )`
+- Removed obsolete `_calculate_text_similarity()` method (22 lines deleted)
+
+**Threshold Changes**:
+- `threshold_question` default: 100.0 → 90.0 (sensible fallback)
+- `threshold_gist` default: 100.0 → 90.0
+
+#### Solution Manager Factory Config - COMPLETE ✅
+**File**: `memory/solution_manager_factory.py` (+2/-1 lines)
+
+**Changes**:
+- `storage_backend` default: `"local"` → `"development"` (config-driven naming)
+- Added `nprobes` to config dict: `config_mgr.get( "solution snapshots lancedb nprobes", default=20, return_type="int" )`
+
+#### Normalizer Verbose Output Cleanup - COMPLETE ✅
+**File**: `memory/normalizer.py` (+2/-2 lines)
+
+**Changes**: Replaced `du.print_banner()` with simple `print()` for verbose output:
+```python
+# BEFORE
+if self.verbose: du.print_banner( f"Normalizing: {text[:50]}..." )
+
+# AFTER
+if self.debug and self.verbose: print( f"Normalizing: {text[:50]}..." )
+```
+
+#### Notification Retry Logic - COMPLETE ✅
+**File**: `cli/notify_user_async.py` (+122/-69 lines, net +53)
+
+**New Feature**: Adaptive retry intervals for WebSocket auth timing (Phase 2.7).
+
+**Implementation**:
+- NEW `calculate_retry_intervals()` function (49 lines) with Design by Contract docstring
+- Short timeouts (≤10s): Aggressive linear retries `[1, 1, 2, 2, 3]` to catch WebSocket auth window
+- Long timeouts (>10s): Exponential backoff with 5s cap `[1, 2, 4, 5, 5, 5...]`
+- Retry loop wrapping HTTP requests with attempt tracking and debug output
+- Only retries on `user_not_available` status, fails fast on network/HTTP errors
+
+#### Multimodal Tokenization Approach - COMPLETE ✅
+**File**: `rest/multimodal_munger.py` (+103/-37 lines, net +66)
+
+**Problem**: Previous regex-based punctuation replacement failed at sentence boundaries.
+- `" five "` pattern couldn't match "five?" at end of sentence
+- `" five "` pattern couldn't match "Five" at start of sentence
+
+**Solution**: Tokenization approach with case preservation:
+```python
+"What's five plus five?" → ["What's", " ", "five", " ", "plus", " ", "five", "?"]
+                        → ["What's", " ", "5",    " ", "+",    " ", "5",    "?"]
+                        → "What's 5 + 5?"
+```
+
+**Implementation**:
+- NEW `_tokenize()` method (25 lines) with Design by Contract docstring
+- Rewritten `munge_text_punctuation()` using tokenization
+- Build case-insensitive lookup dictionaries from .map files
+- Replace tokens by checking lowercase, keep original case when no match
+- Preserved OLD APPROACHES in comments for rollback reference
+
+### Files Modified
+
+**COSA Repository** (6 files):
+
+| File | Lines Changed | Description |
+|------|---------------|-------------|
+| `cli/notify_user_async.py` | +122/-69 | Adaptive retry intervals for WebSocket auth |
+| `memory/lancedb_solution_manager.py` | +87/-87 | Proper vector search, threshold defaults |
+| `memory/normalizer.py` | +2/-2 | Verbose output cleanup (print_banner → print) |
+| `memory/solution_manager_factory.py` | +2/-1 | nprobes config, storage_backend default |
+| `rest/multimodal_munger.py` | +103/-37 | Tokenization approach for punctuation |
+| `rest/routers/admin.py` | +9/-2 | Import fix, config-driven threshold+debug |
+
+**Total Impact**: 6 files, +325 insertions/-146 deletions (net +179 lines)
+
+### Threshold Separation Summary
+
+| Context | Threshold | Rationale |
+|---------|-----------|-----------|
+| Queue (user queries) | 95% | Precision-focused for direct answers |
+| Admin search | 80% | Recall-focused for discovery/exploration |
+| Function defaults | 90% | Sensible fallback when not specified |
+
+### Current Status
+
+- **Import Fix**: ✅ COMPLETE - ConfigurationManager path corrected
+- **Vector Search**: ✅ IMPLEMENTED - Proper LanceDB similarity search
+- **Config-Driven**: ✅ IMPLEMENTED - Thresholds, debug, storage_backend from config
+- **Retry Logic**: ✅ COMPLETE - Adaptive intervals for WebSocket timing
+- **Tokenization**: ✅ COMPLETE - Reliable word-level replacement
+
+### LanceDB Upgrade Status
+
+All 6 parts complete:
+1. ✅ Backend infrastructure
+2. ✅ Match % UI display
+3. ✅ STT + Ctrl+R integration
+4. ✅ nprobes warning fix
+5. ✅ Admin threshold separation
+6. ✅ Import fix + config-driven design
 
 ---
 

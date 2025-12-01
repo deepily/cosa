@@ -17,11 +17,12 @@ import numpy as np
 
 import cosa.utils.util as du
 from cosa.memory.snapshot_manager_interface import (
-    SolutionSnapshotManagerInterface, 
-    PerformanceMetrics, 
+    SolutionSnapshotManagerInterface,
+    PerformanceMetrics,
     PerformanceMonitor
 )
 from cosa.memory.solution_snapshot import SolutionSnapshot
+from cosa.memory.question_embeddings_table import QuestionEmbeddingsTable
 
 
 class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
@@ -84,6 +85,10 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         # Initialize components for hierarchical search
         self._canonical_synonyms = None  # Lazy initialization
         self._normalizer = None  # Lazy initialization
+        self._question_embeddings_tbl = QuestionEmbeddingsTable( debug=debug, verbose=verbose )
+
+        # Vector search performance tuning (nprobes for IVF index)
+        self._nprobes = config.get( "nprobes", 20 )
 
         if self.debug:
             print( f"LanceDBSolutionManager configured:" )
@@ -1068,8 +1073,8 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
     def get_snapshots_by_question( self,
                                   question: str,
                                   question_gist: Optional[str] = None,
-                                  threshold_question: float = 100.0,
-                                  threshold_gist: float = 100.0,
+                                  threshold_question: float = 90.0,
+                                  threshold_gist: float = 90.0,
                                   limit: int = 7,
                                   debug: bool = False ) -> List[Tuple[float, Any]]:
         """
@@ -1183,40 +1188,44 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                 monitor.stop()
                 return [(100.0, snapshot)]
 
-            # Level 4: Fall back to similarity search
+            # Level 4: Vector similarity search using LanceDB
             if self.debug:
-                print( f"LEVEL 4: No exact matches found, falling back to similarity search..." )
+                print( f"LEVEL 4: No exact matches found, performing vector similarity search..." )
 
-            # For similarity search, we need to generate an embedding for the question
-            # Since we don't have direct access to embedding generation here,
-            # we'll implement a simple text similarity for now
-            # In a full implementation, this would use the EmbeddingManager
+            # Get embedding for query (uses cached if available, generates if not)
+            query_embedding = self._question_embeddings_tbl.get_embedding( question )
 
-            if self.debug:
-                print( f"Performing similarity search for: {du.truncate_string( question, 50 )}" )
+            if not query_embedding:
+                if self.debug:
+                    print( "Failed to generate query embedding, returning empty results" )
+                monitor.stop()
+                return []
 
-            # Simple implementation: check all questions for text similarity
+            # Perform vector similarity search on question_embedding field
+            search_results = self._table.search(
+                query_embedding,
+                vector_column_name="question_embedding"
+            ).metric( "dot" ).nprobes( self._nprobes ).limit( limit if limit > 0 else 100 ).to_list()
+
             similar_snapshots = []
+            for record in search_results:
+                # Extract dot product score (for L2-normalized embeddings = cosine similarity)
+                dot_product = record.get( "_distance", 0.0 )
 
-            for cached_question, id_hash in self._question_lookup.items():
-                # Simple text similarity (this would be replaced with vector search)
-                similarity = self._calculate_text_similarity( question, cached_question )
-                similarity_percent = similarity * 100
+                # Convert to percentage (0-100 scale)
+                # OpenAI embeddings are L2-normalized, so dot product ≈ cosine similarity
+                similarity_percent = dot_product * 100
 
+                # Apply threshold filter
                 if similarity_percent >= threshold_question:
-                    record = self._id_lookup[id_hash]
                     snapshot = self._record_to_snapshot( record )
-                    similar_snapshots.append( (similarity_percent, snapshot) )
-
-            # Sort by similarity descending
-            similar_snapshots.sort( key=lambda x: x[0], reverse=True )
-
-            # Limit results
-            if limit > 0:
-                similar_snapshots = similar_snapshots[:limit]
+                    similar_snapshots.append( ( similarity_percent, snapshot ) )
 
             if self.debug:
-                print( f"Found {len( similar_snapshots )} similar snapshots" )
+                print( f"Vector search found {len( similar_snapshots )} results above threshold {threshold_question}%" )
+
+            # LanceDB already returns sorted by similarity descending, but ensure consistency
+            similar_snapshots.sort( key=lambda x: x[0], reverse=True )
             
         except Exception as e:
             if self.debug:
@@ -1226,29 +1235,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             monitor.stop()
             
         return similar_snapshots
-    
-    def _calculate_text_similarity( self, text1: str, text2: str ) -> float:
-        """
-        Simple text similarity calculation (placeholder for vector similarity).
-        
-        This is a temporary implementation. In the full version, this would use
-        LanceDB's native vector similarity search with embeddings.
-        """
-        if text1.lower() == text2.lower():
-            return 1.0
-        
-        # Simple word overlap similarity
-        words1 = set( text1.lower().split() )
-        words2 = set( text2.lower().split() )
-        
-        if not words1 or not words2:
-            return 0.0
-        
-        intersection = words1.intersection( words2 )
-        union = words1.union( words2 )
-        
-        return len( intersection ) / len( union ) if union else 0.0
-    
+
     def get_snapshots_by_code_similarity( self,
                                          exemplar_snapshot: SolutionSnapshot,
                                          threshold: float = 85.0,

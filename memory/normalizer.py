@@ -213,7 +213,7 @@ class Normalizer:
         if not text or not text.strip():
             return ""
             
-        if self.verbose: du.print_banner( f"Normalizing: {text[:50]}..." )
+        if self.debug and self.verbose: print( f"Normalizing: {text[:50]}..." )
         
         # Step 1: Expand contractions
         text = self.expand_contractions( text )
@@ -250,7 +250,7 @@ class Normalizer:
         # Ensure consistent spacing around math operators (handles cases like "2+2" -> "2 + 2")
         result = re.sub( r'(\d)([+\-*/=<>])(\d)', r'\1 \2 \3', result )
 
-        if self.debug and self.verbose: du.print_banner( f"Normalized result: {result}" )
+        if self.debug and self.verbose: print( f"Normalized result: {result}" )
 
         return result
     

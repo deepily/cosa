@@ -18,7 +18,11 @@ from cosa.rest.admin_service import (
     toggle_user_status,
     admin_reset_password
 )
+from cosa.config.configuration_manager import ConfigurationManager
 import cosa.utils.util as du
+
+# Module-level config manager for threshold access
+_config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
 
 
 # ============================================================================
@@ -515,11 +519,16 @@ async def search_snapshots(
         )
 
     try:
+        # Get config values (lower threshold than queue for discovery/exploration)
+        threshold = _config_mgr.get( "similarity_threshold_admin_search", default=80.0, return_type="float" )
+        debug     = _config_mgr.get( "app_debug", default=False, return_type="boolean" )
+
         # Search snapshots using vector similarity
         results = snapshot_mgr.get_snapshots_by_question(
-            question    = q,
-            limit       = limit,
-            debug       = False
+            question           = q,
+            threshold_question = threshold,
+            limit              = limit,
+            debug              = debug
         )
 
         # Convert results to response format

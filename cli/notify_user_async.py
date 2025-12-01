@@ -19,6 +19,7 @@ Environment Variables:
 
 import os
 import sys
+import time
 import requests
 import argparse
 from typing import Optional
@@ -40,6 +41,57 @@ from cosa.cli.notification_types import (
     DEFAULT_SERVER_URL,
     ENV_SERVER_URL
 )
+
+
+def calculate_retry_intervals( timeout_seconds: int ) -> list:
+    """
+    Calculate adaptive retry intervals based on timeout duration.
+
+    For short timeouts (≤10s): Aggressive linear retries to catch WebSocket
+    auth completion (which takes 5-10 seconds empirically).
+
+    For long timeouts (>10s): Exponential backoff with 5s cap to reduce
+    server load while maintaining responsiveness.
+
+    Requires:
+        - timeout_seconds is a positive integer
+
+    Ensures:
+        - Returns list of intervals that fit within timeout (0.5s buffer)
+        - Short timeouts: [1, 1, 2, 2, 3] pattern (aggressive)
+        - Long timeouts: [1, 2, 4, 5, 5, 5...] pattern (exponential with cap)
+        - Total interval time < timeout_seconds - 0.5
+
+    Args:
+        timeout_seconds: Total time budget for retries
+
+    Returns:
+        list: Retry intervals in seconds (e.g., [1, 1, 2, 2] = 4 attempts)
+    """
+    if timeout_seconds <= 10:
+        # Aggressive retries for short timeouts (catch 5-10s WebSocket auth window)
+        # Pattern: [1s, 1s, 2s, 2s, 3s] = 9s total
+        intervals = [ 1, 1, 2, 2, 3 ]
+    else:
+        # Exponential backoff with 5s cap for long timeouts
+        # Pattern: [1s, 2s, 4s, 5s, 5s, 5s...]
+        intervals = []
+        delay = 1
+        while sum( intervals ) < timeout_seconds - 1:
+            intervals.append( min( delay, 5 ) )  # Cap at 5s
+            delay *= 2
+
+    # Trim to fit within timeout (leave 0.5s buffer for final request)
+    cumulative = 0
+    result = []
+    for interval in intervals:
+        if cumulative + interval < timeout_seconds - 0.5:
+            result.append( interval )
+            cumulative += interval
+        else:
+            break
+
+    return result
 
 
 def notify_user_async(
@@ -98,90 +150,126 @@ def notify_user_async(
         base_url = base_url.rstrip( '/' )
         api_key = None  # Will cause authentication error (intentional - forces user to fix config)
 
-    try:
-        url = f"{base_url}/api/notify"
+    # Calculate retry intervals based on timeout (Phase 2.7 - adaptive retry for WebSocket auth)
+    retry_intervals = calculate_retry_intervals( request.timeout )
+    all_delays = [ 0 ] + retry_intervals  # First attempt immediate, then configured delays
+    total_attempts = len( all_delays )
 
-        # Convert request to API params (Phase 2.5 - api_key moved to headers)
-        params = request.to_api_params()
+    # Retry loop with enumeration to track last attempt
+    for attempt_idx, retry_delay in enumerate( all_delays, start=1 ):
+        if retry_delay > 0:
+            if debug:
+                print( f"[DEBUG] Retry {attempt_idx - 1} after {retry_delay}s (user connecting)...", file=sys.stderr )
+            time.sleep( retry_delay )
 
-        # Create headers with API key authentication (Phase 2.5)
-        headers = {
-            'X-API-Key': api_key
-        }
+        is_last_attempt = ( attempt_idx == total_attempts )
 
-        if debug:
-            print( f"[DEBUG] Sending notification to: {url}", file=sys.stderr )
-            print( f"[DEBUG] Environment: {env if 'env' in locals() else 'fallback'}", file=sys.stderr )
-            print( f"[DEBUG] Request model: {request.model_dump_json( indent=2 )}", file=sys.stderr )
-            print( f"[DEBUG] API params: {params}", file=sys.stderr )
-            print( f"[DEBUG] API key: {api_key[:20]}...{api_key[-10:] if api_key else 'None'}", file=sys.stderr )
+        try:
+            url = f"{base_url}/api/notify"
 
-        # Send notification (fire-and-forget - no SSE streaming)
-        response = requests.post(
-            url,
-            params  = params,
-            headers = headers,
-            timeout = request.timeout
-        )
+            # Convert request to API params (Phase 2.5 - api_key moved to headers)
+            params = request.to_api_params()
 
-        if response.status_code == 200:
-            # Parse JSON response
-            data = response.json()
+            # Create headers with API key authentication (Phase 2.5)
+            headers = {
+                'X-API-Key': api_key
+            }
 
             if debug:
-                print( f"[DEBUG] Response data: {data}", file=sys.stderr )
+                print( f"[DEBUG] Attempt {attempt_idx}/{total_attempts}: Sending notification to: {url}", file=sys.stderr )
+                if attempt_idx == 1:  # Only print verbose details on first attempt
+                    print( f"[DEBUG] Environment: {env if 'env' in locals() else 'fallback'}", file=sys.stderr )
+                    print( f"[DEBUG] Request model: {request.model_dump_json( indent=2 )}", file=sys.stderr )
+                    print( f"[DEBUG] API params: {params}", file=sys.stderr )
+                    print( f"[DEBUG] API key: {api_key[:20]}...{api_key[-10:] if api_key else 'None'}", file=sys.stderr )
 
-            # Create typed response
-            return AsyncNotificationResponse(
-                success          = True,
-                status           = data.get( "status", "queued" ),
-                message          = data.get( "message" ),
-                target_user      = request.target_user,
-                target_system_id = data.get( "target_system_id" ),
-                connection_count = data.get( "connection_count", 0 )
+            # Send notification (fire-and-forget - no SSE streaming)
+            response = requests.post(
+                url,
+                params  = params,
+                headers = headers,
+                timeout = request.timeout
             )
 
-        else:
-            # HTTP error
-            error_text = response.text if response.text else "No error message"
+            if response.status_code == 200:
+                # Parse JSON response
+                data = response.json()
+
+                if debug:
+                    print( f"[DEBUG] Attempt {attempt_idx} response: {data}", file=sys.stderr )
+
+                # Check if user_not_available and retries remaining
+                status = data.get( "status", "queued" )
+
+                if status == "user_not_available" and not is_last_attempt:
+                    # User still connecting - retry
+                    if debug:
+                        print( f"[DEBUG] user_not_available (attempt {attempt_idx}), will retry...", file=sys.stderr )
+                    continue
+
+                # Success or final attempt - return result
+                return AsyncNotificationResponse(
+                    success          = True,
+                    status           = status,
+                    message          = data.get( "message" ),
+                    target_user      = request.target_user,
+                    target_system_id = data.get( "target_system_id" ),
+                    connection_count = data.get( "connection_count", 0 )
+                )
+
+            else:
+                # HTTP error - don't retry, fail immediately
+                error_text = response.text if response.text else "No error message"
+                return AsyncNotificationResponse(
+                    success     = False,
+                    status      = "error",
+                    message     = f"HTTP {response.status_code}: {error_text}",
+                    target_user = request.target_user
+                )
+
+        except requests.exceptions.ConnectionError:
+            # Network errors - don't retry, fail immediately
             return AsyncNotificationResponse(
                 success     = False,
-                status      = "error",
-                message     = f"HTTP {response.status_code}: {error_text}",
+                status      = "connection_error",
+                message     = f"Cannot reach server at {base_url}. Check that Lupin is running and {ENV_SERVER_URL} is correct.",
                 target_user = request.target_user
             )
 
-    except requests.exceptions.ConnectionError:
-        return AsyncNotificationResponse(
-            success     = False,
-            status      = "connection_error",
-            message     = f"Cannot reach server at {base_url}. Check that Lupin is running and {ENV_SERVER_URL} is correct.",
-            target_user = request.target_user
-        )
+        except requests.exceptions.Timeout:
+            # Timeout - don't retry, fail immediately
+            return AsyncNotificationResponse(
+                success     = False,
+                status      = "timeout",
+                message     = f"Server did not respond within {request.timeout} seconds",
+                target_user = request.target_user
+            )
 
-    except requests.exceptions.Timeout:
-        return AsyncNotificationResponse(
-            success     = False,
-            status      = "timeout",
-            message     = f"Server did not respond within {request.timeout} seconds",
-            target_user = request.target_user
-        )
+        except requests.exceptions.RequestException as e:
+            # Request errors - don't retry, fail immediately
+            return AsyncNotificationResponse(
+                success     = False,
+                status      = "error",
+                message     = f"Request error: {e}",
+                target_user = request.target_user
+            )
 
-    except requests.exceptions.RequestException as e:
-        return AsyncNotificationResponse(
-            success     = False,
-            status      = "error",
-            message     = f"Request error: {e}",
-            target_user = request.target_user
-        )
+        except Exception as e:
+            # Unexpected errors - don't retry, fail immediately
+            return AsyncNotificationResponse(
+                success     = False,
+                status      = "error",
+                message     = f"Unexpected error: {e}",
+                target_user = request.target_user
+            )
 
-    except Exception as e:
-        return AsyncNotificationResponse(
-            success     = False,
-            status      = "error",
-            message     = f"Unexpected error: {e}",
-            target_user = request.target_user
-        )
+    # Exhausted all retries (should never reach here due to is_last_attempt logic)
+    return AsyncNotificationResponse(
+        success     = False,
+        status      = "user_not_available",
+        message     = f"User not available after {total_attempts} attempts",
+        target_user = request.target_user
+    )
 
 
 def validate_environment() -> bool:
