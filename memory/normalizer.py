@@ -79,7 +79,32 @@ class Normalizer:
         "where's": "where is",
         "who's": "who is",
         "how's": "how is",
-        "ain't": "am not"  # or "is not" depending on context
+        "ain't": "am not",  # or "is not" depending on context
+        # STT-friendly variants (no apostrophe) - common in speech-to-text output
+        "whats": "what is",
+        "thats": "that is",
+        "theres": "there is",
+        "heres": "here is",
+        "wheres": "where is",
+        "whos": "who is",
+        "hows": "how is",
+        "dont": "do not",
+        "wont": "will not",
+        "cant": "cannot",
+        "didnt": "did not",
+        "doesnt": "does not",
+        "isnt": "is not",
+        "arent": "are not",
+        "wasnt": "was not",
+        "werent": "were not",
+        "youre": "you are",
+        "theyre": "they are",
+        "youve": "you have",
+        "theyve": "they have",
+        "youd": "you would",
+        "theyd": "they would",
+        "youll": "you will",
+        "theyll": "they will"
     }
 
     # Math and comparison operators that should be preserved during normalization

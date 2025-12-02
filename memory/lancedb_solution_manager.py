@@ -642,19 +642,31 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             raise ValueError( "Invalid snapshot: question cannot be empty" )
 
         try:
-            # Check if snapshot already exists
+            # Check if snapshot already exists (cache-based fast path)
             question = snapshot.question
-            exists = self._check_snapshot_exists( question )
+            exists_in_cache = self._check_snapshot_exists( question )
 
-            if not exists:
-                # Brand new snapshot - use direct INSERT
+            if not exists_in_cache:
+                # Cache miss - but record might still exist in DB due to race conditions
+                # (e.g., cache invalidated during merge, or double-submission)
+                # Do a direct DB check to prevent duplicate INSERTs
+                existing_records = self._check_db_for_question( question )
+
+                if existing_records:
+                    # DUPE-GUARD: Found in DB but not cache - restore cache and UPDATE
+                    if self.debug: print( f"[DUPE-GUARD] Found existing record in DB (cache miss): {du.truncate_string( question, 50 )}" )
+                    # Restore cache entry
+                    self._question_lookup[question] = existing_records[0]["id_hash"]
+                    self._id_lookup[existing_records[0]["id_hash"]] = existing_records[0]
+                    return self._update_existing_snapshot( snapshot )
+
+                # Truly new snapshot - use direct INSERT
                 if self.debug:
-                    # Show verbatim question for clarity (not normalized version)
                     verbatim = snapshot.last_question_asked or snapshot.question or question
                     print( f"Inserting new snapshot for: {du.truncate_string( verbatim, 50 )}" )
                 return self._insert_new_snapshot( snapshot )
             else:
-                # Existing snapshot - determine best update approach
+                # Existing snapshot in cache - determine best update approach
                 if self.debug:
                     print( f"Updating existing snapshot for: {du.truncate_string( question, 50 )}" )
                 return self._update_existing_snapshot( snapshot )
@@ -667,19 +679,47 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
     def _check_snapshot_exists( self, question: str ) -> bool:
         """
         Check if snapshot exists using cache for fast lookup.
-        
+
         Requires:
             - question is non-empty string
-            
+
         Ensures:
             - Returns True if snapshot exists
             - Returns False if snapshot doesn't exist
-            
+
         Raises:
             - None
         """
         return question in self._question_lookup
-    
+
+    def _check_db_for_question( self, question: str ) -> list:
+        """
+        Check LanceDB directly for question (bypass cache).
+
+        Used as fallback when cache miss occurs, to catch race conditions
+        where cache was invalidated but record exists in DB.
+
+        Requires:
+            - question is non-empty string
+            - Table is initialized
+
+        Ensures:
+            - Returns list of matching records (empty if not found)
+            - Does NOT modify cache
+
+        Raises:
+            - None (returns empty list on error)
+        """
+        try:
+            # Escape single quotes in question for SQL WHERE clause
+            escaped_question = question.replace( "'", "''" )
+            results = self._table.search().where( f"question = '{escaped_question}'" ).limit( 1 ).to_list()
+            return results
+        except Exception as e:
+            if self.debug:
+                print( f"[DUPE-GUARD] DB check failed: {e}" )
+            return []
+
     def _insert_new_snapshot( self, snapshot: SolutionSnapshot ) -> bool:
         """
         Insert a brand new snapshot using direct LanceDB add.
@@ -1041,27 +1081,41 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             if self.debug:
                 print( f"[DELETE-DEBUG] Looking up question: '{question}'" )
                 print( f"[DELETE-DEBUG] Cache size: {len(self._question_lookup)} questions" )
-                print( f"[DELETE-DEBUG] First 3 cache keys: {list(self._question_lookup.keys())[:3]}" )
-                print( f"[DELETE-DEBUG] Exact match found? {question in self._question_lookup}" )
 
+            # Check cache first
             if question not in self._question_lookup:
+                # FALLBACK: Check DB directly (cache may be stale)
                 if self.debug:
-                    print( f"[DELETE-DEBUG] Lookup failed - cache key not found" )
-                    print( f"Snapshot not found for: {du.truncate_string( question, 50 )}" )
-                return False
+                    print( f"[DELETE-DEBUG] Cache miss - checking DB directly..." )
 
-            # Get ID hash for deletion using verbatim question
-            id_hash = self._question_lookup[question]
-            
+                existing_records = self._check_db_for_question( question )
+
+                if not existing_records:
+                    if self.debug:
+                        print( f"[DELETE-DEBUG] Not found in cache OR DB" )
+                        print( f"Snapshot not found for: {du.truncate_string( question, 50 )}" )
+                    return False
+
+                # Found in DB but not cache - get id_hash from DB record
+                id_hash = existing_records[0]["id_hash"]
+                if self.debug:
+                    print( f"[DELETE-DEBUG] Found in DB (cache miss): {id_hash[:8]}..." )
+            else:
+                id_hash = self._question_lookup[question]
+                if self.debug:
+                    print( f"[DELETE-DEBUG] Found in cache: {id_hash[:8]}..." )
+
             # Delete from table
             self._table.delete( f"id_hash = '{id_hash}'" )
 
-            # Update cache using verbatim question
-            del self._question_lookup[question]
-            del self._id_lookup[id_hash]
-            
+            # Update cache (remove if present)
+            if question in self._question_lookup:
+                del self._question_lookup[question]
+            if id_hash in self._id_lookup:
+                del self._id_lookup[id_hash]
+
             if self.debug:
-                print( f"✓ Deleted snapshot for: {du.truncate_string( question, 50 )}" )
+                print( f"✓ Deleted snapshot: {id_hash[:8]}..." )
             
             return True
             
@@ -1201,28 +1255,64 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                 monitor.stop()
                 return []
 
+            # Point 1: Query embedding validation
+            if self.debug and self.verbose:
+                print( f"[SIMILARITY-DEBUG] Query text: '{du.truncate_string( question, 80 )}'" )
+                if query_embedding:
+                    print( f"[SIMILARITY-DEBUG] Query embedding: {len( query_embedding )} dims, first 5 values: {query_embedding[:5]}" )
+                    # Check if embedding is all zeros
+                    is_zeros = all( v == 0.0 for v in query_embedding[:100] )
+                    if is_zeros:
+                        print( f"[SIMILARITY-DEBUG] ⚠️ WARNING: Query embedding appears to be all zeros!" )
+
             # Perform vector similarity search on question_embedding field
             search_results = self._table.search(
                 query_embedding,
                 vector_column_name="question_embedding"
             ).metric( "dot" ).nprobes( self._nprobes ).limit( limit if limit > 0 else 100 ).to_list()
 
+            # Point 2: Raw search results count
+            if self.debug and self.verbose:
+                print( f"[SIMILARITY-DEBUG] Raw LanceDB search returned {len( search_results )} results" )
+                if not search_results:
+                    print( f"[SIMILARITY-DEBUG] ⚠️ No results from LanceDB - database may be empty or embeddings missing" )
+
             similar_snapshots = []
             for record in search_results:
-                # Extract dot product score (for L2-normalized embeddings = cosine similarity)
-                dot_product = record.get( "_distance", 0.0 )
+                # Extract distance value from LanceDB
+                # NOTE: With dot metric, _distance = 1 - dot_product (lower = more similar)
+                distance = record.get( "_distance", 0.0 )
 
-                # Convert to percentage (0-100 scale)
-                # OpenAI embeddings are L2-normalized, so dot product ≈ cosine similarity
-                similarity_percent = dot_product * 100
+                # Convert distance to similarity percentage (0-100 scale)
+                # similarity = 1 - distance, matching file-based np.dot() * 100 formula
+                similarity_percent = ( 1.0 - distance ) * 100
 
                 # Apply threshold filter
                 if similarity_percent >= threshold_question:
                     snapshot = self._record_to_snapshot( record )
                     similar_snapshots.append( ( similarity_percent, snapshot ) )
 
+            # Point 3: Top 10 results logging (regardless of threshold)
+            if self.debug and self.verbose and search_results:
+                print( f"[SIMILARITY-DEBUG] Top 10 results (threshold={threshold_question}%):" )
+                for i, record in enumerate( search_results[:10] ):
+                    distance       = record.get( "_distance", 0.0 )
+                    score          = ( 1.0 - distance ) * 100
+                    id_hash        = record.get( "id_hash", "?" )[:8]
+                    created_date   = record.get( "created_date", "?" )[:10]  # Just date part
+                    answer_preview = du.truncate_string( record.get( "answer", "?" ), 20 )
+                    q_preview      = du.truncate_string( record.get( "question", "?" ), 40 )
+                    pass_fail      = "✓" if score >= threshold_question else "✗"
+                    print( f"[SIMILARITY-DEBUG]   {i+1}. {pass_fail} {score:.1f}% [{id_hash}] {created_date} - '{q_preview}' → '{answer_preview}'" )
+
+            # Point 4: Summary
             if self.debug:
-                print( f"Vector search found {len( similar_snapshots )} results above threshold {threshold_question}%" )
+                total    = len( search_results )
+                passed   = len( similar_snapshots )
+                filtered = total - passed
+                print( f"[SIMILARITY-DEBUG] Vector search: {total} total, {passed} above {threshold_question}%, {filtered} filtered out" )
+                if self.verbose and similar_snapshots:
+                    print( f"[SIMILARITY-DEBUG] Top result: {similar_snapshots[0][0]:.1f}% - '{du.truncate_string( similar_snapshots[0][1].question, 50 )}'" )
 
             # LanceDB already returns sorted by similarity descending, but ensure consistency
             similar_snapshots.sort( key=lambda x: x[0], reverse=True )

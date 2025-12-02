@@ -126,7 +126,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         if question == "":
             self.question = self.last_question_asked
         else:
-            self.question = ss.SolutionSnapshot.remove_non_alphanumerics( question )
+            self.question = question  # Store verbatim - DO NOT normalize here!
             
         self.question_gist         = question_gist
         self.answer_conversational = None

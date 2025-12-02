@@ -244,9 +244,9 @@ class TodoFifoQueue( FifoQueue ):
             question_gist = self.normalizer.normalize( parsed_question )
 
         # Generate three-level representation
-        query_verbatim = question  # Exact user input
+        query_verbatim   = question  # Exact user input
         query_normalized = self.normalizer.normalize( parsed_question )  # Always normalize for consistency
-        query_gist = question_gist  # Use the gist computed above
+        query_gist       = question_gist  # Use the gist computed above
 
         # Generate embeddings using cache-first strategy
         embedding_verbatim = self.embedding_manager.generate_embedding(

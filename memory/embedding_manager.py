@@ -229,8 +229,9 @@ class EmbeddingManager:
         if normalize_for_cache:
             cache_key = self.normalize_text_for_cache( text )
             text_for_embedding = cache_key  # Generate embedding for normalized text
-            if self.debug and self.verbose:
-                print( f"Using normalized cache key: '{cache_key}'" )
+            if self.debug:
+                print( f"[EMBED-DEBUG] Original: '{du.truncate_string( text, 60 )}'" )
+                print( f"[EMBED-DEBUG] Normalized: '{du.truncate_string( cache_key, 60 )}'" )
         else:
             cache_key = text
             text_for_embedding = text  # Generate embedding for exact text

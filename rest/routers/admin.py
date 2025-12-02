@@ -481,6 +481,7 @@ async def reset_user_password(
 )
 async def search_snapshots(
     q: str,
+    threshold: float = 80.0,
     limit: int = 50,
     admin_user: Dict = Depends( require_admin ),
     snapshot_mgr = Depends( get_snapshot_manager )
@@ -491,6 +492,7 @@ async def search_snapshots(
     Requires:
         - Admin role authorization
         - Non-empty query string
+        - Valid threshold (0-100)
         - Valid limit (1-100)
 
     Ensures:
@@ -501,6 +503,7 @@ async def search_snapshots(
 
     Query Parameters:
         - q: Search query text
+        - threshold: Min similarity % (0-100, default 80)
         - limit: Max results (1-100, default 50)
 
     Returns:
@@ -512,6 +515,12 @@ async def search_snapshots(
             detail      = "Query parameter 'q' cannot be empty"
         )
 
+    if threshold < 0 or threshold > 100:
+        raise HTTPException(
+            status_code = status.HTTP_400_BAD_REQUEST,
+            detail      = "Threshold must be between 0 and 100"
+        )
+
     if limit < 1 or limit > 100:
         raise HTTPException(
             status_code = status.HTTP_400_BAD_REQUEST,
@@ -519,9 +528,8 @@ async def search_snapshots(
         )
 
     try:
-        # Get config values (lower threshold than queue for discovery/exploration)
-        threshold = _config_mgr.get( "similarity_threshold_admin_search", default=80.0, return_type="float" )
-        debug     = _config_mgr.get( "app_debug", default=False, return_type="boolean" )
+        # Use threshold from query param, debug from config
+        debug = _config_mgr.get( "app_debug", default=False, return_type="boolean" )
 
         # Search snapshots using vector similarity
         results = snapshot_mgr.get_snapshots_by_question(
@@ -537,6 +545,14 @@ async def search_snapshots(
             # Truncate question to 100 chars for preview
             question_preview = du.truncate_string( snapshot.question, max_len=100 )
 
+            # Debug: Show synonyms for each search result
+            print( f"[ADMIN-SEARCH] ID: {snapshot.id_hash[:8]}, Score: {score:.1f}%" )
+            print( f"  Question: {snapshot.question}" )
+            if snapshot.synonymous_questions:
+                print( f"  Synonyms ({len( snapshot.synonymous_questions )}):" )
+                for syn_q, syn_score in snapshot.synonymous_questions.items():
+                    print( f"    - '{syn_q}' ({syn_score:.1f}%)" )
+
             search_results.append( SnapshotSearchResult(
                 id_hash          = snapshot.id_hash,
                 question_preview = question_preview,
@@ -544,6 +560,9 @@ async def search_snapshots(
                 created_date     = snapshot.created_date,
                 score            = score
             ))
+
+        # Ensure descending order by score (highest similarity first)
+        search_results.sort( key=lambda x: x.score, reverse=True )
 
         return SearchSnapshotsResponse(
             results = search_results,

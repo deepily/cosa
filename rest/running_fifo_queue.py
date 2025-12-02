@@ -129,14 +129,20 @@ class RunningFifoQueue( FifoQueue ):
         try:
             # Point to the head of the queue without popping it
             running_job = self.head()
-            
+
             if not running_job:
                 print( "[RUNNING] Warning: _process_job called but no job in running queue" )
                 return
-            
+
+            # JOB-TRACE: Log each job processing for duplicate investigation
+            import time
+            question_trace = getattr( running_job, 'last_question_asked', 'unknown' )
+            timestamp_trace = time.strftime( "%Y-%m-%d %H:%M:%S" )
+            print( f"[JOB-TRACE] {timestamp_trace} Processing: {du.truncate_string( question_trace, 50 )}..." )
+
             # Limit the length of the question string
             truncated_question = du.truncate_string( running_job.last_question_asked, max_len=64 )
-            
+
             run_timer = sw.Stopwatch( "Starting job run timer..." )
             
             # Process based on job type

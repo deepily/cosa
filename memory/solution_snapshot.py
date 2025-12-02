@@ -53,24 +53,40 @@ class SolutionSnapshot( RunnableCode ):
     @staticmethod
     def remove_non_alphanumerics( input: str, replacement_char: str="" ) -> str:
         """
-        DEPRECATED: Use Normalizer.normalize() instead for consistent normalization.
-
-        Remove non-alphanumeric characters from input.
-
-        This method is preserved for backward compatibility but should not be used
-        for new code. Use cosa.memory.normalizer.Normalizer.normalize() instead.
-
-        Requires:
-            - input is a string
-            - replacement_char is a string
-
-        Ensures:
-            - Returns lowercase string with non-alphanumeric chars replaced
-            - Preserves spaces
-
-        Raises:
-            - None
+        ╔══════════════════════════════════════════════════════════════════════════════╗
+        ║  🔥🔥🔥 DEPRECATED - DO NOT USE THIS FUNCTION! 🔥🔥🔥                         ║
+        ║                                                                              ║
+        ║  This function DESTROYS mathematical operators (+, -, *, /) and punctuation! ║
+        ║  It caused HOURS of debugging pain. Use Normalizer.normalize() instead.      ║
+        ║                                                                              ║
+        ║  Example of destruction:                                                     ║
+        ║    "What's 4 + 4?" → "whats 4 4"  (CORRUPTED!)                              ║
+        ║                                                                              ║
+        ║  Use instead: cosa.memory.normalizer.Normalizer.normalize()                  ║
+        ║  The Normalizer preserves MATH_OPERATORS and expands contractions properly.  ║
+        ╚══════════════════════════════════════════════════════════════════════════════╝
         """
+        # 🚨🚨🚨 SCREAM DEPRECATION WARNING TO CONSOLE 🚨🚨🚨
+        print( "" )
+        print( "╔" + "═" * 78 + "╗" )
+        print( "║" + " 🔥🔥🔥 DEPRECATED FUNCTION CALLED: remove_non_alphanumerics() 🔥🔥🔥 ".center( 78 ) + "║" )
+        print( "║" + "═" * 78 + "║" )
+        print( "║" + " WARNING: This function DESTROYS math operators and punctuation!".ljust( 78 ) + "║" )
+        print( "║" + f" Input:  '{input[:50]}...'".ljust( 78 ) + "║" ) if len( input ) > 50 else print( "║" + f" Input:  '{input}'".ljust( 78 ) + "║" )
+        print( "║" + "".ljust( 78 ) + "║" )
+        print( "║" + " USE INSTEAD: cosa.memory.normalizer.Normalizer.normalize()".ljust( 78 ) + "║" )
+        print( "║" + "".ljust( 78 ) + "║" )
+        print( "║" + " Stack trace to find the caller:".ljust( 78 ) + "║" )
+        print( "╚" + "═" * 78 + "╝" )
+
+        import traceback
+        traceback.print_stack( limit=5 )
+
+        print( "" )
+        print( "🔥" * 40 )
+        print( "" )
+
+        # Still execute for backward compatibility, but they'll know it happened!
         regex = re.compile( "[^a-zA-Z0-9 ]" )
         cleaned_output = regex.sub( replacement_char, input ).lower()
 
@@ -427,15 +443,12 @@ class SolutionSnapshot( RunnableCode ):
         else:
             self.last_question_asked = question
 
-        # Use correct Normalizer that preserves math operators (not deprecated remove_non_alphanumerics)
-        normalizer = Normalizer()
-        question = normalizer.normalize( question )
-
+        # Store verbatim question - normalization causes signal loss
         if question not in self.synonymous_questions:
-            self.synonymous_questions[ question ] = score
+            self.synonymous_questions[ self.last_question_asked ] = score
             self.updated_date = self.get_timestamp()
         else:
-            print( f"Question [{question}] is already listed as a synonymous question." )
+            print( f"Question [{self.last_question_asked}] is already listed as a synonymous question." )
         
     def get_last_synonymous_question( self ) -> str:
         """

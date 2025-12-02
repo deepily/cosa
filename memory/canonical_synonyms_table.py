@@ -206,6 +206,7 @@ class CanonicalSynonymsTable:
 
             # Generate three-level representation
             question_normalized = self._normalizer.normalize( question_verbatim )
+
             # For gist, we'd need GistNormalizer but for now use normalized
             question_gist = question_normalized  # Simplified for now
 

@@ -1,6 +1,8 @@
 # COSA Development History
 
-> **📝 CURRENT**: 2025.11.30 - Parent Lupin Sync: LanceDB Part 6 Complete + Config-Driven Design! Synced 6 files from parent Lupin Session 12. **IMPORT FIX**: Fixed wrong ConfigurationManager import path (`cosa.app` → `cosa.config`) in admin.py causing ModuleNotFoundError. **CONFIG-DRIVEN DESIGN**: User-emphasized improvements throughout: replaced hardcoded `debug=False` with `_config_mgr.get("app_debug")`, replaced hardcoded `storage_backend="local"` default with `"development"`. **NEW CONFIG KEY**: `similarity_threshold_admin_search = 80.0` for admin search (lower than queue's 95% to enable discovery/exploration). **THRESHOLD SEPARATION**: Queue uses 95% (precision), admin uses 80% (recall), function defaults changed 100%→90%. **VECTOR SEARCH FIX**: lancedb_solution_manager.py Level 4 now uses proper LanceDB vector similarity search via QuestionEmbeddingsTable instead of placeholder text similarity. **NORMALIZER CLEANUP**: Replaced `du.print_banner()` with simple `print()` for verbose output (13 checks updated). **RETRY LOGIC**: notify_user_async.py now has adaptive retry intervals for WebSocket auth timing. **MULTIMODAL TOKENIZATION**: New `_tokenize()` method and rewritten `munge_text_punctuation()` using tokenization approach for reliable word-level replacement. **Total Impact**: 6 files, +325/-146 lines (net +179 lines). ✅ LanceDB Part 6 Complete! 🔧✅
+> **🔥 CURRENT**: 2025.12.01 - Parent Lupin Sync: Synonym Signal Loss ROOT CAUSE FOUND + FIXED! Synced 9 files from parent Lupin Sessions 13-15. **ROOT CAUSE**: `agent_base.py:129` was calling DEPRECATED `SolutionSnapshot.remove_non_alphanumerics()` which strips ALL punctuation including apostrophes and math operators ("What's 4 + 4?" → "whats 4 4"). **FIX APPLIED**: Changed to `self.question = question` (store verbatim). **DEPRECATION NUKE**: Made `remove_non_alphanumerics()` SCREAM its deprecation with ASCII box, fire emojis, stack trace (limit=5), and 40 fire emojis. **STT-FRIENDLY CONTRACTIONS**: Added 24 apostrophe-less variants to Normalizer ("whats"→"what is", "dont"→"do not", etc.). **ADMIN IMPROVEMENTS**: Added threshold query param, descending sort, synonym debug logging. **DUPE-GUARD**: DB fallback for cache desync in save_snapshot() and delete_snapshot(). **SIMILARITY DEBUG**: Verbose logging for vector search (query embedding, raw results, top 10, threshold filtering). **JOB-TRACE**: Added job processing logging for duplicate investigation. **Total Impact**: 9 files, +221/-66 lines (net +155 lines). ✅ Synonym signal loss fixed! 🔥🐛✅
+
+> **Previous Achievement**: 2025.11.30 - Parent Lupin Sync: LanceDB Part 6 Complete + Config-Driven Design! Synced 6 files from parent Lupin Session 12. Import fix, config-driven design, vector search implementation, adaptive retry logic, tokenization approach. Total Impact: 6 files, +325/-146 lines. ✅ LanceDB Part 6 Complete! 🔧✅
 
 > **Previous Achievement**: 2025.11.26 - Parent Lupin Sync: Snapshot ID Hash Collision Bug Fix + Diagnostic Cleanup! Synced critical bug fix from parent Lupin session. **ROOT CAUSE IDENTIFIED**: Classic Python mutable default argument bug in `solution_snapshot.py:161` where `run_date: str=get_timestamp()` was evaluated ONCE at module load time instead of per-instantiation. All snapshots created without explicit `run_date` shared the SAME frozen timestamp, generating IDENTICAL SHA256 `id_hash` values. This caused "sqrt(122)" to find existing record with that hash (sqrt(100)), add "sqrt(122)" synonym to wrong snapshot, returning "10" instead of ~11.045. **FIX**: Changed default parameters from function calls to `None` (line 161), then call `self.get_timestamp()` (with `microseconds=True` for run_date) in function body when values are None (lines 257-259). **DIAGNOSTIC CLEANUP**: Removed ~200 lines of verbose diagnostic logging from investigation phase across 4 files. **LanceDB Query Fix**: Previous session's pandas filtering fix for exact match queries (3 methods). **Method Rename**: `add_snapshot()` → `save_snapshot()` for semantic clarity. **Total Impact**: 8 files, +151/-185 lines (net -34 lines). ✅ Hash collision bug fixed! 🐛✅🧹
 
@@ -21,6 +23,138 @@
 > **Previous Achievement**: 2025.11.10 - Phase 2.5.4 API Key Authentication Infrastructure COMPLETE! Header-based API key authentication (X-API-Key header) implemented. Fixed critical schema bug (api_keys.user_id INTEGER→TEXT). Integration testing infrastructure created (10 tests).
 
 > **Previous Achievement**: 2025.11.08 - Notification System Phase 2.3 CLI Modernization COMMITTED! Split async/sync notification clients with Pydantic validation (1,376 lines across 3 new files).
+
+---
+
+## 2025.12.01 - Parent Lupin Sync: Synonym Signal Loss ROOT CAUSE FOUND + FIXED
+
+### Summary
+Synced 9 files from parent Lupin Sessions 13-15 (2025.12.01). Major breakthrough: finally traced the source of question corruption ("What's 4 + 4?" → "whats 4 4") to deprecated `remove_non_alphanumerics()` method being called in `agent_base.py:129`. Fixed by storing questions verbatim, added screaming deprecation warnings, and enhanced debugging throughout.
+
+### Work Performed
+
+#### Synonym Signal Loss Root Cause - FIXED ✅
+**File**: `agents/agent_base.py` (+1/-1 lines)
+
+**Problem**: Questions like "What's 4 + 4?" were being corrupted to "whats 4 4" before storage, losing apostrophes and math operators.
+
+**Root Cause**: Line 129 was calling `ss.SolutionSnapshot.remove_non_alphanumerics( question )` which uses regex `[^a-zA-Z0-9 ]` to strip ALL punctuation.
+
+**Fix**: Changed to store question verbatim:
+```python
+# BEFORE (broken - strips math operators!)
+self.question = ss.SolutionSnapshot.remove_non_alphanumerics( question )
+
+# AFTER (correct - preserve verbatim)
+self.question = question  # Store verbatim - DO NOT normalize here!
+```
+
+#### Deprecation Warning Enhancement - COMPLETE ✅
+**File**: `memory/solution_snapshot.py` (+40/-24 lines)
+
+**Changes**: Made `remove_non_alphanumerics()` SCREAM its deprecation:
+- Massive ASCII box docstring explaining the destruction
+- Console output with 🔥 fire emojis and warning banners
+- Display of input text being corrupted
+- Stack trace (limit=5) to identify caller
+- 40 fire emojis at the end
+- Still executes for backward compatibility, but caller WILL notice
+
+#### STT-Friendly Contractions - COMPLETE ✅
+**File**: `memory/normalizer.py` (+27/-1 lines)
+
+**Addition**: Added 24 apostrophe-less contractions common in speech-to-text output:
+- "whats"→"what is", "thats"→"that is", "theres"→"there is"
+- "dont"→"do not", "wont"→"will not", "cant"→"cannot"
+- "youre"→"you are", "theyre"→"they are"
+- "youve"→"you have", "theyve"→"they have"
+- And 14 more variants
+
+**Omitted**: Ambiguous ones (im, id, its, hell, shell, well, were) that could be valid words.
+
+#### Admin Search Improvements - COMPLETE ✅
+**File**: `rest/routers/admin.py` (+25/-1 lines)
+
+**Changes**:
+1. **Threshold Query Param**: Now accepts `threshold` parameter (0-100, default 80) for flexible search
+2. **Descending Sort**: Added explicit `search_results.sort( key=lambda x: x.score, reverse=True )`
+3. **Synonym Debug Logging**: Shows ID, question, and all synonyms with scores for each result:
+   ```
+   [ADMIN-SEARCH] ID: abc12345, Score: 85.2%
+     Question: What's 2 + 2?
+     Synonyms (3):
+       - 'whats 2 plus 2' (92.1%)
+       - 'what is two plus two' (88.4%)
+   ```
+
+#### DUPE-GUARD: DB Fallback for Cache Desync - COMPLETE ✅
+**File**: `memory/lancedb_solution_manager.py` (+150/-8 lines)
+
+**Problem**: Cache could become stale during race conditions, causing duplicate inserts or failed deletes.
+
+**Solution**: Added DB fallback checks when cache misses:
+1. **save_snapshot()**: If cache miss, check DB directly before INSERT to prevent duplicates
+2. **delete_snapshot()**: If cache miss, check DB directly before failing
+3. NEW `_check_db_for_question()` method for direct DB lookups
+
+**Similarity Debug Logging**: Added verbose output for vector search debugging:
+- Query embedding validation (checks for all-zeros)
+- Raw search results count
+- Top 10 results with pass/fail indicators
+- Threshold filtering summary
+
+#### Minor Enhancements - COMPLETE ✅
+
+| File | Changes | Description |
+|------|---------|-------------|
+| `memory/embedding_manager.py` | +2/-3 | Debug output showing original vs normalized text |
+| `memory/canonical_synonyms_table.py` | +1 | Minor whitespace cleanup |
+| `rest/running_fifo_queue.py` | +8/-4 | JOB-TRACE logging for duplicate investigation |
+| `rest/todo_fifo_queue.py` | +2/-2 | Variable alignment cleanup |
+
+### Files Modified
+
+**COSA Repository** (9 files):
+
+| File | Lines Changed | Description |
+|------|---------------|-------------|
+| `agents/agent_base.py` | +1/-1 | Store question verbatim (ROOT CAUSE FIX) |
+| `memory/solution_snapshot.py` | +40/-24 | Screaming deprecation warning |
+| `memory/normalizer.py` | +27/-1 | 24 STT-friendly contractions |
+| `memory/lancedb_solution_manager.py` | +150/-8 | DUPE-GUARD + similarity debug |
+| `rest/routers/admin.py` | +25/-1 | Threshold param + sort + debug |
+| `memory/embedding_manager.py` | +2/-3 | Debug output enhancement |
+| `memory/canonical_synonyms_table.py` | +1 | Whitespace cleanup |
+| `rest/running_fifo_queue.py` | +8/-4 | JOB-TRACE logging |
+| `rest/todo_fifo_queue.py` | +2/-2 | Variable alignment |
+
+**Total Impact**: 9 files, +221 insertions/-66 deletions (net +155 lines)
+
+### Integration with Parent Lupin
+
+**Parent Session Context** (2025.12.01, Sessions 13-15):
+- Session 13: UI polish + synonym signal loss investigation + STT contractions
+- Session 14: ESC key handler for admin modal
+- Session 15: ROOT CAUSE FOUND + FIXED + deprecation nuke
+
+**Why Gist Was Correct**: The gist goes through `gist_normalizer.get_normalized_gist()` which properly expands contractions and preserves operators - that's why synonym gist showed "what is 4 + 4" while question showed corrupted "whats 4 4".
+
+### Current Status
+
+- **Root Cause**: ✅ FIXED - agent_base.py now stores verbatim
+- **Deprecation Warning**: ✅ IMPLEMENTED - Impossible to miss
+- **STT Contractions**: ✅ ADDED - 24 variants in Normalizer
+- **Admin Search**: ✅ ENHANCED - Threshold param + sort + debug
+- **DUPE-GUARD**: ✅ IMPLEMENTED - DB fallback prevents duplicates
+- **Similarity Debug**: ✅ ADDED - Comprehensive vector search logging
+
+### Testing Required
+
+1. Delete LanceDB database to clear corrupted data
+2. Restart server
+3. Test "What's 4 + 4?" via voice → should store verbatim
+4. Verify synonyms show correctly in admin detail view
+5. Confirm no duplicate snapshots created
 
 ---
 
