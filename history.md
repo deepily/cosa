@@ -1,6 +1,8 @@
 # COSA Development History
 
-> **🔥 CURRENT**: 2025.12.01 - Parent Lupin Sync: Synonym Signal Loss ROOT CAUSE FOUND + FIXED! Synced 9 files from parent Lupin Sessions 13-15. **ROOT CAUSE**: `agent_base.py:129` was calling DEPRECATED `SolutionSnapshot.remove_non_alphanumerics()` which strips ALL punctuation including apostrophes and math operators ("What's 4 + 4?" → "whats 4 4"). **FIX APPLIED**: Changed to `self.question = question` (store verbatim). **DEPRECATION NUKE**: Made `remove_non_alphanumerics()` SCREAM its deprecation with ASCII box, fire emojis, stack trace (limit=5), and 40 fire emojis. **STT-FRIENDLY CONTRACTIONS**: Added 24 apostrophe-less variants to Normalizer ("whats"→"what is", "dont"→"do not", etc.). **ADMIN IMPROVEMENTS**: Added threshold query param, descending sort, synonym debug logging. **DUPE-GUARD**: DB fallback for cache desync in save_snapshot() and delete_snapshot(). **SIMILARITY DEBUG**: Verbose logging for vector search (query embedding, raw results, top 10, threshold filtering). **JOB-TRACE**: Added job processing logging for duplicate investigation. **Total Impact**: 9 files, +221/-66 lines (net +155 lines). ✅ Synonym signal loss fixed! 🔥🐛✅
+> **🔍 CURRENT**: 2025.12.02 - Parent Lupin Sync: Code Similarity Visualization + Duplicate Snapshot Bug Fixes! Synced 3 files from parent Lupin Sessions 16-17. **PHASE 1 - CODE SIMILARITY SEARCH**: Replaced stub `get_snapshots_by_code_similarity()` with real LanceDB vector search on `code_embedding` field, added new `get_snapshots_by_solution_similarity()` method for `solution_embedding` field (+200 lines in lancedb_solution_manager.py). **PHASE 2 - API ENDPOINTS**: Added 3 Pydantic models (`CodeSimilarityResult`, `SimilarSnapshotsResponse`, `SnapshotPreviewResponse`) and 2 endpoints (`/admin/snapshots/{id_hash}/preview`, `/admin/snapshots/{id_hash}/similar`). **DUPLICATE BUG FIX 1 - TOCTOU RACE**: Added `threading.Lock` around `save_snapshot()` critical section to prevent concurrent calls from both passing cache/DB checks. **DUPLICATE BUG FIX 2 - ID HASH PRESERVATION**: Added `snapshot.id_hash = existing_id_hash` in `_update_existing_snapshot()` so `merge_insert` matches existing record. **GIST GENERATION FIX**: `running_fifo_queue.py` called uninitialized `self.normalizer`; fixed by importing/initializing `GistNormalizer`, plus added gist generation to `_handle_base_agent()` for new jobs. **Total Impact**: 3 files, +513 insertions/-81 deletions (net +432 lines). 🔍💻🐛✅
+
+> **🔥 PREVIOUS**: 2025.12.01 - Parent Lupin Sync: Synonym Signal Loss ROOT CAUSE FOUND + FIXED! Synced 9 files from parent Lupin Sessions 13-15. **ROOT CAUSE**: `agent_base.py:129` was calling DEPRECATED `SolutionSnapshot.remove_non_alphanumerics()` which strips ALL punctuation including apostrophes and math operators ("What's 4 + 4?" → "whats 4 4"). **FIX APPLIED**: Changed to `self.question = question` (store verbatim). **DEPRECATION NUKE**: Made `remove_non_alphanumerics()` SCREAM its deprecation with ASCII box, fire emojis, stack trace (limit=5), and 40 fire emojis. **STT-FRIENDLY CONTRACTIONS**: Added 24 apostrophe-less variants to Normalizer ("whats"→"what is", "dont"→"do not", etc.). **ADMIN IMPROVEMENTS**: Added threshold query param, descending sort, synonym debug logging. **DUPE-GUARD**: DB fallback for cache desync in save_snapshot() and delete_snapshot(). **SIMILARITY DEBUG**: Verbose logging for vector search (query embedding, raw results, top 10, threshold filtering). **JOB-TRACE**: Added job processing logging for duplicate investigation. **Total Impact**: 9 files, +221/-66 lines (net +155 lines). ✅ Synonym signal loss fixed! 🔥🐛✅
 
 > **Previous Achievement**: 2025.11.30 - Parent Lupin Sync: LanceDB Part 6 Complete + Config-Driven Design! Synced 6 files from parent Lupin Session 12. Import fix, config-driven design, vector search implementation, adaptive retry logic, tokenization approach. Total Impact: 6 files, +325/-146 lines. ✅ LanceDB Part 6 Complete! 🔧✅
 
@@ -23,6 +25,118 @@
 > **Previous Achievement**: 2025.11.10 - Phase 2.5.4 API Key Authentication Infrastructure COMPLETE! Header-based API key authentication (X-API-Key header) implemented. Fixed critical schema bug (api_keys.user_id INTEGER→TEXT). Integration testing infrastructure created (10 tests).
 
 > **Previous Achievement**: 2025.11.08 - Notification System Phase 2.3 CLI Modernization COMMITTED! Split async/sync notification clients with Pydantic validation (1,376 lines across 3 new files).
+
+---
+
+## 2025.12.02 - Parent Lupin Sync: Code Similarity Visualization + Duplicate Snapshot Bug Fixes
+
+### Summary
+Synced 3 files from parent Lupin Sessions 16-17 (2025.12.02). Major feature: full code similarity visualization for admin snapshots dashboard. Critical bug fixes: duplicate snapshot creation (TOCTOU race + id_hash preservation) and code_gist generation (uninitialized normalizer + missing generation location).
+
+### Work Performed
+
+#### Code Similarity Search Backend - COMPLETE ✅
+**File**: `memory/lancedb_solution_manager.py` (+258/-81 lines, net +177 lines)
+
+**Phase 1 - Replace Stub with Real Vector Search**:
+- Replaced placeholder `get_snapshots_by_code_similarity()` with real LanceDB vector search on `code_embedding` field
+- NEW `get_snapshots_by_solution_similarity()` method for `solution_embedding` field searches
+- Both methods: validate embeddings, perform vector search with `.metric("dot").nprobes()`, convert distance to similarity percentage, filter by threshold, exclude self
+
+**Distance-to-Similarity Formula**:
+```python
+# With dot metric: _distance = 1 - dot_product (lower = more similar)
+distance = record.get( "_distance", 0.0 )
+similarity_percent = ( 1.0 - distance ) * 100
+```
+
+#### Duplicate Snapshot Bug Fixes - COMPLETE ✅
+**File**: `memory/lancedb_solution_manager.py`
+
+**BUG 1 - TOCTOU Race Condition**:
+- **Problem**: Two concurrent `save_snapshot()` calls for same question could both pass cache/DB checks before either INSERT commits
+- **Fix**: Added `from threading import Lock`, class-level `_save_lock = Lock()`, wrapped critical section with `with self._save_lock:`
+- **Pattern**: Follows existing codebase (EmbeddingManager, Normalizer, GistNormalizer all use `_lock = Lock()`)
+
+**BUG 2 - id_hash NOT Preserved on Update**:
+- **Problem**: New snapshot has its OWN id_hash (generated from creation timestamp), but `merge_insert("id_hash")` expects matching hash. Mismatch causes INSERT instead of UPDATE!
+- **Fix**: Added `snapshot.id_hash = existing_id_hash` in `_update_existing_snapshot()` before calling `_full_replace_snapshot()`
+
+**Concurrent Save Test**:
+```python
+# Added to quick_smoke_test(): Pre-creates 3 snapshots, launches threads, verifies only 1 record
+concurrent_snapshots = [SolutionSnapshot(...) for _ in range(3)]
+threads = [threading.Thread(target=threaded_save, args=(s,)) for s in concurrent_snapshots]
+# Verify: len(matching) == 1
+```
+
+#### Admin API Endpoints - COMPLETE ✅
+**File**: `rest/routers/admin.py` (+229 lines)
+
+**New Pydantic Models**:
+- `CodeSimilarityResult`: Individual result (id_hash, question_preview, code_gist, similarity, created_date)
+- `SimilarSnapshotsResponse`: Two lists (code_similar, explanation_similar) with counts
+- `SnapshotPreviewResponse`: Preview data for hover tooltips (code_preview, code_gist)
+
+**New Endpoints**:
+1. `GET /admin/snapshots/{id_hash}/preview` - Returns first 300 chars of code + code_gist for hover preview
+2. `GET /admin/snapshots/{id_hash}/similar` - Vector similarity search returning code-similar and explanation-similar snapshots
+
+**Detail Modal Enhancements**:
+- Added `solution_summary` and `code_gist` fields to `SnapshotDetailResponse`
+
+#### Gist Generation Fix - COMPLETE ✅
+**File**: `rest/running_fifo_queue.py` (+26/-10 lines, net +16 lines)
+
+**BUG - Uninitialized Normalizer**:
+- **Problem**: Code called `self.normalizer.process_text()` but `self.normalizer` was NEVER INITIALIZED
+- **Fix**: Import `GistNormalizer`, initialize `self.gist_normalizer` in `__init__`, use `self.gist_normalizer.get_normalized_gist()`
+
+**BUG - Missing Generation Location**:
+- **Problem**: `code_gist` only generated in `_handle_solution_snapshot()` (cached path) but NOT in `_handle_base_agent()` (new jobs)
+- **Fix**: Added gist generation block to `_handle_base_agent()` after speech emitted but before `update_runtime_stats()`
+
+**Cache Hit Tuple Unpack**:
+- Fixed unpacking: `score, cached_snapshot = cached_snapshots[0]` (was missing score)
+
+### Files Modified
+
+**COSA Repository** (3 files):
+
+| File | Lines Changed | Description |
+|------|---------------|-------------|
+| `memory/lancedb_solution_manager.py` | +258/-81 | Code/solution similarity search, TOCTOU lock, id_hash preservation, concurrent test |
+| `rest/routers/admin.py` | +229/-0 | 3 Pydantic models, 2 endpoints, 2 detail fields |
+| `rest/running_fifo_queue.py` | +26/-10 | GistNormalizer init, gist generation in new jobs path, tuple unpack fix |
+
+**Total Impact**: 3 files, +513 insertions/-81 deletions (net +432 lines)
+
+### Integration with Parent Lupin
+
+**Parent Session Context** (2025.12.02, Sessions 16-17):
+- Session 16: Duplicate snapshot bug investigation - found TOCTOU race + id_hash mismatch root causes
+- Session 17: Code similarity visualization feature complete - 4 phases (backend, API, hover preview, drill-down modal)
+
+**Frontend Changes** (in parent Lupin only, not COSA):
+- Hover preview icons (📝 💻) on search results
+- Similarity modal with two-column layout
+- Click-to-view detail items
+
+### Current Status
+
+- **Code Similarity Search**: ✅ IMPLEMENTED - Real LanceDB vector search on code_embedding
+- **Solution Similarity Search**: ✅ IMPLEMENTED - New method for solution_embedding
+- **TOCTOU Race Fix**: ✅ COMPLETE - Thread lock prevents concurrent duplicate inserts
+- **ID Hash Preservation**: ✅ COMPLETE - Updates use original id_hash for merge_insert match
+- **Gist Generation**: ✅ FIXED - Initialized normalizer, added new jobs path generation
+- **Preview/Similar Endpoints**: ✅ COMPLETE - Admin can explore code similarity
+
+### Testing Performed
+
+1. Concurrent save protection test added to `quick_smoke_test()`
+2. Both sequential and concurrent tests pass
+3. Preview endpoint returns code + gist
+4. Similar endpoint returns code and explanation matches
 
 ---
 

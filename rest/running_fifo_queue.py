@@ -5,6 +5,7 @@ from cosa.rest.fifo_queue import FifoQueue
 from cosa.agents.agent_base import AgentBase
 from cosa.memory.input_and_output_table import InputAndOutputTable
 from cosa.memory.solution_snapshot import SolutionSnapshot
+from cosa.memory.gist_normalizer import GistNormalizer
 
 import cosa.utils.util as du
 import cosa.utils.util_stopwatch as sw
@@ -56,6 +57,7 @@ class RunningFifoQueue( FifoQueue ):
         self.debug               = False if config_mgr is None else config_mgr.get( "app_debug",   default=False, return_type="boolean" )
         self.verbose             = False if config_mgr is None else config_mgr.get( "app_verbose", default=False, return_type="boolean" )
         self.io_tbl              = InputAndOutputTable()
+        self.gist_normalizer     = GistNormalizer( debug=self.debug, verbose=self.verbose )
     
     
     def enter_running_loop( self ) -> None:
@@ -157,9 +159,9 @@ class RunningFifoQueue( FifoQueue ):
 
                 if cached_snapshots and len( cached_snapshots ) > 0:
                     # CACHE HIT - Use the cached result
-                    cached_snapshot = cached_snapshots[0]  # Use first/best match
+                    score, cached_snapshot = cached_snapshots[0]  # Unpack (score, snapshot) tuple
 
-                    if self.debug: print( f"[CACHE] 🎯 CACHE HIT: Found cached solution from {cached_snapshot.run_date}" )
+                    if self.debug: print( f"[CACHE] 🎯 CACHE HIT: Found cached solution from {cached_snapshot.run_date} (score: {score:.1f}%)" )
 
                     # Convert cached snapshot to proper format and use it
                     running_job = self._format_cached_result( cached_snapshot, truncated_question, run_timer )
@@ -253,22 +255,32 @@ class RunningFifoQueue( FifoQueue ):
             # If we've arrived at this point, then we've successfully run the agentic part of this job
             self._emit_speech( running_job.answer_conversational, job=running_job )
             agent_timer.print( "Done!", use_millis=True )
-            
+
             # Only the ReceptionistAgent and WeatherAgent are not being serialized as a solution snapshot
             # TODO: this needs to not be so ad hoc as it appears right now!
             serialize_snapshot = (
-                not isinstance( running_job, ReceptionistAgent ) and 
+                not isinstance( running_job, ReceptionistAgent ) and
                 not isinstance( running_job, WeatherAgent ) # and
                 # not isinstance( running_job, MathRefactoringAgent )
             )
             if serialize_snapshot:
-                
+
                 # recast the agent object as a solution snapshot object and add it to the snapshot manager
                 running_job = SolutionSnapshot.create( running_job )
                 # KLUDGE! I shouldn't have to do this!
                 print( f"KLUDGE! Setting running_job.answer_conversational to [{formatted_output}]...")
                 running_job.answer_conversational = formatted_output
-                
+
+                # Generate code_gist on first execution (after response sent, before stats update)
+                if running_job.runtime_stats["run_count"] == -1 and not running_job.code_gist:
+                    code_explanation = running_job.solution_summary if running_job.solution_summary else running_job.thoughts
+                    if code_explanation:
+                        try:
+                            running_job.code_gist = self.gist_normalizer.get_normalized_gist( code_explanation )
+                            if self.debug: print( f"Generated code_gist: {du.truncate_string(running_job.code_gist, 100)}" )
+                        except Exception as e:
+                            if self.debug: print( f"Failed to generate code_gist: {e}" )
+
                 running_job.update_runtime_stats( agent_timer )
                 
                 # Save snapshot to manager (inserts new or updates existing)
@@ -338,7 +350,7 @@ class RunningFifoQueue( FifoQueue ):
             if code_explanation:
                 try:
                     # Generate gist of code explanation for future formatter optimization
-                    running_job.code_gist = self.normalizer.process_text( code_explanation )
+                    running_job.code_gist = self.gist_normalizer.get_normalized_gist( code_explanation )
                     if self.debug: print( f"Generated code_gist: {du.truncate_string(running_job.code_gist, 100)}" )
                 except Exception as e:
                     if self.debug: print( f"Failed to generate code_gist: {e}" )

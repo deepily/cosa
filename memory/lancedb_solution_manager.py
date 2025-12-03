@@ -9,6 +9,7 @@ while maintaining 100% API compatibility with the file-based implementation.
 import os
 import json
 import time
+from threading import Lock
 from typing import List, Tuple, Optional, Dict, Any
 
 import lancedb
@@ -28,12 +29,16 @@ from cosa.memory.question_embeddings_table import QuestionEmbeddingsTable
 class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
     """
     LanceDB-based solution snapshot manager with native vector search.
-    
+
     Implements the SolutionSnapshotManagerInterface using LanceDB's vector database
     capabilities for high-performance semantic similarity search. Provides identical
     API to file-based implementation while leveraging native vector operations.
     """
-    
+
+    # Thread safety: Lock for save operations to prevent TOCTOU race conditions
+    # that cause duplicate records when concurrent save_snapshot() calls occur
+    _save_lock = Lock()
+
     def __init__( self, config: Dict[str, Any], debug: bool = False, verbose: bool = False ) -> None:
         """
         Initialize LanceDB solution snapshot manager with multi-backend support.
@@ -642,34 +647,39 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             raise ValueError( "Invalid snapshot: question cannot be empty" )
 
         try:
-            # Check if snapshot already exists (cache-based fast path)
-            question = snapshot.question
-            exists_in_cache = self._check_snapshot_exists( question )
+            # CRITICAL: Lock the entire check-then-insert flow to prevent TOCTOU race conditions.
+            # Without this lock, two concurrent calls for the same question can both pass
+            # the cache and DB checks before either INSERT commits, creating duplicate records.
+            # See: 2025.12 duplicate snapshot investigation - f4aa24b5 and 2ea576fa bug
+            with self._save_lock:
+                # Check if snapshot already exists (cache-based fast path)
+                question = snapshot.question
+                exists_in_cache = self._check_snapshot_exists( question )
 
-            if not exists_in_cache:
-                # Cache miss - but record might still exist in DB due to race conditions
-                # (e.g., cache invalidated during merge, or double-submission)
-                # Do a direct DB check to prevent duplicate INSERTs
-                existing_records = self._check_db_for_question( question )
+                if not exists_in_cache:
+                    # Cache miss - but record might still exist in DB due to race conditions
+                    # (e.g., cache invalidated during merge, or double-submission)
+                    # Do a direct DB check to prevent duplicate INSERTs
+                    existing_records = self._check_db_for_question( question )
 
-                if existing_records:
-                    # DUPE-GUARD: Found in DB but not cache - restore cache and UPDATE
-                    if self.debug: print( f"[DUPE-GUARD] Found existing record in DB (cache miss): {du.truncate_string( question, 50 )}" )
-                    # Restore cache entry
-                    self._question_lookup[question] = existing_records[0]["id_hash"]
-                    self._id_lookup[existing_records[0]["id_hash"]] = existing_records[0]
+                    if existing_records:
+                        # DUPE-GUARD: Found in DB but not cache - restore cache and UPDATE
+                        if self.debug: print( f"[DUPE-GUARD] Found existing record in DB (cache miss): {du.truncate_string( question, 50 )}" )
+                        # Restore cache entry
+                        self._question_lookup[question] = existing_records[0]["id_hash"]
+                        self._id_lookup[existing_records[0]["id_hash"]] = existing_records[0]
+                        return self._update_existing_snapshot( snapshot )
+
+                    # Truly new snapshot - use direct INSERT
+                    if self.debug:
+                        verbatim = snapshot.last_question_asked or snapshot.question or question
+                        print( f"Inserting new snapshot for: {du.truncate_string( verbatim, 50 )}" )
+                    return self._insert_new_snapshot( snapshot )
+                else:
+                    # Existing snapshot in cache - determine best update approach
+                    if self.debug:
+                        print( f"Updating existing snapshot for: {du.truncate_string( question, 50 )}" )
                     return self._update_existing_snapshot( snapshot )
-
-                # Truly new snapshot - use direct INSERT
-                if self.debug:
-                    verbatim = snapshot.last_question_asked or snapshot.question or question
-                    print( f"Inserting new snapshot for: {du.truncate_string( verbatim, 50 )}" )
-                return self._insert_new_snapshot( snapshot )
-            else:
-                # Existing snapshot in cache - determine best update approach
-                if self.debug:
-                    print( f"Updating existing snapshot for: {du.truncate_string( question, 50 )}" )
-                return self._update_existing_snapshot( snapshot )
 
         except Exception as e:
             if self.debug:
@@ -765,32 +775,39 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
     def _update_existing_snapshot( self, snapshot: SolutionSnapshot ) -> bool:
         """
         Update existing snapshot using appropriate LanceDB operation.
-        
+
         Determines the most efficient update method based on what fields changed:
         - Runtime stats only: Use table.update() for targeted field update
         - Multiple fields: Use merge_insert for full replacement
-        
+
         Requires:
             - snapshot is valid SolutionSnapshot
             - snapshot exists in table
-            
+
         Ensures:
             - Snapshot updated using optimal LanceDB operation
             - Cache updated with new data
             - Returns True if successful
-            
+
         Raises:
             - Exception if update fails
         """
         try:
-            # Get existing snapshot for comparison
+            # Get existing snapshot's id_hash from cache
             existing_id_hash = self._question_lookup[snapshot.question]
             existing_record = self._id_lookup[existing_id_hash]
-            
+
+            # CRITICAL: Preserve the original id_hash when updating!
+            # The incoming snapshot may have a NEW id_hash (generated from its creation time),
+            # but we must use the ORIGINAL id_hash so merge_insert matches the existing record.
+            # Without this, merge_insert("id_hash") finds no match and INSERTS instead of UPDATE.
+            # See: 2025.12 duplicate snapshot investigation - root cause fix
+            snapshot.id_hash = existing_id_hash
+
             # For now, use merge_insert for all updates (safest approach)
             # TODO: Add smart detection for partial updates in future iterations
             return self._full_replace_snapshot( snapshot )
-            
+
         except Exception as e:
             if self.debug:
                 print( f"  ✗ Update failed: {e}" )
@@ -1329,76 +1346,217 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
     def get_snapshots_by_code_similarity( self,
                                          exemplar_snapshot: SolutionSnapshot,
                                          threshold: float = 85.0,
-                                         limit: int = -1, 
+                                         limit: int = 20,
+                                         exclude_self: bool = True,
                                          debug: bool = False ) -> List[Tuple[float, Any]]:
         """
         Search for snapshots by code similarity using LanceDB vector search.
-        
+
         Requires:
             - Manager is initialized
-            - exemplar_snapshot has valid code_embedding
+            - exemplar_snapshot has valid code_embedding (non-zero 1536-dim vector)
             - threshold is between 0.0 and 100.0
-            
+
         Ensures:
             - Returns list of (similarity_score, snapshot) tuples
             - Results sorted by similarity descending
-            - Uses LanceDB's native vector search for code embeddings
+            - Uses LanceDB's native vector search on code_embedding field
+            - Excludes exemplar snapshot if exclude_self=True
             - Performance metrics included
-            
+
         Raises:
             - RuntimeError if not initialized
-            - ValueError if exemplar_snapshot invalid
+            - ValueError if exemplar_snapshot invalid or missing code_embedding
         """
         if not self.is_initialized():
             raise RuntimeError( "Manager must be initialized before searching" )
-        
+
         if not exemplar_snapshot:
             raise ValueError( "Exemplar snapshot cannot be None" )
-        
+
         if not (0.0 <= threshold <= 100.0):
             raise ValueError( "Threshold must be between 0.0 and 100.0" )
-        
+
         monitor = PerformanceMonitor( "get_snapshots_by_code_similarity" )
         monitor.start()
-        
+
         try:
-            # For now, implement simple fallback
-            # In full implementation, this would use LanceDB vector search on code_embedding field
-            
-            if self.debug:
-                print( f"Performing code similarity search" )
-            
+            # Get code embedding from exemplar snapshot
+            query_embedding = exemplar_snapshot.code_embedding
+
+            # Validate code embedding exists and is non-zero
+            if not query_embedding:
+                if debug: print( "Exemplar snapshot has no code_embedding" )
+                monitor.stop()
+                return []
+
+            # Check if embedding is all zeros (invalid)
+            is_zeros = all( v == 0.0 for v in query_embedding[:100] )
+            if is_zeros:
+                if debug: print( "Exemplar snapshot has zero code_embedding" )
+                monitor.stop()
+                return []
+
+            if debug:
+                print( f"[CODE-SIMILARITY] Searching with code_embedding ({len( query_embedding )} dims)" )
+                print( f"[CODE-SIMILARITY] Exemplar: '{du.truncate_string( exemplar_snapshot.question, 60 )}'" )
+
+            # Perform vector similarity search on code_embedding field
+            # Request extra results to account for self-exclusion
+            effective_limit = ( limit + 1 ) if exclude_self else ( limit if limit > 0 else 100 )
+
+            search_results = self._table.search(
+                query_embedding,
+                vector_column_name="code_embedding"
+            ).metric( "dot" ).nprobes( self._nprobes ).limit( effective_limit ).to_list()
+
+            if debug:
+                print( f"[CODE-SIMILARITY] LanceDB returned {len( search_results )} raw results" )
+
             similar_snapshots = []
-            
-            # Simple implementation: find snapshots with code
-            for id_hash, record in self._id_lookup.items():
-                if record.get( "code_returns" ) or record.get( "code_example" ):
-                    # Simple similarity based on code presence
-                    similarity = 75.0  # Placeholder similarity
-                    
-                    if similarity >= threshold:
-                        snapshot = self._record_to_snapshot( record )
-                        similar_snapshots.append( (similarity, snapshot) )
-            
+            for record in search_results:
+                # Skip self if requested
+                if exclude_self and record.get( "id_hash" ) == exemplar_snapshot.id_hash:
+                    continue
+
+                # Extract distance and convert to similarity percentage
+                # With dot metric: _distance = 1 - dot_product (lower = more similar)
+                distance = record.get( "_distance", 0.0 )
+                similarity_percent = ( 1.0 - distance ) * 100
+
+                # Apply threshold filter
+                if similarity_percent >= threshold:
+                    snapshot = self._record_to_snapshot( record )
+                    similar_snapshots.append( ( similarity_percent, snapshot ) )
+
             # Sort by similarity descending
             similar_snapshots.sort( key=lambda x: x[0], reverse=True )
-            
+
             # Limit results
             if limit > 0:
                 similar_snapshots = similar_snapshots[:limit]
-            
-            if self.debug:
-                print( f"Found {len( similar_snapshots )} code-similar snapshots" )
-            
+
+            if debug:
+                print( f"[CODE-SIMILARITY] Found {len( similar_snapshots )} snapshots above {threshold}% threshold" )
+                for i, ( score, snap ) in enumerate( similar_snapshots[:5] ):
+                    print( f"[CODE-SIMILARITY]   {i+1}. {score:.1f}% - '{du.truncate_string( snap.question, 50 )}'" )
+
         except Exception as e:
-            if self.debug:
+            if debug:
                 print( f"✗ Code similarity search failed: {e}" )
             raise
         finally:
             monitor.stop()
-            
+
         return similar_snapshots
-    
+
+    def get_snapshots_by_solution_similarity( self,
+                                              exemplar_snapshot: SolutionSnapshot,
+                                              threshold: float = 85.0,
+                                              limit: int = 20,
+                                              exclude_self: bool = True,
+                                              debug: bool = False ) -> List[Tuple[float, Any]]:
+        """
+        Search for snapshots by solution/explanation similarity using LanceDB vector search.
+
+        Requires:
+            - Manager is initialized
+            - exemplar_snapshot has valid solution_embedding (non-zero 1536-dim vector)
+            - threshold is between 0.0 and 100.0
+
+        Ensures:
+            - Returns list of (similarity_score, snapshot) tuples
+            - Results sorted by similarity descending
+            - Uses LanceDB's native vector search on solution_embedding field
+            - Excludes exemplar snapshot if exclude_self=True
+            - Performance metrics included
+
+        Raises:
+            - RuntimeError if not initialized
+            - ValueError if exemplar_snapshot invalid or missing solution_embedding
+        """
+        if not self.is_initialized():
+            raise RuntimeError( "Manager must be initialized before searching" )
+
+        if not exemplar_snapshot:
+            raise ValueError( "Exemplar snapshot cannot be None" )
+
+        if not (0.0 <= threshold <= 100.0):
+            raise ValueError( "Threshold must be between 0.0 and 100.0" )
+
+        monitor = PerformanceMonitor( "get_snapshots_by_solution_similarity" )
+        monitor.start()
+
+        try:
+            # Get solution embedding from exemplar snapshot
+            query_embedding = exemplar_snapshot.solution_embedding
+
+            # Validate solution embedding exists and is non-zero
+            if not query_embedding:
+                if debug: print( "Exemplar snapshot has no solution_embedding" )
+                monitor.stop()
+                return []
+
+            # Check if embedding is all zeros (invalid)
+            is_zeros = all( v == 0.0 for v in query_embedding[:100] )
+            if is_zeros:
+                if debug: print( "Exemplar snapshot has zero solution_embedding" )
+                monitor.stop()
+                return []
+
+            if debug:
+                print( f"[SOLUTION-SIMILARITY] Searching with solution_embedding ({len( query_embedding )} dims)" )
+                print( f"[SOLUTION-SIMILARITY] Exemplar: '{du.truncate_string( exemplar_snapshot.question, 60 )}'" )
+
+            # Perform vector similarity search on solution_embedding field
+            # Request extra results to account for self-exclusion
+            effective_limit = ( limit + 1 ) if exclude_self else ( limit if limit > 0 else 100 )
+
+            search_results = self._table.search(
+                query_embedding,
+                vector_column_name="solution_embedding"
+            ).metric( "dot" ).nprobes( self._nprobes ).limit( effective_limit ).to_list()
+
+            if debug:
+                print( f"[SOLUTION-SIMILARITY] LanceDB returned {len( search_results )} raw results" )
+
+            similar_snapshots = []
+            for record in search_results:
+                # Skip self if requested
+                if exclude_self and record.get( "id_hash" ) == exemplar_snapshot.id_hash:
+                    continue
+
+                # Extract distance and convert to similarity percentage
+                # With dot metric: _distance = 1 - dot_product (lower = more similar)
+                distance = record.get( "_distance", 0.0 )
+                similarity_percent = ( 1.0 - distance ) * 100
+
+                # Apply threshold filter
+                if similarity_percent >= threshold:
+                    snapshot = self._record_to_snapshot( record )
+                    similar_snapshots.append( ( similarity_percent, snapshot ) )
+
+            # Sort by similarity descending
+            similar_snapshots.sort( key=lambda x: x[0], reverse=True )
+
+            # Limit results
+            if limit > 0:
+                similar_snapshots = similar_snapshots[:limit]
+
+            if debug:
+                print( f"[SOLUTION-SIMILARITY] Found {len( similar_snapshots )} snapshots above {threshold}% threshold" )
+                for i, ( score, snap ) in enumerate( similar_snapshots[:5] ):
+                    print( f"[SOLUTION-SIMILARITY]   {i+1}. {score:.1f}% - '{du.truncate_string( snap.question, 50 )}'" )
+
+        except Exception as e:
+            if debug:
+                print( f"✗ Solution similarity search failed: {e}" )
+            raise
+        finally:
+            monitor.stop()
+
+        return similar_snapshots
+
     def get_gists( self ) -> List[str]:
         """
         Return all available question gists.
@@ -1622,9 +1780,42 @@ def quick_smoke_test():
         print( "\nTesting basic search..." )
         results = manager.get_snapshots_by_question( "test question" )
         print( f"✓ Search returned {len( results )} results" )
-        
+
+        # Test concurrent save protection (regression test for TOCTOU duplicate bug)
+        # See: 2025.12 duplicate snapshot investigation - f4aa24b5 and 2ea576fa bug
+        print( "\nTesting concurrent save protection..." )
+        import threading
+
+        # Pre-create snapshots (expensive due to embedding generation)
+        # This tests the lock without waiting for slow OpenAI API calls
+        concurrent_snapshots = [
+            SolutionSnapshot( question="concurrent test question", answer="test" )
+            for _ in range( 3 )
+        ]
+        print( f"  Pre-created {len( concurrent_snapshots )} snapshots with different id_hashes" )
+
+        concurrent_results = []
+        def threaded_save( snapshot ):
+            result = manager.save_snapshot( snapshot )
+            concurrent_results.append( result )
+
+        threads = [ threading.Thread( target=threaded_save, args=( s, ) ) for s in concurrent_snapshots ]
+        for t in threads: t.start()
+        for t in threads: t.join()
+
+        # Verify no duplicates created
+        records = manager._table.to_pandas()
+        matching = records[ records["question"] == "concurrent test question" ]
+        if len( matching ) == 1:
+            print( "✓ Concurrent save protection working (1 record, no duplicates)" )
+        else:
+            print( f"✗ Concurrent save issue: {len( matching )} records exist (expected 1)" )
+
+        # Cleanup test record
+        manager.delete_snapshot( "concurrent test question" )
+
         print( "\n✓ LanceDBSolutionManager smoke test completed successfully" )
-        
+
     except Exception as e:
         print( f"✗ Error during smoke test: {e}" )
         du.print_stack_trace( e, explanation="LanceDBSolutionManager smoke test failed", caller="quick_smoke_test()" )

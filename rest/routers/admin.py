@@ -135,10 +135,39 @@ class SnapshotDetailResponse( BaseModel ):
     answer_conversational: str
     runtime_stats: dict
     code: List[str]
+    solution_summary: str = ""                        # verbose code explanation
+    code_gist: str = ""                               # concise code gist
     synonymous_questions: Dict[str, float] = {}       # question → similarity score
     synonymous_question_gists: Dict[str, float] = {}  # gist → similarity score
     created_date: str
     user_id: str
+
+
+class CodeSimilarityResult( BaseModel ):
+    """Individual result for code/explanation similarity search."""
+    id_hash: str = Field( ..., description="Unique identifier (MD5 hash)" )
+    question_preview: str = Field( ..., description="Truncated question (100 chars)" )
+    code_gist: str = Field( ..., description="Natural language description of code" )
+    similarity: float = Field( ..., description="Similarity score (0-100)" )
+    created_date: str = Field( ..., description="Creation timestamp" )
+
+
+class SimilarSnapshotsResponse( BaseModel ):
+    """Response model for similar snapshots endpoint."""
+    source_id_hash: str = Field( ..., description="ID hash of source snapshot" )
+    source_question: str = Field( ..., description="Question from source snapshot" )
+    code_similar: List[CodeSimilarityResult] = Field( default=[], description="Snapshots with similar code" )
+    explanation_similar: List[CodeSimilarityResult] = Field( default=[], description="Snapshots with similar explanations" )
+    total_code_matches: int = Field( default=0, description="Count of code-similar snapshots" )
+    total_explanation_matches: int = Field( default=0, description="Count of explanation-similar snapshots" )
+
+
+class SnapshotPreviewResponse( BaseModel ):
+    """Response model for hover preview data."""
+    id_hash: str = Field( ..., description="Unique identifier (MD5 hash)" )
+    code_preview: str = Field( ..., description="First 300 chars of joined code" )
+    code_gist: str = Field( ..., description="Natural language description of code" )
+    question: str = Field( ..., description="Full question text" )
 
 
 # ============================================================================
@@ -629,6 +658,8 @@ async def get_snapshot_details(
             answer_conversational     = snapshot.answer_conversational,
             runtime_stats             = snapshot.runtime_stats,
             code                      = snapshot.code,
+            solution_summary          = snapshot.solution_summary,
+            code_gist                 = snapshot.code_gist,
             synonymous_questions      = dict( snapshot.synonymous_questions ),
             synonymous_question_gists = dict( snapshot.synonymous_question_gists ),
             created_date              = snapshot.created_date,
@@ -722,4 +753,202 @@ async def delete_snapshot(
         raise HTTPException(
             status_code = status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail      = "Failed to delete snapshot. Please try again."
+        )
+
+
+# ============================================================================
+# Snapshot Similarity Endpoints
+# ============================================================================
+
+@router.get(
+    "/snapshots/{id_hash}/preview",
+    response_model  = SnapshotPreviewResponse,
+    status_code     = status.HTTP_200_OK,
+    summary         = "Get snapshot preview",
+    description     = "Get code and explanation preview for hover display. Requires admin role."
+)
+async def get_snapshot_preview(
+    id_hash: str,
+    admin_user: Dict = Depends( require_admin ),
+    snapshot_mgr = Depends( get_snapshot_manager )
+) -> SnapshotPreviewResponse:
+    """
+    Get snapshot preview data for hover tooltips.
+
+    Requires:
+        - Admin role authorization
+        - Valid snapshot ID hash
+
+    Ensures:
+        - Returns code preview (first 300 chars)
+        - Returns code_gist (explanation)
+        - Returns 404 if snapshot not found
+
+    Path Parameters:
+        - id_hash: Snapshot ID (MD5 hash)
+
+    Returns:
+        SnapshotPreviewResponse: Preview data for UI display
+    """
+    try:
+        # Get snapshot by ID
+        snapshot = snapshot_mgr.get_snapshot_by_id( id_hash )
+
+        if not snapshot:
+            raise HTTPException(
+                status_code = status.HTTP_404_NOT_FOUND,
+                detail      = "Snapshot not found"
+            )
+
+        # Build code preview (first 300 chars of joined code)
+        code_lines = snapshot.code if isinstance( snapshot.code, list ) else []
+        code_text = "\n".join( code_lines )
+        code_preview = code_text[:300] + ( "..." if len( code_text ) > 300 else "" )
+
+        # Get code explanation with fallback:
+        # 1. code_gist (what the code does - generated from solution_summary)
+        # 2. solution_summary (explanation of the solution/code)
+        code_gist = getattr( snapshot, "code_gist", "" ) or ""
+        if not code_gist.strip():
+            code_gist = getattr( snapshot, "solution_summary", "" ) or ""
+
+        return SnapshotPreviewResponse(
+            id_hash      = id_hash,
+            code_preview = code_preview,
+            code_gist    = code_gist,
+            question     = snapshot.question or ""
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print( f"[ADMIN-SNAPSHOTS] Preview failed for {id_hash}: {e}" )
+        traceback.print_exc()
+        raise HTTPException(
+            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail      = "Failed to retrieve snapshot preview"
+        )
+
+
+@router.get(
+    "/snapshots/{id_hash}/similar",
+    response_model  = SimilarSnapshotsResponse,
+    status_code     = status.HTTP_200_OK,
+    summary         = "Find similar snapshots",
+    description     = "Find snapshots with similar code or explanation. Requires admin role."
+)
+async def get_similar_snapshots(
+    id_hash: str,
+    code_threshold: float = 85.0,
+    explanation_threshold: float = 85.0,
+    limit: int = 20,
+    admin_user: Dict = Depends( require_admin ),
+    snapshot_mgr = Depends( get_snapshot_manager )
+) -> SimilarSnapshotsResponse:
+    """
+    Find snapshots with similar code or explanation using vector similarity.
+
+    Requires:
+        - Admin role authorization
+        - Valid snapshot ID hash
+        - Thresholds between 0.0 and 100.0
+
+    Ensures:
+        - Returns list of code-similar snapshots
+        - Returns list of explanation-similar snapshots
+        - Excludes source snapshot from results
+        - Returns 404 if source snapshot not found
+
+    Path Parameters:
+        - id_hash: Source snapshot ID (MD5 hash)
+
+    Query Parameters:
+        - code_threshold: Min code similarity % (default 85.0)
+        - explanation_threshold: Min explanation similarity % (default 85.0)
+        - limit: Max results per category (default 20)
+
+    Returns:
+        SimilarSnapshotsResponse: Similar snapshots grouped by type
+    """
+    debug = _config_mgr.get( "app_debug" )
+
+    try:
+        if debug: print( f"[ADMIN-SIMILAR] Finding similar snapshots for {id_hash}" )
+
+        # Get source snapshot
+        source_snapshot = snapshot_mgr.get_snapshot_by_id( id_hash )
+
+        if not source_snapshot:
+            raise HTTPException(
+                status_code = status.HTTP_404_NOT_FOUND,
+                detail      = "Source snapshot not found"
+            )
+
+        if debug:
+            print( f"[ADMIN-SIMILAR] Source: '{source_snapshot.question[:60]}...'" )
+
+        # Find code-similar snapshots
+        code_similar_results = []
+        try:
+            code_matches = snapshot_mgr.get_snapshots_by_code_similarity(
+                exemplar_snapshot = source_snapshot,
+                threshold         = code_threshold,
+                limit             = limit,
+                exclude_self      = True,
+                debug             = debug
+            )
+
+            for score, snap in code_matches:
+                code_similar_results.append( CodeSimilarityResult(
+                    id_hash          = snap.id_hash,
+                    question_preview = ( snap.question[:100] + "..." ) if len( snap.question ) > 100 else snap.question,
+                    code_gist        = getattr( snap, "code_gist", "" ) or "",
+                    similarity       = round( score, 1 ),
+                    created_date     = snap.created_date or ""
+                ) )
+        except Exception as e:
+            if debug: print( f"[ADMIN-SIMILAR] Code similarity search failed: {e}" )
+
+        # Find explanation-similar snapshots
+        explanation_similar_results = []
+        try:
+            explanation_matches = snapshot_mgr.get_snapshots_by_solution_similarity(
+                exemplar_snapshot = source_snapshot,
+                threshold         = explanation_threshold,
+                limit             = limit,
+                exclude_self      = True,
+                debug             = debug
+            )
+
+            for score, snap in explanation_matches:
+                explanation_similar_results.append( CodeSimilarityResult(
+                    id_hash          = snap.id_hash,
+                    question_preview = ( snap.question[:100] + "..." ) if len( snap.question ) > 100 else snap.question,
+                    code_gist        = getattr( snap, "code_gist", "" ) or "",
+                    similarity       = round( score, 1 ),
+                    created_date     = snap.created_date or ""
+                ) )
+        except Exception as e:
+            if debug: print( f"[ADMIN-SIMILAR] Explanation similarity search failed: {e}" )
+
+        if debug:
+            print( f"[ADMIN-SIMILAR] Found {len( code_similar_results )} code matches, {len( explanation_similar_results )} explanation matches" )
+
+        return SimilarSnapshotsResponse(
+            source_id_hash             = id_hash,
+            source_question            = source_snapshot.question or "",
+            code_similar               = code_similar_results,
+            explanation_similar        = explanation_similar_results,
+            total_code_matches         = len( code_similar_results ),
+            total_explanation_matches  = len( explanation_similar_results )
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print( f"[ADMIN-SIMILAR] Failed for {id_hash}: {e}" )
+        traceback.print_exc()
+        raise HTTPException(
+            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail      = "Failed to find similar snapshots"
         )
