@@ -1,6 +1,8 @@
 # COSA Development History
 
-> **🔍 CURRENT**: 2025.12.02 - Parent Lupin Sync: Code Similarity Visualization + Duplicate Snapshot Bug Fixes! Synced 3 files from parent Lupin Sessions 16-17. **PHASE 1 - CODE SIMILARITY SEARCH**: Replaced stub `get_snapshots_by_code_similarity()` with real LanceDB vector search on `code_embedding` field, added new `get_snapshots_by_solution_similarity()` method for `solution_embedding` field (+200 lines in lancedb_solution_manager.py). **PHASE 2 - API ENDPOINTS**: Added 3 Pydantic models (`CodeSimilarityResult`, `SimilarSnapshotsResponse`, `SnapshotPreviewResponse`) and 2 endpoints (`/admin/snapshots/{id_hash}/preview`, `/admin/snapshots/{id_hash}/similar`). **DUPLICATE BUG FIX 1 - TOCTOU RACE**: Added `threading.Lock` around `save_snapshot()` critical section to prevent concurrent calls from both passing cache/DB checks. **DUPLICATE BUG FIX 2 - ID HASH PRESERVATION**: Added `snapshot.id_hash = existing_id_hash` in `_update_existing_snapshot()` so `merge_insert` matches existing record. **GIST GENERATION FIX**: `running_fifo_queue.py` called uninitialized `self.normalizer`; fixed by importing/initializing `GistNormalizer`, plus added gist generation to `_handle_base_agent()` for new jobs. **Total Impact**: 3 files, +513 insertions/-81 deletions (net +432 lines). 🔍💻🐛✅
+> **🎨 CURRENT**: 2025.12.03 - Parent Lupin Sync: Field Rename + Third Similarity Dimension! Synced 4 files from parent Lupin Session 18. **FIELD RENAME `code_gist` → `solution_summary_gist`**: Renamed for consistency with solution-focused naming convention. Updated schema field, snapshot record conversion, parameter names, Pydantic models, and API endpoints. **NEW `solution_gist_embedding` FIELD**: Added 1536-dim embedding field to schema + record conversion + snapshot constructor. **NEW `get_snapshots_by_solution_gist_similarity()` METHOD**: Third vector search dimension using `solution_gist_embedding` field for comparing concise summaries. **NEW `set_solution_summary_gist()` METHOD**: SolutionSnapshot setter that generates embedding. **ENSURE_TOP_RESULT FEATURE**: All 3 similarity methods now accept `ensure_top_result=True` (default) to always return at least one result even if below threshold - useful for UI that needs to show something. **API ENHANCEMENTS**: `CodeSimilarityResult` expanded with `code_preview`, `solution_summary_preview` fields. `SimilarSnapshotsResponse` expanded with `solution_gist_similar` list and `total_solution_gist_matches` count. `/similar` endpoint now accepts `gist_threshold` param. **LAZY GIST BACKFILL**: `running_fifo_queue.py` now generates `solution_summary_gist` if missing (not just on first run), enabling backfill for cache hits. **Total Impact**: 4 files, +309 insertions/-66 deletions (net +243 lines). 🎨✅
+
+> **🔍 PREVIOUS**: 2025.12.02 - Parent Lupin Sync: Code Similarity Visualization + Duplicate Snapshot Bug Fixes! Synced 3 files from parent Lupin Sessions 16-17. **PHASE 1 - CODE SIMILARITY SEARCH**: Replaced stub `get_snapshots_by_code_similarity()` with real LanceDB vector search on `code_embedding` field, added new `get_snapshots_by_solution_similarity()` method for `solution_embedding` field (+200 lines in lancedb_solution_manager.py). **PHASE 2 - API ENDPOINTS**: Added 3 Pydantic models (`CodeSimilarityResult`, `SimilarSnapshotsResponse`, `SnapshotPreviewResponse`) and 2 endpoints (`/admin/snapshots/{id_hash}/preview`, `/admin/snapshots/{id_hash}/similar`). **DUPLICATE BUG FIX 1 - TOCTOU RACE**: Added `threading.Lock` around `save_snapshot()` critical section to prevent concurrent calls from both passing cache/DB checks. **DUPLICATE BUG FIX 2 - ID HASH PRESERVATION**: Added `snapshot.id_hash = existing_id_hash` in `_update_existing_snapshot()` so `merge_insert` matches existing record. **GIST GENERATION FIX**: `running_fifo_queue.py` called uninitialized `self.normalizer`; fixed by importing/initializing `GistNormalizer`, plus added gist generation to `_handle_base_agent()` for new jobs. **Total Impact**: 3 files, +513 insertions/-81 deletions (net +432 lines). 🔍💻🐛✅
 
 > **🔥 PREVIOUS**: 2025.12.01 - Parent Lupin Sync: Synonym Signal Loss ROOT CAUSE FOUND + FIXED! Synced 9 files from parent Lupin Sessions 13-15. **ROOT CAUSE**: `agent_base.py:129` was calling DEPRECATED `SolutionSnapshot.remove_non_alphanumerics()` which strips ALL punctuation including apostrophes and math operators ("What's 4 + 4?" → "whats 4 4"). **FIX APPLIED**: Changed to `self.question = question` (store verbatim). **DEPRECATION NUKE**: Made `remove_non_alphanumerics()` SCREAM its deprecation with ASCII box, fire emojis, stack trace (limit=5), and 40 fire emojis. **STT-FRIENDLY CONTRACTIONS**: Added 24 apostrophe-less variants to Normalizer ("whats"→"what is", "dont"→"do not", etc.). **ADMIN IMPROVEMENTS**: Added threshold query param, descending sort, synonym debug logging. **DUPE-GUARD**: DB fallback for cache desync in save_snapshot() and delete_snapshot(). **SIMILARITY DEBUG**: Verbose logging for vector search (query embedding, raw results, top 10, threshold filtering). **JOB-TRACE**: Added job processing logging for duplicate investigation. **Total Impact**: 9 files, +221/-66 lines (net +155 lines). ✅ Synonym signal loss fixed! 🔥🐛✅
 
@@ -25,6 +27,154 @@
 > **Previous Achievement**: 2025.11.10 - Phase 2.5.4 API Key Authentication Infrastructure COMPLETE! Header-based API key authentication (X-API-Key header) implemented. Fixed critical schema bug (api_keys.user_id INTEGER→TEXT). Integration testing infrastructure created (10 tests).
 
 > **Previous Achievement**: 2025.11.08 - Notification System Phase 2.3 CLI Modernization COMMITTED! Split async/sync notification clients with Pydantic validation (1,376 lines across 3 new files).
+
+---
+
+## 2025.12.03 - Parent Lupin Sync: Field Rename + Third Similarity Dimension
+
+### Summary
+Synced 4 files from parent Lupin Session 18 (2025.12.03). Major theme: field rename for consistency and adding third similarity search dimension. Renamed `code_gist` → `solution_summary_gist` throughout the codebase, added new `solution_gist_embedding` field and corresponding similarity search method, and enhanced API to support three-column similarity modal in UI.
+
+### Work Performed
+
+#### Field Rename: `code_gist` → `solution_summary_gist` - COMPLETE ✅
+**Rationale**: The field contains a concise summary of the `solution_summary` (verbose explanation), not a gist of the code itself. Renaming for consistency with solution-focused naming convention.
+
+**Files Updated**:
+
+1. **`memory/lancedb_solution_manager.py`**:
+   - Schema field: `pa.field( "code_gist", pa.string() )` → `pa.field( "solution_summary_gist", pa.string() )`
+   - Record conversion: `"code_gist"` → `"solution_summary_gist"` in `_snapshot_to_record()`
+   - Snapshot reconstruction: `code_gist=record.get( "code_gist", "" )` → `solution_summary_gist=record.get( "solution_summary_gist", "" )` in `_record_to_snapshot()`
+
+2. **`memory/solution_snapshot.py`**:
+   - Parameter: `code_gist: str=""` → `solution_summary_gist: str=""`
+   - Attribute: `self.code_gist` → `self.solution_summary_gist`
+
+3. **`rest/routers/admin.py`**:
+   - `SnapshotDetailResponse` field: `code_gist` → `solution_summary_gist`
+   - `CodeSimilarityResult` field: `code_gist` → `solution_summary_gist`
+   - `SnapshotPreviewResponse` field: `code_gist` → `solution_summary_gist`
+   - All endpoint assignments updated
+
+4. **`rest/running_fifo_queue.py`**:
+   - Generation check: `not running_job.code_gist` → `not running_job.solution_summary_gist`
+   - Assignment: `running_job.code_gist = ...` → `running_job.set_solution_summary_gist( ... )`
+   - Debug output: `"Generated code_gist"` → `"Generated solution_summary_gist"`
+
+#### New `solution_gist_embedding` Field - COMPLETE ✅
+**File**: `memory/lancedb_solution_manager.py`, `memory/solution_snapshot.py`
+
+**Purpose**: Enable similarity search on concise gist summaries (separate from verbose `solution_embedding`).
+
+**Changes**:
+- Added `pa.field( "solution_gist_embedding", pa.list_( pa.float32(), 1536 ) )` to schema
+- Added `"solution_gist_embedding"` to record conversion in `_snapshot_to_record()`
+- Added `solution_gist_embedding` parameter and attribute to `SolutionSnapshot.__init__()`
+- Auto-generate embedding in constructor if `solution_summary_gist` provided but embedding missing
+
+#### New `get_snapshots_by_solution_gist_similarity()` Method - COMPLETE ✅
+**File**: `memory/lancedb_solution_manager.py` (+123 lines)
+
+**Purpose**: Third similarity search dimension - find snapshots with similar concise summaries.
+
+**Pattern**: Follows exact same structure as existing `get_snapshots_by_code_similarity()` and `get_snapshots_by_solution_similarity()`:
+- Validate embedding exists and non-zero
+- Perform LanceDB vector search on `solution_gist_embedding` field
+- Convert distance to similarity percentage
+- Filter by threshold, exclude self
+- Sort by similarity descending
+
+#### New `set_solution_summary_gist()` Setter Method - COMPLETE ✅
+**File**: `memory/solution_snapshot.py` (+19 lines)
+
+**Purpose**: Set gist and auto-generate embedding atomically.
+
+```python
+def set_solution_summary_gist( self, solution_summary_gist: str ) -> None:
+    self.solution_summary_gist   = solution_summary_gist
+    self.solution_gist_embedding = self._embedding_mgr.generate_embedding( solution_summary_gist, normalize_for_cache=False )
+    self.updated_date            = self.get_timestamp()
+```
+
+#### `ensure_top_result` Feature - COMPLETE ✅
+**Files**: `memory/lancedb_solution_manager.py` (all 3 similarity methods)
+
+**Purpose**: Always return at least one result even if no results meet threshold. Useful for UI that needs to show something.
+
+**Implementation**:
+```python
+def get_snapshots_by_code_similarity( ..., ensure_top_result: bool = True, ... ):
+    ...
+    best_below_threshold = None
+    for record in search_results:
+        if similarity_percent >= threshold:
+            similar_snapshots.append( ... )
+        elif ensure_top_result and best_below_threshold is None:
+            # Track best result below threshold
+            best_below_threshold = ( similarity_percent, snapshot )
+
+    # Include best if no results met threshold
+    if len( similar_snapshots ) == 0 and ensure_top_result and best_below_threshold is not None:
+        similar_snapshots.append( best_below_threshold )
+```
+
+#### API Enhancements - COMPLETE ✅
+**File**: `rest/routers/admin.py`
+
+**Model Changes**:
+- `CodeSimilarityResult`: Added `code_preview`, `solution_summary_preview` fields
+- `SimilarSnapshotsResponse`: Added `solution_gist_similar` list and `total_solution_gist_matches` count
+
+**Endpoint Changes**:
+- `/admin/snapshots/{id_hash}/similar`: Added `gist_threshold` query parameter
+- All three similarity searches now call with `ensure_top_result=ensure_top_result`
+
+#### Lazy Gist Backfill - COMPLETE ✅
+**File**: `rest/running_fifo_queue.py`
+
+**Change**: Gist generation condition changed from `run_count == -1 and not gist` to just `not solution_summary_gist`.
+
+**Benefit**: Cache hits that previously missed gist generation now get backfilled on next execution.
+
+### Files Modified
+
+**COSA Repository** (4 files):
+
+| File | Lines Changed | Description |
+|------|---------------|-------------|
+| `memory/lancedb_solution_manager.py` | +164/-0 | New gist similarity method, ensure_top_result, schema field |
+| `memory/solution_snapshot.py` | +36/-0 | New field, setter method, auto-embedding |
+| `rest/routers/admin.py` | +151/-0 | Enhanced models, third similarity endpoint |
+| `rest/running_fifo_queue.py` | +24/-0 | Lazy gist backfill, field rename |
+
+**Total Impact**: 4 files, +309 insertions/-66 deletions (net +243 lines)
+
+### Integration with Parent Lupin
+
+**Parent Session Context** (2025.12.03, Session 18):
+- Extended similarity modal from 2-column to 3-column layout
+- Added "✨ Similar by Gist" column
+- Responsive breakpoints for mobile
+- Updated all frontend JavaScript/CSS to use new field names
+
+**COSA Benefit**:
+- Backend fully supports three similarity dimensions
+- Field naming now consistent with solution-focused convention
+- UI will always show results even with low similarity (ensure_top_result)
+
+### Current Status
+
+- **Field Rename**: ✅ COMPLETE - `code_gist` → `solution_summary_gist` across 4 files
+- **Gist Embedding**: ✅ ADDED - New `solution_gist_embedding` field in schema
+- **Third Similarity Method**: ✅ IMPLEMENTED - `get_snapshots_by_solution_gist_similarity()`
+- **ensure_top_result**: ✅ ADDED - All 3 similarity methods support it
+- **API Enhanced**: ✅ COMPLETE - Third column support in response models
+- **Lazy Backfill**: ✅ ENABLED - Missing gists generated on next cache hit
+
+### Testing Notes
+
+The frontend (parent Lupin) was updated simultaneously, so the three-column similarity modal should work immediately after syncing these backend changes.
 
 ---
 

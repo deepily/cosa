@@ -176,9 +176,9 @@ class SolutionSnapshot( RunnableCode ):
                   last_question_asked: str="", answer: str="", answer_conversational: str="", error: str="", routing_command: str="", agent_class_name: Optional[str]=None,
                   created_date: str=None, updated_date: str=None, run_date: str=None,
                   runtime_stats: dict=get_default_stats_dict(),
-                  id_hash: str="", solution_summary: str="", code: list[str]=[], code_gist: str="", code_returns: str="", code_example: str="", code_type: str="raw", thoughts: str="",
+                  id_hash: str="", solution_summary: str="", code: list[str]=[], solution_summary_gist: str="", code_returns: str="", code_example: str="", code_type: str="raw", thoughts: str="",
                   programming_language: str="Python", language_version: str="3.10",
-                  question_embedding: list[float]=[ ], question_normalized_embedding: list[float]=[ ], question_gist_embedding: list[float]=[ ], solution_embedding: list[float]=[ ], code_embedding: list[float]=[ ], thoughts_embedding: list[float]=[ ],
+                  question_embedding: list[float]=[ ], question_normalized_embedding: list[float]=[ ], question_gist_embedding: list[float]=[ ], solution_embedding: list[float]=[ ], code_embedding: list[float]=[ ], thoughts_embedding: list[float]=[ ], solution_gist_embedding: list[float]=[ ],
                   solution_directory: str="/src/conf/long-term-memory/solutions/", solution_file: Optional[str]=None, user_id: str="ricardo_felipe_ruiz_6bdc", debug: bool=False, verbose: bool=False
                   ) -> None:
         """
@@ -261,7 +261,7 @@ class SolutionSnapshot( RunnableCode ):
         self.solution_summary      = solution_summary
 
         self.code                  = code
-        self.code_gist             = code_gist  # Gist of code explanation (generated after first successful execution)
+        self.solution_summary_gist = solution_summary_gist  # Gist of solution_summary (generated after first successful execution)
         self.code_returns          = code_returns
         self.code_example          = code_example
         self.code_type             = code_type
@@ -325,7 +325,14 @@ class SolutionSnapshot( RunnableCode ):
             dirty = True
         else:
             self.thoughts_embedding = thoughts_embedding
-            
+
+        # If the solution gist embedding is empty, generate it
+        if solution_summary_gist and not solution_gist_embedding:
+            self.solution_gist_embedding = self._embedding_mgr.generate_embedding( solution_summary_gist, normalize_for_cache=False )
+            dirty = True
+        else:
+            self.solution_gist_embedding = solution_gist_embedding
+
         # Note: Auto-save removed - serialization is now handled by managers
         # If embeddings were generated during loading, they will be persisted
         # when the manager calls add_snapshot() or equivalent method
@@ -524,7 +531,26 @@ class SolutionSnapshot( RunnableCode ):
         self.code           = code
         self.code_embedding = self._embedding_mgr.generate_embedding( " ".join( code ), normalize_for_cache=False )
         self.updated_date   = self.get_timestamp()
-    
+
+    def set_solution_summary_gist( self, solution_summary_gist: str ) -> None:
+        """
+        Set solution summary gist and generate embedding.
+
+        Requires:
+            - solution_summary_gist is a string
+
+        Ensures:
+            - Updates solution_summary_gist field
+            - Generates new embedding
+            - Updates timestamp
+
+        Raises:
+            - None
+        """
+        self.solution_summary_gist   = solution_summary_gist
+        self.solution_gist_embedding = self._embedding_mgr.generate_embedding( solution_summary_gist, normalize_for_cache=False )
+        self.updated_date            = self.get_timestamp()
+
     def get_question_similarity( self, other_snapshot: 'SolutionSnapshot' ) -> float:
         """
         Calculate question similarity with another snapshot.

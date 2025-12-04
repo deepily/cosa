@@ -271,15 +271,15 @@ class RunningFifoQueue( FifoQueue ):
                 print( f"KLUDGE! Setting running_job.answer_conversational to [{formatted_output}]...")
                 running_job.answer_conversational = formatted_output
 
-                # Generate code_gist on first execution (after response sent, before stats update)
-                if running_job.runtime_stats["run_count"] == -1 and not running_job.code_gist:
+                # Generate solution_summary_gist if missing (lazy backfill for cache hits or failed generations)
+                if not running_job.solution_summary_gist:
                     code_explanation = running_job.solution_summary if running_job.solution_summary else running_job.thoughts
                     if code_explanation:
                         try:
-                            running_job.code_gist = self.gist_normalizer.get_normalized_gist( code_explanation )
-                            if self.debug: print( f"Generated code_gist: {du.truncate_string(running_job.code_gist, 100)}" )
+                            running_job.set_solution_summary_gist( self.gist_normalizer.get_normalized_gist( code_explanation ) )
+                            if self.debug: print( f"Generated solution_summary_gist: {du.truncate_string(running_job.solution_summary_gist, 100)}" )
                         except Exception as e:
-                            if self.debug: print( f"Failed to generate code_gist: {e}" )
+                            if self.debug: print( f"Failed to generate solution_summary_gist: {e}" )
 
                 running_job.update_runtime_stats( agent_timer )
                 
@@ -342,18 +342,18 @@ class RunningFifoQueue( FifoQueue ):
         # If we've arrived at this point, then we've successfully run the job
         run_timer.print( "Solution snapshot full run complete ", use_millis=True )
 
-        # Generate code_gist after first successful execution (run_count == -1 before update)
-        if running_job.runtime_stats["run_count"] == -1 and not running_job.code_gist:
-            if self.debug: print( f"First successful execution - generating code_gist..." )
+        # Generate solution_summary_gist if missing (lazy backfill for cache hits or failed generations)
+        if not running_job.solution_summary_gist:
+            if self.debug: print( f"Generating missing solution_summary_gist..." )
             # Use solution_summary or thoughts as code explanation source
             code_explanation = running_job.solution_summary if running_job.solution_summary else running_job.thoughts
             if code_explanation:
                 try:
-                    # Generate gist of code explanation for future formatter optimization
-                    running_job.code_gist = self.gist_normalizer.get_normalized_gist( code_explanation )
-                    if self.debug: print( f"Generated code_gist: {du.truncate_string(running_job.code_gist, 100)}" )
+                    # Generate gist of solution_summary for future formatter optimization
+                    running_job.set_solution_summary_gist( self.gist_normalizer.get_normalized_gist( code_explanation ) )
+                    if self.debug: print( f"Generated solution_summary_gist: {du.truncate_string(running_job.solution_summary_gist, 100)}" )
                 except Exception as e:
-                    if self.debug: print( f"Failed to generate code_gist: {e}" )
+                    if self.debug: print( f"Failed to generate solution_summary_gist: {e}" )
 
         running_job.update_runtime_stats( run_timer )
         du.print_banner( f"Job [{running_job.question}] complete!", prepend_nl=True, end="\n" )
