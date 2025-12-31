@@ -1,6 +1,8 @@
 # COSA Development History
 
-> **📬 CURRENT**: 2025.12.30 - Parent Lupin Sync: Sender-Aware Notification System Infrastructure! Synced 8 files from parent Lupin Sessions 19-23 (Phase 1-6 implementation). **NEW `Notification` SQLAlchemy MODEL**: 128-line PostgreSQL model with sender routing, timestamps, response handling, and state machine (postgres_models.py:479-612). **NEW `NotificationRepository` CLASS**: 462-line repository with CRUD operations, sender-based grouping, activity-anchored window loading, state management (notification_repository.py - NEW FILE). **CLI SENDER SUPPORT**: Added `sender_id` field to `NotificationRequest` and `AsyncNotificationRequest` with auto-extraction from `[PREFIX]` in message via `extract_sender_from_message()` helper (notification_models.py:27-64, 158-163, 248-253, 458-463, 503-515). **API SENDER RESOLUTION**: Added `resolve_sender_id()` helper and `sender_id` query param to `/api/notify` endpoint, PostgreSQL persistence for history loading (notifications.py:135-166, 186, 289-290, 328-349). **NEW HISTORY ENDPOINTS**: `/notifications/senders/{user_email}` (get senders with activity), `/notifications/history/{sender_id}/{user_email}` (get sender conversation history), `/notifications/conversation/{sender_id}/{user_email}` DELETE (delete sender conversation). **FIFO QUEUE UPDATE**: Added `sender_id` field to `NotificationItem` (notification_fifo_queue.py). **DATABASE CONTEXT MANAGER**: Added `get_db()` context manager for session management (database.py). **Total Impact**: 8 files (7 modified, 1 created), +585 insertions/-33 deletions (net +552 lines). 📬✅
+> **🐛 CURRENT**: 2025.12.31 - Parent Lupin Sync: Sort Order Display Bug Fix! Synced 1 file from parent Lupin Session 24. **ROOT CAUSE**: Complex chain of transformations (DB DESC → JS `.reverse()` → CSS `column-reverse` → `appendChild`) cancelled each other out incorrectly for real-time vs initial load scenarios. **THE FIX**: Changed `notification_repository.py:220` from `.desc()` → `.asc()` so DB returns oldest-first; JS then uses `insertBefore` to prepend each message, resulting in newest at top. **HOW IT WORKS NOW**: Database returns oldest→newest (ASC), JS iterates with `insertBefore` prepending each message, result is newest at top for both initial page load AND real-time WebSocket notifications. **Total Impact**: 1 file, +3/-3 lines. Phase 8 sort order bug RESOLVED, sender-aware notification system fully functional. 🐛✅
+
+> **📬 PREVIOUS**: 2025.12.30 - Parent Lupin Sync: Sender-Aware Notification System Infrastructure! Synced 8 files from parent Lupin Sessions 19-23 (Phase 1-6 implementation). **NEW `Notification` SQLAlchemy MODEL**: 128-line PostgreSQL model with sender routing, timestamps, response handling, and state machine (postgres_models.py:479-612). **NEW `NotificationRepository` CLASS**: 462-line repository with CRUD operations, sender-based grouping, activity-anchored window loading, state management (notification_repository.py - NEW FILE). **CLI SENDER SUPPORT**: Added `sender_id` field to `NotificationRequest` and `AsyncNotificationRequest` with auto-extraction from `[PREFIX]` in message via `extract_sender_from_message()` helper (notification_models.py:27-64, 158-163, 248-253, 458-463, 503-515). **API SENDER RESOLUTION**: Added `resolve_sender_id()` helper and `sender_id` query param to `/api/notify` endpoint, PostgreSQL persistence for history loading (notifications.py:135-166, 186, 289-290, 328-349). **NEW HISTORY ENDPOINTS**: `/notifications/senders/{user_email}` (get senders with activity), `/notifications/history/{sender_id}/{user_email}` (get sender conversation history), `/notifications/conversation/{sender_id}/{user_email}` DELETE (delete sender conversation). **FIFO QUEUE UPDATE**: Added `sender_id` field to `NotificationItem` (notification_fifo_queue.py). **DATABASE CONTEXT MANAGER**: Added `get_db()` context manager for session management (database.py). **Total Impact**: 8 files (7 modified, 1 created), +585 insertions/-33 deletions (net +552 lines). 📬✅
 
 > **🎨 PREVIOUS**: 2025.12.03 - Parent Lupin Sync: Field Rename + Third Similarity Dimension! Synced 4 files from parent Lupin Session 18. **FIELD RENAME `code_gist` → `solution_summary_gist`**: Renamed for consistency with solution-focused naming convention. Updated schema field, snapshot record conversion, parameter names, Pydantic models, and API endpoints. **NEW `solution_gist_embedding` FIELD**: Added 1536-dim embedding field to schema + record conversion + snapshot constructor. **NEW `get_snapshots_by_solution_gist_similarity()` METHOD**: Third vector search dimension using `solution_gist_embedding` field for comparing concise summaries. **NEW `set_solution_summary_gist()` METHOD**: SolutionSnapshot setter that generates embedding. **ENSURE_TOP_RESULT FEATURE**: All 3 similarity methods now accept `ensure_top_result=True` (default) to always return at least one result even if below threshold - useful for UI that needs to show something. **API ENHANCEMENTS**: `CodeSimilarityResult` expanded with `code_preview`, `solution_summary_preview` fields. `SimilarSnapshotsResponse` expanded with `solution_gist_similar` list and `total_solution_gist_matches` count. `/similar` endpoint now accepts `gist_threshold` param. **LAZY GIST BACKFILL**: `running_fifo_queue.py` now generates `solution_summary_gist` if missing (not just on first run), enabling backfill for cache hits. **Total Impact**: 4 files, +309 insertions/-66 deletions (net +243 lines). 🎨✅
 
@@ -29,6 +31,83 @@
 > **Previous Achievement**: 2025.11.10 - Phase 2.5.4 API Key Authentication Infrastructure COMPLETE! Header-based API key authentication (X-API-Key header) implemented. Fixed critical schema bug (api_keys.user_id INTEGER→TEXT). Integration testing infrastructure created (10 tests).
 
 > **Previous Achievement**: 2025.11.08 - Notification System Phase 2.3 CLI Modernization COMMITTED! Split async/sync notification clients with Pydantic validation (1,376 lines across 3 new files).
+
+---
+
+## 2025.12.31 - Parent Lupin Sync: Sort Order Display Bug Fix
+
+### Summary
+Synced 1 file from parent Lupin Session 24 (2025.12.31). Fixed critical sort order bug where notification messages displayed oldest-first instead of newest-first. This was the final blocker for the sender-aware notification system (Phase 8).
+
+### Work Performed
+
+#### Sort Order Bug Fix - COMPLETE ✅
+**File**: `rest/db/repositories/notification_repository.py` (+3/-3 lines)
+
+**Problem**: Notification messages displayed oldest-first instead of newest-first in the Fresh Queue UI.
+
+**Root Cause**: Complex chain of transformations cancelled each other out incorrectly:
+```
+DB DESC → JS .reverse() → CSS column-reverse → appendChild
+```
+This behaved differently for real-time WebSocket notifications vs initial page load.
+
+**The Fix**: Changed `get_sender_history()` method (line 220) from `.desc()` to `.asc()`:
+```python
+# BEFORE (broken - part of problematic transformation chain)
+).order_by(
+    Notification.created_at.desc()  # Newest first for notification list
+).all()
+
+# AFTER (correct - works with insertBefore prepend pattern)
+).order_by(
+    Notification.created_at.asc()  # Oldest first - insertBefore prepends newest to top
+).all()
+```
+
+**Updated Docstring**: Also updated the Ensures section to correctly document the behavior:
+- "Ordered by created_at ascending (oldest first for insertBefore prepend)"
+- "List of Notification instances in chronological order (oldest first)"
+
+**How It Works Now**:
+1. Database returns oldest→newest (ASC order)
+2. JavaScript iterates through results
+3. Each message uses `insertBefore(messageDiv, container.firstChild)` to prepend
+4. Result: newest message at top for both initial load AND real-time WebSocket notifications
+
+### Files Modified
+
+**COSA Repository** (1 file):
+
+| File | Lines Changed | Description |
+|------|---------------|-------------|
+| `rest/db/repositories/notification_repository.py` | +3/-3 | Sort order fix + docstring update |
+
+**Total Impact**: 1 file, +3 insertions/-3 deletions (net 0 lines)
+
+### Integration with Parent Lupin
+
+**Parent Session Context** (2025.12.31, Session 24):
+- This was the final fix to complete Phase 8 of sender-aware notification system
+- Frontend changes in parent Lupin: CSS flex-direction, JS .reverse() removal, appendChild→insertBefore
+- Backend change in COSA: `.desc()` → `.asc()` ordering
+
+**Complete Fix (4 changes total)**:
+1. CSS `queue-fresh.css:793` - Changed `flex-direction: column-reverse` → `column`
+2. JS `queue-fresh.js:4169` - Removed `.reverse()` call on initial load
+3. JS `queue-fresh.js:3449` - Changed `appendChild` → `insertBefore(messageDiv, container.firstChild)`
+4. Python `notification_repository.py:220` - Changed `.desc()` → `.asc()` (THIS FILE)
+
+### Current Status
+
+- **Sort Order Bug**: ✅ FIXED - Newest messages now at top consistently
+- **Phase 8 Testing**: ✅ COMPLETE - Sender-aware notification system fully functional
+- **History Health**: ⚠️ Parent Lupin at ~30k tokens - archive needed
+
+### Next Session Priorities
+
+1. Archive parent Lupin history.md (approaching 30k tokens)
+2. Continue with any new Lupin features
 
 ---
 

@@ -180,11 +180,11 @@ class NotificationRepository( BaseRepository[Notification] ):
 
         Ensures:
             - Returns notifications within [anchor - window_hours, anchor]
-            - Ordered by created_at descending (newest first for notification list)
+            - Ordered by created_at ascending (oldest first for insertBefore prepend)
             - If anchor is None, uses sender's last activity as anchor
 
         Returns:
-            List of Notification instances in chronological order
+            List of Notification instances in chronological order (oldest first)
 
         Example:
             # Load last 24 hours relative to sender's last activity
@@ -217,7 +217,7 @@ class NotificationRepository( BaseRepository[Notification] ):
             Notification.created_at >= window_start,
             Notification.created_at <= anchor
         ).order_by(
-            Notification.created_at.desc()  # Newest first for notification list
+            Notification.created_at.asc()  # Oldest first - insertBefore prepends newest to top
         ).all()
 
     def update_state( self, notification_id: uuid.UUID, new_state: str ) -> Optional[Notification]:
