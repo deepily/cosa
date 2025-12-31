@@ -52,7 +52,7 @@ def get_database_url() -> str:
         instance = os.environ.get( "CLOUD_SQL_CONNECTION_NAME" )
         user = os.environ.get( "DB_USER", "lupin_app" )
         password = os.environ.get( "DB_PASSWORD" )
-        database = os.environ.get( "DB_NAME", "lupin_auth" )
+        database = os.environ.get( "DB_NAME", "lupin_db" )
 
         if not instance or not password:
             raise ValueError(
@@ -69,7 +69,7 @@ def get_database_url() -> str:
         password = os.environ.get( "DB_PASSWORD", "dev_password" )
         host = os.environ.get( "DB_HOST", "localhost" )
         port = os.environ.get( "DB_PORT", "5432" )
-        database = os.environ.get( "DB_NAME", "lupin_auth_test" )  # Separate test database
+        database = os.environ.get( "DB_NAME", "lupin_db_test" )  # Separate test database
 
         return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{database}"
 
@@ -79,7 +79,7 @@ def get_database_url() -> str:
         password = os.environ.get( "DB_PASSWORD", "dev_password" )
         host = os.environ.get( "DB_HOST", "localhost" )
         port = os.environ.get( "DB_PORT", "5432" )
-        database = os.environ.get( "DB_NAME", "lupin_auth" )
+        database = os.environ.get( "DB_NAME", "lupin_db" )
 
         return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{database}"
 

@@ -16,7 +16,8 @@ class NotificationItem:
                  source: str = "claude_code", user_id: Optional[str] = None,
                  id: Optional[str] = None, title: Optional[str] = None,
                  response_requested: bool = False, response_type: Optional[str] = None,
-                 response_default: Optional[str] = None, timeout_seconds: Optional[int] = None ) -> None:
+                 response_default: Optional[str] = None, timeout_seconds: Optional[int] = None,
+                 sender_id: Optional[str] = None ) -> None:
         """
         Initialize a notification item.
 
@@ -31,6 +32,7 @@ class NotificationItem:
             - Sets timestamp to current time
             - Initializes tracking fields
             - Stores Phase 2.2 response-required fields
+            - Sets sender_id with fallback to unknown sender
 
         Raises:
             - None
@@ -54,6 +56,9 @@ class NotificationItem:
         self.response_type      = response_type
         self.response_default   = response_default
         self.timeout_seconds    = timeout_seconds
+
+        # Sender identification for multi-project grouping
+        self.sender_id          = sender_id or "claude.code@unknown.deepily.ai"
         
     def _get_local_timestamp( self ) -> str:
         """Get timezone-aware timestamp using configured timezone from ConfigurationManager"""
@@ -99,7 +104,9 @@ class NotificationItem:
             "response_requested" : self.response_requested,
             "response_type"      : self.response_type,
             "response_default"   : self.response_default,
-            "timeout_seconds"    : self.timeout_seconds
+            "timeout_seconds"    : self.timeout_seconds,
+            # Sender identification
+            "sender_id"          : self.sender_id
         }
 
 
@@ -188,7 +195,8 @@ class NotificationFifoQueue( FifoQueue ):
                          source: str = "claude_code", user_id: Optional[str] = None,
                          id: Optional[str] = None, title: Optional[str] = None,
                          response_requested: bool = False, response_type: Optional[str] = None,
-                         response_default: Optional[str] = None, timeout_seconds: Optional[int] = None ) -> NotificationItem:
+                         response_default: Optional[str] = None, timeout_seconds: Optional[int] = None,
+                         sender_id: Optional[str] = None ) -> NotificationItem:
         """
         Push a notification with priority handling and io_tbl logging.
 
@@ -203,11 +211,12 @@ class NotificationFifoQueue( FifoQueue ):
             - Logs to InputAndOutputTable for persistence
             - Auto-emits WebSocket event via parent class
             - Includes Phase 2.2 response-required fields if provided
+            - Sets sender_id for multi-project grouping
 
         Raises:
             - None (handles errors gracefully)
         """
-        # Create notification item with Phase 2.2 fields
+        # Create notification item with Phase 2.2 fields and sender_id
         notification = NotificationItem(
             message            = message,
             type               = type,
@@ -219,7 +228,8 @@ class NotificationFifoQueue( FifoQueue ):
             response_requested = response_requested,
             response_type      = response_type,
             response_default   = response_default,
-            timeout_seconds    = timeout_seconds
+            timeout_seconds    = timeout_seconds,
+            sender_id          = sender_id
         )
         
         # Priority handling - urgent/high go to front, but after other urgent/high
@@ -444,37 +454,52 @@ def quick_smoke_test():
         # Test adding notifications with different priorities
         print( "✓ Testing notification addition with priorities..." )
         
-        # Add normal priority notification
+        # Add normal priority notification with explicit sender_id
         notif1 = queue.push_notification(
-            message="Normal priority test message",
+            message="[LUPIN] Normal priority test message",
             type="task",
             priority="medium",
-            user_id="test_user"
+            user_id="test_user",
+            sender_id="claude.code@lupin.deepily.ai"
         )
-        
-        # Add high priority notification (should go to front)
+
+        # Add high priority notification (should go to front) - no sender_id (tests default)
         notif2 = queue.push_notification(
             message="High priority urgent message",
-            type="alert", 
+            type="alert",
             priority="high",
             user_id="test_user"
         )
-        
-        # Add another normal priority
+
+        # Add another normal priority with different sender
         notif3 = queue.push_notification(
-            message="Another normal message",
+            message="[COSA] Another normal message",
             type="progress",
             priority="medium",
-            user_id="test_user"
+            user_id="test_user",
+            sender_id="claude.code@cosa.deepily.ai"
         )
         
         # Verify queue order (high priority should be first)
         assert queue.size() == 3, f"Expected 3 items, got {queue.size()}"
-        
+
         first_item = queue.head()
         assert first_item.priority == "high", f"Expected high priority first, got {first_item.priority}"
-        
+
         print( f"✓ Queue size: {queue.size()}, first item priority: {first_item.priority}" )
+
+        # Test sender_id functionality
+        print( "✓ Testing sender_id propagation..." )
+        assert notif1.sender_id == "claude.code@lupin.deepily.ai", f"Expected LUPIN sender_id, got {notif1.sender_id}"
+        assert notif2.sender_id == "claude.code@unknown.deepily.ai", f"Expected default sender_id, got {notif2.sender_id}"
+        assert notif3.sender_id == "claude.code@cosa.deepily.ai", f"Expected COSA sender_id, got {notif3.sender_id}"
+
+        # Verify sender_id in to_dict() output
+        notif1_dict = notif1.to_dict()
+        assert "sender_id" in notif1_dict, "sender_id missing from to_dict() output"
+        assert notif1_dict[ "sender_id" ] == "claude.code@lupin.deepily.ai", f"sender_id mismatch in to_dict()"
+
+        print( f"✓ sender_id tests passed: LUPIN={notif1.sender_id}, default={notif2.sender_id}, COSA={notif3.sender_id}" )
         
         # Test marking as played
         print( "✓ Testing playback tracking..." )

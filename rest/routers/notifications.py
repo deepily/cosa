@@ -10,18 +10,21 @@ Generated on: 2025-01-24
 
 from fastapi import APIRouter, Query, HTTPException, Depends, Body
 from fastapi.responses import JSONResponse, StreamingResponse
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, Annotated
 import zoneinfo
 import asyncio
 import json
 import uuid
+import re
 
 # Import dependencies and services
 from ..notification_fifo_queue import NotificationFifoQueue
 from ..websocket_manager import WebSocketManager
 from ..notifications_database import NotificationsDatabase
 from ..middleware.api_key_auth import require_api_key
+from ..db.database import get_db
+from ..db.repositories.notification_repository import NotificationRepository
 
 router = APIRouter(prefix="/api", tags=["notifications"])
 
@@ -129,6 +132,41 @@ def get_local_timestamp():
         if app_debug: print(f"[TIMEZONE] Warning: Invalid timezone '{timezone_name}', falling back to UTC: {e}")
         return datetime.now().isoformat()
 
+
+def resolve_sender_id( explicit_sender_id: Optional[str], message: str ) -> str:
+    """
+    Resolve sender ID using precedence: explicit > extracted from [PREFIX] > default.
+
+    Requires:
+        - explicit_sender_id is None or a valid sender ID string
+        - message is a string
+
+    Ensures:
+        - Returns explicit_sender_id if provided
+        - Otherwise extracts from [PREFIX] in message (e.g., [LUPIN] -> claude.code@lupin.deepily.ai)
+        - Falls back to claude.code@unknown.deepily.ai if no sender can be determined
+
+    Args:
+        explicit_sender_id: Explicitly provided sender ID (from --sender-id CLI arg)
+        message: Notification message text
+
+    Returns:
+        str: Resolved sender ID in claude.code@{project}.deepily.ai format
+    """
+    # Priority 1: Explicit sender_id
+    if explicit_sender_id:
+        return explicit_sender_id
+
+    # Priority 2: Extract from [PREFIX] in message
+    match = re.match( r'^\[([A-Z]+)\]', message )
+    if match:
+        project = match.group( 1 ).lower()
+        return f"claude.code@{project}.deepily.ai"
+
+    # Priority 3: Default fallback
+    return "claude.code@unknown.deepily.ai"
+
+
 # NOTE: API parameter is 'target_user' for backward compatibility and simplicity.
 # Internally, the config system uses 'global_notification_recipient' to support
 # future multi-recipient routing. This naming mismatch is intentional.
@@ -145,6 +183,7 @@ async def notify_user(
     timeout_seconds: int = Query(30, description="Timeout in seconds for response-required notifications (Phase 2.2 - reduced for testing)"),
     response_default: Optional[str] = Query(None, description="Default response value for timeout/offline (Phase 2.1)"),
     title: Optional[str] = Query(None, description="Terse technical title for voice-first UX (Phase 2.1)"),
+    sender_id: Optional[str] = Query(None, description="Sender ID (e.g., claude.code@lupin.deepily.ai). Auto-extracted from [PREFIX] in message if not provided."),
     notification_queue: NotificationFifoQueue = Depends(get_notification_queue),
     ws_manager: WebSocketManager = Depends(get_websocket_manager),
     notification_db: NotificationsDatabase = Depends(get_notifications_database)
@@ -247,9 +286,13 @@ async def notify_user(
                 detail="timeout_seconds must be positive"
             )
     
+    # Resolve sender_id using precedence: explicit > extracted from [PREFIX] > default
+    resolved_sender_id = resolve_sender_id( sender_id, message )
+
     # Log notification (existing logging system)
     mode = "response-required" if response_requested else "fire-and-forget"
     print(f"[NOTIFY] Claude Code notification ({mode}): {type}/{priority} - {message}")
+    print(f"[NOTIFY] Sender ID resolved: {resolved_sender_id}")
 
     try:
         # Look up user in JWT auth database to get their UUID user_id
@@ -282,8 +325,29 @@ async def notify_user(
                 priority    = priority,
                 source      = "claude_code",
                 user_id     = target_system_id,
-                title       = title  # Phase 2.2 - include title for consistency
+                title       = title,  # Phase 2.2 - include title for consistency
+                sender_id   = resolved_sender_id  # Sender-aware notification system
             )
+
+            # Persist to PostgreSQL for history loading
+            try:
+                with get_db() as session:
+                    repo = NotificationRepository( session )
+                    db_notification = repo.create_notification(
+                        sender_id    = resolved_sender_id,
+                        recipient_id = uuid.UUID( target_system_id ),
+                        message      = message.strip(),
+                        type         = type,
+                        priority     = priority,
+                        title        = title
+                    )
+                    # Update state to delivered if user is connected
+                    if is_connected:
+                        repo.update_state( db_notification.id, "delivered" )
+                    print( f"[NOTIFY] ✓ Persisted notification {db_notification.id} to PostgreSQL" )
+            except Exception as db_error:
+                # Log but don't fail - FIFO queue is the primary delivery mechanism
+                print( f"[NOTIFY] ⚠️ Failed to persist to PostgreSQL (non-fatal): {db_error}" )
 
             if not is_connected:
                 print(f"[NOTIFY] User {target_user} ({target_system_id}) is not connected - notification not delivered")
@@ -315,7 +379,7 @@ async def notify_user(
 
                 # Create notification in database with state='expired'
                 notification_id = notification_db.create_notification(
-                    sender_id          = "claude.code@deepily.ai",
+                    sender_id          = resolved_sender_id,  # Use resolved sender_id
                     recipient_id       = target_system_id,
                     title              = title or message.strip()[:50],  # Fallback to first 50 chars
                     message            = message.strip(),
@@ -343,7 +407,7 @@ async def notify_user(
 
         # User is online - create notification in database
         notification_id = notification_db.create_notification(
-            sender_id          = "claude.code@deepily.ai",
+            sender_id          = resolved_sender_id,  # Use resolved sender_id
             recipient_id       = target_system_id,
             title              = title or message.strip()[:50],
             message            = message.strip(),
@@ -381,7 +445,8 @@ async def notify_user(
             response_requested = True,
             response_type      = response_type,
             response_default   = response_default,
-            timeout_seconds    = timeout_seconds
+            timeout_seconds    = timeout_seconds,
+            sender_id          = resolved_sender_id  # Sender-aware notification system
         )
 
         # DEBUG: Log the notification_item after creation
@@ -822,9 +887,261 @@ async def delete_notification(
             }
         else:
             raise HTTPException(status_code=404, detail=f"Notification {notification_id} not found")
-            
+
     except HTTPException:
         raise
     except Exception as e:
         print(f"[NOTIFY] Error deleting notification {notification_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete notification: {str(e)}")
+
+
+# =============================================================================
+# HISTORY ENDPOINTS (Phase 6 - Sender-Aware Notification System)
+# =============================================================================
+
+@router.get( "/notifications/senders/{user_email}" )
+async def get_senders_with_activity(
+    user_email: str,
+    hours: Optional[int] = Query( None, description="Filter to senders active within N hours" )
+):
+    """
+    Get list of senders with recent notification activity for a user.
+
+    Returns sender IDs ordered by most recent activity, with last activity
+    timestamp and notification count. Used by frontend for sender card initialization.
+
+    Requires:
+        - user_email is a valid registered email address
+        - User exists in auth database
+
+    Ensures:
+        - Returns list of {sender_id, last_activity, count} sorted by last_activity desc
+        - Optional hours filter limits to recent activity
+        - Empty list if no notifications found
+
+    Raises:
+        - HTTPException with 404 if user not found
+        - HTTPException with 500 for query failures
+
+    Args:
+        user_email: User's email address
+        hours: Optional filter - only include senders active within N hours
+
+    Returns:
+        List of sender activity summaries
+    """
+    try:
+        # Look up user to get UUID
+        from cosa.rest.user_service import get_user_by_email
+
+        user_data = get_user_by_email( user_email )
+        if not user_data:
+            raise HTTPException(
+                status_code = 404,
+                detail      = f"User not found: {user_email}"
+            )
+
+        user_id = uuid.UUID( user_data["id"] ) if isinstance( user_data["id"], str ) else user_data["id"]
+
+        with get_db() as session:
+            repo = NotificationRepository( session )
+            activities = repo.get_sender_last_activities( user_id )
+
+            # Apply hours filter if specified
+            if hours is not None:
+                cutoff = datetime.now( timezone.utc ) - timedelta( hours=hours )
+                activities = [
+                    a for a in activities
+                    if a["last_activity"] >= cutoff
+                ]
+
+            # Convert datetime to ISO string for JSON serialization
+            for activity in activities:
+                if activity["last_activity"]:
+                    activity["last_activity"] = activity["last_activity"].isoformat()
+
+            print( f"[NOTIFY] Returning {len( activities )} senders for {user_email}" )
+
+            return activities
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print( f"[NOTIFY] Error getting senders for {user_email}: {str( e )}" )
+        raise HTTPException(
+            status_code = 500,
+            detail      = f"Failed to get sender list: {str( e )}"
+        )
+
+
+@router.get( "/notifications/conversation/{sender_id}/{user_email}" )
+async def get_sender_conversation(
+    sender_id: str,
+    user_email: str,
+    hours: int = Query( 24, description="Window size in hours (default: 24)" ),
+    anchor: Optional[str] = Query( None, description="ISO timestamp to anchor window around" )
+):
+    """
+    Get conversation history between a sender and recipient.
+
+    Returns notifications in chronological order (oldest first) for chat-style display.
+    Uses activity-anchored window loading - window is relative to anchor timestamp
+    (defaults to sender's last activity).
+
+    Requires:
+        - sender_id is a valid sender identifier (e.g., claude.code@lupin.deepily.ai)
+        - user_email is a valid registered email address
+        - User exists in auth database
+
+    Ensures:
+        - Returns notifications within [anchor - hours, anchor]
+        - Notifications sorted chronologically (oldest first)
+        - Each notification includes full details for UI rendering
+        - Empty list if no notifications found
+
+    Raises:
+        - HTTPException with 404 if user not found
+        - HTTPException with 500 for query failures
+
+    Args:
+        sender_id: Sender identifier
+        user_email: User's email address
+        hours: Window size in hours (default: 24)
+        anchor: Optional ISO timestamp to anchor window around
+
+    Returns:
+        List of notification objects for the conversation
+    """
+    try:
+        # Look up user to get UUID
+        from cosa.rest.user_service import get_user_by_email
+
+        user_data = get_user_by_email( user_email )
+        if not user_data:
+            raise HTTPException(
+                status_code = 404,
+                detail      = f"User not found: {user_email}"
+            )
+
+        user_id = uuid.UUID( user_data["id"] ) if isinstance( user_data["id"], str ) else user_data["id"]
+
+        # Parse anchor timestamp if provided
+        anchor_dt = None
+        if anchor:
+            try:
+                anchor_dt = datetime.fromisoformat( anchor.replace( 'Z', '+00:00' ) )
+            except ValueError:
+                raise HTTPException(
+                    status_code = 400,
+                    detail      = f"Invalid anchor timestamp format: {anchor}"
+                )
+
+        with get_db() as session:
+            repo = NotificationRepository( session )
+            notifications = repo.get_sender_conversation(
+                sender_id    = sender_id,
+                recipient_id = user_id,
+                anchor       = anchor_dt,
+                window_hours = hours
+            )
+
+            # Convert to dict for JSON serialization
+            result = []
+            for notif in notifications:
+                result.append( {
+                    "id"                 : str( notif.id ),
+                    "sender_id"          : notif.sender_id,
+                    "message"            : notif.message,
+                    "title"              : notif.title,
+                    "type"               : notif.type,
+                    "priority"           : notif.priority,
+                    "state"              : notif.state,
+                    "created_at"         : notif.created_at.isoformat() if notif.created_at else None,
+                    "delivered_at"       : notif.delivered_at.isoformat() if notif.delivered_at else None,
+                    "responded_at"       : notif.responded_at.isoformat() if notif.responded_at else None,
+                    "response_requested" : notif.response_requested,
+                    "response_type"      : notif.response_type,
+                    "response_value"     : notif.response_value,
+                    "timestamp"          : notif.created_at.isoformat() if notif.created_at else None
+                } )
+
+            print( f"[NOTIFY] Returning {len( result )} notifications for {sender_id} → {user_email}" )
+
+            return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print( f"[NOTIFY] Error getting conversation for {sender_id}: {str( e )}" )
+        raise HTTPException(
+            status_code = 500,
+            detail      = f"Failed to get conversation: {str( e )}"
+        )
+
+
+@router.delete( "/notifications/conversation/{sender_id}/{user_email}" )
+async def delete_sender_conversation( sender_id: str, user_email: str ):
+    """
+    Delete all notifications in a conversation between sender and recipient.
+
+    Allows users to delete an entire conversation (all notifications from a specific
+    sender) rather than deleting individual notifications.
+
+    Requires:
+        - sender_id is a valid sender identifier (e.g., claude.code@lupin.deepily.ai)
+        - user_email is a valid registered email address
+        - User exists in auth database
+
+    Ensures:
+        - All notifications matching sender_id AND recipient deleted
+        - Returns count of deleted notifications
+        - Returns 404 if user not found (not if conversation empty)
+
+    Raises:
+        - HTTPException with 404 if user not found
+        - HTTPException with 500 for deletion failures
+
+    Args:
+        sender_id: Sender identifier
+        user_email: User's email address
+
+    Returns:
+        JSON with deleted count
+    """
+    try:
+        # Look up user to get UUID
+        from cosa.rest.user_service import get_user_by_email
+
+        user_data = get_user_by_email( user_email )
+        if not user_data:
+            raise HTTPException(
+                status_code = 404,
+                detail      = f"User not found: {user_email}"
+            )
+
+        user_id = uuid.UUID( user_data["id"] ) if isinstance( user_data["id"], str ) else user_data["id"]
+
+        with get_db() as session:
+            repo = NotificationRepository( session )
+            deleted_count = repo.delete_by_sender(
+                sender_id    = sender_id,
+                recipient_id = user_id
+            )
+
+            print( f"[NOTIFY] Deleted {deleted_count} notifications for {sender_id} → {user_email}" )
+
+            return {
+                "status"        : "success",
+                "sender_id"     : sender_id,
+                "user_email"    : user_email,
+                "deleted_count" : deleted_count
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print( f"[NOTIFY] Error deleting conversation for {sender_id}: {str( e )}" )
+        raise HTTPException(
+            status_code = 500,
+            detail      = f"Failed to delete conversation: {str( e )}"
+        )

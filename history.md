@@ -1,6 +1,8 @@
 # COSA Development History
 
-> **🎨 CURRENT**: 2025.12.03 - Parent Lupin Sync: Field Rename + Third Similarity Dimension! Synced 4 files from parent Lupin Session 18. **FIELD RENAME `code_gist` → `solution_summary_gist`**: Renamed for consistency with solution-focused naming convention. Updated schema field, snapshot record conversion, parameter names, Pydantic models, and API endpoints. **NEW `solution_gist_embedding` FIELD**: Added 1536-dim embedding field to schema + record conversion + snapshot constructor. **NEW `get_snapshots_by_solution_gist_similarity()` METHOD**: Third vector search dimension using `solution_gist_embedding` field for comparing concise summaries. **NEW `set_solution_summary_gist()` METHOD**: SolutionSnapshot setter that generates embedding. **ENSURE_TOP_RESULT FEATURE**: All 3 similarity methods now accept `ensure_top_result=True` (default) to always return at least one result even if below threshold - useful for UI that needs to show something. **API ENHANCEMENTS**: `CodeSimilarityResult` expanded with `code_preview`, `solution_summary_preview` fields. `SimilarSnapshotsResponse` expanded with `solution_gist_similar` list and `total_solution_gist_matches` count. `/similar` endpoint now accepts `gist_threshold` param. **LAZY GIST BACKFILL**: `running_fifo_queue.py` now generates `solution_summary_gist` if missing (not just on first run), enabling backfill for cache hits. **Total Impact**: 4 files, +309 insertions/-66 deletions (net +243 lines). 🎨✅
+> **📬 CURRENT**: 2025.12.30 - Parent Lupin Sync: Sender-Aware Notification System Infrastructure! Synced 8 files from parent Lupin Sessions 19-23 (Phase 1-6 implementation). **NEW `Notification` SQLAlchemy MODEL**: 128-line PostgreSQL model with sender routing, timestamps, response handling, and state machine (postgres_models.py:479-612). **NEW `NotificationRepository` CLASS**: 462-line repository with CRUD operations, sender-based grouping, activity-anchored window loading, state management (notification_repository.py - NEW FILE). **CLI SENDER SUPPORT**: Added `sender_id` field to `NotificationRequest` and `AsyncNotificationRequest` with auto-extraction from `[PREFIX]` in message via `extract_sender_from_message()` helper (notification_models.py:27-64, 158-163, 248-253, 458-463, 503-515). **API SENDER RESOLUTION**: Added `resolve_sender_id()` helper and `sender_id` query param to `/api/notify` endpoint, PostgreSQL persistence for history loading (notifications.py:135-166, 186, 289-290, 328-349). **NEW HISTORY ENDPOINTS**: `/notifications/senders/{user_email}` (get senders with activity), `/notifications/history/{sender_id}/{user_email}` (get sender conversation history), `/notifications/conversation/{sender_id}/{user_email}` DELETE (delete sender conversation). **FIFO QUEUE UPDATE**: Added `sender_id` field to `NotificationItem` (notification_fifo_queue.py). **DATABASE CONTEXT MANAGER**: Added `get_db()` context manager for session management (database.py). **Total Impact**: 8 files (7 modified, 1 created), +585 insertions/-33 deletions (net +552 lines). 📬✅
+
+> **🎨 PREVIOUS**: 2025.12.03 - Parent Lupin Sync: Field Rename + Third Similarity Dimension! Synced 4 files from parent Lupin Session 18. **FIELD RENAME `code_gist` → `solution_summary_gist`**: Renamed for consistency with solution-focused naming convention. Updated schema field, snapshot record conversion, parameter names, Pydantic models, and API endpoints. **NEW `solution_gist_embedding` FIELD**: Added 1536-dim embedding field to schema + record conversion + snapshot constructor. **NEW `get_snapshots_by_solution_gist_similarity()` METHOD**: Third vector search dimension using `solution_gist_embedding` field for comparing concise summaries. **NEW `set_solution_summary_gist()` METHOD**: SolutionSnapshot setter that generates embedding. **ENSURE_TOP_RESULT FEATURE**: All 3 similarity methods now accept `ensure_top_result=True` (default) to always return at least one result even if below threshold - useful for UI that needs to show something. **API ENHANCEMENTS**: `CodeSimilarityResult` expanded with `code_preview`, `solution_summary_preview` fields. `SimilarSnapshotsResponse` expanded with `solution_gist_similar` list and `total_solution_gist_matches` count. `/similar` endpoint now accepts `gist_threshold` param. **LAZY GIST BACKFILL**: `running_fifo_queue.py` now generates `solution_summary_gist` if missing (not just on first run), enabling backfill for cache hits. **Total Impact**: 4 files, +309 insertions/-66 deletions (net +243 lines). 🎨✅
 
 > **🔍 PREVIOUS**: 2025.12.02 - Parent Lupin Sync: Code Similarity Visualization + Duplicate Snapshot Bug Fixes! Synced 3 files from parent Lupin Sessions 16-17. **PHASE 1 - CODE SIMILARITY SEARCH**: Replaced stub `get_snapshots_by_code_similarity()` with real LanceDB vector search on `code_embedding` field, added new `get_snapshots_by_solution_similarity()` method for `solution_embedding` field (+200 lines in lancedb_solution_manager.py). **PHASE 2 - API ENDPOINTS**: Added 3 Pydantic models (`CodeSimilarityResult`, `SimilarSnapshotsResponse`, `SnapshotPreviewResponse`) and 2 endpoints (`/admin/snapshots/{id_hash}/preview`, `/admin/snapshots/{id_hash}/similar`). **DUPLICATE BUG FIX 1 - TOCTOU RACE**: Added `threading.Lock` around `save_snapshot()` critical section to prevent concurrent calls from both passing cache/DB checks. **DUPLICATE BUG FIX 2 - ID HASH PRESERVATION**: Added `snapshot.id_hash = existing_id_hash` in `_update_existing_snapshot()` so `merge_insert` matches existing record. **GIST GENERATION FIX**: `running_fifo_queue.py` called uninitialized `self.normalizer`; fixed by importing/initializing `GistNormalizer`, plus added gist generation to `_handle_base_agent()` for new jobs. **Total Impact**: 3 files, +513 insertions/-81 deletions (net +432 lines). 🔍💻🐛✅
 
@@ -27,6 +29,100 @@
 > **Previous Achievement**: 2025.11.10 - Phase 2.5.4 API Key Authentication Infrastructure COMPLETE! Header-based API key authentication (X-API-Key header) implemented. Fixed critical schema bug (api_keys.user_id INTEGER→TEXT). Integration testing infrastructure created (10 tests).
 
 > **Previous Achievement**: 2025.11.08 - Notification System Phase 2.3 CLI Modernization COMMITTED! Split async/sync notification clients with Pydantic validation (1,376 lines across 3 new files).
+
+---
+
+## 2025.12.30 - Parent Lupin Sync: Sender-Aware Notification System Infrastructure
+
+### Summary
+Synced 8 files from parent Lupin Sessions 19-23 (2025.12.29-30). Major theme: implementing sender-aware notification infrastructure enabling multi-project grouping (LUPIN, COSA, PLAN), chat-style UI with collapsible sender cards, and PostgreSQL persistence for conversation history.
+
+### Work Performed
+
+#### New `Notification` SQLAlchemy Model - COMPLETE ✅
+**File**: `rest/postgres_models.py` (+128 lines)
+
+Full ORM model for PostgreSQL persistence with:
+- **Routing fields**: `sender_id` (indexed), `recipient_id` (FK to users)
+- **Content fields**: `title`, `message`, `type`, `priority`
+- **Timestamps**: `created_at`, `delivered_at`, `responded_at`, `expires_at`
+- **Response handling**: `response_requested`, `response_type`, `response_value` (JSONB), `response_default`, `timeout_seconds`
+- **State machine**: `state` field (created, queued, delivered, responded, expired, error)
+- **Indexes**: 5 indexes including composite `(sender_id, recipient_id)`
+
+#### New `NotificationRepository` Class - COMPLETE ✅
+**File**: `rest/db/repositories/notification_repository.py` (NEW - 462 lines)
+
+Repository pattern implementation extending `BaseRepository` with:
+- `create_notification()` - Create with all fields
+- `get_by_sender()` - Get notifications for sender/recipient pair
+- `get_senders_with_activity()` - List senders with notification counts
+- `update_state()` - State machine transitions
+- `update_response()` - Record user responses
+- `delete_by_sender()` - Delete entire conversation with sender
+
+#### CLI Sender Support - COMPLETE ✅
+**File**: `cli/notification_models.py` (+65 lines)
+
+- Added `extract_sender_from_message()` helper function
+- Extracts `[PREFIX]` from message start (e.g., `[LUPIN]` → `claude.code@lupin.deepily.ai`)
+- Added `sender_id` field to `NotificationRequest` and `AsyncNotificationRequest`
+- Pattern validation: `^claude\.code@[a-z]+\.deepily\.ai$`
+- Auto-extraction in `to_query_params()` methods
+
+#### API Sender Resolution - COMPLETE ✅
+**File**: `rest/routers/notifications.py` (+331 lines)
+
+- Added `resolve_sender_id()` helper (explicit > extracted > default fallback)
+- Added `sender_id` query parameter to `/api/notify` endpoint
+- PostgreSQL persistence via `NotificationRepository.create_notification()`
+- Updated `NotificationItem` creation to include `sender_id`
+
+#### New History Endpoints - COMPLETE ✅
+**File**: `rest/routers/notifications.py`
+
+Three new endpoints for sender-aware history:
+1. `GET /notifications/senders/{user_email}` - List senders with activity summary
+2. `GET /notifications/history/{sender_id}/{user_email}` - Get conversation history
+3. `DELETE /notifications/conversation/{sender_id}/{user_email}` - Delete sender conversation
+
+#### FIFO Queue Update - COMPLETE ✅
+**File**: `rest/notification_fifo_queue.py` (+59 lines net)
+
+- Added `sender_id` field to `NotificationItem` dataclass
+- Updated queue operations to handle sender routing
+
+#### Database Context Manager - COMPLETE ✅
+**File**: `rest/db/database.py` (+6 lines)
+
+- Added `get_db()` context manager for PostgreSQL session management
+- Integrates with FastAPI dependency injection
+
+### Files Created/Modified
+
+**Created (1 file)**:
+- `rest/db/repositories/notification_repository.py` (462 lines) - Repository pattern for Notification model
+
+**Modified (7 files)**:
+- `cli/notification_models.py` (+65 lines) - sender_id field + extraction helper
+- `cli/notify_user_async.py` (+8 lines) - sender_id parameter pass-through
+- `cli/notify_user_sync.py` (+8 lines) - sender_id parameter pass-through
+- `rest/db/database.py` (+6 lines) - get_db() context manager
+- `rest/notification_fifo_queue.py` (+59/-26 lines) - sender_id in NotificationItem
+- `rest/postgres_models.py` (+141 lines) - Notification model + User relationship
+- `rest/routers/notifications.py` (+331 lines) - sender resolution + history endpoints
+
+### Total Impact
+- **Files**: 8 (7 modified, 1 created)
+- **Insertions**: +585 lines
+- **Deletions**: -33 lines
+- **Net Change**: +552 lines
+
+### Current Status
+- **Sender-Aware Notifications**: ✅ Phase 1-6 infrastructure complete
+- **PostgreSQL Persistence**: ✅ Ready for history loading
+- **CLI Integration**: ✅ Auto-extraction from `[PREFIX]` messages
+- **Next Steps**: Phase 7-8 testing in parent Lupin project
 
 ---
 

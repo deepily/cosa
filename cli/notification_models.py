@@ -24,6 +24,41 @@ Usage:
 from pydantic import BaseModel, Field, field_validator, EmailStr
 from typing import Optional, Literal, Union
 from enum import Enum
+import re
+
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+def extract_sender_from_message( message: str ) -> Optional[str]:
+    """
+    Extract sender ID from message prefix like [LUPIN] or [COSA].
+
+    Requires:
+        - message is a string
+
+    Ensures:
+        - Returns claude.code@{project}.deepily.ai if [PREFIX] found
+        - Returns None if no prefix found
+        - Project name is lowercased
+
+    Examples:
+        "[LUPIN] Build complete" -> "claude.code@lupin.deepily.ai"
+        "[COSA] Tests passed"    -> "claude.code@cosa.deepily.ai"
+        "No prefix message"      -> None
+
+    Args:
+        message: Notification message text
+
+    Returns:
+        str or None: Sender ID in email format, or None if no prefix
+    """
+    match = re.match( r'^\[([A-Z]+)\]', message )
+    if match:
+        project = match.group( 1 ).lower()
+        return f"claude.code@{project}.deepily.ai"
+    return None
 
 
 # ============================================================================
@@ -120,6 +155,12 @@ class NotificationRequest(BaseModel):
         description="Terse technical title for voice-first UX"
     )
 
+    sender_id: Optional[str] = Field(
+        default=None,
+        pattern=r'^claude\.code@[a-z]+\.deepily\.ai$',
+        description="Sender ID (e.g., claude.code@lupin.deepily.ai). Auto-extracted from [PREFIX] if not provided."
+    )
+
     @field_validator( 'message' )
     @classmethod
     def message_not_whitespace( cls, v: str ) -> str:
@@ -203,6 +244,13 @@ class NotificationRequest(BaseModel):
 
         if self.title is not None:
             params["title"] = self.title
+
+        # Sender ID: explicit > extracted from message > None (API will use default)
+        resolved_sender_id = self.sender_id
+        if not resolved_sender_id:
+            resolved_sender_id = extract_sender_from_message( self.message )
+        if resolved_sender_id:
+            params["sender_id"] = resolved_sender_id
 
         return params
 
@@ -407,6 +455,12 @@ class AsyncNotificationRequest(BaseModel):
         description="HTTP request timeout in seconds (1-30)"
     )
 
+    sender_id: Optional[str] = Field(
+        default=None,
+        pattern=r'^claude\.code@[a-z]+\.deepily\.ai$',
+        description="Sender ID (e.g., claude.code@lupin.deepily.ai). Auto-extracted from [PREFIX] if not provided."
+    )
+
     @field_validator( 'message' )
     @classmethod
     def message_not_whitespace( cls, v: str ) -> str:
@@ -446,12 +500,21 @@ class AsyncNotificationRequest(BaseModel):
         Returns:
             dict: Query parameters for requests.post()
         """
-        return {
+        params = {
             "message"     : self.message,
             "type"        : self.notification_type.value,
             "priority"    : self.priority.value,
             "target_user" : self.target_user
         }
+
+        # Sender ID: explicit > extracted from message > None (API will use default)
+        resolved_sender_id = self.sender_id
+        if not resolved_sender_id:
+            resolved_sender_id = extract_sender_from_message( self.message )
+        if resolved_sender_id:
+            params["sender_id"] = resolved_sender_id
+
+        return params
 
 
 class AsyncNotificationResponse(BaseModel):

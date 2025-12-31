@@ -118,6 +118,11 @@ class User( Base ):
         back_populates="user",
         cascade="all, delete-orphan"
     )
+    notifications: Mapped[List["Notification"]] = relationship(
+        "Notification",
+        back_populates="recipient",
+        cascade="all, delete-orphan"
+    )
 
     # Indexes defined in schema
     __table_args__ = (
@@ -474,6 +479,134 @@ class FailedLoginAttempt( Base ):
         return f"<FailedLoginAttempt(id={self.id}, email='{self.email}', ip={self.ip_address})>"
 
 
+class Notification( Base ):
+    """
+    Notification model for sender-aware notification system.
+
+    Requires:
+        - sender_id: Sender identifier (e.g., claude.code@lupin.deepily.ai)
+        - recipient_id: Valid user UUID
+        - message: Notification message text
+
+    Ensures:
+        - id is automatically generated UUID
+        - created_at defaults to current timestamp
+        - state defaults to 'created'
+        - cascades delete when recipient user is deleted
+    """
+    __tablename__ = "notifications"
+
+    # Primary Key
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID( as_uuid=True ),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid()
+    )
+
+    # Routing - sender_id is the key field for multi-project grouping
+    sender_id: Mapped[str] = mapped_column(
+        String( 255 ),
+        nullable=False,
+        index=True
+    )
+    recipient_id: Mapped[uuid.UUID] = mapped_column(
+        UUID( as_uuid=True ),
+        ForeignKey( "users.id", ondelete="CASCADE" ),
+        nullable=False,
+        index=True
+    )
+
+    # Content
+    title: Mapped[Optional[str]] = mapped_column(
+        String( 255 ),
+        nullable=True
+    )
+    message: Mapped[str] = mapped_column(
+        Text,
+        nullable=False
+    )
+    type: Mapped[str] = mapped_column(
+        String( 50 ),
+        nullable=False,
+        index=True
+    )
+    priority: Mapped[str] = mapped_column(
+        String( 50 ),
+        nullable=False
+    )
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime( timezone=True ),
+        nullable=False,
+        default=func.now(),
+        server_default=func.now()
+    )
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime( timezone=True ),
+        nullable=True
+    )
+    responded_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime( timezone=True ),
+        nullable=True
+    )
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime( timezone=True ),
+        nullable=True
+    )
+
+    # Response handling
+    response_requested: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default="false"
+    )
+    response_type: Mapped[Optional[str]] = mapped_column(
+        String( 50 ),
+        nullable=True
+    )
+    response_value: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True
+    )
+    response_default: Mapped[Optional[str]] = mapped_column(
+        String( 255 ),
+        nullable=True
+    )
+    timeout_seconds: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        nullable=True
+    )
+
+    # State machine (created, queued, delivered, responded, expired, error)
+    state: Mapped[str] = mapped_column(
+        String( 50 ),
+        nullable=False,
+        default="created",
+        server_default="created",
+        index=True
+    )
+
+    # Relationship to User
+    recipient: Mapped["User"] = relationship(
+        "User",
+        back_populates="notifications"
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index( 'idx_notifications_sender_id', 'sender_id' ),
+        Index( 'idx_notifications_recipient_id', 'recipient_id' ),
+        Index( 'idx_notifications_state', 'state' ),
+        Index( 'idx_notifications_created_at', 'created_at' ),
+        Index( 'idx_notifications_sender_recipient', 'sender_id', 'recipient_id' ),
+    )
+
+    def __repr__( self ) -> str:
+        return f"<Notification(id={self.id}, sender='{self.sender_id}', state='{self.state}')>"
+
+
 class AuthAuditLog( Base ):
     """
     Authentication audit log model for security tracking.
@@ -561,17 +694,17 @@ def quick_smoke_test():
         # Test 2: Model classes exist
         print( "Testing model class definitions..." )
         models = [User, RefreshToken, ApiKey, EmailVerificationToken,
-                  PasswordResetToken, FailedLoginAttempt, AuthAuditLog]
+                  PasswordResetToken, FailedLoginAttempt, Notification, AuthAuditLog]
         for model in models:
             assert hasattr( model, '__tablename__' ), f"{model.__name__} missing __tablename__"
-        print( f"✓ All 7 models defined: {', '.join( [m.__name__ for m in models] )}" )
+        print( f"✓ All 8 models defined: {', '.join( [m.__name__ for m in models] )}" )
 
         # Test 3: Base metadata exists
         print( "Testing Base metadata..." )
         assert hasattr( Base, 'metadata' ), "Base missing metadata"
         table_names = list( Base.metadata.tables.keys() )
         expected_tables = ['users', 'refresh_tokens', 'api_keys', 'email_verification_tokens',
-                          'password_reset_tokens', 'failed_login_attempts', 'auth_audit_log']
+                          'password_reset_tokens', 'failed_login_attempts', 'notifications', 'auth_audit_log']
         assert set( table_names ) == set( expected_tables ), f"Table mismatch: {table_names}"
         print( f"✓ Base metadata contains {len( table_names )} tables" )
 
@@ -579,7 +712,9 @@ def quick_smoke_test():
         print( "Testing ORM relationships..." )
         assert hasattr( User, 'refresh_tokens' ), "User missing refresh_tokens relationship"
         assert hasattr( User, 'api_keys' ), "User missing api_keys relationship"
+        assert hasattr( User, 'notifications' ), "User missing notifications relationship"
         assert hasattr( RefreshToken, 'user' ), "RefreshToken missing user relationship"
+        assert hasattr( Notification, 'recipient' ), "Notification missing recipient relationship"
         print( "✓ ORM relationships defined correctly" )
 
         # Test 5: Test PostgreSQL connection and schema validation

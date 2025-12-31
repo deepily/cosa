@@ -489,6 +489,11 @@ Environment Variables:
     )
 
     parser.add_argument(
+        "--sender-id",
+        help="Sender ID (e.g., claude.code@lupin.deepily.ai). Auto-extracted from [PREFIX] in message if not provided."
+    )
+
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable debug output to stderr"
@@ -506,7 +511,8 @@ Environment Variables:
             target_user        = args.target_user,
             timeout_seconds    = args.timeout,
             response_default   = args.response_default,
-            title              = args.title
+            title              = args.title,
+            sender_id          = args.sender_id
         )
 
     except ValidationError as e:

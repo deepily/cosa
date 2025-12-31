@@ -420,6 +420,11 @@ Environment Variables:
     )
 
     parser.add_argument(
+        "--sender-id",
+        help="Sender ID (e.g., claude.code@lupin.deepily.ai). Auto-extracted from [PREFIX] in message if not provided."
+    )
+
+    parser.add_argument(
         "--validate-env",
         action="store_true",
         help="Validate environment configuration and exit"
@@ -445,7 +450,8 @@ Environment Variables:
             notification_type = NotificationType( args.type ),
             priority          = NotificationPriority( args.priority ),
             target_user       = args.target_user,
-            timeout           = args.timeout
+            timeout           = args.timeout,
+            sender_id         = args.sender_id
         )
 
     except ValidationError as e:
