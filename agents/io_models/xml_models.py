@@ -2253,6 +2253,48 @@ class WeatherResponse( BaseXMLModel ):
         )
 
 
+class FormatterResponse( BaseXMLModel ):
+    """
+    Universal formatter response model for all agent formatters.
+
+    Handles XML responses from RawOutputFormatter when rephrasing raw agent
+    output into conversational responses suitable for TTS.
+
+    Expected XML format:
+    <response>
+        <rephrased-answer>Conversational response here</rephrased-answer>
+    </response>
+
+    Used by formatters for:
+    - DateAndTimeAgent: Conversational time/date responses
+    - MathAgent: Conversational math answers
+    - CalendarAgent: Conversational calendar event summaries
+    - WeatherAgent: Conversational weather information
+    - TodoListAgent: Conversational todo list responses
+    - ReceptionistAgent: Conversational chat responses
+
+    Note: Receptionist template includes <thoughts> field but it is
+          ignored by RawOutputFormatter (only rephrased-answer extracted).
+
+    This is the universal model that all formatters use. WeatherResponse
+    is kept for backward compatibility and weather-specific helper methods.
+    """
+
+    rephrased_answer: str = Field(
+        ...,
+        description="Conversational response formatted for TTS",
+        alias="rephrased-answer"
+    )
+
+    @field_validator( 'rephrased_answer' )
+    @classmethod
+    def validate_rephrased_answer( cls, v ):
+        """Ensure rephrased_answer is not empty."""
+        if not v or not v.strip():
+            raise ValueError( "rephrased_answer cannot be empty" )
+        return v.strip()
+
+
 class VoxCommandResponse( BaseXMLModel ):
     """
     Voice-to-browser command response model.

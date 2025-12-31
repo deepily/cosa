@@ -8,22 +8,33 @@ and managing notification lifecycle (played/deleted status).
 Generated on: 2025-01-24
 """
 
-from fastapi import APIRouter, Query, HTTPException, Depends
-from fastapi.responses import JSONResponse
-from datetime import datetime
-from typing import Dict, Any, Optional
+from fastapi import APIRouter, Query, HTTPException, Depends, Body
+from fastapi.responses import JSONResponse, StreamingResponse
+from datetime import datetime, timedelta, timezone
+from typing import Dict, Any, Optional, Annotated
 import zoneinfo
+import asyncio
+import json
+import uuid
+import re
 
 # Import dependencies and services
-from ..user_id_generator import email_to_system_id
 from ..notification_fifo_queue import NotificationFifoQueue
 from ..websocket_manager import WebSocketManager
+from ..notifications_database import NotificationsDatabase
+from ..middleware.api_key_auth import require_api_key
+from ..db.database import get_db
+from ..db.repositories.notification_repository import NotificationRepository
 
 router = APIRouter(prefix="/api", tags=["notifications"])
 
 # Global variables that will be injected via dependencies (temporary)
 jobs_notification_queue = None
 websocket_manager = None
+
+# Global state for pending responses (Phase 2.1 SSE blocking flow)
+# {notification_id: {"event": asyncio.Event(), "response_data": None}}
+pending_responses = {}
 
 def get_notification_queue():
     """
@@ -48,21 +59,39 @@ def get_notification_queue():
 def get_websocket_manager():
     """
     Dependency to get websocket manager from main module.
-    
+
     Requires:
         - fastapi_app.main module is available
         - main_module has websocket_manager attribute
-        
+
     Ensures:
         - Returns the websocket manager instance
         - Provides access to WebSocket communication
-        
+
     Raises:
         - ImportError if main module not available
         - AttributeError if websocket manager not found
     """
     import fastapi_app.main as main_module
     return main_module.websocket_manager
+
+def get_notifications_database():
+    """
+    Dependency to get notifications database instance.
+
+    Requires:
+        - NotificationsDatabase class is importable
+        - Database file exists at canonical path
+
+    Ensures:
+        - Returns NotificationsDatabase instance
+        - Uses canonical path for production database
+        - Provides access to notifications CRUD operations
+
+    Raises:
+        - FileNotFoundError if database file not found
+    """
+    return NotificationsDatabase( debug=False )
 
 def get_local_timestamp():
     """
@@ -103,66 +132,127 @@ def get_local_timestamp():
         if app_debug: print(f"[TIMEZONE] Warning: Invalid timezone '{timezone_name}', falling back to UTC: {e}")
         return datetime.now().isoformat()
 
+
+def resolve_sender_id( explicit_sender_id: Optional[str], message: str ) -> str:
+    """
+    Resolve sender ID using precedence: explicit > extracted from [PREFIX] > default.
+
+    Requires:
+        - explicit_sender_id is None or a valid sender ID string
+        - message is a string
+
+    Ensures:
+        - Returns explicit_sender_id if provided
+        - Otherwise extracts from [PREFIX] in message (e.g., [LUPIN] -> claude.code@lupin.deepily.ai)
+        - Falls back to claude.code@unknown.deepily.ai if no sender can be determined
+
+    Args:
+        explicit_sender_id: Explicitly provided sender ID (from --sender-id CLI arg)
+        message: Notification message text
+
+    Returns:
+        str: Resolved sender ID in claude.code@{project}.deepily.ai format
+    """
+    # Priority 1: Explicit sender_id
+    if explicit_sender_id:
+        return explicit_sender_id
+
+    # Priority 2: Extract from [PREFIX] in message
+    match = re.match( r'^\[([A-Z]+)\]', message )
+    if match:
+        project = match.group( 1 ).lower()
+        return f"claude.code@{project}.deepily.ai"
+
+    # Priority 3: Default fallback
+    return "claude.code@unknown.deepily.ai"
+
+
+# NOTE: API parameter is 'target_user' for backward compatibility and simplicity.
+# Internally, the config system uses 'global_notification_recipient' to support
+# future multi-recipient routing. This naming mismatch is intentional.
+# API stability takes precedence over naming consistency.
 @router.post("/notify")
 async def notify_user(
+    authenticated_user_id: Annotated[str, Depends(require_api_key)],
     message: str = Query(..., description="Notification message text"),
     type: str = Query("custom", description="Notification type (task, progress, alert, custom)"),
     priority: str = Query("medium", description="Priority level (low, medium, high, urgent)"),
-    target_user: str = Query("ricardo.felipe.ruiz@gmail.com", description="Target user EMAIL ADDRESS (server converts to system ID internally)"),
-    api_key: str = Query(..., description="Simple API key for authentication"),
+    target_user: str = Query(..., description="Target user email address (required - configure in CLI config or pass explicitly)"),
+    response_requested: bool = Query(False, description="Whether notification requires user response (Phase 2.1)"),
+    response_type: Optional[str] = Query(None, description="Response type: yes_no or open_ended (Phase 2.1)"),
+    timeout_seconds: int = Query(30, description="Timeout in seconds for response-required notifications (Phase 2.2 - reduced for testing)"),
+    response_default: Optional[str] = Query(None, description="Default response value for timeout/offline (Phase 2.1)"),
+    title: Optional[str] = Query(None, description="Terse technical title for voice-first UX (Phase 2.1)"),
+    sender_id: Optional[str] = Query(None, description="Sender ID (e.g., claude.code@lupin.deepily.ai). Auto-extracted from [PREFIX] in message if not provided."),
     notification_queue: NotificationFifoQueue = Depends(get_notification_queue),
-    ws_manager: WebSocketManager = Depends(get_websocket_manager)
+    ws_manager: WebSocketManager = Depends(get_websocket_manager),
+    notification_db: NotificationsDatabase = Depends(get_notifications_database)
 ):
     """
     Claude Code notification endpoint for user communication.
-    
-    This endpoint allows Claude Code and other agents to send notifications
-    to users through the Genie-in-the-Box application. Notifications are
-    delivered via WebSocket and converted to audio using HybridTTS.
-    
+
+    Supports both fire-and-forget notifications (Phase 1) and response-required
+    notifications with SSE blocking (Phase 2.1).
+
+    **Fire-and-Forget Mode** (response_requested=False):
+    - Queues notification for WebSocket delivery
+    - Returns immediately without blocking
+    - Existing behavior unchanged
+
+    **Response-Required Mode** (response_requested=True):
+    - Creates notification in database with expiration
+    - Pushes to WebSocket for UI rendering
+    - Returns SSE stream that blocks until response/timeout
+    - Supports offline detection (immediate default return)
+
     Requires:
-        - api_key matches "claude_code_simple_key"
+        - Valid API key in X-API-Key header (validated by require_api_key middleware)
         - message is non-empty after stripping whitespace
         - type is one of: task, progress, alert, custom
         - priority is one of: low, medium, high, urgent
         - target_user is a valid email address
-        - WebSocket manager and notification queue are initialized
-        
+        - If response_requested=True: response_type must be "yes_no" or "open_ended"
+
     Ensures:
         - Validates all input parameters against allowed values
         - Converts target email to system ID for routing
-        - Adds notification to queue with proper metadata
-        - Attempts WebSocket delivery to connected users
-        - Returns appropriate status based on delivery success
+        - Fire-and-forget: Queues notification and returns immediately
+        - Response-required: Creates database record, returns SSE stream
+        - Offline detection: Returns default immediately if user not connected
         - Logs all notification attempts and results
-        
+
     Raises:
-        - HTTPException with 401 for invalid API key
+        - HTTPException with 401 for invalid/missing API key (via middleware)
         - HTTPException with 400 for invalid parameters
+        - HTTPException with 503 for offline user without default
         - HTTPException with 500 for delivery failures
-        
+
     Args:
+        authenticated_user_id: Service account user ID (from API key validation)
         message: The notification message text
         type: Type of notification (task, progress, alert, custom)
         priority: Priority level (low, medium, high, urgent)
-        api_key: Simple API key for authentication
-        
+        target_user: Target user email address
+        response_requested: Whether notification requires response (Phase 2.1)
+        response_type: Response type (yes_no, open_ended) for Phase 2.1
+        timeout_seconds: Timeout for response-required notifications (Phase 2.1)
+        response_default: Default value for timeout/offline (Phase 2.1)
+        title: Terse technical title for voice-first UX (Phase 2.1)
+
     Returns:
-        dict: Success status and notification details
+        dict (fire-and-forget) or StreamingResponse (SSE for response-required)
     """
-    # Validate API key (Phase 1: Simple hardcoded key)
-    if api_key != "claude_code_simple_key":
-        print(f"[AUTH] Invalid API key attempt: {api_key}")
-        raise HTTPException(status_code=401, detail="Invalid API key")
-    
+    # API key validation handled by require_api_key middleware
+    # authenticated_user_id contains the validated service account user ID
+
     # Validate notification type
     valid_types = ["task", "progress", "alert", "custom"]
     if type not in valid_types:
-        raise HTTPException( 
-            status_code=400, 
-            detail=f"Invalid notification type: {type}. Valid types: {', '.join(valid_types)}" 
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid notification type: {type}. Valid types: {', '.join(valid_types)}"
         )
-    
+
     # Validate priority
     valid_priorities = ["low", "medium", "high", "urgent"]
     if priority not in valid_priorities:
@@ -170,69 +260,437 @@ async def notify_user(
             status_code=400,
             detail=f"Invalid priority: {priority}. Valid priorities: {', '.join(valid_priorities)}"
         )
-    
+
     # Validate message
     if not message or not message.strip():
         raise HTTPException(status_code=400, detail="Please provide a message to send")
+
+    # Phase 2.1: Validate response-required parameters
+    if response_requested:
+        if not response_type:
+            raise HTTPException(
+                status_code=400,
+                detail="response_type is required when response_requested=True (yes_no or open_ended)"
+            )
+
+        valid_response_types = ["yes_no", "open_ended"]
+        if response_type not in valid_response_types:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid response_type: {response_type}. Valid types: {', '.join(valid_response_types)}"
+            )
+
+        if timeout_seconds <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="timeout_seconds must be positive"
+            )
     
-    # Create notification payload
-    notification = {
-        "message": message.strip(),
-        "type": type,
-        "priority": priority,
-        "timestamp": get_local_timestamp(),
-        "source": "claude_code"
-    }
-    
+    # Resolve sender_id using precedence: explicit > extracted from [PREFIX] > default
+    resolved_sender_id = resolve_sender_id( sender_id, message )
+
     # Log notification (existing logging system)
-    print(f"[NOTIFY] Claude Code notification: {type}/{priority} - {message}")
-    
+    mode = "response-required" if response_requested else "fire-and-forget"
+    print(f"[NOTIFY] Claude Code notification ({mode}): {type}/{priority} - {message}")
+    print(f"[NOTIFY] Sender ID resolved: {resolved_sender_id}")
+
     try:
-        # Convert target email to system ID for user-specific routing
-        target_system_id = email_to_system_id(target_user)
-        
-        # Add to notification queue with state tracking and io_tbl logging
-        notification_item = notification_queue.push_notification(
-            message=message.strip(),
-            type=type,
-            priority=priority,
-            source="claude_code",
-            user_id=target_system_id
-        )
-        
-        # Check if user is available before attempting to send
+        # Look up user in JWT auth database to get their UUID user_id
+        from cosa.rest.user_service import get_user_by_email
+
+        user_data = get_user_by_email(target_user)
+        if not user_data:
+            print(f"[NOTIFY] ❌ User not found in auth database: {target_user}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"User not found: {target_user}"
+            )
+
+        target_system_id = user_data["id"]
+        print(f"[NOTIFY] Resolved user {target_user} → UUID {target_system_id}")
+
+        # Check if user is connected
         is_connected = ws_manager.is_user_connected(target_system_id)
         connection_count = ws_manager.get_user_connection_count(target_system_id)
-        
-        if not is_connected:
-            # User not available - log and return appropriate response
-            print(f"[NOTIFY] User {target_user} ({target_system_id}) is not connected to queue UI - notification not delivered")
+        print(f"[NOTIFY] WebSocket connection check: is_connected={is_connected}, count={connection_count}")
+
+        # =================================================================================
+        # FIRE-AND-FORGET MODE (Phase 1 - existing behavior)
+        # =================================================================================
+        if not response_requested:
+            # Add to notification queue with state tracking and io_tbl logging
+            notification_item = notification_queue.push_notification(
+                message     = message.strip(),
+                type        = type,
+                priority    = priority,
+                source      = "claude_code",
+                user_id     = target_system_id,
+                title       = title,  # Phase 2.2 - include title for consistency
+                sender_id   = resolved_sender_id  # Sender-aware notification system
+            )
+
+            # Persist to PostgreSQL for history loading
+            try:
+                with get_db() as session:
+                    repo = NotificationRepository( session )
+                    db_notification = repo.create_notification(
+                        sender_id    = resolved_sender_id,
+                        recipient_id = uuid.UUID( target_system_id ),
+                        message      = message.strip(),
+                        type         = type,
+                        priority     = priority,
+                        title        = title
+                    )
+                    # Update state to delivered if user is connected
+                    if is_connected:
+                        repo.update_state( db_notification.id, "delivered" )
+                    print( f"[NOTIFY] ✓ Persisted notification {db_notification.id} to PostgreSQL" )
+            except Exception as db_error:
+                # Log but don't fail - FIFO queue is the primary delivery mechanism
+                print( f"[NOTIFY] ⚠️ Failed to persist to PostgreSQL (non-fatal): {db_error}" )
+
+            if not is_connected:
+                print(f"[NOTIFY] User {target_user} ({target_system_id}) is not connected - notification not delivered")
+                return {
+                    "status"             : "user_not_available",
+                    "message"            : f"User {target_user} is not connected to queue UI",
+                    "target_user"        : target_user,
+                    "target_system_id"   : target_system_id,
+                    "connection_count"   : 0
+                }
+
+            print(f"[NOTIFY] ✓ Notification queued for {target_user} ({target_system_id}) - {connection_count} connection(s)")
             return {
-                "status": "user_not_available",
-                "message": f"User {target_user} is not connected to queue UI",
-                "notification": notification,
-                "target_user": target_user,
-                "target_system_id": target_system_id,
-                "connection_count": 0
+                "status"             : "queued",
+                "message"            : f"Notification queued for delivery to {target_user}",
+                "target_user"        : target_user,
+                "target_system_id"   : target_system_id,
+                "connection_count"   : connection_count
             }
-        
-        # Notification automatically queued and will be delivered via notification_queue_update event
-        # No immediate WebSocket emission needed - eliminates duplicate notification system
-        print(f"[NOTIFY] ✓ Notification queued for {target_user} ({target_system_id}) - {connection_count} connection(s)")
-        print(f"[NOTIFY] → Will be delivered via notification_queue_update WebSocket event")
-        
-        return {
-            "status": "queued",
-            "message": f"Notification queued for delivery to {target_user}",
-            "notification": notification,
-            "target_user": target_user,
-            "target_system_id": target_system_id,
-            "connection_count": connection_count
+
+        # =================================================================================
+        # RESPONSE-REQUIRED MODE (Phase 2.1 - new SSE blocking behavior)
+        # =================================================================================
+
+        # Task 5: Offline Detection - return default immediately if user not connected
+        if not is_connected:
+            if response_default:
+                print(f"[NOTIFY] User offline - returning default immediately: {response_default}")
+
+                # Create notification in database with state='expired'
+                notification_id = notification_db.create_notification(
+                    sender_id          = resolved_sender_id,  # Use resolved sender_id
+                    recipient_id       = target_system_id,
+                    title              = title or message.strip()[:50],  # Fallback to first 50 chars
+                    message            = message.strip(),
+                    type               = type,
+                    priority           = priority,
+                    source_context     = "claude_code",
+                    response_requested = True,
+                    response_type      = response_type,
+                    response_default   = response_default,
+                    timeout_seconds    = timeout_seconds
+                )
+                notification_db.update_state( notification_id, "expired" )
+
+                return JSONResponse({
+                    "status"             : "offline",
+                    "default_used"       : response_default,
+                    "notification_id"    : notification_id,
+                    "message"            : "User is offline, returned default value immediately"
+                })
+            else:
+                raise HTTPException(
+                    status_code = 503,
+                    detail      = "User is offline and no default response provided"
+                )
+
+        # User is online - create notification in database
+        notification_id = notification_db.create_notification(
+            sender_id          = resolved_sender_id,  # Use resolved sender_id
+            recipient_id       = target_system_id,
+            title              = title or message.strip()[:50],
+            message            = message.strip(),
+            type               = type,
+            priority           = priority,
+            source_context     = "claude_code",
+            response_requested = True,
+            response_type      = response_type,
+            response_default   = response_default,
+            timeout_seconds    = timeout_seconds
+        )
+
+        print(f"[NOTIFY] Created response-required notification: {notification_id}")
+
+        # Task 3: Create in-memory event for SSE blocking
+        response_event = asyncio.Event()
+        pending_responses[notification_id] = {
+            "event"         : response_event,
+            "response_data" : None
         }
-            
+
+        # DEBUG: Log the response_default value before pushing to queue
+        print(f"[DEBUG] Creating notification with response_default: '{response_default}'")
+        print(f"[DEBUG] Response type: {response_type}, Timeout: {timeout_seconds}s")
+
+        # Push notification to WebSocket for UI rendering (Phase 2.2 with full fields)
+        notification_item = notification_queue.push_notification(
+            message            = message.strip(),
+            type               = type,
+            priority           = priority,
+            source             = "claude_code",
+            user_id            = target_system_id,
+            id                 = notification_id,  # Use database ID for consistency
+            title              = title or message.strip()[:50],
+            response_requested = True,
+            response_type      = response_type,
+            response_default   = response_default,
+            timeout_seconds    = timeout_seconds,
+            sender_id          = resolved_sender_id  # Sender-aware notification system
+        )
+
+        # DEBUG: Log the notification_item after creation
+        print(f"[DEBUG] Notification item created: {notification_item}")
+        print(f"[DEBUG] Notification item.response_default: '{notification_item.response_default}'")
+        print(f"[DEBUG] Notification item to_dict(): {notification_item.to_dict()}")
+
+        print(f"[NOTIFY] Pushed notification {notification_id} via WebSocket, starting SSE stream...")
+
+        # Task 3 & 4: SSE event generator with timeout handling
+        async def event_generator():
+            try:
+                # Wait for response with timeout
+                await asyncio.wait_for(
+                    response_event.wait(),
+                    timeout = timeout_seconds
+                )
+
+                # Response received!
+                response = pending_responses[notification_id]["response_data"]
+                print(f"[NOTIFY] ✓ Response received for {notification_id}: {response}")
+
+                yield f"data: {json.dumps({'status': 'responded', 'response': response, 'default_used': False})}\n\n"
+
+            except asyncio.TimeoutError:
+                # Task 4: Timeout - use default value
+                print(f"[NOTIFY] ⏱️ Timeout for notification {notification_id}, using default: {response_default}")
+
+                notification_db.update_state( notification_id, "expired" )
+
+                # Task 7: Broadcast notification_expired WebSocket event
+                try:
+                    await ws_manager.emit_to_user(
+                        target_system_id,
+                        "notification_expired",
+                        {
+                            "notification_id"  : notification_id,
+                            "default_used"     : response_default,
+                            "timeout"          : True,
+                            "timestamp"        : datetime.utcnow().isoformat()
+                        }
+                    )
+                    print(f"[NOTIFY] ✓ Broadcast notification_expired event for {notification_id}")
+                except Exception as ws_error:
+                    print(f"[NOTIFY] ⚠️ Failed to broadcast notification_expired event: {ws_error}")
+
+                default_response = {
+                    "status"       : "expired",
+                    "response"     : response_default,
+                    "default_used" : True,
+                    "timeout"      : True
+                }
+
+                yield f"data: {json.dumps(default_response)}\n\n"
+
+            except Exception as e:
+                # Unexpected error
+                print(f"[NOTIFY] ❌ SSE stream error for {notification_id}: {e}")
+
+                yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+
+            finally:
+                # Cleanup
+                if notification_id in pending_responses:
+                    del pending_responses[notification_id]
+                    print(f"[NOTIFY] Cleaned up pending_responses for {notification_id}")
+
+        # Return SSE streaming response
+        return StreamingResponse(
+            event_generator(),
+            media_type = "text/event-stream",
+            headers    = {
+                "Cache-Control"                : "no-cache",
+                "X-Accel-Buffering"            : "no",
+                "Connection"                   : "keep-alive",
+                "Content-Type"                 : "text/event-stream",
+                "Access-Control-Allow-Origin"  : "*"
+            }
+        )
+
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"[NOTIFY] ❌ Notification error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Notification failed: {str(e)}")
+
+@router.post("/notify/response")
+async def submit_notification_response(
+    request_body: Dict[str, Any] = Body(..., description="Request body with notification_id and response_value"),
+    notification_db: NotificationsDatabase = Depends(get_notifications_database),
+    ws_manager: WebSocketManager = Depends(get_websocket_manager)
+):
+    """
+    Submit user response to a response-required notification (Phase 2.1).
+
+    This endpoint is called by the client UI when the user responds to a notification
+    (clicks Yes/No button, submits text input, etc.). It updates the database,
+    signals the waiting SSE stream, and broadcasts WebSocket events.
+
+    Requires:
+        - notification_id is a valid UUID of an existing notification
+        - response_value is a dict with response data
+        - Notification exists in database with state='delivered'
+
+    Ensures:
+        - Updates database with response_value and state='responded'
+        - Signals waiting SSE stream via asyncio.Event
+        - Broadcasts notification_responded WebSocket event
+        - Accepts responses within grace period (30s after expiration)
+        - Returns success confirmation
+
+    Raises:
+        - HTTPException with 404 if notification not found
+        - HTTPException with 400 if notification already responded/expired (outside grace period)
+        - HTTPException with 500 for update failures
+
+    Args:
+        notification_id: UUID of the notification
+        response_value: Response data dict (structure depends on response_type)
+
+    Returns:
+        dict: Success status and response details
+    """
+    try:
+        # Extract fields from request body
+        notification_id = request_body.get( "notification_id" )
+        response_value  = request_body.get( "response_value" )
+
+        if not notification_id:
+            raise HTTPException(
+                status_code = 422,
+                detail      = "notification_id is required in request body"
+            )
+
+        if response_value is None:
+            raise HTTPException(
+                status_code = 422,
+                detail      = "response_value is required in request body"
+            )
+
+        # Phase 2.4: Validate and sanitize response_value for open-ended responses
+        if isinstance( response_value, str ):
+            # Sanitize: Remove HTML/script tags to prevent XSS
+            import re
+            response_value = re.sub( r'<[^>]+>', '', response_value )
+
+            # Length validation
+            if len( response_value ) > 500:
+                raise HTTPException(
+                    status_code = 400,
+                    detail      = "Response too long (maximum 500 characters)"
+                )
+
+            # Empty check (after stripping whitespace)
+            if len( response_value.strip() ) == 0:
+                raise HTTPException(
+                    status_code = 400,
+                    detail      = "Response cannot be empty"
+                )
+
+        print(f"[NOTIFY] Response submission for {notification_id}: {response_value}")
+
+        # Get notification from database
+        notification = notification_db.get_notification( notification_id )
+
+        if not notification:
+            raise HTTPException(
+                status_code = 404,
+                detail      = f"Notification {notification_id} not found"
+            )
+
+        # Check state - must be 'delivered' or within grace period
+        if notification["state"] == "responded":
+            raise HTTPException(
+                status_code = 400,
+                detail      = "Notification already responded to"
+            )
+
+        # Grace period check (30 seconds - from config in Phase 2.2)
+        grace_period_seconds = 30
+
+        if notification["state"] == "expired":
+            # Check if within grace period
+            expires_at    = datetime.fromisoformat( notification["expires_at"] ) if notification["expires_at"] else None
+            now           = datetime.utcnow()
+
+            if expires_at and (now - expires_at).total_seconds() > grace_period_seconds:
+                raise HTTPException(
+                    status_code = 400,
+                    detail      = f"Notification expired more than {grace_period_seconds}s ago (grace period exceeded)"
+                )
+
+            print(f"[NOTIFY] Accepting late response within grace period ({grace_period_seconds}s)")
+
+        # Update database with response
+        success = notification_db.update_response(
+            notification_id,
+            json.dumps( response_value )
+        )
+
+        if not success:
+            raise HTTPException(
+                status_code = 500,
+                detail      = "Failed to update notification response in database"
+            )
+
+        print(f"[NOTIFY] ✓ Updated database with response for {notification_id}")
+
+        # Task 2: Signal waiting SSE stream (if it exists)
+        if notification_id in pending_responses:
+            pending_responses[notification_id]["response_data"] = response_value
+            pending_responses[notification_id]["event"].set()  # Wake up SSE stream!
+            print(f"[NOTIFY] ✓ Signaled SSE stream for {notification_id}")
+        else:
+            print(f"[NOTIFY] No SSE stream waiting for {notification_id} (may have already completed)")
+
+        # Task 7: Broadcast WebSocket event (notification_responded)
+        try:
+            await ws_manager.emit_to_user(
+                notification["recipient_id"],
+                "notification_responded",
+                {
+                    "notification_id"  : notification_id,
+                    "response_value"   : response_value,
+                    "timestamp"        : datetime.utcnow().isoformat()
+                }
+            )
+            print(f"[NOTIFY] ✓ Broadcast notification_responded event for {notification_id}")
+        except Exception as e:
+            print(f"[NOTIFY] ⚠️ Failed to broadcast WebSocket event: {e}")
+
+        return {
+            "status"           : "success",
+            "message"          : f"Response recorded for notification {notification_id}",
+            "notification_id"  : notification_id,
+            "response_value"   : response_value,
+            "timestamp"        : datetime.utcnow().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[NOTIFY] ❌ Response submission error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Response submission failed: {str(e)}")
 
 @router.get("/notifications/{user_id}")
 async def get_user_notifications(
@@ -429,9 +887,261 @@ async def delete_notification(
             }
         else:
             raise HTTPException(status_code=404, detail=f"Notification {notification_id} not found")
-            
+
     except HTTPException:
         raise
     except Exception as e:
         print(f"[NOTIFY] Error deleting notification {notification_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete notification: {str(e)}")
+
+
+# =============================================================================
+# HISTORY ENDPOINTS (Phase 6 - Sender-Aware Notification System)
+# =============================================================================
+
+@router.get( "/notifications/senders/{user_email}" )
+async def get_senders_with_activity(
+    user_email: str,
+    hours: Optional[int] = Query( None, description="Filter to senders active within N hours" )
+):
+    """
+    Get list of senders with recent notification activity for a user.
+
+    Returns sender IDs ordered by most recent activity, with last activity
+    timestamp and notification count. Used by frontend for sender card initialization.
+
+    Requires:
+        - user_email is a valid registered email address
+        - User exists in auth database
+
+    Ensures:
+        - Returns list of {sender_id, last_activity, count} sorted by last_activity desc
+        - Optional hours filter limits to recent activity
+        - Empty list if no notifications found
+
+    Raises:
+        - HTTPException with 404 if user not found
+        - HTTPException with 500 for query failures
+
+    Args:
+        user_email: User's email address
+        hours: Optional filter - only include senders active within N hours
+
+    Returns:
+        List of sender activity summaries
+    """
+    try:
+        # Look up user to get UUID
+        from cosa.rest.user_service import get_user_by_email
+
+        user_data = get_user_by_email( user_email )
+        if not user_data:
+            raise HTTPException(
+                status_code = 404,
+                detail      = f"User not found: {user_email}"
+            )
+
+        user_id = uuid.UUID( user_data["id"] ) if isinstance( user_data["id"], str ) else user_data["id"]
+
+        with get_db() as session:
+            repo = NotificationRepository( session )
+            activities = repo.get_sender_last_activities( user_id )
+
+            # Apply hours filter if specified
+            if hours is not None:
+                cutoff = datetime.now( timezone.utc ) - timedelta( hours=hours )
+                activities = [
+                    a for a in activities
+                    if a["last_activity"] >= cutoff
+                ]
+
+            # Convert datetime to ISO string for JSON serialization
+            for activity in activities:
+                if activity["last_activity"]:
+                    activity["last_activity"] = activity["last_activity"].isoformat()
+
+            print( f"[NOTIFY] Returning {len( activities )} senders for {user_email}" )
+
+            return activities
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print( f"[NOTIFY] Error getting senders for {user_email}: {str( e )}" )
+        raise HTTPException(
+            status_code = 500,
+            detail      = f"Failed to get sender list: {str( e )}"
+        )
+
+
+@router.get( "/notifications/conversation/{sender_id}/{user_email}" )
+async def get_sender_conversation(
+    sender_id: str,
+    user_email: str,
+    hours: int = Query( 24, description="Window size in hours (default: 24)" ),
+    anchor: Optional[str] = Query( None, description="ISO timestamp to anchor window around" )
+):
+    """
+    Get conversation history between a sender and recipient.
+
+    Returns notifications in chronological order (oldest first) for chat-style display.
+    Uses activity-anchored window loading - window is relative to anchor timestamp
+    (defaults to sender's last activity).
+
+    Requires:
+        - sender_id is a valid sender identifier (e.g., claude.code@lupin.deepily.ai)
+        - user_email is a valid registered email address
+        - User exists in auth database
+
+    Ensures:
+        - Returns notifications within [anchor - hours, anchor]
+        - Notifications sorted chronologically (oldest first)
+        - Each notification includes full details for UI rendering
+        - Empty list if no notifications found
+
+    Raises:
+        - HTTPException with 404 if user not found
+        - HTTPException with 500 for query failures
+
+    Args:
+        sender_id: Sender identifier
+        user_email: User's email address
+        hours: Window size in hours (default: 24)
+        anchor: Optional ISO timestamp to anchor window around
+
+    Returns:
+        List of notification objects for the conversation
+    """
+    try:
+        # Look up user to get UUID
+        from cosa.rest.user_service import get_user_by_email
+
+        user_data = get_user_by_email( user_email )
+        if not user_data:
+            raise HTTPException(
+                status_code = 404,
+                detail      = f"User not found: {user_email}"
+            )
+
+        user_id = uuid.UUID( user_data["id"] ) if isinstance( user_data["id"], str ) else user_data["id"]
+
+        # Parse anchor timestamp if provided
+        anchor_dt = None
+        if anchor:
+            try:
+                anchor_dt = datetime.fromisoformat( anchor.replace( 'Z', '+00:00' ) )
+            except ValueError:
+                raise HTTPException(
+                    status_code = 400,
+                    detail      = f"Invalid anchor timestamp format: {anchor}"
+                )
+
+        with get_db() as session:
+            repo = NotificationRepository( session )
+            notifications = repo.get_sender_conversation(
+                sender_id    = sender_id,
+                recipient_id = user_id,
+                anchor       = anchor_dt,
+                window_hours = hours
+            )
+
+            # Convert to dict for JSON serialization
+            result = []
+            for notif in notifications:
+                result.append( {
+                    "id"                 : str( notif.id ),
+                    "sender_id"          : notif.sender_id,
+                    "message"            : notif.message,
+                    "title"              : notif.title,
+                    "type"               : notif.type,
+                    "priority"           : notif.priority,
+                    "state"              : notif.state,
+                    "created_at"         : notif.created_at.isoformat() if notif.created_at else None,
+                    "delivered_at"       : notif.delivered_at.isoformat() if notif.delivered_at else None,
+                    "responded_at"       : notif.responded_at.isoformat() if notif.responded_at else None,
+                    "response_requested" : notif.response_requested,
+                    "response_type"      : notif.response_type,
+                    "response_value"     : notif.response_value,
+                    "timestamp"          : notif.created_at.isoformat() if notif.created_at else None
+                } )
+
+            print( f"[NOTIFY] Returning {len( result )} notifications for {sender_id} → {user_email}" )
+
+            return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print( f"[NOTIFY] Error getting conversation for {sender_id}: {str( e )}" )
+        raise HTTPException(
+            status_code = 500,
+            detail      = f"Failed to get conversation: {str( e )}"
+        )
+
+
+@router.delete( "/notifications/conversation/{sender_id}/{user_email}" )
+async def delete_sender_conversation( sender_id: str, user_email: str ):
+    """
+    Delete all notifications in a conversation between sender and recipient.
+
+    Allows users to delete an entire conversation (all notifications from a specific
+    sender) rather than deleting individual notifications.
+
+    Requires:
+        - sender_id is a valid sender identifier (e.g., claude.code@lupin.deepily.ai)
+        - user_email is a valid registered email address
+        - User exists in auth database
+
+    Ensures:
+        - All notifications matching sender_id AND recipient deleted
+        - Returns count of deleted notifications
+        - Returns 404 if user not found (not if conversation empty)
+
+    Raises:
+        - HTTPException with 404 if user not found
+        - HTTPException with 500 for deletion failures
+
+    Args:
+        sender_id: Sender identifier
+        user_email: User's email address
+
+    Returns:
+        JSON with deleted count
+    """
+    try:
+        # Look up user to get UUID
+        from cosa.rest.user_service import get_user_by_email
+
+        user_data = get_user_by_email( user_email )
+        if not user_data:
+            raise HTTPException(
+                status_code = 404,
+                detail      = f"User not found: {user_email}"
+            )
+
+        user_id = uuid.UUID( user_data["id"] ) if isinstance( user_data["id"], str ) else user_data["id"]
+
+        with get_db() as session:
+            repo = NotificationRepository( session )
+            deleted_count = repo.delete_by_sender(
+                sender_id    = sender_id,
+                recipient_id = user_id
+            )
+
+            print( f"[NOTIFY] Deleted {deleted_count} notifications for {sender_id} → {user_email}" )
+
+            return {
+                "status"        : "success",
+                "sender_id"     : sender_id,
+                "user_email"    : user_email,
+                "deleted_count" : deleted_count
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print( f"[NOTIFY] Error deleting conversation for {sender_id}: {str( e )}" )
+        raise HTTPException(
+            status_code = 500,
+            detail      = f"Failed to delete conversation: {str( e )}"
+        )

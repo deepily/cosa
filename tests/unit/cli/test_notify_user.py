@@ -271,7 +271,7 @@ class TestNotifyUser( unittest.TestCase ):
             
             # Verify error messages
             mock_print.assert_any_call( f"✗ Connection error: Cannot reach server at {self.test_server_url}" )
-            mock_print.assert_any_call( "  Check that Genie-in-the-Box is running and COSA_APP_SERVER_URL is correct" )
+            mock_print.assert_any_call( "  Check that Lupin is running and COSA_APP_SERVER_URL is correct" )
     
     def test_notify_user_timeout_error( self ):
         """

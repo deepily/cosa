@@ -132,3 +132,54 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Standardized Smoke Testing (December 2025)**: All 21 core modules refactored with consistent `quick_smoke_test()` patterns
 - Refactoring to use external LLM services instead of in-memory models
 - Implementing router for directing requests to appropriate LLM endpoints
+
+## Installed Workflows
+
+**Session Management**:
+- `/plan-session-start` - Initialize work session (load history, identify TODOs)
+- `/plan-session-end` - Complete end-of-session ritual (history, commits, notifications)
+
+**History Management**:
+- `/plan-history-management` - Archive, check, and analyze history.md token health (4 modes)
+
+**Planning is Prompting Core**:
+- `/p-is-p-00-start-here` - Entry point with decision matrix and philosophy
+- `/p-is-p-01-planning` - Work planning workflow (classify → pattern → breakdown)
+- `/p-is-p-02-documentation` - Implementation documentation (for large/complex work)
+
+**Installation Management**:
+- `/plan-about` - View installed workflows with version comparison
+- `/plan-install-wizard` - Run installation wizard to add/update workflows
+- `/plan-uninstall-wizard` - Remove workflows safely with confirmation
+
+**Testing Workflows** (Planning is Prompting):
+- `/plan-test-baseline` - Establish pre-change baseline (COSA: smoke + unit tests)
+- `/plan-test-remediation` - Post-change verification and remediation
+- `/plan-test-harness-update` - Test maintenance planning (analyze changes, identify missing tests)
+
+**Legacy Testing Workflows** (old naming convention - preserved):
+- `/smoke-test-baseline` - Pre-change baseline collection (legacy)
+- `/smoke-test-remediation` - Post-change verification (legacy)
+
+**Backup Infrastructure**:
+- `/plan-backup-check` - Check backup script version against canonical
+- `/plan-backup` - Dry-run backup preview (safe default)
+- `/plan-backup-write` - Execute actual backup (explicit write mode)
+- Script: `src/scripts/backup.sh` - Configured for COSA → DATA02
+- Config: `src/scripts/conf/rsync-exclude.txt` - Exclusion patterns
+
+**Meta-Workflow Tools**:
+- `/plan-workflow-audit` - Execution compliance audit with automatic remediation
+
+**Custom Workflows** (legacy - preserved):
+- `/cosa-session-end` - COSA-specific session end workflow (legacy)
+
+## Planning Workflows
+
+**Entry Point**: See planning-is-prompting → workflow/p-is-p-00-start-here.md
+
+**Two-Step Process**:
+1. **Plan the Work** (planning-is-prompting → workflow/p-is-p-01-planning-the-work.md) - Always required
+2. **Document Implementation** (planning-is-prompting → workflow/p-is-p-02-documenting-the-implementation.md) - Only for Pattern 1, 2, 5
+
+**Decision Matrix**: Use `/p-is-p-00-start-here` to determine which workflows you need

@@ -5,6 +5,7 @@ from cosa.rest.fifo_queue import FifoQueue
 from cosa.agents.agent_base import AgentBase
 from cosa.memory.input_and_output_table import InputAndOutputTable
 from cosa.memory.solution_snapshot import SolutionSnapshot
+from cosa.memory.gist_normalizer import GistNormalizer
 
 import cosa.utils.util as du
 import cosa.utils.util_stopwatch as sw
@@ -53,7 +54,10 @@ class RunningFifoQueue( FifoQueue ):
         
         self.auto_debug          = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
         self.inject_bugs         = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
+        self.debug               = False if config_mgr is None else config_mgr.get( "app_debug",   default=False, return_type="boolean" )
+        self.verbose             = False if config_mgr is None else config_mgr.get( "app_verbose", default=False, return_type="boolean" )
         self.io_tbl              = InputAndOutputTable()
+        self.gist_normalizer     = GistNormalizer( debug=self.debug, verbose=self.verbose )
     
     
     def enter_running_loop( self ) -> None:
@@ -127,14 +131,20 @@ class RunningFifoQueue( FifoQueue ):
         try:
             # Point to the head of the queue without popping it
             running_job = self.head()
-            
+
             if not running_job:
                 print( "[RUNNING] Warning: _process_job called but no job in running queue" )
                 return
-            
+
+            # JOB-TRACE: Log each job processing for duplicate investigation
+            import time
+            question_trace = getattr( running_job, 'last_question_asked', 'unknown' )
+            timestamp_trace = time.strftime( "%Y-%m-%d %H:%M:%S" )
+            print( f"[JOB-TRACE] {timestamp_trace} Processing: {du.truncate_string( question_trace, 50 )}..." )
+
             # Limit the length of the question string
             truncated_question = du.truncate_string( running_job.last_question_asked, max_len=64 )
-            
+
             run_timer = sw.Stopwatch( "Starting job run timer..." )
             
             # Process based on job type
@@ -142,25 +152,22 @@ class RunningFifoQueue( FifoQueue ):
                 # NEW: Check cache BEFORE agent execution
                 question = running_job.last_question_asked
 
-                if hasattr( self, 'debug' ) and self.debug:
-                    print( f"[CACHE] Checking cache for question: {question}" )
+                if self.debug: print( f"[CACHE] Checking cache for question: {question}" )
 
                 # Search for existing snapshot
                 cached_snapshots = self.snapshot_mgr.get_snapshots_by_question( question )
 
                 if cached_snapshots and len( cached_snapshots ) > 0:
-                    # CACHE HIT - Use cached result
-                    cached_snapshot = cached_snapshots[0]  # Use first/best match
+                    # CACHE HIT - Use the cached result
+                    score, cached_snapshot = cached_snapshots[0]  # Unpack (score, snapshot) tuple
 
-                    if hasattr( self, 'debug' ) and self.debug:
-                        print( f"[CACHE] 🎯 CACHE HIT: Found cached solution from {cached_snapshot.run_date}" )
+                    if self.debug: print( f"[CACHE] 🎯 CACHE HIT: Found cached solution from {cached_snapshot.run_date} (score: {score:.1f}%)" )
 
                     # Convert cached snapshot to proper format and use it
                     running_job = self._format_cached_result( cached_snapshot, truncated_question, run_timer )
                 else:
                     # CACHE MISS - Continue with normal agent execution
-                    if hasattr( self, 'debug' ) and self.debug:
-                        print( f"[CACHE] ❌ CACHE MISS: Running agent for new question" )
+                    if self.debug: print( f"[CACHE] ❌ CACHE MISS: Running agent for new question" )
 
                     running_job = self._handle_base_agent( running_job, truncated_question, run_timer )
             else:
@@ -237,8 +244,8 @@ class RunningFifoQueue( FifoQueue ):
             formatted_output    = running_job.do_all()
         
         except Exception as e:
-            
-            du.print_stack_trace( e, explanation="do_all() failed", caller="RunningFifoQueue._handle_base_agent()" )
+
+            du.print_stack_trace( e, explanation="do_all() failed", caller="RunningFifoQueue._handle_base_agent()", debug=self.debug )
             running_job = self._handle_error_case( code_response, running_job, truncated_question )
         
         du.print_banner( f"Job [{running_job.last_question_asked}] complete...", prepend_nl=True, end="\n" )
@@ -248,28 +255,38 @@ class RunningFifoQueue( FifoQueue ):
             # If we've arrived at this point, then we've successfully run the agentic part of this job
             self._emit_speech( running_job.answer_conversational, job=running_job )
             agent_timer.print( "Done!", use_millis=True )
-            
+
             # Only the ReceptionistAgent and WeatherAgent are not being serialized as a solution snapshot
             # TODO: this needs to not be so ad hoc as it appears right now!
             serialize_snapshot = (
-                not isinstance( running_job, ReceptionistAgent ) and 
+                not isinstance( running_job, ReceptionistAgent ) and
                 not isinstance( running_job, WeatherAgent ) # and
                 # not isinstance( running_job, MathRefactoringAgent )
             )
             if serialize_snapshot:
-                
+
                 # recast the agent object as a solution snapshot object and add it to the snapshot manager
                 running_job = SolutionSnapshot.create( running_job )
                 # KLUDGE! I shouldn't have to do this!
                 print( f"KLUDGE! Setting running_job.answer_conversational to [{formatted_output}]...")
                 running_job.answer_conversational = formatted_output
-                
+
+                # Generate solution_summary_gist if missing (lazy backfill for cache hits or failed generations)
+                if not running_job.solution_summary_gist:
+                    code_explanation = running_job.solution_summary if running_job.solution_summary else running_job.thoughts
+                    if code_explanation:
+                        try:
+                            running_job.set_solution_summary_gist( self.gist_normalizer.get_normalized_gist( code_explanation ) )
+                            if self.debug: print( f"Generated solution_summary_gist: {du.truncate_string(running_job.solution_summary_gist, 100)}" )
+                        except Exception as e:
+                            if self.debug: print( f"Failed to generate solution_summary_gist: {e}" )
+
                 running_job.update_runtime_stats( agent_timer )
                 
-                # Adding this snapshot to the snapshot manager serializes it to the local filesystem
-                print( f"Adding job [{truncated_question}] to snapshot manager..." )
-                self.snapshot_mgr.add_snapshot( running_job )
-                print( f"Adding job [{truncated_question}] to snapshot manager... Done!" )
+                # Save snapshot to manager (inserts new or updates existing)
+                print( f"Saving job [{truncated_question}] to snapshot manager..." )
+                self.snapshot_mgr.save_snapshot( running_job )
+                print( f"Saving job [{truncated_question}] to snapshot manager... Done!" )
                 
                 du.print_banner( "running_job.runtime_stats", prepend_nl=True )
                 pprint.pprint( running_job.runtime_stats )
@@ -314,7 +331,7 @@ class RunningFifoQueue( FifoQueue ):
         timer = sw.Stopwatch( msg=msg )
         _ = running_job.run_code()
         timer.print( "Done!", use_millis=True )
-        
+
         formatted_output = running_job.run_formatter()
         print( formatted_output )
         self._emit_speech( running_job.answer_conversational, job=running_job )
@@ -324,13 +341,28 @@ class RunningFifoQueue( FifoQueue ):
 
         # If we've arrived at this point, then we've successfully run the job
         run_timer.print( "Solution snapshot full run complete ", use_millis=True )
+
+        # Generate solution_summary_gist if missing (lazy backfill for cache hits or failed generations)
+        if not running_job.solution_summary_gist:
+            if self.debug: print( f"Generating missing solution_summary_gist..." )
+            # Use solution_summary or thoughts as code explanation source
+            code_explanation = running_job.solution_summary if running_job.solution_summary else running_job.thoughts
+            if code_explanation:
+                try:
+                    # Generate gist of solution_summary for future formatter optimization
+                    running_job.set_solution_summary_gist( self.gist_normalizer.get_normalized_gist( code_explanation ) )
+                    if self.debug: print( f"Generated solution_summary_gist: {du.truncate_string(running_job.solution_summary_gist, 100)}" )
+                except Exception as e:
+                    if self.debug: print( f"Failed to generate solution_summary_gist: {e}" )
+
         running_job.update_runtime_stats( run_timer )
         du.print_banner( f"Job [{running_job.question}] complete!", prepend_nl=True, end="\n" )
-        
-        # Note: Snapshot already saved via self.snapshot_mgr.add_snapshot() at line 248
-        # Removed redundant write_current_state_to_file() call as serialization
-        # is now handled by managers, not snapshot objects
-        
+
+        # Persist updated runtime stats to LanceDB
+        print( f"Saving snapshot with runtime stats for [{truncated_question}]..." )
+        self.snapshot_mgr.save_snapshot( running_job )
+        print( f"Saving snapshot with runtime stats for [{truncated_question}]... Done!" )
+
         du.print_banner( "running_job.runtime_stats", prepend_nl=True )
         pprint.pprint( running_job.runtime_stats )
         
@@ -353,7 +385,7 @@ class RunningFifoQueue( FifoQueue ):
             - Updates queues (moves to done queue)
             - Emits websocket updates
             - Updates runtime stats
-            - Returns properly formatted cached result
+            - Returns a properly formatted cached result
 
         Raises:
             - None (handles errors gracefully)
@@ -372,12 +404,15 @@ class RunningFifoQueue( FifoQueue ):
         run_timer.print( "CACHE HIT - result retrieved in ", use_millis=True )
         cached_snapshot.update_runtime_stats( run_timer )
 
+        # Persist updated runtime stats to LanceDB (fixes runtime stats not persisting on cache hits)
+        self.snapshot_mgr.save_snapshot( cached_snapshot )
+
         # Update the run_date to current time to show when it was retrieved
         cached_snapshot.run_date = cached_snapshot.get_timestamp()
 
         du.print_banner( f"CACHED Job [{cached_snapshot.question}] complete!", prepend_nl=True, end="\n" )
 
-        if hasattr( self, 'debug' ) and self.debug:
+        if self.debug:
             du.print_banner( "cached_snapshot.runtime_stats", prepend_nl=True )
             pprint.pprint( cached_snapshot.runtime_stats )
 
@@ -390,14 +425,6 @@ class RunningFifoQueue( FifoQueue ):
         )
 
         return cached_snapshot
-
-    # def _get_audio_url( self, text ):
-    #
-    #     with self.app.app_context():
-    #         url = url_for( 'get_tts_audio' ) + f"?tts_text={text}"
-    #
-    #     return url
-
 
 def quick_smoke_test():
     """

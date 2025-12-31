@@ -244,9 +244,9 @@ class TodoFifoQueue( FifoQueue ):
             question_gist = self.normalizer.normalize( parsed_question )
 
         # Generate three-level representation
-        query_verbatim = question  # Exact user input
+        query_verbatim   = question  # Exact user input
         query_normalized = self.normalizer.normalize( parsed_question )  # Always normalize for consistency
-        query_gist = question_gist  # Use the gist computed above
+        query_gist       = question_gist  # Use the gist computed above
 
         # Generate embeddings using cache-first strategy
         embedding_verbatim = self.embedding_manager.generate_embedding(
@@ -271,7 +271,7 @@ class TodoFifoQueue( FifoQueue ):
             print( f"  Verbatim:   '{query_verbatim}'" )
             print( f"  Normalized: '{query_normalized}'" )
             print( f"  Gist:       '{query_gist}'" )
-            print( f"Embeddings generated - V:{len(embedding_verbatim)} N:{len(embedding_normalized)} G:{len(embedding_gist)}" )
+            print( f"Embeddings generated - V:{len( embedding_verbatim )} N:{len( embedding_normalized )} G:{len( embedding_gist )}" )
 
         # check to see if the queue isn't accepting jobs (because it's waiting for response to a previous request)
         if not self.is_accepting_jobs():

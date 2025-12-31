@@ -5,6 +5,7 @@ import asyncio
 import concurrent.futures
 
 from pydantic_ai import Agent
+from pydantic_ai.settings import ModelSettings
 
 import cosa.utils.util as du
 from cosa.agents.base_llm_client import LlmClientInterface
@@ -69,38 +70,42 @@ class ChatClient( LlmClientInterface ):
         # Initialize the Agent with the model
         if self.debug:
             du.print_banner( f"Initializing ChatClient with model: {model_name}" )
-        
-        self.model = Agent( model_name, **generation_args )
+
+        # Wrap generation parameters in ModelSettings for pydantic_ai API
+        model_settings = ModelSettings( **generation_args )
+        self.model = Agent( model_name, model_settings=model_settings )
     
     async def _stream_async( self, prompt: str, **generation_args: Any ) -> str:
         """
         Internal method to handle async streaming for chat models.
-        
+
         Requires:
             - prompt: A non-empty string to send to the LLM
             - self.model: An initialized Agent with async streaming capability
-            
+
         Ensures:
             - Streams response chunks from the LLM
             - Displays progress if self.debug is True
             - Collects all chunks into a single response
-            
+
         Returns:
             - Complete response string from the LLM
         """
         output = [ ]
-        
-        async with self.model.run_stream( prompt, **generation_args ) as result:
+
+        # Wrap generation parameters in ModelSettings for pydantic_ai API
+        runtime_settings = ModelSettings( **generation_args )
+        async with self.model.run_stream( prompt, model_settings=runtime_settings ) as result:
             counter = 0
             async for chunk in result.stream_text( delta=True ):
-                if self.debug:
+                if self.debug and self.verbose:
                     print( chunk, end="", flush=True )
                 else:
                     counter += 1
                     if counter % 128 == 0: print()
                     print( ".", end="", flush=True )
                 output.append( chunk )
-        
+
         return "".join( output )
     
     async def run_async( self, prompt: str, stream: bool = False, **kwargs: Any ) -> str:
@@ -136,17 +141,19 @@ class ChatClient( LlmClientInterface ):
         if not updated_gen_args["stream"]:
             # Non-streaming mode
             start_time = time.perf_counter()
-            response = await self.model.run( prompt, **updated_gen_args )
-            response = response.data
+            # Wrap generation parameters in ModelSettings for pydantic_ai API
+            runtime_settings = ModelSettings( **updated_gen_args )
+            response = await self.model.run( prompt, model_settings=runtime_settings )
+            response = response.output
             duration = time.perf_counter() - start_time
-            
+
             completion_tokens = self.token_counter.count_tokens( self.model_name, response )
             if self.debug and self.verbose:
                 self._print_metadata( prompt_tokens, completion_tokens, duration, client_type="Chat" )
             return response
         
         # Streaming mode
-        print( f"🔄 Streaming from chat model: {self.model_name}\n" )
+        if self.debug and self.verbose: print( f"🔄 Streaming from chat model: {self.model_name}\n" )
         start_time = time.perf_counter()
         
         output = await self._stream_async( prompt, **updated_gen_args )

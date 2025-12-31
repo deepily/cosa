@@ -126,7 +126,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         if question == "":
             self.question = self.last_question_asked
         else:
-            self.question = ss.SolutionSnapshot.remove_non_alphanumerics( question )
+            self.question = question  # Store verbatim - DO NOT normalize here!
             
         self.question_gist         = question_gist
         self.answer_conversational = None
@@ -322,10 +322,10 @@ class AgentBase( RunnableCode, abc.ABC ):
 
         factory = LlmClientFactory()  # No arguments for the singleton constructor
         llm = factory.get_client( self.model_name, debug=self.debug, verbose=self.verbose )
-        
-        if self.debug: print( f"Prompt: {self.prompt}" )
+
+        if self.debug and self.verbose: print( f"Prompt: {self.prompt}" )
         response = llm.run( self.prompt )
-        if self.debug: print( f"Response: {response}" )
+        if self.debug and self.verbose: print( f"Response: {response}" )
         
         # Parse XML-esque response
         self.prompt_response_dict = self._update_response_dictionary( response )

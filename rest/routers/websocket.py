@@ -275,8 +275,11 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
     try:
         # SECURITY: Handle malformed JSON gracefully
         try:
+            print(f"[WS-QUEUE-AUTH] Waiting for auth message from session [{session_id}]...")
             auth_message = await websocket.receive_json()
+            print(f"[WS-QUEUE-AUTH] Received auth message: type={auth_message.get('type')}, has_token={('token' in auth_message)}, has_events={('subscribed_events' in auth_message)}")
         except json.JSONDecodeError:
+            print(f"[WS-QUEUE-AUTH] JSON decode error for session [{session_id}]")
             await websocket.send_json({
                 "type": "auth_error",
                 "message": "Authentication message must be valid JSON"
@@ -284,6 +287,7 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
             await websocket.close()
             return
         except Exception as parse_error:
+            print(f"[WS-QUEUE-AUTH] Parse error for session [{session_id}]: {parse_error}")
             await websocket.send_json({
                 "type": "auth_error",
                 "message": f"Failed to parse authentication message: {str(parse_error)}"
@@ -293,6 +297,7 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
 
         # SECURITY: Validate message structure first
         if not isinstance(auth_message, dict):
+            print(f"[WS-QUEUE-AUTH] Invalid message type for session [{session_id}]: {type(auth_message)}")
             await websocket.send_json({
                 "type": "auth_error",
                 "message": "Authentication message must be a JSON object"
@@ -302,6 +307,7 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
 
         # SECURITY: Check required fields
         if auth_message.get("type") != "auth_request":
+            print(f"[WS-QUEUE-AUTH] Wrong message type for session [{session_id}]: {auth_message.get('type')}")
             await websocket.send_json({
                 "type": "auth_error",
                 "message": "First message must be auth_request"
@@ -310,6 +316,7 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
             return
 
         if "token" not in auth_message:
+            print(f"[WS-QUEUE-AUTH] Missing token for session [{session_id}]")
             await websocket.send_json({
                 "type": "auth_error",
                 "message": "Authentication message must include token field"
@@ -320,6 +327,7 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
         # SECURITY: Validate token format before attempting verification
         token = auth_message["token"]
         if not isinstance(token, str):
+            print(f"[WS-QUEUE-AUTH] Token not a string for session [{session_id}]: {type(token)}")
             await websocket.send_json({
                 "type": "auth_error",
                 "message": "Token must be a string"
@@ -328,6 +336,7 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
             return
 
         if not token.strip():
+            print(f"[WS-QUEUE-AUTH] Empty token for session [{session_id}]")
             await websocket.send_json({
                 "type": "auth_error",
                 "message": "Token cannot be empty"
@@ -335,36 +344,54 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
             await websocket.close()
             return
 
+        # Log token format (first 30 chars for debugging)
+        token_preview = token[:30] + "..." if len(token) > 30 else token
+        print(f"[WS-QUEUE-AUTH] Token format for session [{session_id}]: {token_preview}")
+
         # Verify token using configuration-based routing (JWT/mock/Firebase)
         from cosa.rest.auth import verify_token
         try:
+            print(f"[WS-QUEUE-AUTH] Verifying token for session [{session_id}]...")
             user_info = await verify_token(token)
             user_id = user_info["uid"]
-            
+            print(f"[WS-QUEUE-AUTH] Token verified successfully! user_id=[{user_id}], email={user_info.get('email')}")
+
             # Extract subscribed events from auth message
             subscribed_events = auth_message.get("subscribed_events", ["*"])
-            
+            print(f"[WS-QUEUE-AUTH] Subscribed events for session [{session_id}]: {subscribed_events}")
+
             # Connect with user association and subscriptions
+            print(f"[WS-QUEUE-AUTH] Connecting session [{session_id}] to user [{user_id}] in WebSocket manager...")
             websocket_manager.connect(websocket, session_id, user_id, subscribed_events)
-            print(f"[WS-QUEUE] Authenticated session [{session_id}] for user [{user_id}]")
-            
+            print(f"[WS-QUEUE] ✅ Authenticated session [{session_id}] for user [{user_id}]")
+
+            # Verify connection was established
+            is_connected = websocket_manager.is_user_connected(user_id)
+            connection_count = websocket_manager.get_user_connection_count(user_id)
+            print(f"[WS-QUEUE-AUTH] Connection verification: is_connected={is_connected}, connection_count={connection_count}")
+
             # Send auth success
             await websocket.send_json({
                 "type": "auth_success",
                 "user_id": user_id,
                 "session_id": session_id
             })
-            
+
         except Exception as e:
+            print(f"[WS-QUEUE-AUTH] ❌ Token verification failed for session [{session_id}]: {type(e).__name__}: {str(e)}")
+            import traceback
+            traceback.print_exc()
             await websocket.send_json({
                 "type": "auth_error",
                 "message": str(e)
             })
             await websocket.close()
             return
-            
+
     except Exception as e:
-        print(f"[WS-QUEUE] Auth error: {e}")
+        print(f"[WS-QUEUE] ❌ Auth error for session [{session_id}]: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         await websocket.close()
         return
     

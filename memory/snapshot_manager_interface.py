@@ -195,21 +195,23 @@ class SolutionSnapshotManagerInterface( ABC ):
         pass
 
     @abstractmethod
-    def add_snapshot( self, snapshot: SolutionSnapshot ) -> bool:
+    def save_snapshot( self, snapshot: SolutionSnapshot ) -> bool:
         """
-        Add snapshot to storage backend.
-        
+        Save snapshot to storage backend using upsert semantics.
+
+        Performs INSERT for new snapshots or UPDATE for existing ones.
+
         Requires:
             - snapshot is a valid SolutionSnapshot instance
             - snapshot.question is not empty
             - Storage backend is initialized
-            
+
         Ensures:
             - Snapshot is stored persistently
             - Returns True if successful, False otherwise
-            - Existing snapshot with same question may be updated
+            - Existing snapshot with same question is updated (upsert)
             - Performance metrics collected if monitoring enabled
-            
+
         Raises:
             - ValueError if snapshot invalid
             - ConnectionError if storage unavailable

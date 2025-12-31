@@ -27,6 +27,7 @@ from cosa.memory.snapshot_manager_interface import (
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.memory.embedding_manager import EmbeddingManager
 from cosa.memory.question_embeddings_table import QuestionEmbeddingsTable
+from cosa.memory.normalizer import Normalizer
 
 
 class FileBasedSolutionManager( SolutionSnapshotManagerInterface ):
@@ -81,6 +82,7 @@ class FileBasedSolutionManager( SolutionSnapshotManagerInterface ):
 
         self.path = config["path"]
         self._embedding_mgr = EmbeddingManager( debug=debug, verbose=verbose )
+        self._normalizer = Normalizer()  # For consistent normalization
 
         # Internal data structures
         self._snapshots_by_question = None
@@ -175,7 +177,7 @@ class FileBasedSolutionManager( SolutionSnapshotManagerInterface ):
             self._persist_snapshot( snapshot )
 
             # Add to in-memory indexes
-            question = SolutionSnapshot.remove_non_alphanumerics( snapshot.question )
+            question = self._normalizer.normalize( snapshot.question )
             self._snapshots_by_question[ question ] = snapshot
 
             # Update synonymous questions index
@@ -262,7 +264,7 @@ class FileBasedSolutionManager( SolutionSnapshotManagerInterface ):
 
         try:
             # Clean up the question string before querying
-            question = SolutionSnapshot.remove_non_alphanumerics( question )
+            question = self._normalizer.normalize( question )
 
             if not self._question_exists( question ):
                 if self.debug:

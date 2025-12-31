@@ -1,1401 +1,1092 @@
 # COSA Development History
 
-> **🎯 CURRENT ACHIEVEMENT**: 2025.10.06 - Branch Analyzer Professional Refactoring COMPLETE! Transformed 261-line quick-and-dirty script into ~2,900-line professional package with full COSA compliance. New features: YAML configuration, multiple output formats (console/JSON/markdown), HEAD resolution, clear comparison context, comprehensive documentation. ✅ All standards met!
+> **🐛 CURRENT**: 2025.12.31 - Parent Lupin Sync: Sort Order Display Bug Fix! Synced 1 file from parent Lupin Session 24. **ROOT CAUSE**: Complex chain of transformations (DB DESC → JS `.reverse()` → CSS `column-reverse` → `appendChild`) cancelled each other out incorrectly for real-time vs initial load scenarios. **THE FIX**: Changed `notification_repository.py:220` from `.desc()` → `.asc()` so DB returns oldest-first; JS then uses `insertBefore` to prepend each message, resulting in newest at top. **HOW IT WORKS NOW**: Database returns oldest→newest (ASC), JS iterates with `insertBefore` prepending each message, result is newest at top for both initial page load AND real-time WebSocket notifications. **Total Impact**: 1 file, +3/-3 lines. Phase 8 sort order bug RESOLVED, sender-aware notification system fully functional. 🐛✅
 
-> **Previous Achievement**: 2025.10.04 - Multi-Session Integration Day! WebSocket JWT auth fixed, admin user management backend added, test database dual safety implemented, and canonical path management pattern enforced. Major infrastructure improvements across authentication, testing, and code quality.
+> **📬 PREVIOUS**: 2025.12.30 - Parent Lupin Sync: Sender-Aware Notification System Infrastructure! Synced 8 files from parent Lupin Sessions 19-23 (Phase 1-6 implementation). **NEW `Notification` SQLAlchemy MODEL**: 128-line PostgreSQL model with sender routing, timestamps, response handling, and state machine (postgres_models.py:479-612). **NEW `NotificationRepository` CLASS**: 462-line repository with CRUD operations, sender-based grouping, activity-anchored window loading, state management (notification_repository.py - NEW FILE). **CLI SENDER SUPPORT**: Added `sender_id` field to `NotificationRequest` and `AsyncNotificationRequest` with auto-extraction from `[PREFIX]` in message via `extract_sender_from_message()` helper (notification_models.py:27-64, 158-163, 248-253, 458-463, 503-515). **API SENDER RESOLUTION**: Added `resolve_sender_id()` helper and `sender_id` query param to `/api/notify` endpoint, PostgreSQL persistence for history loading (notifications.py:135-166, 186, 289-290, 328-349). **NEW HISTORY ENDPOINTS**: `/notifications/senders/{user_email}` (get senders with activity), `/notifications/history/{sender_id}/{user_email}` (get sender conversation history), `/notifications/conversation/{sender_id}/{user_email}` DELETE (delete sender conversation). **FIFO QUEUE UPDATE**: Added `sender_id` field to `NotificationItem` (notification_fifo_queue.py). **DATABASE CONTEXT MANAGER**: Added `get_db()` context manager for session management (database.py). **Total Impact**: 8 files (7 modified, 1 created), +585 insertions/-33 deletions (net +552 lines). 📬✅
 
-> **🚨 RESOLVED**: **repo/branch_change_analysis.py COMPLETE REFACTOR** ✅✅✅
->
-> The quick-and-dirty git diff analysis tool has been completely refactored into a professional package that EXCEEDS all COSA standards:
-> - ✅ **Design by Contract docstrings** - ALL functions have Requires/Ensures/Raises sections
-> - ✅ **Comprehensive error handling** - Custom exception hierarchy, try/catch on all subprocess calls
-> - ✅ **Debug/verbose parameters** - Throughout all classes, proper logging
-> - ✅ **Smoke tests** - `quick_smoke_test()` with ✓/✗ indicators, 9/9 tests passing
-> - ✅ **du.print_banner()** integration - Professional COSA formatting
-> - ✅ **Spacing compliance** - Spaces inside parentheses/brackets everywhere
-> - ✅ **YAML configuration** - No ConfigurationManager dependency, plain YAML files
-> - ✅ **Vertical alignment** - All equals signs aligned, dictionaries aligned on colons
-> - ✅ **One-line conditionals** - Used appropriately throughout
-> - ✅ **BONUS: Multiple output formats** - Console, JSON, Markdown with full formatting
-> - ✅ **BONUS: HEAD resolution** - Auto-resolves symbolic refs to actual branch names
-> - ✅ **BONUS: Clear comparison context** - Shows repository, branches, direction in all outputs
-> - ✅ **BONUS: --repo-path argument** - Analyze any repository from anywhere
-> - ✅ **BONUS: Comprehensive documentation** - 400+ line README with examples
->
-> **New Implementation**: `cosa/repo/branch_analyzer/` package (10 modules, ~2,900 lines)
-> **Original Preserved**: `cosa/repo/branch_change_analysis.py` (261 lines, untouched reference)
-> **Code Quality**: 🏆 Professional, production-ready, exemplary COSA compliance
+> **🎨 PREVIOUS**: 2025.12.03 - Parent Lupin Sync: Field Rename + Third Similarity Dimension! Synced 4 files from parent Lupin Session 18. **FIELD RENAME `code_gist` → `solution_summary_gist`**: Renamed for consistency with solution-focused naming convention. Updated schema field, snapshot record conversion, parameter names, Pydantic models, and API endpoints. **NEW `solution_gist_embedding` FIELD**: Added 1536-dim embedding field to schema + record conversion + snapshot constructor. **NEW `get_snapshots_by_solution_gist_similarity()` METHOD**: Third vector search dimension using `solution_gist_embedding` field for comparing concise summaries. **NEW `set_solution_summary_gist()` METHOD**: SolutionSnapshot setter that generates embedding. **ENSURE_TOP_RESULT FEATURE**: All 3 similarity methods now accept `ensure_top_result=True` (default) to always return at least one result even if below threshold - useful for UI that needs to show something. **API ENHANCEMENTS**: `CodeSimilarityResult` expanded with `code_preview`, `solution_summary_preview` fields. `SimilarSnapshotsResponse` expanded with `solution_gist_similar` list and `total_solution_gist_matches` count. `/similar` endpoint now accepts `gist_threshold` param. **LAZY GIST BACKFILL**: `running_fifo_queue.py` now generates `solution_summary_gist` if missing (not just on first run), enabling backfill for cache hits. **Total Impact**: 4 files, +309 insertions/-66 deletions (net +243 lines). 🎨✅
 
-> **🚨 PENDING**: Slash Command Source File Sync - The bash execution fixes applied to `.claude/commands/smoke-test-baseline.md` need to be applied to `src/rnd/prompts/baseline-smoke-test-prompt.md` to prevent regenerating broken commands. See `rnd/2025.09.23-slash-command-bash-fix-status.md` for details.
+> **🔍 PREVIOUS**: 2025.12.02 - Parent Lupin Sync: Code Similarity Visualization + Duplicate Snapshot Bug Fixes! Synced 3 files from parent Lupin Sessions 16-17. **PHASE 1 - CODE SIMILARITY SEARCH**: Replaced stub `get_snapshots_by_code_similarity()` with real LanceDB vector search on `code_embedding` field, added new `get_snapshots_by_solution_similarity()` method for `solution_embedding` field (+200 lines in lancedb_solution_manager.py). **PHASE 2 - API ENDPOINTS**: Added 3 Pydantic models (`CodeSimilarityResult`, `SimilarSnapshotsResponse`, `SnapshotPreviewResponse`) and 2 endpoints (`/admin/snapshots/{id_hash}/preview`, `/admin/snapshots/{id_hash}/similar`). **DUPLICATE BUG FIX 1 - TOCTOU RACE**: Added `threading.Lock` around `save_snapshot()` critical section to prevent concurrent calls from both passing cache/DB checks. **DUPLICATE BUG FIX 2 - ID HASH PRESERVATION**: Added `snapshot.id_hash = existing_id_hash` in `_update_existing_snapshot()` so `merge_insert` matches existing record. **GIST GENERATION FIX**: `running_fifo_queue.py` called uninitialized `self.normalizer`; fixed by importing/initializing `GistNormalizer`, plus added gist generation to `_handle_base_agent()` for new jobs. **Total Impact**: 3 files, +513 insertions/-81 deletions (net +432 lines). 🔍💻🐛✅
 
-## 2025.10.06 - Branch Analyzer Professional Refactoring COMPLETE ✅
+> **🔥 PREVIOUS**: 2025.12.01 - Parent Lupin Sync: Synonym Signal Loss ROOT CAUSE FOUND + FIXED! Synced 9 files from parent Lupin Sessions 13-15. **ROOT CAUSE**: `agent_base.py:129` was calling DEPRECATED `SolutionSnapshot.remove_non_alphanumerics()` which strips ALL punctuation including apostrophes and math operators ("What's 4 + 4?" → "whats 4 4"). **FIX APPLIED**: Changed to `self.question = question` (store verbatim). **DEPRECATION NUKE**: Made `remove_non_alphanumerics()` SCREAM its deprecation with ASCII box, fire emojis, stack trace (limit=5), and 40 fire emojis. **STT-FRIENDLY CONTRACTIONS**: Added 24 apostrophe-less variants to Normalizer ("whats"→"what is", "dont"→"do not", etc.). **ADMIN IMPROVEMENTS**: Added threshold query param, descending sort, synonym debug logging. **DUPE-GUARD**: DB fallback for cache desync in save_snapshot() and delete_snapshot(). **SIMILARITY DEBUG**: Verbose logging for vector search (query embedding, raw results, top 10, threshold filtering). **JOB-TRACE**: Added job processing logging for duplicate investigation. **Total Impact**: 9 files, +221/-66 lines (net +155 lines). ✅ Synonym signal loss fixed! 🔥🐛✅
+
+> **Previous Achievement**: 2025.11.30 - Parent Lupin Sync: LanceDB Part 6 Complete + Config-Driven Design! Synced 6 files from parent Lupin Session 12. Import fix, config-driven design, vector search implementation, adaptive retry logic, tokenization approach. Total Impact: 6 files, +325/-146 lines. ✅ LanceDB Part 6 Complete! 🔧✅
+
+> **Previous Achievement**: 2025.11.26 - Parent Lupin Sync: Snapshot ID Hash Collision Bug Fix + Diagnostic Cleanup! Synced critical bug fix from parent Lupin session. **ROOT CAUSE IDENTIFIED**: Classic Python mutable default argument bug in `solution_snapshot.py:161` where `run_date: str=get_timestamp()` was evaluated ONCE at module load time instead of per-instantiation. All snapshots created without explicit `run_date` shared the SAME frozen timestamp, generating IDENTICAL SHA256 `id_hash` values. This caused "sqrt(122)" to find existing record with that hash (sqrt(100)), add "sqrt(122)" synonym to wrong snapshot, returning "10" instead of ~11.045. **FIX**: Changed default parameters from function calls to `None` (line 161), then call `self.get_timestamp()` (with `microseconds=True` for run_date) in function body when values are None (lines 257-259). **DIAGNOSTIC CLEANUP**: Removed ~200 lines of verbose diagnostic logging from investigation phase across 4 files. **LanceDB Query Fix**: Previous session's pandas filtering fix for exact match queries (3 methods). **Method Rename**: `add_snapshot()` → `save_snapshot()` for semantic clarity. **Total Impact**: 8 files, +151/-185 lines (net -34 lines). ✅ Hash collision bug fixed! 🐛✅🧹
+
+> **Previous Achievement**: 2025.11.25 - Parent Lupin Sync: LanceDB Query Fix + Method Rename + Dependency Injection! Synced 6 files from parent Lupin Session 10 with critical bug fixes and architectural improvements. **LanceDB Query Pattern Bug Fix**: Fixed critical bug where exact match lookups returned WRONG snapshots (e.g., "What's the square root of 144?" returned "What's 2+2?" answer). Root cause: LanceDB's `table.search().where(filter)` without a vector query returns **arbitrary rows**, not filtered results. Fixed all three `find_exact_*` methods in canonical_synonyms_table.py to use pandas filtering instead. **Method Rename**: `add_snapshot()` → `save_snapshot()` across 4 files (22 call sites) for semantic clarity - the method is actually an upsert (INSERT or UPDATE), not just "add". **Stale Stats Fix**: FastAPI dependency injection pattern - added `get_snapshot_manager()` dependency function that retrieves global singleton from `fastapi_app.main` module, ensuring cache consistency between math agent writes and admin reads. **Admin API Enhancement**: Added `synonymous_questions` and `synonymous_question_gists` fields to SnapshotDetailResponse. **Total Impact**: 6 files, +108 insertions/-143 deletions (net -35 lines). ✅ All Session 10 fixes synced! 🐛🔧
+
+> **Previous Achievement**: 2025.11.24 - Parent Lupin Sync: Math Agent Debugging + Admin Snapshots API + LanceDB Optimizations! Synced 10 files from parent Lupin repository with improvements from 4 math agent debugging sessions (Sessions 5-9). **Math Agent Enhancements**: Added static `apply_formatting()` method enabling SolutionSnapshot replay to use same formatting logic as original agent execution, preventing formatter hallucination in terse mode. **Gist Caching System**: NEW `GistCacheTable` class (536 lines) providing LanceDB-backed persistent cache for LLM-generated gists (~500ms savings per cache hit, 70-80% expected hit rate). **LanceDB Optimizations**: Added scalar index on id_hash for merge_insert performance, pre-merge cache invalidation, fresh DB read after merge, comprehensive stats debugging. **Total Impact**: 11 files (10 modified, 1 created), +423 insertions/-127 deletions (net +296 lines). ✅ Math agent cache hit formatting now consistent with original execution! 🧮🔧
+
+> **Previous Achievement**: 2025.11.20 - Parent Lupin Sync: Test Infrastructure & Code Quality Improvements! Synced 7 files from parent Lupin repository with improvements from 100% Test Adherence achievement (2025.11.20). **Configuration Manager**: Enhanced docstrings with Testing/Notes sections documenting atomic `_reset_singleton=True` pattern for test isolation. **Normalizer**: Added MATH_OPERATORS preservation ({+, -, *, /, =, >, <} etc.) for mathematical query support. **Solution Snapshot**: Improved question handling (verbatim storage + normalized indexing), fixed field mapping bug (code_returns → code). **Total Impact**: 7 files modified, +95 insertions/-29 deletions (net +66 lines). ✅ Improved test reliability and error diagnostics! 🔧✨
+
+> **Previous Achievement**: 2025.11.19 - PostgreSQL Repository Migration (Phase 2.6.3) COMPLETE! Migrated 8 COSA service layer files from direct SQLite database calls to PostgreSQL repository pattern. **Services Migrated**: email_token_service.py, rate_limiter.py, api_key_auth.py middleware, refresh_token_service.py. **Timezone Modernization**: All datetime operations migrated from `datetime.utcnow()` → `datetime.now(timezone.utc)` (Python 3.12+ best practice). **Total Impact**: 8 files modified, +186 insertions/-291 deletions (net -105 lines). ✅ Ready for integration testing! 🐘🔄
+
+> **Previous Achievement**: 2025.11.18 - LanceDB GCS Multi-Backend Testing & Normalization Fix COMPLETE! Test-driven development approach (Option B) achieved 100% test pass rate across all backends. **Critical Bug Fixed**: Normalization mismatch between insert/query operations (50%→100% pass rate). Root cause: `SolutionSnapshot.__init__()` used deprecated `remove_non_alphanumerics()` vs `Normalizer.normalize()` in queries. **Final Results**: Local backend 3/3 PASS, GCS backend 3/3 PASS, unit tests 11/11 PASS. 🎯✅
+
+> **Previous Achievement**: 2025.11.13 - LanceDB Multi-Backend Storage Infrastructure COMPLETE! Implemented factory pattern for LanceDB solution manager enabling seamless switching between local filesystem (development) and Google Cloud Storage (test/production deployment). Ready for Cloud Run test deployment with GCS backend! 🏗️✅
+
+> **Previous Achievement**: 2025.11.11 - Phase 2.5.4 Config Migration COMPLETE! Renamed `~/.lupin/config` → `~/.notifications/config` and `target_user` → `global_notification_recipient`. Dual support for backward compatibility implemented. 🔄✅
+
+> **Previous Achievement**: 2025.11.10 - Phase 2.5.4 API Key Authentication Infrastructure COMPLETE! Header-based API key authentication (X-API-Key header) implemented. Fixed critical schema bug (api_keys.user_id INTEGER→TEXT). Integration testing infrastructure created (10 tests).
+
+> **Previous Achievement**: 2025.11.08 - Notification System Phase 2.3 CLI Modernization COMMITTED! Split async/sync notification clients with Pydantic validation (1,376 lines across 3 new files).
+
+---
+
+## 2025.12.31 - Parent Lupin Sync: Sort Order Display Bug Fix
 
 ### Summary
-Transformed the `branch_change_analysis.py` quick-and-dirty script (261 lines) into a professional, production-ready package (~2,900 lines across 10 modules) with full COSA compliance. The refactoring exceeded all requirements from the URGENT TODO, adding bonus features like multiple output formats, HEAD resolution, repository path support, and comprehensive documentation. Original file preserved as reference.
+Synced 1 file from parent Lupin Session 24 (2025.12.31). Fixed critical sort order bug where notification messages displayed oldest-first instead of newest-first. This was the final blocker for the sender-aware notification system (Phase 8).
 
 ### Work Performed
 
-#### Phase 1: Architecture and Foundation - COMPLETE ✅
-- **Package Structure**: Created `cosa/repo/branch_analyzer/` with 10 modules
-  - `__init__.py` - Package exports and comprehensive documentation
-  - `exceptions.py` - 5 custom exception classes (GitCommandError, ConfigurationError, ParserError, ClassificationError)
-  - `default_config.yaml` - 170 lines of comprehensive YAML configuration
-  - `config_loader.py` - YAML loading with validation (280 lines)
-  - `file_classifier.py` - Configurable file type detection (180 lines)
-  - `line_classifier.py` - Python/JS/TS code vs comment detection (280 lines)
-  - `git_diff_parser.py` - Safe git subprocess execution with error handling (240 lines)
-  - `statistics_collector.py` - Data aggregation with percentages (160 lines)
-  - `report_formatter.py` - 3 output formats: console, JSON, markdown (330 lines)
-  - `analyzer.py` - Main orchestrator + `quick_smoke_test()` (370 lines)
+#### Sort Order Bug Fix - COMPLETE ✅
+**File**: `rest/db/repositories/notification_repository.py` (+3/-3 lines)
 
-#### Phase 2: CLI and Path Management - COMPLETE ✅
-- **CLI Entry Point**: Created `run_branch_analyzer.py` with full argparse (150 lines)
-  - Added `--repo-path` argument to analyze any repository
-  - Added `--base` and `--head` arguments with clear defaults
-  - Added `--output` for format selection (console/JSON/markdown)
-  - Added `--config` for custom configuration files
-  - Removed LUPIN_ROOT dependency - uses simple imports from src directory
-- **Python -m Execution**: Renamed CLI script to avoid package/module name conflict
-  - `branch_analyzer.py` → `run_branch_analyzer.py`
-  - Enables: `python -m cosa.repo.run_branch_analyzer`
-  - Works from src directory without environment variables
+**Problem**: Notification messages displayed oldest-first instead of newest-first in the Fresh Queue UI.
 
-#### Phase 3: Enhanced Output and Documentation - COMPLETE ✅
-- **HEAD Resolution**: Added git command to resolve symbolic refs to actual branch names
-  - `HEAD` → actual branch name (e.g., `wip-v0.0.9-2025.09.27-tracking-lupin-work`)
-  - Prevents confusing "HEAD vs main" in output
-- **Clear Comparison Context**: Enhanced all output formats with:
-  - Repository absolute path
-  - Base branch and current branch clearly labeled
-  - Comparison direction with arrow (→)
-  - Helpful explanation when using HEAD
-- **Multiple Output Formats**:
-  - **Console**: COSA-style banner with `du.print_banner()`, comparison context, statistics
-  - **JSON**: Machine-readable with metadata and resolved branch names
-  - **Markdown**: Documentation-friendly with tables and formatted headers
-- **Comprehensive Documentation**: Created `README-branch-analyzer.md` (400+ lines)
-  - Quick start guide
-  - Understanding defaults section (repo-path=., base=main, head=HEAD)
-  - CLI reference with all arguments explained
-  - Output format examples for all three formats
-  - Configuration guide
-  - Programmatic usage examples
-  - Testing instructions
-  - Architecture overview
-  - Troubleshooting guide
+**Root Cause**: Complex chain of transformations cancelled each other out incorrectly:
+```
+DB DESC → JS .reverse() → CSS column-reverse → appendChild
+```
+This behaved differently for real-time WebSocket notifications vs initial page load.
 
-#### Phase 4: Testing and Validation - COMPLETE ✅
-- **Smoke Tests**: Added `quick_smoke_test()` to analyzer.py
-  - 9 comprehensive tests covering all components
-  - ✓ Configuration loading
-  - ✓ File classification (Python, JavaScript, unknown)
-  - ✓ Line classification (Python code/comment/docstring)
-  - ✓ Line classification (JavaScript code/comment)
-  - ✓ Statistics collection
-  - ✓ Console formatting
-  - ✓ JSON formatting
-  - ✓ Markdown formatting
-  - ✓ Exception hierarchy validation
-  - **Result**: 9/9 tests passing (100%)
-- **Integration Testing**: Tested with actual git diff (main...HEAD in COSA repo)
-  - Successfully analyzed 9,078 lines added, 399 removed
-  - Correctly categorized by file type (Python, Markdown, JSON)
-  - Accurately separated code from comments/docstrings (58.4% code, 34.7% docstrings, 6.9% comments)
+**The Fix**: Changed `get_sender_history()` method (line 220) from `.desc()` to `.asc()`:
+```python
+# BEFORE (broken - part of problematic transformation chain)
+).order_by(
+    Notification.created_at.desc()  # Newest first for notification list
+).all()
+
+# AFTER (correct - works with insertBefore prepend pattern)
+).order_by(
+    Notification.created_at.asc()  # Oldest first - insertBefore prepends newest to top
+).all()
+```
+
+**Updated Docstring**: Also updated the Ensures section to correctly document the behavior:
+- "Ordered by created_at ascending (oldest first for insertBefore prepend)"
+- "List of Notification instances in chronological order (oldest first)"
+
+**How It Works Now**:
+1. Database returns oldest→newest (ASC order)
+2. JavaScript iterates through results
+3. Each message uses `insertBefore(messageDiv, container.firstChild)` to prepend
+4. Result: newest message at top for both initial load AND real-time WebSocket notifications
+
+### Files Modified
+
+**COSA Repository** (1 file):
+
+| File | Lines Changed | Description |
+|------|---------------|-------------|
+| `rest/db/repositories/notification_repository.py` | +3/-3 | Sort order fix + docstring update |
+
+**Total Impact**: 1 file, +3 insertions/-3 deletions (net 0 lines)
+
+### Integration with Parent Lupin
+
+**Parent Session Context** (2025.12.31, Session 24):
+- This was the final fix to complete Phase 8 of sender-aware notification system
+- Frontend changes in parent Lupin: CSS flex-direction, JS .reverse() removal, appendChild→insertBefore
+- Backend change in COSA: `.desc()` → `.asc()` ordering
+
+**Complete Fix (4 changes total)**:
+1. CSS `queue-fresh.css:793` - Changed `flex-direction: column-reverse` → `column`
+2. JS `queue-fresh.js:4169` - Removed `.reverse()` call on initial load
+3. JS `queue-fresh.js:3449` - Changed `appendChild` → `insertBefore(messageDiv, container.firstChild)`
+4. Python `notification_repository.py:220` - Changed `.desc()` → `.asc()` (THIS FILE)
+
+### Current Status
+
+- **Sort Order Bug**: ✅ FIXED - Newest messages now at top consistently
+- **Phase 8 Testing**: ✅ COMPLETE - Sender-aware notification system fully functional
+- **History Health**: ⚠️ Parent Lupin at ~30k tokens - archive needed
+
+### Next Session Priorities
+
+1. Archive parent Lupin history.md (approaching 30k tokens)
+2. Continue with any new Lupin features
+
+---
+
+## 2025.12.30 - Parent Lupin Sync: Sender-Aware Notification System Infrastructure
+
+### Summary
+Synced 8 files from parent Lupin Sessions 19-23 (2025.12.29-30). Major theme: implementing sender-aware notification infrastructure enabling multi-project grouping (LUPIN, COSA, PLAN), chat-style UI with collapsible sender cards, and PostgreSQL persistence for conversation history.
+
+### Work Performed
+
+#### New `Notification` SQLAlchemy Model - COMPLETE ✅
+**File**: `rest/postgres_models.py` (+128 lines)
+
+Full ORM model for PostgreSQL persistence with:
+- **Routing fields**: `sender_id` (indexed), `recipient_id` (FK to users)
+- **Content fields**: `title`, `message`, `type`, `priority`
+- **Timestamps**: `created_at`, `delivered_at`, `responded_at`, `expires_at`
+- **Response handling**: `response_requested`, `response_type`, `response_value` (JSONB), `response_default`, `timeout_seconds`
+- **State machine**: `state` field (created, queued, delivered, responded, expired, error)
+- **Indexes**: 5 indexes including composite `(sender_id, recipient_id)`
+
+#### New `NotificationRepository` Class - COMPLETE ✅
+**File**: `rest/db/repositories/notification_repository.py` (NEW - 462 lines)
+
+Repository pattern implementation extending `BaseRepository` with:
+- `create_notification()` - Create with all fields
+- `get_by_sender()` - Get notifications for sender/recipient pair
+- `get_senders_with_activity()` - List senders with notification counts
+- `update_state()` - State machine transitions
+- `update_response()` - Record user responses
+- `delete_by_sender()` - Delete entire conversation with sender
+
+#### CLI Sender Support - COMPLETE ✅
+**File**: `cli/notification_models.py` (+65 lines)
+
+- Added `extract_sender_from_message()` helper function
+- Extracts `[PREFIX]` from message start (e.g., `[LUPIN]` → `claude.code@lupin.deepily.ai`)
+- Added `sender_id` field to `NotificationRequest` and `AsyncNotificationRequest`
+- Pattern validation: `^claude\.code@[a-z]+\.deepily\.ai$`
+- Auto-extraction in `to_query_params()` methods
+
+#### API Sender Resolution - COMPLETE ✅
+**File**: `rest/routers/notifications.py` (+331 lines)
+
+- Added `resolve_sender_id()` helper (explicit > extracted > default fallback)
+- Added `sender_id` query parameter to `/api/notify` endpoint
+- PostgreSQL persistence via `NotificationRepository.create_notification()`
+- Updated `NotificationItem` creation to include `sender_id`
+
+#### New History Endpoints - COMPLETE ✅
+**File**: `rest/routers/notifications.py`
+
+Three new endpoints for sender-aware history:
+1. `GET /notifications/senders/{user_email}` - List senders with activity summary
+2. `GET /notifications/history/{sender_id}/{user_email}` - Get conversation history
+3. `DELETE /notifications/conversation/{sender_id}/{user_email}` - Delete sender conversation
+
+#### FIFO Queue Update - COMPLETE ✅
+**File**: `rest/notification_fifo_queue.py` (+59 lines net)
+
+- Added `sender_id` field to `NotificationItem` dataclass
+- Updated queue operations to handle sender routing
+
+#### Database Context Manager - COMPLETE ✅
+**File**: `rest/db/database.py` (+6 lines)
+
+- Added `get_db()` context manager for PostgreSQL session management
+- Integrates with FastAPI dependency injection
+
+### Files Created/Modified
+
+**Created (1 file)**:
+- `rest/db/repositories/notification_repository.py` (462 lines) - Repository pattern for Notification model
+
+**Modified (7 files)**:
+- `cli/notification_models.py` (+65 lines) - sender_id field + extraction helper
+- `cli/notify_user_async.py` (+8 lines) - sender_id parameter pass-through
+- `cli/notify_user_sync.py` (+8 lines) - sender_id parameter pass-through
+- `rest/db/database.py` (+6 lines) - get_db() context manager
+- `rest/notification_fifo_queue.py` (+59/-26 lines) - sender_id in NotificationItem
+- `rest/postgres_models.py` (+141 lines) - Notification model + User relationship
+- `rest/routers/notifications.py` (+331 lines) - sender resolution + history endpoints
+
+### Total Impact
+- **Files**: 8 (7 modified, 1 created)
+- **Insertions**: +585 lines
+- **Deletions**: -33 lines
+- **Net Change**: +552 lines
+
+### Current Status
+- **Sender-Aware Notifications**: ✅ Phase 1-6 infrastructure complete
+- **PostgreSQL Persistence**: ✅ Ready for history loading
+- **CLI Integration**: ✅ Auto-extraction from `[PREFIX]` messages
+- **Next Steps**: Phase 7-8 testing in parent Lupin project
+
+---
+
+## 2025.12.03 - Parent Lupin Sync: Field Rename + Third Similarity Dimension
+
+### Summary
+Synced 4 files from parent Lupin Session 18 (2025.12.03). Major theme: field rename for consistency and adding third similarity search dimension. Renamed `code_gist` → `solution_summary_gist` throughout the codebase, added new `solution_gist_embedding` field and corresponding similarity search method, and enhanced API to support three-column similarity modal in UI.
+
+### Work Performed
+
+#### Field Rename: `code_gist` → `solution_summary_gist` - COMPLETE ✅
+**Rationale**: The field contains a concise summary of the `solution_summary` (verbose explanation), not a gist of the code itself. Renaming for consistency with solution-focused naming convention.
+
+**Files Updated**:
+
+1. **`memory/lancedb_solution_manager.py`**:
+   - Schema field: `pa.field( "code_gist", pa.string() )` → `pa.field( "solution_summary_gist", pa.string() )`
+   - Record conversion: `"code_gist"` → `"solution_summary_gist"` in `_snapshot_to_record()`
+   - Snapshot reconstruction: `code_gist=record.get( "code_gist", "" )` → `solution_summary_gist=record.get( "solution_summary_gist", "" )` in `_record_to_snapshot()`
+
+2. **`memory/solution_snapshot.py`**:
+   - Parameter: `code_gist: str=""` → `solution_summary_gist: str=""`
+   - Attribute: `self.code_gist` → `self.solution_summary_gist`
+
+3. **`rest/routers/admin.py`**:
+   - `SnapshotDetailResponse` field: `code_gist` → `solution_summary_gist`
+   - `CodeSimilarityResult` field: `code_gist` → `solution_summary_gist`
+   - `SnapshotPreviewResponse` field: `code_gist` → `solution_summary_gist`
+   - All endpoint assignments updated
+
+4. **`rest/running_fifo_queue.py`**:
+   - Generation check: `not running_job.code_gist` → `not running_job.solution_summary_gist`
+   - Assignment: `running_job.code_gist = ...` → `running_job.set_solution_summary_gist( ... )`
+   - Debug output: `"Generated code_gist"` → `"Generated solution_summary_gist"`
+
+#### New `solution_gist_embedding` Field - COMPLETE ✅
+**File**: `memory/lancedb_solution_manager.py`, `memory/solution_snapshot.py`
+
+**Purpose**: Enable similarity search on concise gist summaries (separate from verbose `solution_embedding`).
+
+**Changes**:
+- Added `pa.field( "solution_gist_embedding", pa.list_( pa.float32(), 1536 ) )` to schema
+- Added `"solution_gist_embedding"` to record conversion in `_snapshot_to_record()`
+- Added `solution_gist_embedding` parameter and attribute to `SolutionSnapshot.__init__()`
+- Auto-generate embedding in constructor if `solution_summary_gist` provided but embedding missing
+
+#### New `get_snapshots_by_solution_gist_similarity()` Method - COMPLETE ✅
+**File**: `memory/lancedb_solution_manager.py` (+123 lines)
+
+**Purpose**: Third similarity search dimension - find snapshots with similar concise summaries.
+
+**Pattern**: Follows exact same structure as existing `get_snapshots_by_code_similarity()` and `get_snapshots_by_solution_similarity()`:
+- Validate embedding exists and non-zero
+- Perform LanceDB vector search on `solution_gist_embedding` field
+- Convert distance to similarity percentage
+- Filter by threshold, exclude self
+- Sort by similarity descending
+
+#### New `set_solution_summary_gist()` Setter Method - COMPLETE ✅
+**File**: `memory/solution_snapshot.py` (+19 lines)
+
+**Purpose**: Set gist and auto-generate embedding atomically.
+
+```python
+def set_solution_summary_gist( self, solution_summary_gist: str ) -> None:
+    self.solution_summary_gist   = solution_summary_gist
+    self.solution_gist_embedding = self._embedding_mgr.generate_embedding( solution_summary_gist, normalize_for_cache=False )
+    self.updated_date            = self.get_timestamp()
+```
+
+#### `ensure_top_result` Feature - COMPLETE ✅
+**Files**: `memory/lancedb_solution_manager.py` (all 3 similarity methods)
+
+**Purpose**: Always return at least one result even if no results meet threshold. Useful for UI that needs to show something.
+
+**Implementation**:
+```python
+def get_snapshots_by_code_similarity( ..., ensure_top_result: bool = True, ... ):
+    ...
+    best_below_threshold = None
+    for record in search_results:
+        if similarity_percent >= threshold:
+            similar_snapshots.append( ... )
+        elif ensure_top_result and best_below_threshold is None:
+            # Track best result below threshold
+            best_below_threshold = ( similarity_percent, snapshot )
+
+    # Include best if no results met threshold
+    if len( similar_snapshots ) == 0 and ensure_top_result and best_below_threshold is not None:
+        similar_snapshots.append( best_below_threshold )
+```
+
+#### API Enhancements - COMPLETE ✅
+**File**: `rest/routers/admin.py`
+
+**Model Changes**:
+- `CodeSimilarityResult`: Added `code_preview`, `solution_summary_preview` fields
+- `SimilarSnapshotsResponse`: Added `solution_gist_similar` list and `total_solution_gist_matches` count
+
+**Endpoint Changes**:
+- `/admin/snapshots/{id_hash}/similar`: Added `gist_threshold` query parameter
+- All three similarity searches now call with `ensure_top_result=ensure_top_result`
+
+#### Lazy Gist Backfill - COMPLETE ✅
+**File**: `rest/running_fifo_queue.py`
+
+**Change**: Gist generation condition changed from `run_count == -1 and not gist` to just `not solution_summary_gist`.
+
+**Benefit**: Cache hits that previously missed gist generation now get backfilled on next execution.
+
+### Files Modified
+
+**COSA Repository** (4 files):
+
+| File | Lines Changed | Description |
+|------|---------------|-------------|
+| `memory/lancedb_solution_manager.py` | +164/-0 | New gist similarity method, ensure_top_result, schema field |
+| `memory/solution_snapshot.py` | +36/-0 | New field, setter method, auto-embedding |
+| `rest/routers/admin.py` | +151/-0 | Enhanced models, third similarity endpoint |
+| `rest/running_fifo_queue.py` | +24/-0 | Lazy gist backfill, field rename |
+
+**Total Impact**: 4 files, +309 insertions/-66 deletions (net +243 lines)
+
+### Integration with Parent Lupin
+
+**Parent Session Context** (2025.12.03, Session 18):
+- Extended similarity modal from 2-column to 3-column layout
+- Added "✨ Similar by Gist" column
+- Responsive breakpoints for mobile
+- Updated all frontend JavaScript/CSS to use new field names
+
+**COSA Benefit**:
+- Backend fully supports three similarity dimensions
+- Field naming now consistent with solution-focused convention
+- UI will always show results even with low similarity (ensure_top_result)
+
+### Current Status
+
+- **Field Rename**: ✅ COMPLETE - `code_gist` → `solution_summary_gist` across 4 files
+- **Gist Embedding**: ✅ ADDED - New `solution_gist_embedding` field in schema
+- **Third Similarity Method**: ✅ IMPLEMENTED - `get_snapshots_by_solution_gist_similarity()`
+- **ensure_top_result**: ✅ ADDED - All 3 similarity methods support it
+- **API Enhanced**: ✅ COMPLETE - Third column support in response models
+- **Lazy Backfill**: ✅ ENABLED - Missing gists generated on next cache hit
+
+### Testing Notes
+
+The frontend (parent Lupin) was updated simultaneously, so the three-column similarity modal should work immediately after syncing these backend changes.
+
+---
+
+## 2025.12.02 - Parent Lupin Sync: Code Similarity Visualization + Duplicate Snapshot Bug Fixes
+
+### Summary
+Synced 3 files from parent Lupin Sessions 16-17 (2025.12.02). Major feature: full code similarity visualization for admin snapshots dashboard. Critical bug fixes: duplicate snapshot creation (TOCTOU race + id_hash preservation) and code_gist generation (uninitialized normalizer + missing generation location).
+
+### Work Performed
+
+#### Code Similarity Search Backend - COMPLETE ✅
+**File**: `memory/lancedb_solution_manager.py` (+258/-81 lines, net +177 lines)
+
+**Phase 1 - Replace Stub with Real Vector Search**:
+- Replaced placeholder `get_snapshots_by_code_similarity()` with real LanceDB vector search on `code_embedding` field
+- NEW `get_snapshots_by_solution_similarity()` method for `solution_embedding` field searches
+- Both methods: validate embeddings, perform vector search with `.metric("dot").nprobes()`, convert distance to similarity percentage, filter by threshold, exclude self
+
+**Distance-to-Similarity Formula**:
+```python
+# With dot metric: _distance = 1 - dot_product (lower = more similar)
+distance = record.get( "_distance", 0.0 )
+similarity_percent = ( 1.0 - distance ) * 100
+```
+
+#### Duplicate Snapshot Bug Fixes - COMPLETE ✅
+**File**: `memory/lancedb_solution_manager.py`
+
+**BUG 1 - TOCTOU Race Condition**:
+- **Problem**: Two concurrent `save_snapshot()` calls for same question could both pass cache/DB checks before either INSERT commits
+- **Fix**: Added `from threading import Lock`, class-level `_save_lock = Lock()`, wrapped critical section with `with self._save_lock:`
+- **Pattern**: Follows existing codebase (EmbeddingManager, Normalizer, GistNormalizer all use `_lock = Lock()`)
+
+**BUG 2 - id_hash NOT Preserved on Update**:
+- **Problem**: New snapshot has its OWN id_hash (generated from creation timestamp), but `merge_insert("id_hash")` expects matching hash. Mismatch causes INSERT instead of UPDATE!
+- **Fix**: Added `snapshot.id_hash = existing_id_hash` in `_update_existing_snapshot()` before calling `_full_replace_snapshot()`
+
+**Concurrent Save Test**:
+```python
+# Added to quick_smoke_test(): Pre-creates 3 snapshots, launches threads, verifies only 1 record
+concurrent_snapshots = [SolutionSnapshot(...) for _ in range(3)]
+threads = [threading.Thread(target=threaded_save, args=(s,)) for s in concurrent_snapshots]
+# Verify: len(matching) == 1
+```
+
+#### Admin API Endpoints - COMPLETE ✅
+**File**: `rest/routers/admin.py` (+229 lines)
+
+**New Pydantic Models**:
+- `CodeSimilarityResult`: Individual result (id_hash, question_preview, code_gist, similarity, created_date)
+- `SimilarSnapshotsResponse`: Two lists (code_similar, explanation_similar) with counts
+- `SnapshotPreviewResponse`: Preview data for hover tooltips (code_preview, code_gist)
+
+**New Endpoints**:
+1. `GET /admin/snapshots/{id_hash}/preview` - Returns first 300 chars of code + code_gist for hover preview
+2. `GET /admin/snapshots/{id_hash}/similar` - Vector similarity search returning code-similar and explanation-similar snapshots
+
+**Detail Modal Enhancements**:
+- Added `solution_summary` and `code_gist` fields to `SnapshotDetailResponse`
+
+#### Gist Generation Fix - COMPLETE ✅
+**File**: `rest/running_fifo_queue.py` (+26/-10 lines, net +16 lines)
+
+**BUG - Uninitialized Normalizer**:
+- **Problem**: Code called `self.normalizer.process_text()` but `self.normalizer` was NEVER INITIALIZED
+- **Fix**: Import `GistNormalizer`, initialize `self.gist_normalizer` in `__init__`, use `self.gist_normalizer.get_normalized_gist()`
+
+**BUG - Missing Generation Location**:
+- **Problem**: `code_gist` only generated in `_handle_solution_snapshot()` (cached path) but NOT in `_handle_base_agent()` (new jobs)
+- **Fix**: Added gist generation block to `_handle_base_agent()` after speech emitted but before `update_runtime_stats()`
+
+**Cache Hit Tuple Unpack**:
+- Fixed unpacking: `score, cached_snapshot = cached_snapshots[0]` (was missing score)
+
+### Files Modified
+
+**COSA Repository** (3 files):
+
+| File | Lines Changed | Description |
+|------|---------------|-------------|
+| `memory/lancedb_solution_manager.py` | +258/-81 | Code/solution similarity search, TOCTOU lock, id_hash preservation, concurrent test |
+| `rest/routers/admin.py` | +229/-0 | 3 Pydantic models, 2 endpoints, 2 detail fields |
+| `rest/running_fifo_queue.py` | +26/-10 | GistNormalizer init, gist generation in new jobs path, tuple unpack fix |
+
+**Total Impact**: 3 files, +513 insertions/-81 deletions (net +432 lines)
+
+### Integration with Parent Lupin
+
+**Parent Session Context** (2025.12.02, Sessions 16-17):
+- Session 16: Duplicate snapshot bug investigation - found TOCTOU race + id_hash mismatch root causes
+- Session 17: Code similarity visualization feature complete - 4 phases (backend, API, hover preview, drill-down modal)
+
+**Frontend Changes** (in parent Lupin only, not COSA):
+- Hover preview icons (📝 💻) on search results
+- Similarity modal with two-column layout
+- Click-to-view detail items
+
+### Current Status
+
+- **Code Similarity Search**: ✅ IMPLEMENTED - Real LanceDB vector search on code_embedding
+- **Solution Similarity Search**: ✅ IMPLEMENTED - New method for solution_embedding
+- **TOCTOU Race Fix**: ✅ COMPLETE - Thread lock prevents concurrent duplicate inserts
+- **ID Hash Preservation**: ✅ COMPLETE - Updates use original id_hash for merge_insert match
+- **Gist Generation**: ✅ FIXED - Initialized normalizer, added new jobs path generation
+- **Preview/Similar Endpoints**: ✅ COMPLETE - Admin can explore code similarity
+
+### Testing Performed
+
+1. Concurrent save protection test added to `quick_smoke_test()`
+2. Both sequential and concurrent tests pass
+3. Preview endpoint returns code + gist
+4. Similar endpoint returns code and explanation matches
+
+---
+
+## 2025.12.01 - Parent Lupin Sync: Synonym Signal Loss ROOT CAUSE FOUND + FIXED
+
+### Summary
+Synced 9 files from parent Lupin Sessions 13-15 (2025.12.01). Major breakthrough: finally traced the source of question corruption ("What's 4 + 4?" → "whats 4 4") to deprecated `remove_non_alphanumerics()` method being called in `agent_base.py:129`. Fixed by storing questions verbatim, added screaming deprecation warnings, and enhanced debugging throughout.
+
+### Work Performed
+
+#### Synonym Signal Loss Root Cause - FIXED ✅
+**File**: `agents/agent_base.py` (+1/-1 lines)
+
+**Problem**: Questions like "What's 4 + 4?" were being corrupted to "whats 4 4" before storage, losing apostrophes and math operators.
+
+**Root Cause**: Line 129 was calling `ss.SolutionSnapshot.remove_non_alphanumerics( question )` which uses regex `[^a-zA-Z0-9 ]` to strip ALL punctuation.
+
+**Fix**: Changed to store question verbatim:
+```python
+# BEFORE (broken - strips math operators!)
+self.question = ss.SolutionSnapshot.remove_non_alphanumerics( question )
+
+# AFTER (correct - preserve verbatim)
+self.question = question  # Store verbatim - DO NOT normalize here!
+```
+
+#### Deprecation Warning Enhancement - COMPLETE ✅
+**File**: `memory/solution_snapshot.py` (+40/-24 lines)
+
+**Changes**: Made `remove_non_alphanumerics()` SCREAM its deprecation:
+- Massive ASCII box docstring explaining the destruction
+- Console output with 🔥 fire emojis and warning banners
+- Display of input text being corrupted
+- Stack trace (limit=5) to identify caller
+- 40 fire emojis at the end
+- Still executes for backward compatibility, but caller WILL notice
+
+#### STT-Friendly Contractions - COMPLETE ✅
+**File**: `memory/normalizer.py` (+27/-1 lines)
+
+**Addition**: Added 24 apostrophe-less contractions common in speech-to-text output:
+- "whats"→"what is", "thats"→"that is", "theres"→"there is"
+- "dont"→"do not", "wont"→"will not", "cant"→"cannot"
+- "youre"→"you are", "theyre"→"they are"
+- "youve"→"you have", "theyve"→"they have"
+- And 14 more variants
+
+**Omitted**: Ambiguous ones (im, id, its, hell, shell, well, were) that could be valid words.
+
+#### Admin Search Improvements - COMPLETE ✅
+**File**: `rest/routers/admin.py` (+25/-1 lines)
+
+**Changes**:
+1. **Threshold Query Param**: Now accepts `threshold` parameter (0-100, default 80) for flexible search
+2. **Descending Sort**: Added explicit `search_results.sort( key=lambda x: x.score, reverse=True )`
+3. **Synonym Debug Logging**: Shows ID, question, and all synonyms with scores for each result:
+   ```
+   [ADMIN-SEARCH] ID: abc12345, Score: 85.2%
+     Question: What's 2 + 2?
+     Synonyms (3):
+       - 'whats 2 plus 2' (92.1%)
+       - 'what is two plus two' (88.4%)
+   ```
+
+#### DUPE-GUARD: DB Fallback for Cache Desync - COMPLETE ✅
+**File**: `memory/lancedb_solution_manager.py` (+150/-8 lines)
+
+**Problem**: Cache could become stale during race conditions, causing duplicate inserts or failed deletes.
+
+**Solution**: Added DB fallback checks when cache misses:
+1. **save_snapshot()**: If cache miss, check DB directly before INSERT to prevent duplicates
+2. **delete_snapshot()**: If cache miss, check DB directly before failing
+3. NEW `_check_db_for_question()` method for direct DB lookups
+
+**Similarity Debug Logging**: Added verbose output for vector search debugging:
+- Query embedding validation (checks for all-zeros)
+- Raw search results count
+- Top 10 results with pass/fail indicators
+- Threshold filtering summary
+
+#### Minor Enhancements - COMPLETE ✅
+
+| File | Changes | Description |
+|------|---------|-------------|
+| `memory/embedding_manager.py` | +2/-3 | Debug output showing original vs normalized text |
+| `memory/canonical_synonyms_table.py` | +1 | Minor whitespace cleanup |
+| `rest/running_fifo_queue.py` | +8/-4 | JOB-TRACE logging for duplicate investigation |
+| `rest/todo_fifo_queue.py` | +2/-2 | Variable alignment cleanup |
+
+### Files Modified
+
+**COSA Repository** (9 files):
+
+| File | Lines Changed | Description |
+|------|---------------|-------------|
+| `agents/agent_base.py` | +1/-1 | Store question verbatim (ROOT CAUSE FIX) |
+| `memory/solution_snapshot.py` | +40/-24 | Screaming deprecation warning |
+| `memory/normalizer.py` | +27/-1 | 24 STT-friendly contractions |
+| `memory/lancedb_solution_manager.py` | +150/-8 | DUPE-GUARD + similarity debug |
+| `rest/routers/admin.py` | +25/-1 | Threshold param + sort + debug |
+| `memory/embedding_manager.py` | +2/-3 | Debug output enhancement |
+| `memory/canonical_synonyms_table.py` | +1 | Whitespace cleanup |
+| `rest/running_fifo_queue.py` | +8/-4 | JOB-TRACE logging |
+| `rest/todo_fifo_queue.py` | +2/-2 | Variable alignment |
+
+**Total Impact**: 9 files, +221 insertions/-66 deletions (net +155 lines)
+
+### Integration with Parent Lupin
+
+**Parent Session Context** (2025.12.01, Sessions 13-15):
+- Session 13: UI polish + synonym signal loss investigation + STT contractions
+- Session 14: ESC key handler for admin modal
+- Session 15: ROOT CAUSE FOUND + FIXED + deprecation nuke
+
+**Why Gist Was Correct**: The gist goes through `gist_normalizer.get_normalized_gist()` which properly expands contractions and preserves operators - that's why synonym gist showed "what is 4 + 4" while question showed corrupted "whats 4 4".
+
+### Current Status
+
+- **Root Cause**: ✅ FIXED - agent_base.py now stores verbatim
+- **Deprecation Warning**: ✅ IMPLEMENTED - Impossible to miss
+- **STT Contractions**: ✅ ADDED - 24 variants in Normalizer
+- **Admin Search**: ✅ ENHANCED - Threshold param + sort + debug
+- **DUPE-GUARD**: ✅ IMPLEMENTED - DB fallback prevents duplicates
+- **Similarity Debug**: ✅ ADDED - Comprehensive vector search logging
+
+### Testing Required
+
+1. Delete LanceDB database to clear corrupted data
+2. Restart server
+3. Test "What's 4 + 4?" via voice → should store verbatim
+4. Verify synonyms show correctly in admin detail view
+5. Confirm no duplicate snapshots created
+
+---
+
+## 2025.11.30 - Parent Lupin Sync: LanceDB Part 6 Complete + Config-Driven Design
+
+### Summary
+Synced 6 files from parent Lupin Session 12 (2025.11.30). Major theme: config-driven design improvements. Fixed ConfigurationManager import bug, implemented proper LanceDB vector similarity search, added adaptive retry logic for notifications, and rewrote multimodal text processing with tokenization approach.
+
+### Work Performed
+
+#### ConfigurationManager Import Fix - COMPLETE ✅
+**File**: `rest/routers/admin.py` (+9/-2 lines)
+
+**Problem**: ModuleNotFoundError when accessing admin endpoints - wrong import path.
+
+**Fix**: Changed import from `cosa.app` to `cosa.config`:
+```python
+from cosa.config.configuration_manager import ConfigurationManager
+```
+
+Added module-level config manager for threshold access with config-driven values:
+- `threshold = _config_mgr.get( "similarity_threshold_admin_search", default=80.0 )`
+- `debug = _config_mgr.get( "app_debug", default=False )`
+
+#### LanceDB Vector Search Implementation - COMPLETE ✅
+**File**: `memory/lancedb_solution_manager.py` (+87/-87 lines, net 0)
+
+**Problem**: Level 4 similarity search used placeholder text-based similarity (`_calculate_text_similarity()`) instead of actual vector search.
+
+**Fix**: Implemented proper LanceDB vector similarity search:
+- Added `QuestionEmbeddingsTable` import for embedding generation
+- Initialize `self._question_embeddings_tbl` and `self._nprobes` in constructor
+- Level 4 now generates query embedding via `_question_embeddings_tbl.get_embedding()`
+- Performs actual vector search: `self._table.search( query_embedding, vector_column_name="question_embedding" ).metric( "dot" ).nprobes( self._nprobes )`
+- Removed obsolete `_calculate_text_similarity()` method (22 lines deleted)
+
+**Threshold Changes**:
+- `threshold_question` default: 100.0 → 90.0 (sensible fallback)
+- `threshold_gist` default: 100.0 → 90.0
+
+#### Solution Manager Factory Config - COMPLETE ✅
+**File**: `memory/solution_manager_factory.py` (+2/-1 lines)
+
+**Changes**:
+- `storage_backend` default: `"local"` → `"development"` (config-driven naming)
+- Added `nprobes` to config dict: `config_mgr.get( "solution snapshots lancedb nprobes", default=20, return_type="int" )`
+
+#### Normalizer Verbose Output Cleanup - COMPLETE ✅
+**File**: `memory/normalizer.py` (+2/-2 lines)
+
+**Changes**: Replaced `du.print_banner()` with simple `print()` for verbose output:
+```python
+# BEFORE
+if self.verbose: du.print_banner( f"Normalizing: {text[:50]}..." )
+
+# AFTER
+if self.debug and self.verbose: print( f"Normalizing: {text[:50]}..." )
+```
+
+#### Notification Retry Logic - COMPLETE ✅
+**File**: `cli/notify_user_async.py` (+122/-69 lines, net +53)
+
+**New Feature**: Adaptive retry intervals for WebSocket auth timing (Phase 2.7).
+
+**Implementation**:
+- NEW `calculate_retry_intervals()` function (49 lines) with Design by Contract docstring
+- Short timeouts (≤10s): Aggressive linear retries `[1, 1, 2, 2, 3]` to catch WebSocket auth window
+- Long timeouts (>10s): Exponential backoff with 5s cap `[1, 2, 4, 5, 5, 5...]`
+- Retry loop wrapping HTTP requests with attempt tracking and debug output
+- Only retries on `user_not_available` status, fails fast on network/HTTP errors
+
+#### Multimodal Tokenization Approach - COMPLETE ✅
+**File**: `rest/multimodal_munger.py` (+103/-37 lines, net +66)
+
+**Problem**: Previous regex-based punctuation replacement failed at sentence boundaries.
+- `" five "` pattern couldn't match "five?" at end of sentence
+- `" five "` pattern couldn't match "Five" at start of sentence
+
+**Solution**: Tokenization approach with case preservation:
+```python
+"What's five plus five?" → ["What's", " ", "five", " ", "plus", " ", "five", "?"]
+                        → ["What's", " ", "5",    " ", "+",    " ", "5",    "?"]
+                        → "What's 5 + 5?"
+```
+
+**Implementation**:
+- NEW `_tokenize()` method (25 lines) with Design by Contract docstring
+- Rewritten `munge_text_punctuation()` using tokenization
+- Build case-insensitive lookup dictionaries from .map files
+- Replace tokens by checking lowercase, keep original case when no match
+- Preserved OLD APPROACHES in comments for rollback reference
+
+### Files Modified
+
+**COSA Repository** (6 files):
+
+| File | Lines Changed | Description |
+|------|---------------|-------------|
+| `cli/notify_user_async.py` | +122/-69 | Adaptive retry intervals for WebSocket auth |
+| `memory/lancedb_solution_manager.py` | +87/-87 | Proper vector search, threshold defaults |
+| `memory/normalizer.py` | +2/-2 | Verbose output cleanup (print_banner → print) |
+| `memory/solution_manager_factory.py` | +2/-1 | nprobes config, storage_backend default |
+| `rest/multimodal_munger.py` | +103/-37 | Tokenization approach for punctuation |
+| `rest/routers/admin.py` | +9/-2 | Import fix, config-driven threshold+debug |
+
+**Total Impact**: 6 files, +325 insertions/-146 deletions (net +179 lines)
+
+### Threshold Separation Summary
+
+| Context | Threshold | Rationale |
+|---------|-----------|-----------|
+| Queue (user queries) | 95% | Precision-focused for direct answers |
+| Admin search | 80% | Recall-focused for discovery/exploration |
+| Function defaults | 90% | Sensible fallback when not specified |
+
+### Current Status
+
+- **Import Fix**: ✅ COMPLETE - ConfigurationManager path corrected
+- **Vector Search**: ✅ IMPLEMENTED - Proper LanceDB similarity search
+- **Config-Driven**: ✅ IMPLEMENTED - Thresholds, debug, storage_backend from config
+- **Retry Logic**: ✅ COMPLETE - Adaptive intervals for WebSocket timing
+- **Tokenization**: ✅ COMPLETE - Reliable word-level replacement
+
+### LanceDB Upgrade Status
+
+All 6 parts complete:
+1. ✅ Backend infrastructure
+2. ✅ Match % UI display
+3. ✅ STT + Ctrl+R integration
+4. ✅ nprobes warning fix
+5. ✅ Admin threshold separation
+6. ✅ Import fix + config-driven design
+
+---
+
+## 2025.11.26 - Parent Lupin Sync: Snapshot ID Hash Collision Bug Fix + Diagnostic Cleanup COMPLETE
+
+### Summary
+Synced critical bug fix and diagnostic cleanup from parent Lupin session. Root cause of wrong math agent answers finally identified: Python's mutable default argument anti-pattern causing all snapshots to share identical timestamps and thus identical SHA256 `id_hash` values.
+
+### Work Performed
+
+#### Snapshot ID Hash Collision Bug Fix - COMPLETE ✅
+**File**: `memory/solution_snapshot.py` (+19/-11 lines)
+
+**The Bug**: All snapshots created without explicit `run_date` parameter shared the SAME frozen timestamp ("2025-11-26 @ 08:30:00 PST"), generating IDENTICAL SHA256 `id_hash` values. When "sqrt(122)" was saved, it found existing record with that hash (sqrt(100)), added "sqrt(122)" synonym to wrong snapshot, causing future queries to return "10" instead of ~11.045.
+
+**Root Cause**: Classic Python mutable default argument bug at line 161:
+```python
+# BEFORE (broken - evaluated ONCE at module load)
+def __init__( self, ..., run_date: str=get_timestamp(), ... ):
+
+# AFTER (correct - evaluated per call)
+def __init__( self, ..., run_date: str=None, ... ):
+    self.run_date = run_date if run_date else self.get_timestamp( microseconds=True )
+```
+
+**Fix Applied**:
+- Changed `created_date`, `updated_date`, `run_date` defaults from function calls to `None`
+- Added conditional assignment in function body (lines 257-259)
+- Added `microseconds=True` for `run_date` to ensure uniqueness even for rapid succession calls
+- Added explanatory comment documenting the bug for future developers
+
+#### Diagnostic Logging Cleanup - COMPLETE ✅
+Removed ~200 lines of verbose diagnostic logging added during investigation phase:
+
+| File | Lines Removed | What Was Removed |
+|------|---------------|------------------|
+| `rest/todo_fifo_queue.py` | -14 | Query entry block diagnostics |
+| `memory/lancedb_solution_manager.py` | -78 | Hierarchical search logging (Levels 1-4) |
+| `memory/canonical_synonyms_table.py` | -54 | Synonym audit logging + `_get_synonyms_for_snapshot()` helper |
+| `memory/solution_snapshot.py` | -33 | State mutation tracking |
+
+**Retained**: Core debug logging guarded by `if self.debug:` conditions (non-verbose).
+
+#### Previous Session Fixes (Still in Diff) - COMPLETE ✅
+- **LanceDB Query Fix**: Pandas filtering for exact match queries (3 methods in canonical_synonyms_table.py)
+- **Method Rename**: `add_snapshot()` → `save_snapshot()` for semantic clarity
+- **Cache Lookup Fix**: Use verbatim questions for cache lookup (matching delete_snapshot behavior)
+
+### Files Modified
+
+**COSA Repository** (8 files):
+
+| File | Lines Changed | Description |
+|------|---------------|-------------|
+| `memory/solution_snapshot.py` | +19/-11 | ID hash collision fix (None defaults + microseconds) |
+| `memory/canonical_synonyms_table.py` | +32/-30 | LanceDB query fix + diagnostic cleanup |
+| `memory/lancedb_solution_manager.py` | +32/-32 | Method rename + cache fix + diagnostic cleanup |
+| `memory/snapshot_manager_interface.py` | +9/-5 | Abstract method rename |
+| `memory/solution_snapshot_mgr.py` | +11/-5 | File-based manager rename + return type |
+| `rest/routers/admin.py` | +71/-71 | Dependency injection + cleanup |
+| `rest/running_fifo_queue.py` | +9/-8 | Call site renames + cache hit save |
+| `rest/todo_fifo_queue.py` | +1/-1 | Minor formatting |
+
+**Total Impact**: 8 files, +151 insertions/-185 deletions (net -34 lines)
+
+### Current Status
+
+- **ID Hash Collision**: ✅ FIXED - Each snapshot gets unique timestamp with microseconds
+- **LanceDB Query Fix**: ✅ COMPLETE - Exact matches use pandas filtering
+- **Method Rename**: ✅ COMPLETE - `save_snapshot()` across all files
+- **Diagnostic Cleanup**: ✅ COMPLETE - ~200 lines removed
+
+### Testing Required
+
+1. Delete LanceDB database to clear corrupted data
+2. Restart server
+3. Test "sqrt(100)" → should return 10
+4. Test "sqrt(122)" → should return ~11.045 (NOT 10!)
+5. Verify unique `id_hash` values in admin snapshots view
+
+---
+
+## 2025.11.25 - Parent Lupin Sync: LanceDB Query Fix + Method Rename + Dependency Injection COMPLETE
+
+### Summary
+Synced 6 files from parent Lupin Session 10 (2025.11.25) with critical bug fixes and architectural improvements. Tonight's work addressed three major issues: (1) LanceDB exact match queries returning wrong results, (2) method naming inconsistency (add_snapshot → save_snapshot), and (3) stale runtime stats in admin endpoints.
+
+### Work Performed
+
+#### LanceDB Query Pattern Bug Fix - COMPLETE ✅
+**File**: `memory/canonical_synonyms_table.py` (+28/-30 lines)
+
+**Problem**: Exact match lookups returned WRONG snapshots. Example: Asking "What's the square root of 144?" returned "What's 2+2?" answer (4 instead of 12).
+
+**Root Cause**: LanceDB's `table.search().where(filter)` without a vector query returns **arbitrary rows**, not filtered results - it's NOT a SQL-like filter!
+
+**Fix**: Changed all three `find_exact_*` methods to use pandas filtering instead:
+```python
+# BEFORE (broken - returns arbitrary rows)
+results = self._canonical_synonyms_table.search().where(
+    f"question_verbatim = '{escaped_question}'"
+).limit( 1 ).to_list()
+
+# AFTER (correct - actual exact match)
+df = self._canonical_synonyms_table.to_pandas()
+matches = df[df['question_verbatim'] == question]
+```
+
+**Methods Fixed**:
+- `find_exact_verbatim()` (lines 276-300)
+- `find_exact_normalized()` (lines 325-349)
+- `find_exact_gist()` (lines 374-398)
+
+#### Method Rename: add_snapshot → save_snapshot - COMPLETE ✅
+**Rationale**: The method performs an upsert (INSERT or UPDATE), not just "add". Renamed for semantic clarity.
+
+**Files Modified**:
+1. `memory/lancedb_solution_manager.py` (+24/-24 lines) - Definition + docstring
+2. `memory/snapshot_manager_interface.py` (+9/-5 lines) - Abstract method
+3. `memory/solution_snapshot_mgr.py` (+11/-5 lines) - File-based implementation (now returns bool)
+4. `rest/running_fifo_queue.py` (+8/-9 lines) - 3 call sites
+
+**Additional Fix in running_fifo_queue.py**:
+Added `self.snapshot_mgr.save_snapshot( cached_snapshot )` in `_format_cached_result()` - this was the ROOT CAUSE of runtime stats not persisting on cache hits (blocked Sessions 8-9).
+
+#### FastAPI Dependency Injection (Stale Stats Fix) - COMPLETE ✅
+**File**: `rest/routers/admin.py` (+28/-70 lines)
+
+**Problem**: Admin endpoints showed stale runtime stats (run_count always 0) despite multiple executions.
+
+**Root Cause**: Each admin request created a new `LanceDBSolutionManager` instance instead of using the global singleton that math agent was writing to.
+
+**Fix**: Implemented FastAPI dependency injection pattern:
+```python
+def get_snapshot_manager():
+    """Dependency to get snapshot manager from main module."""
+    import fastapi_app.main as main_module
+    return main_module.snapshot_mgr
+```
+
+**Endpoints Updated**:
+- `GET /admin/snapshots/search` - now uses `Depends(get_snapshot_manager)`
+- `GET /admin/snapshots/{id_hash}` - now uses `Depends(get_snapshot_manager)`
+- `DELETE /admin/snapshots/{id_hash}` - now uses `Depends(get_snapshot_manager)`
+
+**Model Enhancement**:
+Added to `SnapshotDetailResponse`:
+- `synonymous_questions: Dict[str, float] = {}` - question → similarity score
+- `synonymous_question_gists: Dict[str, float] = {}` - gist → similarity score
+
+### Files Modified
+
+**COSA Repository** (6 files):
+
+| File | Lines Changed | Description |
+|------|---------------|-------------|
+| `memory/canonical_synonyms_table.py` | +28/-30 | LanceDB query fix (pandas filtering) |
+| `memory/lancedb_solution_manager.py` | +24/-24 | Method rename + docstring |
+| `memory/snapshot_manager_interface.py` | +9/-5 | Abstract method rename |
+| `memory/solution_snapshot_mgr.py` | +11/-5 | File-based rename + return type |
+| `rest/routers/admin.py` | +28/-70 | Dependency injection + synonyms fields |
+| `rest/running_fifo_queue.py` | +8/-9 | 3 call sites + cache hit save |
+
+**Total Impact**: 6 files, +108 insertions/-143 deletions (net -35 lines)
+
+### Integration with Parent Lupin
+
+**Parent Session Context** (2025.11.25, Session 10 Part 3):
+- Three major features: Collapsible Synonyms UI, TTFA Timing Metrics, Stale Stats Fix
+- Earlier Session 10: LanceDB query pattern bug fix, method rename, cache lookup consistency
+
+**COSA Benefit**:
+- Exact match queries now return correct results
+- Semantic clarity with save_snapshot naming
+- Admin endpoints show live runtime stats
+- Cache hits properly persist runtime stats
+
+### Current Status
+
+- **LanceDB Query Fix**: ✅ FIXED - Exact matches work correctly
+- **Method Rename**: ✅ COMPLETE - 4 files, 22 call sites updated
+- **Dependency Injection**: ✅ IMPLEMENTED - Admin reads global singleton
+- **Synonyms Fields**: ✅ ADDED - Admin detail endpoint includes synonyms
+
+### Next Session Priorities
+
+1. Validate LanceDB query fix with production data
+2. Monitor admin endpoint runtime stats display
+3. Consider adding cache consistency verification to admin endpoints
+
+---
+
+## 2025.11.24 - Parent Lupin Sync: Math Agent Debugging + Admin Snapshots API + LanceDB Optimizations COMPLETE
+
+### Summary
+Synced 10 files from parent Lupin repository with improvements from 4 math agent debugging sessions (Sessions 5-9, Nov 22-24). Work focused on resolving cache hit formatting inconsistencies, adding gist caching infrastructure, fixing LanceDB persistence issues, and enhancing admin API debugging capabilities. Major architectural improvement: SolutionSnapshot now preserves agent class name to replay with identical formatting logic.
+
+### Work Performed
+
+#### Math Agent Static Formatting Method - COMPLETE ✅
+**File**: `agents/math_agent.py` (+51/-29 lines, net +22 lines)
+
+**Changes**:
+- NEW `apply_formatting()` static method (40 lines) encapsulating terse/verbose formatting decision
+- Both MathAgent.run_formatter() and SolutionSnapshot.run_formatter() use same logic
+- Debug/verbose conditionals updated throughout (4 locations)
+
+**Problem Solved**: Cache hits were using LLM formatter even when original execution used terse mode, causing "2+2=4" to become verbose explanations.
+
+#### Gist Cache Table - NEW FILE ✅
+**File**: `memory/gist_cache_table.py` (536 lines, NEW)
+
+**Purpose**: LanceDB-backed persistent cache for LLM-generated gists (~500ms savings per hit).
+
+**Key Features**:
+- Two-tier lookup: verbatim → normalized (catches "What's" vs "What is" variations)
+- FTS indexes on both question_verbatim and question_normalized
+- Expected 70-80% hit rate, ~5ms lookup vs ~525ms LLM call
+- Statistics tracking (access_count, last_accessed)
+
+#### LanceDB Solution Manager Optimizations - COMPLETE ✅
+**File**: `memory/lancedb_solution_manager.py` (+119/-36 lines, net +83 lines)
+
+**Changes**:
+1. **Scalar Index on id_hash**: Added `create_scalar_index("id_hash", replace=True)` for merge_insert reliability
+2. **Pre-Merge Cache Invalidation**: Clear cache BEFORE merge_insert to prevent stale reads
+3. **Fresh DB Read After Merge**: Repopulate cache from DB, not in-memory record
+4. **Comprehensive Debug Logging**: `[STATS DEBUG]`, `[CACHE DEBUG]`, `[CONSISTENCY]` prefixes
+5. **DELETE Bug Fix**: Removed `.lower()` normalization causing cache key mismatch
+6. **NEW `agent_class_name` Field**: Added to schema for formatting logic preservation
+
+#### Solution Snapshot Agent Tracking - COMPLETE ✅
+**File**: `memory/solution_snapshot.py` (+60/-19 lines, net +41 lines)
+
+**Changes**:
+- NEW `agent_class_name` field (Optional[str]) stores originating agent class
+- `from_agent()` captures `type(agent).__name__` (e.g., "MathAgent", "CalendarAgent")
+- `run_formatter()` checks agent_class_name and delegates to agent-specific formatting
+- Enables correct terse/verbose behavior during cache hit replay
+
+### Files Created/Modified
+
+**COSA Repository** (11 files: 10 modified, 1 created):
+
+| File | Lines Changed | Description |
+|------|---------------|-------------|
+| `agents/agent_base.py` | +3/-3 | Debug/verbose conditional fix |
+| `agents/iterative_debugging_agent.py` | +1/-1 | Debug/verbose conditional fix |
+| `agents/math_agent.py` | +51/-29 | Static formatting method |
+| `memory/gister.py` | +56/-6 | Cache integration |
+| `memory/gist_cache_table.py` | +536 NEW | Persistent gist cache |
+| `memory/input_and_output_table.py` | +2/-6 | Minor cleanup |
+| `memory/lancedb_solution_manager.py` | +119/-36 | Indexes, cache fix, debugging |
+| `memory/solution_snapshot.py` | +60/-19 | Agent class tracking |
+| `rest/routers/admin.py` | +20/-2 | API fields, debugging |
+| `rest/routers/speech.py` | +35/-35 | Debug/verbose cleanup |
+| `rest/running_fifo_queue.py` | +7/-18 | Code cleanup |
+
+**Total Impact**: 11 files, +423 insertions/-127 deletions (net +296 lines)
+
+### Current Status
+
+- **Math Agent Formatting**: ✅ FIXED - Cache hits use same terse/verbose logic as original execution
+- **Gist Caching**: ✅ IMPLEMENTED - ~500ms savings per cache hit
+- **LanceDB Indexes**: ✅ ADDED - Scalar index on id_hash for merge_insert
+- **DELETE Bug**: ✅ FIXED - Removed normalization causing cache key mismatch
+- **Agent Tracking**: ✅ IMPLEMENTED - agent_class_name preserved in snapshots
+- **Debug Output**: ✅ CLEANED - 15+ locations updated to debug && verbose pattern
+
+---
+
+## 2025.11.20 - Parent Lupin Sync: Test Infrastructure & Code Quality Improvements COMPLETE
+
+### Summary
+Synced 7 COSA files with improvements from parent Lupin repository's 100% Test Adherence achievement (2025.11.20). Updates focus on test infrastructure reliability, mathematical query support, error diagnostics, and defensive programming for Docker environments.
+
+### Files Modified
+7 files modified, +95 insertions/-29 deletions (net +66 lines)
+
+---
+
+## 2025.11.19 - PostgreSQL Repository Migration (Phase 2.6.3) COMPLETE
+
+### Summary
+Migrated COSA service layer files from direct SQLite database access to PostgreSQL repository pattern. Updated 8 files to use repository abstraction layer. Modernized all datetime operations from deprecated `datetime.utcnow()` to timezone-aware `datetime.now(timezone.utc)`.
+
+### Files Modified
+8 files modified, +186 insertions/-291 deletions (net -105 lines)
+
+---
+
+## 2025.11.18 - LanceDB GCS Multi-Backend Testing & Normalization Fix COMPLETE
+
+### Summary
+Completed comprehensive test-driven validation of LanceDB multi-backend storage infrastructure. Discovered and fixed critical normalization bug that caused 50% integration test failure.
+
+### Test Results
+- **Unit Tests**: ✅ 11/11 PASS (100%)
+- **Local Backend Integration**: ✅ 3/3 PASS (100%)
+- **GCS Integration**: ✅ 8/8 PASS (100%)
+- **Total**: 22/22 tests passing (100%)
+
+---
+
+## 2025.11.18 - Unit Test Naming Standardization COMPLETE
+
+### Summary
+Standardized all 43 COSA unit test files from `unit_test_*.py` to `test_*.py` naming convention to align with pytest standards.
+
+**Total Impact**: 44 files (43 renamed, 1 documentation update)
+
+---
+
+## 2025.11.13 - LanceDB Multi-Backend Storage Infrastructure COMPLETE
+
+### Summary
+Implemented multi-backend storage factory pattern for LanceDB solution snapshot manager to enable Cloud Run deployment with Google Cloud Storage.
+
+### Files Modified
+2 files modified, +120 insertions, -46 deletions
+
+---
+
+## 2025.11.11 - Phase 2.5.4 Config Migration COMPLETE
+
+### Summary
+Completed configuration migration for notification system. Renamed config location and keys with backward compatibility.
+
+### Files Modified
+4 files, +116/-18 lines
+
+---
+
+## 2025.11.10 - Phase 2.5.4 API Key Authentication Infrastructure COMPLETE
+
+### Summary
+Implemented header-based API key authentication for notification system.
 
 ### Files Created
-
-**New Package** (`cosa/repo/branch_analyzer/`):
-1. `__init__.py` (80 lines) - Package exports and comprehensive docs
-2. `exceptions.py` (230 lines) - Custom exception hierarchy with Design by Contract
-3. `default_config.yaml` (170 lines) - Comprehensive YAML configuration
-4. `config_loader.py` (280 lines) - YAML loading with validation
-5. `file_classifier.py` (180 lines) - Configurable file type detection
-6. `line_classifier.py` (280 lines) - Python/JS/TS code vs comment detection
-7. `git_diff_parser.py` (270 lines) - Git operations with branch name resolution
-8. `statistics_collector.py` (160 lines) - Data aggregation
-9. `report_formatter.py` (360 lines) - Console/JSON/Markdown formatters
-10. `analyzer.py` (370 lines) - Main orchestrator + smoke tests
-
-**CLI and Documentation**:
-11. `run_branch_analyzer.py` (160 lines) - CLI entry point with argparse
-12. `README-branch-analyzer.md` (430 lines) - Comprehensive documentation
-
-**Total**: 12 new files, ~2,970 lines of professional, fully-documented code
+3 new files, 609 lines
 
 ### Files Modified
-- **Original Preserved**: `branch_change_analysis.py` - Untouched (261 lines, preserved as reference)
-
-### Current Status
-
-**Branch Analyzer Package**: ✅ PRODUCTION READY
-- All COSA standards met and exceeded
-- 9/9 smoke tests passing
-- Integration tested with real git diffs
-- Comprehensive documentation
-- Multiple output formats working
-- HEAD resolution functioning
-- Repository path support implemented
-- No dependencies on LUPIN_ROOT or ConfigurationManager
-
-**Code Quality Improvements**:
-- ✅ Design by Contract docstrings (ALL functions)
-- ✅ Comprehensive error handling (custom exceptions, try/catch everywhere)
-- ✅ Debug/verbose parameters (throughout all classes)
-- ✅ COSA formatting compliance (spaces, alignment, one-line conditionals)
-- ✅ Professional documentation (module, class, function level)
-- ✅ Smoke testing (quick_smoke_test() with ✓/✗ indicators)
-
-**Bonus Features Delivered**:
-- ✅ YAML configuration (no ConfigurationManager dependency)
-- ✅ Multiple output formats (console/JSON/markdown)
-- ✅ HEAD resolution (symbolic refs → actual branch names)
-- ✅ Clear comparison context (repository, branches, direction)
-- ✅ Repository path argument (analyze any repo from anywhere)
-- ✅ Python -m execution support
-
-### Next Session Priorities
-1. **Consider unit tests**: Add pytest tests for individual components (optional, smoke tests sufficient)
-2. **Performance optimization**: Add caching for large diffs if needed
-3. **Language support**: Add TypeScript, Rust, Go classifiers if requested
-4. **Output enhancements**: Add HTML format or custom templates if requested
+5 files, +112/-39 lines
 
 ---
 
-## 2025.10.04 - COSA Infrastructure Improvements Across 5 Lupin Sessions
+## 2025.11.08 - Notification System Phase 2.3 CLI Modernization COMPLETE
 
 ### Summary
-Comprehensive day of COSA infrastructure improvements spanning 5 Lupin sessions: WebSocket JWT authentication fix, admin user management backend implementation, test database dual safety mechanism, test configuration simplification, and canonical path management enforcement. All changes support parent Lupin project's authentication and testing infrastructure maturation.
-
-### Work Performed
-
-#### Session 1: WebSocket JWT Authentication Fix - COMPLETE ✅
-- **Problem**: WebSocket endpoint hardcoded `verify_firebase_token()`, bypassing config-based auth routing
-- **Solution**: Changed to `verify_token()` which respects `auth mode` configuration (JWT/mock/Firebase)
-- **Impact**: Integration tests 7/8 → 8/8 (100%), production-ready WebSocket JWT auth
-- **File Modified**: `rest/routers/websocket.py` (+3/-3 lines)
-
-#### Session 2: Admin User Management Backend - COMPLETE ✅
-- **New Components**: Admin service module and REST router for user management
-- **Features**: User listing, role management, activation/deactivation, password reset
-- **Authorization**: Self-protection, audit logging, require_admin middleware
-- **Files Created**:
-  - `rest/admin_service.py` (380 lines) - 5 core admin functions
-  - `rest/routers/admin.py` (287 lines) - 5 protected endpoints
-
-#### Session 3-4: Test Database Dual Safety - COMPLETE ✅
-- **Implementation**: Dual safety validation for test vs production database
-- **Safety Check 1**: Configuration flag `app_testing=true` from Testing block
-- **Safety Check 2A**: If test mode, path MUST contain "test"
-- **Safety Check 2B**: If path contains "test", app_testing MUST be true
-- **Benefits**: Prevents accidental production database access during tests
-- **File Modified**: `rest/auth_database.py` (+50 lines) - Added dual safety checks
-
-#### Session 4: Test Configuration Simplification - COMPLETE ✅
-- **Breakthrough**: Removed overcomplicated runtime config block switching
-- **Solution**: Both server AND pytest use `LUPIN_CONFIG_MGR_CLI_ARGS` to start with Testing block
-- **Cleanup**: Removed unnecessary `/api/switch-config-block` and `/api/init-test-db` endpoints
-- **Result**: 43/43 integration tests passing with simpler architecture
-- **File Modified**: `rest/routers/system.py` (-2 endpoints)
-
-#### Session 5: Canonical Path Management - COMPLETE ✅
-- **Goal**: Eradicate fragile `.parent.parent` chains and `sys.path.append()` patterns
-- **Pattern**: Use `du.get_project_root()` from LUPIN_ROOT environment variable
-- **COSA Changes**: Updated utility functions to support canonical pattern
-- **File Modified**: `utils/util.py` (+310/-244 lines) - Path management refactoring
-- **Additional**: `rest/routers/speech.py` (+8/-8 lines) - Path fixes
-
-### Files Created (2 files, 667 lines)
-- `rest/admin_service.py` (380 lines) - Admin user management service
-- `rest/routers/admin.py` (287 lines) - Admin REST endpoints
-
-### Files Modified (4 files, +368/-252 lines)
-- `rest/auth_database.py` (+50 lines) - Dual safety validation
-- `rest/routers/speech.py` (+8/-8 lines) - Path management fixes
-- `rest/routers/system.py` (-2 endpoints) - Removed unnecessary test endpoints
-- `utils/util.py` (+310/-244 lines) - Canonical path pattern support
-
-### Integration with Parent Lupin Project
-
-These COSA changes directly support Lupin's major achievements today:
-
-1. **JWT/OAuth Phase 10 Complete** (Session 1):
-   - COSA WebSocket fix enabled 100% integration test success
-   - Production-ready authentication system with comprehensive docs
-
-2. **Admin User Management MVP** (Session 2):
-   - COSA backend provides foundation for Lupin admin UI
-   - 23/23 tests passing in parent project
-
-3. **Test Infrastructure Maturation** (Sessions 3-4):
-   - COSA dual safety prevents production database accidents
-   - Simplified test configuration improves developer experience
-   - 43/43 integration tests passing in parent
-
-4. **Code Quality Standards** (Session 5):
-   - COSA path management updated to support canonical pattern
-   - 75% reduction in fragile path code across both repos
-   - Bootstrap pattern established for entry points
-
-### Current Status
-
-- **WebSocket Auth**: ✅ COMPLETE - Configuration-based routing (JWT/mock/Firebase)
-- **Admin Backend**: ✅ COMPLETE - Full CRUD operations with authorization
-- **Test Safety**: ✅ COMPLETE - Dual validation prevents database accidents
-- **Test Config**: ✅ COMPLETE - Simplified to environment variable control
-- **Path Management**: ✅ COMPLETE - Canonical pattern enforced
-- **Integration Tests**: ✅ 100% PASSING - All authentication flows validated
-
-**System Health**:
-- COSA authentication: 100% integration test coverage ✓
-- Admin capabilities: Full user management backend ✓
-- Test isolation: Production database protected ✓
-- Code quality: Canonical patterns enforced ✓
-
-### Next Session Priorities
-
-1. **Admin UI Integration**:
-   - Connect Lupin admin UI to COSA backend endpoints
-   - Implement client-side authorization checks
-   - Add audit log viewing capabilities
-
-2. **Production Deployment**:
-   - Verify WebSocket JWT auth in production
-   - Test admin functions with real user data
-   - Monitor dual safety validation in production
-
-3. **Performance Optimization**:
-   - Profile admin endpoint response times
-   - Optimize database queries for user listings
-   - Consider caching for role checks
-
-**Related Documentation**:
-- Lupin history: 5 sessions documented (JWT/OAuth, admin, testing, path cleanup)
-- Lupin JWT/OAuth docs: `docs/auth/` (7 comprehensive guides)
-- Path management: Global CLAUDE.md bootstrap pattern documentation
+Maintenance session to commit and push Phase 2.3 notification CLI work (1,376 lines).
 
 ---
 
-## 2025.10.03 - User-Filtered Queue Views Phase 1 Backend Infrastructure
-
-### Summary
-Implemented role-based user-filtered queue views enabling multi-tenant isolation for Fresh Queue UI. Added filtering methods to FifoQueue base class, created authorization module using centralized auth_middleware, and enhanced /api/get-queue endpoint with optional user_filter parameter. Phase 1 achieves 100% backend functionality with comprehensive test coverage.
-
-### Work Performed
-
-#### Queue Filtering Infrastructure - COMPLETE ✅
-- **fifo_queue.py**: Added `get_jobs_for_user(user_id)` and `get_all_jobs()` methods for user-specific job retrieval
-- **queue_auth.py**: NEW authorization module implementing `authorize_queue_filter()` using centralized `is_admin()` from auth_middleware
-- **routers/queues.py**: Enhanced `/api/get-queue/{queue_name}` with optional `user_filter` query parameter (None=self, "*"=all, or specific user_id)
-
-#### Authorization & Security - COMPLETE ✅
-- **Regular Users**: Can ONLY query their own jobs (403 Forbidden for wildcard or other users)
-- **Admin Users**: Can query own, specific user's, or all users' jobs via user_filter parameter
-- **Centralized Logic**: Uses `is_admin()` from `auth_middleware.py` (single source of truth)
-- **Backward Compatible**: Parameter optional, existing clients work unchanged
-
-#### Testing Coverage - COMPLETE ✅
-- **Unit Tests**: 32 tests created, 32 passing (100%)
-  - `test_queue_authorization.py` - 17 tests for authorization logic
-  - `test_fifo_queue_filtering.py` - 15 tests for filtering methods
-- **Integration Tests**: Full API workflow tests created (requires server)
-- **Smoke Tests**: End-to-end multi-user scenarios created
-
-### Technical Details
-
-**Files Modified in COSA**:
-- `src/cosa/rest/fifo_queue.py` (+60 lines) - Added filtering methods with Design by Contract docstrings
-- `src/cosa/rest/queue_auth.py` (+95 lines NEW) - Authorization helper using auth_middleware
-- `src/cosa/rest/routers/queues.py` (+70/-48 lines) - Enhanced endpoint with user filtering
-
-**Test Files Created in Parent Lupin** (separate commit):
-- `src/tests/unit/test_queue_authorization.py` (177 lines) - Authorization unit tests
-- `src/tests/unit/test_fifo_queue_filtering.py` (232 lines) - Queue filtering unit tests
-- `src/tests/integration/test_queue_filtering_integration.py` (318 lines) - API integration tests
-- `src/tests/lupin_smoke/test_queue_filtering_smoke.py` (245 lines) - Smoke tests
-
-**Work Plan Documentation** (in Lupin):
-- `src/rnd/2025.10.03-user-filtered-queue-views-implementation-plan.md` - Comprehensive 3-phase plan
-
-### Architecture Decisions
-
-**3-Layer Separation of Concerns**:
-1. **FifoQueue (Data Access)** - Pure filtering methods, no authorization
-2. **queue_auth (Authorization)** - Role-based access control using auth_middleware
-3. **API Endpoint (Orchestration)** - Combines layers with backward-compatible defaults
-
-**Key Design Principles**:
-- **Centralized Auth**: Uses existing `is_admin()` from auth_middleware (DRY principle)
-- **Backward Compatible**: Optional parameter preserves existing client behavior
-- **Security First**: Authorization precedes data access (fail-fast)
-- **Testability**: Each layer independently testable with 100% coverage
-
-### Current Status
-
-- **Phase 1 Backend**: ✅ COMPLETE - All infrastructure and tests implemented
-- **Phase 2 Admin UI**: 📋 PLANNED - JavaScript toggle for admin "View All" (future PR)
-- **Phase 3 Default Migration**: 📋 OPTIONAL - Most secure defaults (future PR)
-
-**Integration Test Results**:
-- Unit Tests: 32/32 passing (100%) ✓
-- Authorization: All scenarios validated ✓
-- Queue Filtering: All edge cases covered ✓
-
-### Next Session Priorities
-
-1. **Phase 2 Implementation** (Separate PR):
-   - Add admin toggle to `queue-fresh.js` for "View All" vs "View My Jobs"
-   - Update UI to show filtering status
-   - No backend changes needed (API already supports it)
-
-2. **Integration Test Validation**:
-   - Run full integration test suite with server running
-   - Validate multi-user scenarios in live environment
-   - Confirm WebSocket events work with filtering
-
-3. **Production Deployment**:
-   - Phase 1 is production-ready (backward compatible)
-   - Consider gradual rollout strategy
-   - Monitor for any edge cases in production
-
-**Related Documentation**:
-- Full implementation plan: `src/rnd/2025.10.03-user-filtered-queue-views-implementation-plan.md` (Lupin repo)
-- Authorization matrix and test strategy documented in work plan
-
----
-
-## 2025.10.01 - Selective .claude/ Directory Tracking SESSION
-
-### Summary
-Updated COSA repository's .gitignore configuration to enable selective tracking of .claude/ directory contents. This change shifts from blanket exclusion to strategic tracking, allowing team collaboration on custom slash commands while protecting personal settings and cache files. Aligns with 2024-2025 Claude Code best practices from Anthropic.
-
-### Work Performed
-
-#### .gitignore Configuration Update - COMPLETE ✅
-- **Before**: Blanket `.claude/settings.local.json` exclusion only
-- **After**: Selective tracking with three explicit exclusions (settings.local.json, cache/, *.log)
-- **Impact**: Enables version control of .claude/commands/*.md files for team workflow sharing
-- **Philosophy**: "Workflows as code" - slash commands are team assets like CI/CD scripts
-
-#### Team Collaboration Enablement - COMPLETE ✅
-- **Custom Slash Commands**: 3 COSA commands now trackable (cosa-session-end.md, smoke-test-baseline.md, smoke-test-remediation.md)
-- **Knowledge Sharing**: New contributors automatically discover project-specific workflows
-- **Reduced Silos**: Solutions to coding problems shared, not isolated per developer
-- **Onboarding**: Faster team member integration with documented workflows
-
-#### Privacy Protection - COMPLETE ✅
-- **Personal Settings**: `.claude/settings.local.json` remains excluded (contains user-specific overrides)
-- **Cache Files**: `.claude/cache/` remains excluded (runtime artifacts)
-- **Log Files**: `.claude/*.log` remains excluded (debugging output)
-- **Zero Privacy Compromise**: Individual workflow preferences fully protected
-
-### Technical Details
-
-**Files Modified**:
-- **Modified**: `.gitignore` (+3/-1 lines) - Updated Claude Code exclusion pattern
-
-**Git Changes** (commit `ef3bf57`):
-```
-# Claude Code - track team configs, ignore personal overrides
-.claude/settings.local.json
-.claude/cache/
-.claude/*.log
-```
-
-**Already Tracked Commands** (verified via `git ls-files`):
-- `.claude/commands/cosa-session-end.md` (10,246 bytes)
-- `.claude/commands/smoke-test-baseline.md` (8,449 bytes)
-- `.claude/commands/smoke-test-remediation.md` (16,967 bytes)
-
-### Benefits Achieved
-
-#### ✅ Team Collaboration
-- Custom workflows discoverable by all team members
-- Standardized development practices version-controlled
-- Shared solutions to common coding challenges
-- Reduced knowledge silos and duplication
-
-#### ✅ Best Practices Alignment
-- Follows Anthropic's 2024-2025 Claude Code recommendations
-- Implements "workflows as code" philosophy
-- Treats slash commands like other team assets (CI/CD, build scripts)
-- Industry-standard approach for Claude Code team usage
-
-#### ✅ Developer Experience
-- New contributors see available slash commands immediately
-- No manual workflow documentation needed - commands are self-documenting
-- Consistent development experience across team
-- Lower onboarding friction
-
-### Current Status
-- **COSA .gitignore**: ✅ UPDATED - Selective .claude/ tracking enabled
-- **Slash Commands**: ✅ TRACKED - 3 custom commands version-controlled
-- **Privacy**: ✅ PROTECTED - Personal settings and cache excluded
-- **Git State**: ✅ COMMITTED - Changes committed locally (ef3bf57), push pending
-
-### Next Session Priorities
-- Consider applying same pattern to parent Lupin repository
-- Document slash command usage for team members
-- Monitor for additional team workflows to version-control
-- Continue regular COSA development tasks
-
----
-
-## 2025.09.29 - Global Notification System Refactor COMPLETE SESSION
-
-### Summary
-Successfully refactored the notification system from N per-project scripts to a single global `notify-claude` command. Eliminated maintenance burden of duplicating notify.sh across multiple repositories. Updated all COSA documentation and slash commands to use the new global command. Implemented backward compatibility with deprecation warnings.
-
-### Work Performed
-
-#### Global Notification Infrastructure - COMPLETE ✅
-- **Global Script Created**: `/home/rruiz/.local/bin/notify-claude` with auto-detection of COSA_CLI_PATH
-- **Auto-Detection Logic**: Searches common installation paths if COSA_CLI_PATH not set
-- **Comprehensive Testing**: Tested from multiple directories (COSA, Lupin root, /tmp), all notification types and priorities
-- **Environment Validation**: Confirmed `--validate-env` flag working correctly
-- **Backward Compatibility**: Old per-project scripts redirect to global command with deprecation warnings
-
-#### COSA Documentation Updates - COMPLETE ✅
-- **Slash Commands Updated**: Modified `.claude/commands/cosa-session-end.md`, `smoke-test-baseline.md`, `smoke-test-remediation.md`
-- **Notification References**: Replaced all hardcoded `/mnt/DATA01/.../notify.sh` paths with `notify-claude`
-- **Simplified Examples**: Removed conditional file existence checks, simplified to direct `notify-claude` calls
-- **Total Updates**: 7 notification calls updated across 3 COSA slash command files
-
-#### Deprecation Strategy - COMPLETE ✅
-- **Deprecation Warnings**: Added to both `/src/scripts/notify.sh` and `/src/lupin-mobile/src/scripts/notify.sh`
-- **Backward Compatibility**: Old scripts redirect to `notify-claude` with clear migration messaging
-- **Clear Migration Path**: Deprecation warnings guide users to global command
-- **Testing Validated**: Deprecated script shows warning and still functions correctly
-
-### Technical Achievements
-
-**Global Script Features**:
-```bash
-# Auto-detects COSA installation
-# Works from any directory
-# Validates environment setup
-# Maintains all existing functionality
-# No per-project setup required
-```
-
-**Files Modified**:
-- **Created**: `/home/rruiz/.local/bin/notify-claude` (57 lines) - Global notification command
-- **Modified**: `src/scripts/notify.sh` (18 lines) - Deprecation redirect
-- **Modified**: `src/lupin-mobile/src/scripts/notify.sh` (18 lines) - Deprecation redirect
-- **Modified**: `.claude/commands/cosa-session-end.md` - Updated notification examples
-- **Modified**: `.claude/commands/smoke-test-baseline.md` - Updated 2 notification calls
-- **Modified**: `.claude/commands/smoke-test-remediation.md` - Updated 2 notification calls
-
-**Testing Results**:
-- ✅ Global command works from any directory
-- ✅ All notification types tested (task, progress, alert, custom)
-- ✅ All priority levels tested (low, medium, high, urgent)
-- ✅ Environment validation working
-- ✅ Deprecated scripts show warnings and redirect correctly
-
-### Project Impact
-
-#### Maintenance Improvements
-- **Before**: N separate notify.sh scripts across multiple projects requiring synchronization
-- **After**: Single global command maintained in one location
-- **Benefit**: Eliminates synchronization burden and maintenance complexity
-
-#### Developer Experience
-- **Simplified**: `notify-claude "message" --type=TYPE --priority=PRIORITY`
-- **No Setup**: Works from any directory without project-specific configuration
-- **Auto-Detection**: Finds COSA installation automatically
-- **Clear Migration**: Deprecation warnings guide to new approach
-
-#### Backward Compatibility
-- **Old Scripts Continue Working**: Redirect to global command
-- **Deprecation Warnings**: Clear messaging about migration path
-- **Gradual Transition**: Projects can migrate on their own schedule
-- **Zero Breaking Changes**: All existing functionality preserved
-
-### Current Status
-- **Global Notification System**: ✅ OPERATIONAL - Single global command working perfectly
-- **COSA Documentation**: ✅ UPDATED - All slash commands use new global command
-- **Backward Compatibility**: ✅ MAINTAINED - Old scripts redirect with warnings
-- **Testing**: ✅ COMPLETE - All scenarios validated and working
-
-### Next Session Priorities
-- Remove deprecated per-project scripts after migration period
-- Consider additional notification features (retry logic, offline queuing)
-- Continue with other COSA development tasks
-
----
-
-## 2025.09.28 - Session-End Slash Command Execution SESSION
-
-### Summary
-Successfully executed COSA session-end ritual via `/cosa-session-end` slash command, demonstrating the automated session management workflow. Brief session focused on testing the comprehensive session-end automation prompt created on 2025.09.27.
-
-### Work Performed
-
-#### Session-End Automation Testing - 100% SUCCESS ✅
-- **Slash Command Execution**: Successfully executed `/cosa-session-end` slash command
-- **Workflow Validation**: Confirmed comprehensive 6-step ritual process working correctly
-- **Notification Integration**: Tested notification system with proper [COSA] prefix and priority settings
-- **History Management**: Validated both COSA and conditional parent Lupin history update logic
-
-#### Technical Achievements
-1. **Session Management Automation**: Confirmed slash command successfully orchestrates complete end-of-session workflow
-2. **Dual Repository Support**: Validated conditional update logic for parent Lupin repository
-3. **Notification System**: Confirmed real-time notifications working throughout session wrap-up
-4. **Process Documentation**: Verified all steps execute in proper sequence with appropriate user feedback
-
-### Project Impact
-
-#### Session Management Validation
-- **Automation Confirmed**: `/cosa-session-end` slash command working as designed
-- **Workflow Efficiency**: Complete session documentation and git management automated
-- **Quality Assurance**: All mandatory steps execute with proper verification and user notifications
-- **Development Workflow**: Session-end ritual now fully automated for regular use
-
-### Current Status
-- **Session-End Automation**: ✅ OPERATIONAL - Slash command successfully executed and validated
-- **Documentation Workflow**: ✅ FUNCTIONAL - Automated history updates and git management working
-- **Notification System**: ✅ ACTIVE - Real-time user notifications throughout session process
-- **Quality Control**: ✅ MAINTAINED - All session-end requirements properly handled
-
-### Next Session Priorities
-- Continue with any pending COSA development tasks
-- Utilize session-end automation for regular development workflow
-- Address any improvements to session-end process based on execution experience
-
----
-
-## 2025.09.27 - COSA Session-End Automation Prompt Creation COMPLETE
-
-### Summary
-Successfully created comprehensive COSA session-end automation prompt by extracting and organizing all end-of-session ritual requirements from global and local Claude.md configuration files. Established streamlined 6-step process with notifications-first approach and conditional parent history updates to prevent duplicate entries.
-
-### Work Performed
-
-#### Session-End Automation Implementation - 100% SUCCESS ✅
-- **Master Prompt Created**: `rnd/prompts/cosa-session-end.md` (294 lines) with complete end-of-session ritual
-- **Slash Command Ready**: `.claude/commands/cosa-session-end.md` (exact copy) for automated execution
-- **Notification-First Design**: Moved notifications from Step 7 to Step 0 as mandatory first requirement
-- **Conditional Logic**: Step 2 only updates parent Lupin history if today's COSA session not already documented
-- **Requirements Integration**: All global and local Claude.md requirements systematically extracted and organized
-
-#### Technical Achievements
-1. **Step Structure Optimization**: Streamlined from 7 steps to 6 steps by removing redundant todo list creation
-2. **Conditional Parent Updates**: Prevents duplicate entries when multiple COSA sessions occur same day
-3. **COSA-Specific Context**: [COSA] prefix, submodule restrictions, dual history management, PYTHONPATH configuration
-4. **Comprehensive Notifications**: Detailed notification system with priorities, types, and examples
-5. **Complete Documentation**: History management rules, error handling, recovery procedures, verification checklist
-
-#### Files Created
-- **Created**: `rnd/prompts/cosa-session-end.md` (294 lines) - Master session-end ritual prompt
-- **Created**: `.claude/commands/cosa-session-end.md` (294 lines) - Slash command copy for automation
-
-### Project Impact
-
-#### Session Management Automation
-- **End-of-Session Standardization**: Complete automation of documentation, git management, and notifications
-- **Dual Repository Support**: Proper handling of COSA submodule and parent Lupin repository
-- **Conditional Logic**: Smart parent history updates prevent duplicate documentation
-- **Notification Integration**: Real-time user notifications throughout session wrap-up process
-
-#### Development Workflow Enhancement
-- **Manual or Automated Use**: Supports both manual step-by-step execution and slash command automation
-- **Configuration Integration**: All requirements from global and local Claude.md files systematically included
-- **Error Handling**: Comprehensive recovery procedures and troubleshooting guidance
-- **Quality Assurance**: Session completion verification checklist ensures all steps completed
-
-### Current Status
-- **Session-End Automation**: ✅ COMPLETE - Comprehensive prompt created and deployed in both locations
-- **Slash Command Ready**: ✅ OPERATIONAL - `/cosa-session-end` command available for immediate use
-- **Requirements Coverage**: ✅ COMPREHENSIVE - All global and local configuration requirements included
-- **Documentation Quality**: ✅ PROFESSIONAL - Complete with examples, troubleshooting, and verification procedures
-
-### Next Session Priorities
-- Commit session-end prompt files to repository
-- Consider testing slash command execution in practice
-- Resume any pending COSA development tasks
-
----
-
-## 2025.09.27 - Three-Level Question Architecture Infrastructure + Interface Enhancements COMMITTED
-
-### Summary
-Successfully committed critical infrastructure changes supporting the three-level question representation architecture and resolved interface inconsistencies discovered during the architecture research phase. These changes establish the foundation for implementing the comprehensive three-level architecture designed to fix search failures.
-
-### Work Performed
-
-#### Infrastructure Enhancements - 100% SUCCESS ✅
-- **Interface Violation Fix**: Added abstract `reload()` method to `snapshot_manager_interface.py` resolving interface compliance issues
-- **Manager Implementation Updates**: Added `reload()` implementations to both FileBasedSolutionManager and LanceDBSolutionManager
-- **API Endpoint Fix**: Fixed `/api/init` endpoint in `system.py` to use `reload()` instead of non-existent `load_snapshots()`
-- **Verbosity Optimization**: Updated debug output in normalizer, completion_client, and llm_client_factory to require both `debug AND verbose` flags
-
-#### Technical Achievements
-1. **Interface Compliance**: Resolved critical interface violation preventing proper manager abstraction
-2. **Console Output Control**: Reduced noise when `app_verbose=False` but `app_debug=True`
-3. **Foundation Preparation**: Established proper interface foundation for three-level architecture implementation
-4. **Architecture Support**: Changes directly support the comprehensive three-level question representation architecture
-
-#### Files Modified (7 files, +128/-10 lines)
-- **Enhanced**: `memory/snapshot_manager_interface.py` - Added abstract `reload()` method
-- **Enhanced**: `memory/file_based_solution_manager.py` - Added `reload()` implementation
-- **Enhanced**: `memory/lancedb_solution_manager.py` - Added `reload()` implementation
-- **Fixed**: `rest/routers/system.py` - Updated `/api/init` to use `reload()`
-- **Optimized**: `memory/normalizer.py` - Updated debug output verbosity
-- **Optimized**: `agents/completion_client.py` - Updated debug output verbosity
-- **Optimized**: `agents/llm_client_factory.py` - Updated debug output verbosity
-
-### Project Impact
-
-#### Architecture Foundation
-- **Interface Standardization**: All snapshot managers now implement identical interfaces with proper `reload()` method
-- **Debugging Enhancement**: Cleaner console output without losing debug capabilities when needed
-- **Migration Readiness**: Infrastructure properly prepared for three-level architecture implementation
-- **Search Failure Prevention**: Addresses underlying interface issues that could impact future search functionality
-
-#### Three-Level Architecture Support
-These changes directly support the **Three-Level Question Representation Architecture** documented in the parent Lupin repository (`/src/rnd/2025.09.27-three-level-question-representation-architecture.md`), which addresses the critical search failure where "What time is it?" returns 0 snapshots despite perfect database matches.
-
-### Current Status
-- **Infrastructure Changes**: ✅ COMMITTED - Interface violations resolved and verbosity optimized
-- **Architecture Foundation**: ✅ ESTABLISHED - Ready for three-level implementation phases
-- **Manager Interfaces**: ✅ STANDARDIZED - All managers implement identical contracts
-- **Development Readiness**: ✅ PREPARED - Foundation set for comprehensive architecture implementation
-
-### Next Session Priorities
-- Implement Phase 1 of three-level architecture (normalizer punctuation removal fix)
-- Begin systematic implementation of QueryLog table and three-level representation
-- Continue with comprehensive architecture implementation following documented plan
-
----
-
-## 2025.09.23 - Slash Command Bash Execution Fix + Source File Sync Issue Identified
-
-### Summary
-Successfully fixed bash execution errors in `/smoke-test-baseline` slash command by resolving variable persistence issues between bash blocks. However, discovered that source prompt files still contain the original bugs and need to be synchronized with the fixes to prevent regenerating broken slash commands.
-
-### Work Performed
-
-#### Slash Command Bash Fix - 100% SUCCESS ✅
-- **Root Cause Identified**: Variables don't persist between separate bash code blocks in slash commands
-- **Fix Applied**: Generate TIMESTAMP within each bash block that uses it, rather than in separate setup block
-- **Complex Command Issue Resolved**: Broke down multi-command chains that were being mangled during execution
-- **Template Issues Fixed**: Updated report template placeholders to avoid variable expansion problems
-
-#### Testing Infrastructure Created ✅
-- **Test Harness**: Created `test-bash-commands.sh` with 13/13 passing validation tests
-- **Mock Testing**: Created `mock-cosa-smoke.sh` for safe command pattern validation
-- **Pattern Validation**: All bash execution patterns now verified working correctly
-
-#### Critical Discovery - Source File Inconsistency ❌
-- **Issue Found**: `src/rnd/prompts/baseline-smoke-test-prompt.md` still contains the original bugs
-- **Impact**: Source prompt will regenerate broken slash command if used
-- **Files Out of Sync**: Slash command fixed but source prompt not updated
-- **Priority**: HIGH - Need to sync source files with fixes tomorrow
-
-### Files Modified
-- **Fixed**: `.claude/commands/smoke-test-baseline.md` - Bash execution patterns corrected
-- **Created**: `test-bash-commands.sh` - Test harness for command validation
-- **Created**: `mock-cosa-smoke.sh` - Mock test for safe validation
-- **Created**: `rnd/2025.09.23-slash-command-bash-fix-status.md` - Status tracking for tomorrow
-
-### Technical Achievements
-- ✅ **Bash Execution Patterns**: All command patterns validated and working
-- ✅ **Variable Persistence**: Fixed cross-block variable dependency issues
-- ✅ **Error Pattern Analysis**: Documented and resolved syntax error causes
-- ❌ **Source File Sync**: Still pending - high priority for tomorrow
-
-### Current Status
-- **Slash Command**: ✅ WORKING - Bash execution errors resolved
-- **Source Prompts**: ❌ OUT OF SYNC - Need to apply same fixes to source files
-- **Test Infrastructure**: ✅ COMPLETE - Ready for validation
-- **Documentation**: ✅ COMPLETE - Status tracked for continuation tomorrow
-
-### Next Session Priorities
-- **HIGH PRIORITY**: Apply bash execution fixes to `src/rnd/prompts/baseline-smoke-test-prompt.md`
-- Check if `src/cosa/rnd/prompts/cosa-baseline-smoke-test-prompt.md` needs similar fixes
-- Verify source prompts and slash commands remain synchronized
-- Test consistency between all related files
-
----
-
-## 2025.09.23 - Pre-Change COSA Framework Baseline Collection COMPLETE
-
-### Summary
-Established comprehensive COSA framework baseline before planned changes using pure data collection methodology. Achieved perfect 100% pass rate (16/16 tests) across all COSA framework categories, confirming excellent framework health and operational readiness for upcoming modifications.
-
-### Work Performed
-
-#### COSA Framework Baseline Establishment - 100% SUCCESS ✅
-- **Perfect Test Results**: Achieved 100.0% pass rate (16/16 tests) across all COSA framework categories
-- **Comprehensive Coverage**: Core (3/3), REST (5/5), Memory (7/7), Training (1/1) - all categories at 100% success
-- **Pure Data Collection**: Zero remediation attempts - focused solely on establishing accurate baseline metrics
-- **Performance Baseline**: Total execution time 38.04s with normal distribution across categories
-
-#### Technical Achievements
-
-##### Framework Health Validation ✅
-1. **Core Systems**: All configuration, utilities, and code runner components operational (100% pass rate)
-2. **REST Infrastructure**: All queue systems, user ID generation, and notification services operational (100% pass rate)
-3. **Memory Operations**: All embedding management, caching, and snapshot systems operational (100% pass rate)
-4. **Training Components**: Quantization and training infrastructure operational (100% pass rate)
-
-##### External Dependencies Confirmed ✅
-- **OpenAI API**: Multiple successful embedding requests (HTTP 200 responses)
-- **LanceDB**: Operational with expected informational warnings (no errors)
-- **XML Schema**: Successful validation and parsing operations
-- **Python Environment**: PYTHONPATH properly configured, all imports successful
-
-#### Baseline Metrics Established
-
-##### Performance Baselines ✅
-- **Total Execution Time**: 38.04 seconds
-- **Fastest Category**: Core (0.00s total)
-- **Slowest Category**: Memory (24.26s total) - Expected due to embedding operations
-- **Average Test Performance**: <3s per test with complex operations up to 12.19s
-
-##### System Health Indicators ✅
-- **Framework Import**: Successful COSA framework import
-- **Environment Setup**: PYTHONPATH configuration working correctly
-- **Database Operations**: All LanceDB operations functioning normally
-- **API Connectivity**: External service dependencies operational
-
-#### Files Created
-- **Baseline Report**: `tests/results/reports/2025.09.23-cosa-baseline-smoke-test-report.md` - Comprehensive framework health documentation
-- **Test Log**: `tests/results/logs/baseline_cosa_smoke_20250923_173035.log` - Complete test execution record
-
-### Project Impact
-
-#### Baseline Documentation
-- **Pre-Change State**: Perfect documentation of COSA framework health before modifications
-- **Regression Detection**: Established metrics for identifying any regressions introduced by upcoming changes
-- **Performance Reference**: Baseline execution times for performance comparison after changes
-- **Dependency Validation**: Confirmed all external and internal dependencies functioning correctly
-
-#### Framework Confidence
-- **Production Ready**: 100% pass rate confirms framework ready for operational use
-- **Change Safety**: Excellent baseline health provides confidence for making planned modifications
-- **Quality Validation**: Comprehensive testing confirms no critical issues in current implementation
-- **Operational Excellence**: All major system components functioning at optimal levels
-
-### Current Status
-- **COSA Framework Baseline**: ✅ ESTABLISHED - 100% pass rate documented with comprehensive metrics
-- **Test Infrastructure**: ✅ OPERATIONAL - Smoke test automation working perfectly
-- **External Dependencies**: ✅ CONFIRMED - All services and APIs functioning correctly
-- **Change Readiness**: ✅ PREPARED - Framework ready for planned modifications with baseline protection
-
-### Next Session Priorities
-- Proceed with planned COSA framework changes with confidence
-- Use post-change smoke testing to validate modifications against this baseline
-- Address any regressions identified through baseline comparison
-- Maintain excellent framework health through systematic testing
-
----
-
-## 2025.09.22 - Agent user_id Parameter Fixes + Gister Class Relocation COMPLETE
-
-### Summary
-Successfully resolved TypeError preventing agent instantiation by adding missing user_id parameter to all agent classes. Additionally relocated Gister class from agents/v010/ to memory/ directory for improved architectural organization. All changes support the ongoing cosa/agents/v010 → cosa/agents migration planning documented in parent Lupin repository.
-
-### Work Performed
-
-#### Agent user_id Parameter Fixes - 100% SUCCESS ✅
-- **DateAndTimeAgent**: Added user_id parameter to `__init__` method and super() call
-- **CalendaringAgent**: Added user_id parameter to `__init__` method and super() call
-- **ReceptionistAgent**: Added user_id parameter to `__init__` method and super() call
-- **TodoListAgent**: Added user_id parameter to `__init__` method and super() call
-- **WeatherAgent**: Added user_id parameter to `__init__` method and super() call
-- **Root Cause Resolution**: Fixed `TypeError: DateAndTimeAgent.__init__() got an unexpected keyword argument 'user_id'` preventing todo_fifo_queue.py from instantiating agents
-
-#### Gister Class Relocation - 100% SUCCESS ✅
-- **Moved Gister**: Relocated from `agents/v010/gister.py` to `memory/gister.py` for better logical organization
-- **Updated Import**: Fixed reference in `memory/gist_normalizer.py` to use new location
-- **Test Updates**: Updated test file references for relocated Gister class
-- **Architectural Improvement**: Gister belongs in memory module as it handles question summarization for embedding operations
-
-#### Technical Achievements
-
-##### Parameter Standardization ✅
-1. **Consistent Interface**: All agent classes now properly accept user_id parameter for AgentBase compatibility
-2. **Super() Call Updates**: All agents properly pass user_id to parent AgentBase constructor
-3. **Error Resolution**: Eliminated TypeError that was blocking queue system from instantiating agents
-4. **Future Compatibility**: Agents now properly support user-specific operations and tracking
-
-##### Module Organization ✅
-- **Logical Placement**: Gister class moved to memory module where it logically belongs
-- **Import Cleanup**: Clean import path from agents/v010 complexity to memory module simplicity
-- **Testing Consistency**: All test references updated to match new location
-- **Migration Support**: Change supports the broader v010 → agents migration planning
-
-#### Files Modified
-- **Enhanced**: `agents/v010/date_and_time_agent.py` - Added user_id parameter
-- **Enhanced**: `agents/v010/calendaring_agent.py` - Added user_id parameter
-- **Enhanced**: `agents/v010/receptionist_agent.py` - Added user_id parameter
-- **Enhanced**: `agents/v010/todo_list_agent.py` - Added user_id parameter
-- **Enhanced**: `agents/v010/weather_agent.py` - Added user_id parameter
-- **Moved**: `agents/v010/gister.py` → `memory/gister.py` - Relocated for better architecture
-- **Updated**: `memory/gist_normalizer.py` - Updated import to use new Gister location
-- **Updated**: `rest/todo_fifo_queue.py` - Related queue system improvements
-- **Updated**: `tests/test_gister_pydantic_migration.py` - Updated test references
-
-### Project Impact
-
-#### System Functionality
-- **Queue Operations**: todo_fifo_queue.py can now successfully instantiate all agent types without TypeError
-- **User Support**: All agents now properly support user_id for user-specific operations and tracking
-- **Architecture Quality**: Gister class now properly located in memory module matching its functionality
-- **Migration Readiness**: Changes support the comprehensive v010 → agents migration plan documented in parent repository
-
-#### Development Quality
-- **Interface Consistency**: All agent classes now follow identical parameter patterns for AgentBase inheritance
-- **Logical Organization**: Gister class placement now matches its actual functionality (memory/embedding operations)
-- **Error Elimination**: Resolved TypeError blocking critical system functionality
-- **Planning Alignment**: Changes directly support the zero-risk migration plan ready for implementation
-
-### Current Status
-- **Agent Interfaces**: ✅ STANDARDIZED - All agents now properly accept user_id parameter
-- **Gister Location**: ✅ IMPROVED - Moved to logical memory module location
-- **System Functionality**: ✅ OPERATIONAL - Queue system can instantiate all agents successfully
-- **Migration Support**: ✅ READY - Changes support broader v010 → agents migration plan
-
-### Context
-This session's work directly supports the comprehensive zero-risk migration plan documented in the parent Lupin repository ([2025.09.22-cosa-agents-v010-migration-plan.md](../../rnd/2025.09.22-cosa-agents-v010-migration-plan.md)). The user_id parameter fixes resolve critical compatibility issues, while the Gister relocation improves architectural organization ahead of the major migration.
-
-## 2025.09.20 - Memory Module Table Creation Enhancement + Session Support COMPLETE
-
-### Summary
-Enhanced COSA memory modules with automatic table creation capabilities and provided commit guidance session. Added robust `_create_table_if_needed()` methods to QuestionEmbeddingsTable and InputAndOutputTable classes, following the established EmbeddingCacheTable pattern for consistent table management across the COSA framework.
-
-### Work Performed
-
-#### Memory Module Enhancements - 100% SUCCESS ✅
-- **QuestionEmbeddingsTable Enhancement**: Added `_create_table_if_needed()` method with PyArrow schema definition for robust table initialization
-- **InputAndOutputTable Enhancement**: Added `_create_table_if_needed()` method with comprehensive FTS indexing on key searchable fields
-- **Schema Definitions**: Implemented explicit PyArrow schemas to ensure proper table structure during creation
-- **FTS Index Creation**: Added full-text search indexes on question, input, input_type, date, time, and output_final fields
-- **Pattern Consistency**: Followed EmbeddingCacheTable approach for uniform table management across framework
-
-#### Session Support Activities ✅
-- **Commit Message Guidance**: Provided structured approach for committing memory module enhancements with proper [COSA] prefix
-- **Requirements.txt Education**: Explained pip freeze usage and dependency management workflows for repository maintenance
-- **Git Workflow Support**: Guided proper commit process following project conventions and Claude Code attribution requirements
-- **End-of-Session Ritual**: Initiated proper documentation workflow per global configuration requirements
-
-#### Technical Achievements
-
-##### Robustness Improvements ✅
-1. **Missing Table Handling**: Both classes now automatically create missing tables instead of failing
-2. **PyArrow Schema Safety**: Explicit schemas prevent data type inference issues during table creation
-3. **Complete FTS Coverage**: All searchable fields properly indexed for optimal query performance
-4. **Graceful Initialization**: Debug logging provides clear feedback during table creation process
-
-##### Architecture Consistency ✅
-- **Uniform Pattern**: All 4 COSA table classes (EmbeddingCacheTable, QuestionEmbeddingsTable, InputAndOutputTable, SolutionSnapshots) now follow identical table creation approach
-- **Framework Reliability**: Enhanced system robustness against missing table scenarios post-incident recovery
-- **Maintenance Simplification**: Consistent error handling and debugging across all memory modules
-
-#### Files Modified
-- **Enhanced**: `memory/question_embeddings_table.py` - Added automatic table creation with PyArrow schema and FTS indexing
-- **Enhanced**: `memory/input_and_output_table.py` - Added automatic table creation with comprehensive field indexing
-- **Updated**: `requirements.txt` - User updated with pip freeze (253 packages, cleaned conda dependencies)
-
-### Project Impact
-
-#### System Robustness
-- **Deployment Resilience**: Memory modules now handle missing table scenarios gracefully without manual intervention
-- **Incident Recovery**: Enhanced recovery capabilities following recent memory corruption incident resolution
-- **Production Stability**: Reduced risk of system failures due to missing or corrupted database tables
-- **Consistent Behavior**: Uniform table creation patterns across all COSA memory components
-
-#### Development Quality
-- **Pattern Adherence**: Maintained established EmbeddingCacheTable approach for framework consistency
-- **Documentation Standards**: Proper Design by Contract docstrings with Requires/Ensures/Raises specifications
-- **Code Quality**: Clean implementation following project style guidelines and spacing conventions
-- **Maintenance Readiness**: Clear, debuggable code with appropriate logging and error handling
-
-### Current Status
-- **Memory Modules**: ✅ ENHANCED - All table classes now include robust auto-creation capabilities
-- **Framework Consistency**: ✅ ACHIEVED - Uniform table management pattern across all 4 COSA table classes
-- **Requirements**: ✅ UPDATED - Dependencies refreshed and cleaned via pip freeze
-- **Documentation**: ✅ IN PROGRESS - Session ritual documentation workflow initiated
-
-### Next Session Priorities
-- Complete end-of-session documentation ritual as per global configuration
-- Continue with any pending memory module testing or validation
-- Address any additional table creation edge cases discovered during usage
-
-## 2025.09.03 - ConfirmationDialog XML Parsing Fix COMPLETE
-
-### Summary
-Successfully removed legacy XML tag replacement hack from ConfirmationDialog class, cleaning up fragile string manipulation code and ensuring proper alignment between Pydantic models and prompt templates. Both Pydantic and baseline parsing now correctly expect `<answer>` fields as designed, eliminating maintenance debt and improving code reliability.
-
-### Work Performed
-
-#### XML Tag Replacement Hack Removal - 100% SUCCESS ✅
-- **Identified Legacy Workaround**: Found problematic string replacement hack converting `<summary>` tags to `<answer>` tags in confirmation_dialog.py
-- **Root Cause Analysis**: Determined hack was compensating for mismatch between YesNoResponse model expectations and perceived LLM output
-- **Clean Removal**: Eliminated `modified_xml = results.replace( "<summary>", "<answer>" ).replace( "</summary>", "</answer>" )` workaround
-- **Proper Alignment**: Verified that prompt template uses `{{PYDANTIC_XML_EXAMPLE}}` which generates correct `<answer>` XML from YesNoResponse model
-
-#### Technical Achievements
-
-##### Parsing Logic Fixes ✅
-1. **Pydantic Parsing**: Direct `YesNoResponse.from_xml( results )` call without string manipulation
-2. **Fallback Parsing**: Updated baseline parsing to expect `answer` field instead of `summary`
-3. **Documentation Update**: Corrected docstring to reflect parsing from `answer` XML tag
-4. **Contract Consistency**: Ensured YesNoResponse model expects exactly what prompt template produces
-
-##### Verification Testing ✅
-- **Created Ephemeral Test**: Built comprehensive verification test in `/src/tmp/test_confirmation_fix.py`
-- **Test Coverage**: Validated both Pydantic and baseline parsing with correct and incorrect XML structures
-- **Results Validation**: Confirmed Pydantic correctly parses `<answer>` XML and properly rejects `<summary>` XML
-- **Clean Cleanup**: Removed temporary test file after successful verification
-
-#### Files Modified
-- **Updated**: `agents/v010/confirmation_dialog.py` - Removed XML tag replacement hack and fixed parsing logic
-- **Verified**: `conf/prompts/agents/confirmation-yes-no.txt` - Confirmed uses `{{PYDANTIC_XML_EXAMPLE}}` marker
-- **Tested**: Created and removed ephemeral test file for verification
-
-### Project Impact
-
-#### Code Quality Improvements
-- **Eliminated Fragile Code**: Removed string replacement hack that could break with XML formatting variations
-- **Improved Maintainability**: No more special-case logic requiring future developer understanding
-- **Contract Consistency**: Perfect alignment between model expectations and template generation
-- **Reduced Technical Debt**: Cleaned up legacy workaround from earlier migration phases
-
-#### Architecture Quality
-- **Single Source of Truth**: YesNoResponse model owns its XML structure, template system uses it directly
-- **Proper Separation**: No string manipulation between template generation and model parsing
-- **Validation Integrity**: Pydantic validation works as designed without preprocessing workarounds
-- **Professional Standards**: Clean, maintainable code following established patterns
-
-### Current Status
-- **ConfirmationDialog**: ✅ CLEAN - No hacks, proper XML parsing alignment
-- **Template System**: ✅ CONSISTENT - Dynamic XML generation working correctly  
-- **Parsing Strategy**: ✅ UNIFIED - Both Pydantic and baseline expect same field structure
-- **Technical Debt**: ✅ REDUCED - Legacy workaround eliminated
-
----
-
-## 2025.08.15 - Dynamic XML Template Migration + Mandatory Pydantic Template Processing
-
-### Summary
-Successfully completed comprehensive Dynamic XML Template Migration, creating a unified system where Pydantic models generate their own XML examples for prompt templates. This eliminates hardcoded XML duplication, establishes single source of truth for XML structures, and makes dynamic template processing mandatory across all agents.
-
-### Work Performed
-
-#### Dynamic XML Template Migration - 100% SUCCESS ✅
-- **Complete Model Integration**: Added `get_example_for_template()` methods to all 11 XML response models
-- **Template Transformation**: Replaced hardcoded XML in 7 prompt templates with `{{PYDANTIC_XML_EXAMPLE}}` markers
-- **Processor Enhancement**: Updated PromptTemplateProcessor to support all agent types with clean MODEL_MAPPING
-- **Mandatory Implementation**: Removed conditional logic - dynamic templating now standard for all agents
-
-#### Technical Achievements
-
-##### Model Method Implementation ✅
-1. **IterativeDebuggingMinimalistResponse**: Added template method for debugger-minimalist.txt
-2. **ReceptionistResponse**: Added template method for receptionist.txt
-3. **WeatherResponse**: Added template method for weather.txt
-4. **Existing Models**: Validated CodeBrainstormResponse, CalendarResponse, CodeResponse, etc. all working
-
-##### Template Migration ✅
-- **date-and-time.txt**: Replaced 21-line hardcoded XML with marker ✅
-- **calendaring.txt**: Replaced 15-line hardcoded XML with marker ✅
-- **todo-lists.txt**: Replaced 14-line hardcoded XML with marker ✅
-- **debugger.txt**: Replaced 18-line hardcoded XML with marker ✅
-- **debugger-minimalist.txt**: Replaced 6-line hardcoded XML with marker ✅
-- **bug-injector.txt**: Replaced 4-line hardcoded XML with marker ✅
-- **receptionist.txt**: Replaced 5-line hardcoded XML with marker ✅
-
-##### Architecture Improvements ✅
-- **Processor Relocation**: Moved PromptTemplateProcessor from `utils/` to `io_models/utils/` for better cohesion
-- **MODEL_MAPPING Enhancement**: Added support for 9 total agent types including new minimalist debugger
-- **Mandatory Processing**: Removed `enable_dynamic_xml_templates` conditional from AgentBase
-- **Round-Trip Validation**: Confirmed XML generation → template injection → agent parsing works perfectly
-
-#### Files Created/Modified
-- **Modified**: `agents/io_models/xml_models.py` - Added get_example_for_template() to 3 additional models
-- **Modified**: `agents/io_models/utils/prompt_template_processor.py` - Enhanced MODEL_MAPPING and imports
-- **Modified**: `agents/v010/agent_base.py` - Removed conditional, made dynamic templating mandatory
-- **Modified**: All 7 prompt template files - Replaced hardcoded XML with {{PYDANTIC_XML_EXAMPLE}} markers
-- **Deleted**: `utils/prompt_template_processor.py` - Cleaned up old location
-
-### Project Impact
-
-#### Architecture Quality
-- **Single Source of Truth**: Models own their XML structure definitions, eliminating duplication
-- **Automatic Synchronization**: Template changes automatically when models change
-- **Reduced Maintenance**: No more maintaining duplicate XML structures in templates
-- **High Cohesion**: Template processor lives close to XML models it serves
-
-#### Developer Experience
-- **Simplified Workflow**: No config flags needed - dynamic templates work automatically
-- **Consistent Behavior**: All agents use same XML generation approach
-- **Easy Model Updates**: Change XML structure in one place, templates update automatically
-- **Robust Error Handling**: Graceful fallback to original template if processing fails
-
-#### Future Readiness
-- **Extensible Design**: Easy to add new agents by adding MODEL_MAPPING entry
-- **Production Ready**: 100% tested with all existing agents
-- **Migration Complete**: System fully transitioned from hardcoded to dynamic XML
-- **Quality Validated**: Comprehensive smoke testing confirms no regressions
-
-### Current TODO
-- Monitor agent performance with mandatory dynamic templating
-- Consider adding XML validation to ensure generated examples parse correctly
-- Document {{PYDANTIC_XML_EXAMPLE}} marker convention for future template developers
-
-## 2025.08.13 - Smoke Test Infrastructure Remediation COMPLETE + Pydantic XML Migration Validation
-
-### Summary
-Successfully completed comprehensive smoke test infrastructure remediation, transforming completely broken testing infrastructure (0% operational) to perfect 100% success rate (35/35 tests passing). This achievement also validated that the recently completed Pydantic XML Migration caused zero compatibility issues - all agents remain fully operational with no breaking changes from the migration.
-
-### Work Performed
-
-#### Smoke Test Infrastructure Remediation - 100% SUCCESS ✅
-- **Perfect Success Rate**: Achieved 100% success rate (35/35 tests passing) across all framework categories
-- **Comprehensive Coverage**: Core (3/3), Agents (17/17), REST (5/5), Memory (7/7), Training (3/3) - all at 100% success
-- **Critical Fixes Applied**: Resolved initialization errors and PYTHONPATH inheritance issues blocking automation
-- **Automation Operational**: Infrastructure now fully ready for regular use with ~1 minute execution time
-- **Quality Transformation**: From 0% operational to enterprise-grade automation infrastructure
-
-#### Technical Achievements
-
-##### Infrastructure Fixes ✅
-1. **Initialization Error Resolution**: Fixed `NameError: name 'cosa_root' is not defined` using COSA_CLI_PATH environment variable
-2. **PYTHONPATH Inheritance Fix**: Resolved 100% import failures by implementing proper sys.path and environment variable management
-3. **Runtime Bug Fixes**: Corrected `max() arg is an empty sequence` error and missing import statements
-4. **Environment Integration**: Leveraged existing COSA_CLI_PATH variable for seamless automation
-
-##### Validation Results ✅
-- **Pydantic XML Migration Success**: Confirmed zero compatibility issues from recent Pydantic XML migration
-- **All Agents Operational**: Math, Calendar, Weather, Todo, Date/Time, Bug Injector, Debugger, Receptionist all working perfectly
-- **Framework Integrity**: No breaking changes detected across any component categories
-- **Production Readiness**: Complete validation that structured_v2 parsing strategy works flawlessly
-
-#### Files Created/Modified
-- **Fixed**: `tests/smoke/infrastructure/cosa_smoke_runner.py` - Core infrastructure fixes for automation
-- **Fixed**: `utils/util.py` - Resolved max() empty sequence error
-- **Fixed**: `agents/v010/two_word_id_generator.py` - Added missing import statement
-- **Created**: `rnd/2025.08.13-comprehensive-smoke-test-execution-and-remediation-plan.md` - Planning documentation
-- **Created**: `rnd/2025.08.13-smoke-test-remediation-report.md` - Comprehensive remediation report
-
-### Project Impact
-
-#### Infrastructure Quality
-- **Enterprise-Grade Testing**: Professional smoke test infrastructure ready for daily CI/CD integration
-- **Automation Reliability**: Perfect 100% success rate enables confident regular execution
-- **Performance Optimized**: Sub-minute execution suitable for frequent validation cycles
-- **Comprehensive Coverage**: All major framework components validated systematically
-
-#### Migration Validation Success
-- **Zero Breaking Changes**: Pydantic XML migration completed successfully with no compatibility issues
-- **Agent Integrity**: All agents continue to operate perfectly with new structured parsing
-- **Framework Stability**: No degradation in functionality despite major XML processing architecture changes
-- **Production Confidence**: Validated that migration was successful and safe for continued operation
-
-### Current Status
-- **Smoke Test Infrastructure**: ✅ 100% OPERATIONAL - Perfect success rate achieved
-- **Pydantic XML Migration**: ✅ 100% VALIDATED - Zero compatibility issues confirmed
-- **Framework Health**: ✅ EXCELLENT - All components operational and tested
-- **Automation Ready**: ✅ FULLY PREPARED - Infrastructure ready for regular use
-
----
-
-## 2025.08.12 - Pydantic XML Migration 100% COMPLETE
-
-### Summary  
-Successfully completed the entire Pydantic XML Migration project, achieving 100% completion with all CoSA agents (Math, Calendar, Weather, Todo, Date/Time, Bug Injector, Debugger, Receptionist) now operational with structured_v2 Pydantic parsing in production. All 4 core models working with sophisticated nested XML processing, comprehensive testing strategy, and production deployment complete.
-
-### Work Performed
-
-#### Pydantic XML Migration - ALL PHASES COMPLETE ✅
-- **4/4 Core Models Working**: SimpleResponse, CommandResponse, YesNoResponse, CodeResponse with full XML serialization/deserialization
-- **Complex Nested Processing**: Solved xmltodict conversion of `<code><line>...</line></code>` structures into Python `List[str]` fields
-- **Advanced Pydantic Integration**: Used `@model_validator(mode='before')` for preprocessing xmltodict nested dictionaries
-- **Three-Tier Testing Strategy**: Unit tests, smoke tests, and component `quick_smoke_test()` methods all operational
-- **Production Deployment**: All agents migrated to structured_v2 parsing strategy with 100% operational status
-- **Agent-Specific Models**: CalendarResponse model extending CodeResponse, MathBrainstormResponse for complex nested structures
-- **Runtime Flag System**: 3-tier parsing strategy operational with per-agent configuration
-
-#### Technical Achievements
-
-##### BaseXMLModel Foundation ✅
-- **Bidirectional XML Conversion**: `.from_xml()` and `.to_xml()` methods with xmltodict integration
-- **Full Pydantic v2 Validation**: Type checking, field validation, and error handling with meaningful messages  
-- **Compatibility Layer**: Handles xmltodict quirks (empty tags → None, nested structures)
-- **Error Handling**: Custom XMLParsingError with context and original exception preservation
-
-##### Model Implementations ✅
-1. **SimpleResponse**: Dynamic single-field handling (gist, summary, answer) with `extra="allow"`
-2. **CommandResponse**: Command routing validation with known agent types and flexible args handling
-3. **YesNoResponse**: Boolean confirmation with smart yes/no detection and normalization
-4. **CodeResponse**: Complex code generation with sophisticated line tag processing and utility methods
-
-##### Critical Discovery ✅
-- **Baseline Compatibility Issue**: Pydantic extracts all code lines correctly, but baseline `util_xml.get_nested_list()` may miss some lines
-- **Testing Strategy Validation**: Three-tier approach successfully caught compatibility discrepancies
-- **xmltodict Behavior**: Empty tags convert to `None` (not empty strings), requiring validation adjustments
-
-#### Files Created/Modified
-- **New**: `cosa/agents.io_models.xml_models.py` - All 4 Pydantic models with comprehensive testing
-- **New**: `cosa/agents.io_models.utils/util_xml_pydantic.py` - BaseXMLModel and XML utilities  
-- **New**: `cosa/tests/unit/agents.io_models.unit_test_xml_parsing_baseline.py` - Baseline unit tests
-- **New**: `cosa/tests/smoke/agents.io_models.test_xml_parsing_baseline.py` - Baseline smoke tests
-- **Updated**: `src/rnd/2025.08.09-pydantic-xml-migration-plan.md` - Progress tracking and technical discoveries
-
-### Migration Results
-1. **Compatibility Discrepancy Resolved**: Baseline data loss issues resolved through complete migration to Pydantic parsing
-2. **Phase 4 Implementation Complete**: MathBrainstormResponse with complex nested brainstorming structures implemented and operational
-3. **Runtime Flag System Complete**: 3-tier parsing strategy operational with per-agent configuration in production
-4. **Comprehensive Testing Complete**: All models tested with unit tests, smoke tests, and production validation
-
-### Project Status: 100% COMPLETE - All Agents Operational in Production
-
----
-
-## 2025.08.05 - Phase 6: Training Components Testing - COMPLETE
-
-### Summary
-Successfully completed Phase 6 of the CoSA Unit Testing Framework by implementing comprehensive unit tests for all 8 training components. Achieved 86/86 tests passing (100% success rate) with zero external dependencies, covering the entire ML training infrastructure including HuggingFace integration, model quantization, PEFT training, XML processing, and response validation.
-
-### Work Performed
-
-#### Phase 6 Training Components Testing COMPLETE ✅
-- **8/8 Components Tested**: All training infrastructure modules covered with comprehensive unit tests
-- **86/86 Tests Passing**: 100% success rate across all components with fast execution (<1s each)
-- **Zero External Dependencies**: Complete isolation using sophisticated mocking of ML frameworks
-- **Professional Standards**: Design by Contract documentation, consistent patterns, comprehensive error handling
-
-#### Component Testing Achievements
-
-##### High Priority Components ✅
-1. **HuggingFace Downloader** (10/10 tests passing):
-   - File operations, authentication, model downloading workflows
-   - Comprehensive mocking of HuggingFace Hub operations
-   - Error handling for network failures and authentication issues
-
-2. **Model Quantizer** (13/13 tests passing):
-   - AutoRound integration, PyTorch tensor operations, quantization workflows
-   - Complex ML framework mocking with tensor shape simulation
-   - Performance optimization and resource management testing
-
-3. **PEFT Trainer** (8/8 tests passing):
-   - LoRA training, parameter-efficient fine-tuning, TRL integration
-   - Training pipeline mocking with loss calculation simulation
-   - Configuration management and model adaptation testing
-
-##### Medium Priority Components ✅
-4. **Model Configurations** (12/12 tests passing):
-   - Dynamic config loading, JSON processing, validation
-   - Multi-model configuration management and inheritance
-   - Error handling for malformed configurations
-
-5. **XML Coordinator** (13/13 tests passing):
-   - Component orchestration, LLM integration, data processing pipelines
-   - Complex component interaction and state management
-   - Performance metrics and timing coordination
-
-6. **XML Prompt Generator** (8/8 tests passing):
-   - Template management, natural language variations, command processing
-   - File operations mocking and placeholder management
-   - Error handling for missing templates and malformed data
-
-##### Low Priority Components ✅
-7. **XML Response Validator** (22/22 tests passed):
-   - Schema validation, response comparison, statistics calculation
-   - Comprehensive XML parsing and validation testing
-   - DataFrame processing and metrics computation
-
-### Technical Achievements
-- **Complex ML Framework Mocking**: Successfully isolated PyTorch, HuggingFace, PEFT, AutoRound, TRL dependencies
-- **Performance Optimization**: All test suites execute in under 1 second with comprehensive coverage
-- **Error Handling Excellence**: Complete coverage of edge cases, malformed inputs, and component failures
-- **Professional Documentation**: Design by Contract patterns with detailed requires/ensures specifications
-
-### Phase 6 Progress Status
-- **Training Components**: 8/8 completed (100% - All components tested)
-- **Test Coverage**: 86/86 individual test functions passing (100% success rate)
-- **Execution Performance**: All test suites complete in <1s each
-- **External Dependencies**: Zero (100% mocked isolation)
-
-### Current Project Metrics
-- **Total Test Files**: 7 comprehensive unit test modules created
-- **Test Coverage**: 86 individual test functions across all training components
-- **Execution Performance**: All tests complete in <1s with comprehensive mocking
-- **External Dependencies**: Zero (Complete ML framework isolation)
-
-### Test Execution Results
-```
-HuggingFace Downloader:    ✅ 10/10 tests passed (100.0%) in 0.089s
-Model Quantizer:           ✅ 13/13 tests passed (100.0%) in 0.095s  
-PEFT Trainer:              ✅ 8/8 tests passed (100.0%) in 0.087s
-Model Configurations:      ✅ 12/12 tests passed (100.0%) in 0.078s
-XML Coordinator:           ✅ 13/13 tests passed (100.0%) in 0.094s
-XML Prompt Generator:      ✅ 8/8 tests passed (100.0%) in 0.091s
-XML Response Validator:    ✅ 22/22 tests passed (100.0%) in 0.115s
-```
-
-### Current Status
-- **Phase 6 Training Components**: ✅ COMPLETE - 86/86 tests passing (100% success rate)
-- **CoSA Testing Framework**: ✅ Phase 1-6 complete, ready for Phase 7 if needed
-- **ML Training Infrastructure**: ✅ Fully tested and validated for production use
-- **Professional Standards**: ✅ Enterprise-grade testing with comprehensive coverage
-
----
-
-## 2025.08.05 - Phase 2: Agent Framework Unit Testing Progress
-
-### Summary
-Continued Phase 2 of the CoSA Framework Unit Testing implementation, completing comprehensive unit tests for TwoWordIdGenerator, CompletionClient, and ChatClient with complete external dependency mocking.
-
-### Work Performed
-1. **TwoWordIdGenerator Unit Testing** ✅:
-   - Created comprehensive unit tests with deterministic randomness mocking
-   - Tested singleton behavior, ID generation, uniqueness validation, and performance
-   - Fixed infinite loop issues in uniqueness testing and asyncio.coroutine deprecation
-   - All 6/6 tests passing successfully (17.6ms duration)
-
-2. **CompletionClient Unit Testing** ✅:
-   - Created comprehensive unit tests with complete LlmCompletion mocking
-   - Tested initialization, sync/async completion, response cleaning, streaming, error handling
-   - Fixed async context detection issues and performance counter exhaustion
-   - All 7/7 tests passing successfully (16.2ms duration)
-
-3. **ChatClient Unit Testing** ✅ (Pre-existing):
-   - Verified existing comprehensive unit tests for chat-based LLM interactions
-   - Tests pydantic-ai Agent mocking, conversation flow, token counting, performance
-   - All 7/7 tests passing successfully (26.2ms duration)
-
-### Technical Achievements
-- **Zero External Dependencies**: Complete isolation from OpenAI APIs, file systems, and network calls
-- **Deterministic Testing**: Predictable behavior through comprehensive mocking strategies
-- **Performance Validation**: All tests execute in <100ms with proper benchmarking
-- **Error Scenario Coverage**: Comprehensive testing of failure modes and edge cases
-
-### Phase 2 Progress Status
-- **High Priority Modules**: 3/6 completed (50% - TwoWordIdGenerator, CompletionClient, ChatClient)
-- **Overall Phase 2**: 3/12 total modules completed (25% overall progress)
-- **Next High Priority**: MathAgent and DateTimeAgent unit testing
-
-### Current Project Metrics
-- **Total Test Files**: 3 comprehensive unit test modules created/verified
-- **Test Coverage**: 21 individual test functions across 3 modules
-- **Execution Performance**: All tests complete in <30ms each
-- **External Dependencies**: Zero (100% mocked)
-
-### Next Steps
-- Continue with MathAgent unit testing (computation validation + mocked LLM responses)
-- Implement DateTimeAgent unit testing (mocked system time + timezone handling)
-- Progress toward Phase 2 completion target
-
----
-
-## 2025.08.01 - Comprehensive Design by Contract Documentation Implementation
-
-### Summary
-Completed comprehensive Design by Contract (DbyC) documentation across the entire CoSA framework, achieving 100% coverage of all 73 Python modules with consistent Requires/Ensures/Raises format.
-
-### Work Performed
-1. **Framework-Wide Documentation Enhancement**:
-   - Enhanced **73/73 Python files** with comprehensive Design by Contract documentation
-   - Converted existing Preconditions/Postconditions format to standardized Requires/Ensures/Raises pattern
-   - Applied consistent documentation standards across all modules
-
-2. **Documentation Coverage by Module**:
-   - **✅ All Agent Files (24/24)**: Complete v010 agent architecture with DbyC specs
-   - **✅ All REST Files (11/11)**: Routers, core services, and dependencies 
-   - **✅ All Memory Files (4/4)**: Embedding management, snapshots, and normalization
-   - **✅ All CLI Files (3/3)**: Notification system and testing infrastructure
-   - **✅ All Training Files (9/9)**: Model training, quantization, and configuration
-   - **✅ All Utility Files (6/6)**: Core utilities and specialized helpers
-   - **✅ All Tool Files (3/3)**: Search integrations and external services
-
-3. **Key Files Enhanced This Session**:
-   - Enhanced REST router files: speech.py, system.py, websocket_admin.py
-   - Enhanced memory system files: normalizer.py, question_embeddings_table.py, solution_snapshot.py, solution_snapshot_mgr.py
-   - Enhanced remaining REST infrastructure: user_id_generator.py, dependencies/config.py
-   - Verified comprehensive coverage of all training and utility modules
-
-4. **Documentation Quality Standards**:
-   - **Requires**: Clear input parameter and system state requirements
-   - **Ensures**: Specific output guarantees and side effects  
-   - **Raises**: Comprehensive exception handling documentation
-   - **Module Context**: Enhanced module-level documentation with comprehensive descriptions
-
-### Technical Impact
-- **Developer Experience**: All functions now have clear contracts defining expected inputs, guaranteed outputs, and exception behavior
-- **Code Maintainability**: Consistent documentation patterns enable easier debugging and modification
-- **System Understanding**: Comprehensive context documentation improves onboarding and system comprehension
-- **Quality Assurance**: Explicit pre/post-conditions and exception specifications reduce integration errors
-
-### Project Status
-- **100% Documentation Coverage**: All 73 Python modules in CoSA framework fully documented
-- **Consistent Standards**: Uniform Requires/Ensures/Raises format across entire codebase
-- **Professional Grade**: Enterprise-level documentation suitable for production systems
-
----
-
-## 2025.06.29 - Completed Lupin Renaming in CoSA Module
-
-### Summary (Part 2)
-Completed the renaming from "Gib" to "Lupin" for search tools, fixing remaining import errors and ensuring FastAPI server starts successfully.
-
-### Additional Work Performed
-1. **Renamed search tool files**:
-   - `search_gib.py` → `search_lupin.py`
-   - `search_gib_v010.py` → `search_lupin_v010.py`
-2. **Updated class names**:
-   - Changed `GibSearch` to `LupinSearch` in both files
-   - Updated all docstring references
-3. **Fixed all imports and references**:
-   - Updated `weather_agent.py` (both v000 and v010 versions)
-   - Updated `todo_fifo_queue.py`
-   - Updated documentation in `README.md`
-
-### Result
-- FastAPI server now starts successfully without import errors
-- All search functionality properly renamed to Lupin branding
-- Complete consistency between file names, class names, and imports
-
----
-
-## 2025.06.29 - Fixed Import Errors from Lupin Renaming
-
-### Summary
-Fixed import errors in CoSA module that were preventing FastAPI server startup after yesterday's project renaming from "Genie-in-the-Box" to "Lupin".
-
-### Work Performed
-1. **Identified root cause**: The parent project's renaming (genie_client → lupin_client) wasn't propagated to the CoSA submodule
-2. **Fixed critical import error**:
-   - Updated `src/cosa/rest/routers/audio.py` line 19
-   - Changed `from lib.clients import genie_client as gc` to `from lib.clients import lupin_client as gc`
-3. **Updated commented references**:
-   - Fixed 2 commented references in `src/cosa/rest/multimodal_munger.py` (lines 810, 813)
-   - Changed from genie_client to lupin_client for consistency
-
-### Technical Details
-- These changes complete the renaming work started in the parent project on 2025.06.28
-- FastAPI server can now start without ImportError
-- No functional changes, only naming updates
-
-### Next Steps
-- Monitor for any other missed references during the renaming
-- Continue with regular development tasks
-
----
-
-## 2025.06.27 - Session Start
-- **[COSA]** Initial session setup
-- **[COSA]** Created history.md file for tracking development progress
-- **[COSA]** Ready to begin development work
-
-## Current Status
-- Working in COSA submodule directory
-- FastAPI REST API architecture refactoring completed
-- NotificationFifoQueue WebSocket implementation active
-- Claude Code notification system integrated
-
-## Next Steps
-- Awaiting user direction for specific tasks
-- Ready to continue development work
+## Archive Navigation
+
+### Monthly Archives
+- **[October 2025 (Oct 4-30)](history/2025-10-history.md)** - Planning workflows, CLI modernization, history management, branch analyzer refactoring (9 sessions)
+- **[June-October 2025 (Jun 27 - Oct 3)](history/2025-06-27-to-10-03-history.md)** - Authentication infrastructure, WebSocket implementation, notification system refactor, testing framework (20 sessions)
+
+### Project Context
+- **Project Span**: June 2025 - Present (COSA framework within Lupin project)
+- **Current Branch**: `wip-v0.1.0-2025.10.07-tracking-lupin-work`
+- **Architecture**: Collection of Small Agents (COSA) for Lupin FastAPI application
+- **Parent Project**: Lupin (located at `../..`)

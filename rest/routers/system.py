@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Dict, Any
 
 # Import dependencies
-from ..auth import get_current_user
+from ..auth import get_current_user, get_current_user_id
 from ..dependencies.config import get_config_manager, get_snapshot_manager, get_id_generator
 from cosa.config.configuration_manager import ConfigurationManager
 from cosa.memory.solution_snapshot_mgr import SolutionSnapshotManager
@@ -302,4 +302,169 @@ async def cleanup_stale_sessions(
         "sessions_cleaned": cleaned,
         "max_age_hours": max_age_hours,
         "timestamp": datetime.now().isoformat()
+    }
+
+@router.get("/api/debug/websocket-state")
+async def get_websocket_state():
+    """
+    Get complete internal state of WebSocket manager for debugging.
+
+    **DEBUG ENDPOINT**: This endpoint exposes internal WebSocket manager state
+    for troubleshooting connection and authentication issues. Should be removed
+    or protected in production environments.
+
+    Requires:
+        - fastapi_app.main module is accessible
+        - WebSocketManager is initialized in main module
+
+    Ensures:
+        - Returns all active_connections (session IDs)
+        - Returns session_to_user mapping (session → user ID)
+        - Returns user_sessions mapping (user ID → list of sessions)
+        - Returns session_subscriptions mapping (session → subscribed events)
+        - Returns session_timestamps for age calculation
+        - Includes helper analysis for quick diagnostics
+
+    Raises:
+        - AttributeError if WebSocketManager not properly initialized
+
+    Returns:
+        dict: Complete internal state with mappings and diagnostics
+
+    Example Response:
+        {
+            "active_connections": ["faithful zebra", "wise penguin"],
+            "session_to_user": {"wise penguin": "ricardo_felipe_ruiz_6bdc"},
+            "user_sessions": {"ricardo_felipe_ruiz_6bdc": ["wise penguin"]},
+            "session_subscriptions": {"wise penguin": ["*"]},
+            "diagnostics": {
+                "unmapped_sessions": ["faithful zebra"],
+                "total_active": 2,
+                "authenticated": 1,
+                "unauthenticated": 1
+            }
+        }
+    """
+    # Get WebSocketManager from main module
+    import fastapi_app.main as main_module
+    websocket_manager = main_module.websocket_manager
+
+    # Extract internal state
+    active_sessions = list(websocket_manager.active_connections.keys())
+    session_to_user_map = dict(websocket_manager.session_to_user)
+    user_sessions_map = {k: list(v) for k, v in websocket_manager.user_sessions.items()}
+    session_subscriptions = {k: list(v) for k, v in websocket_manager.session_subscriptions.items()}
+
+    # Build session timestamps (convert to ISO format)
+    session_timestamps = {}
+    for session_id, timestamp in websocket_manager.session_timestamps.items():
+        session_timestamps[session_id] = timestamp.isoformat()
+
+    # Diagnostic analysis
+    unmapped_sessions = [sid for sid in active_sessions if sid not in session_to_user_map]
+    authenticated_count = len(session_to_user_map)
+    unauthenticated_count = len(unmapped_sessions)
+
+    # Check for orphaned user mappings (user has sessions but none are active)
+    orphaned_users = []
+    for user_id, sessions in user_sessions_map.items():
+        active_user_sessions = [s for s in sessions if s in active_sessions]
+        if not active_user_sessions:
+            orphaned_users.append(user_id)
+
+    return {
+        "active_connections": active_sessions,
+        "session_to_user": session_to_user_map,
+        "user_sessions": user_sessions_map,
+        "session_subscriptions": session_subscriptions,
+        "session_timestamps": session_timestamps,
+        "diagnostics": {
+            "total_active_connections": len(active_sessions),
+            "authenticated_sessions": authenticated_count,
+            "unauthenticated_sessions": unauthenticated_count,
+            "unmapped_sessions": unmapped_sessions,
+            "unique_users_connected": len(user_sessions_map),
+            "orphaned_user_mappings": orphaned_users,
+            "single_session_policy_enabled": websocket_manager.single_session_per_user
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+@router.get("/api/config/client")
+async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
+    """
+    Return client-side configuration parameters for authenticated users.
+
+    **Authentication**: REQUIRED - JWT token validated via dependency injection
+
+    Requires:
+        - Valid JWT token in Authorization header
+        - ConfigurationManager initialized
+        - lupin-app.ini contains timing settings (or uses defaults)
+
+    Ensures:
+        - Returns JSON with all client timing parameters
+        - Only accessible to authenticated users (401 if unauthenticated)
+        - Units converted appropriately for client use
+        - Fallback defaults provided for missing config values
+
+    Args:
+        user_id: Authenticated user ID (injected by dependency, ensures JWT valid)
+
+    Returns:
+        JSON response with timing parameters:
+        {
+            "token_refresh_check_interval_ms": 600000,    # 10 mins in milliseconds
+            "token_expiry_threshold_secs": 300,           # 5 mins in seconds
+            "token_refresh_dedup_window_ms": 60000,       # 60 secs in milliseconds
+            "websocket_heartbeat_interval_secs": 30       # Reference value (secs)
+        }
+
+    Example:
+        GET /api/config/client
+        Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+        Response 200:
+        {
+            "token_refresh_check_interval_ms": 600000,
+            "token_expiry_threshold_secs": 300,
+            "token_refresh_dedup_window_ms": 60000,
+            "websocket_heartbeat_interval_secs": 30
+        }
+    """
+    # Note: user_id parameter required by Depends() - validates JWT token
+    # We don't use the actual user_id value, but it ensures authentication
+
+    config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+
+    # Fetch from config with fallback defaults
+    refresh_check_interval_mins = config_mgr.get(
+        "jwt_token_refresh_check_interval_mins",
+        default=10
+    )
+    expiry_threshold_mins = config_mgr.get(
+        "jwt_token_refresh_expiry_threshold_mins",
+        default=5
+    )
+    dedup_window_secs = config_mgr.get(
+        "jwt_token_refresh_dedup_window_secs",
+        default=60
+    )
+    heartbeat_interval_secs = config_mgr.get(
+        "websocket_heartbeat_interval_seconds",
+        default=30
+    )
+
+    return {
+        # Convert minutes → milliseconds (for setInterval)
+        "token_refresh_check_interval_ms": int( refresh_check_interval_mins * 60 * 1000 ),
+
+        # Convert minutes → seconds (for JWT exp comparison)
+        "token_expiry_threshold_secs": int( expiry_threshold_mins * 60 ),
+
+        # Convert seconds → milliseconds (for Date.now() comparison)
+        "token_refresh_dedup_window_ms": int( dedup_window_secs * 1000 ),
+
+        # Already in seconds (reference value for logging/debugging)
+        "websocket_heartbeat_interval_secs": int( heartbeat_interval_secs )
     }

@@ -17,6 +17,7 @@ from cosa.agents.raw_output_formatter import RawOutputFormatter
 
 import numpy as np
 from cosa.memory.embedding_manager import EmbeddingManager
+from cosa.memory.normalizer import Normalizer
 
 class SolutionSnapshot( RunnableCode ):
     """
@@ -52,22 +53,43 @@ class SolutionSnapshot( RunnableCode ):
     @staticmethod
     def remove_non_alphanumerics( input: str, replacement_char: str="" ) -> str:
         """
-        Remove non-alphanumeric characters from input.
-        
-        Requires:
-            - input is a string
-            - replacement_char is a string
-            
-        Ensures:
-            - Returns lowercase string with non-alphanumeric chars replaced
-            - Preserves spaces
-            
-        Raises:
-            - None
+        ╔══════════════════════════════════════════════════════════════════════════════╗
+        ║  🔥🔥🔥 DEPRECATED - DO NOT USE THIS FUNCTION! 🔥🔥🔥                         ║
+        ║                                                                              ║
+        ║  This function DESTROYS mathematical operators (+, -, *, /) and punctuation! ║
+        ║  It caused HOURS of debugging pain. Use Normalizer.normalize() instead.      ║
+        ║                                                                              ║
+        ║  Example of destruction:                                                     ║
+        ║    "What's 4 + 4?" → "whats 4 4"  (CORRUPTED!)                              ║
+        ║                                                                              ║
+        ║  Use instead: cosa.memory.normalizer.Normalizer.normalize()                  ║
+        ║  The Normalizer preserves MATH_OPERATORS and expands contractions properly.  ║
+        ╚══════════════════════════════════════════════════════════════════════════════╝
         """
+        # 🚨🚨🚨 SCREAM DEPRECATION WARNING TO CONSOLE 🚨🚨🚨
+        print( "" )
+        print( "╔" + "═" * 78 + "╗" )
+        print( "║" + " 🔥🔥🔥 DEPRECATED FUNCTION CALLED: remove_non_alphanumerics() 🔥🔥🔥 ".center( 78 ) + "║" )
+        print( "║" + "═" * 78 + "║" )
+        print( "║" + " WARNING: This function DESTROYS math operators and punctuation!".ljust( 78 ) + "║" )
+        print( "║" + f" Input:  '{input[:50]}...'".ljust( 78 ) + "║" ) if len( input ) > 50 else print( "║" + f" Input:  '{input}'".ljust( 78 ) + "║" )
+        print( "║" + "".ljust( 78 ) + "║" )
+        print( "║" + " USE INSTEAD: cosa.memory.normalizer.Normalizer.normalize()".ljust( 78 ) + "║" )
+        print( "║" + "".ljust( 78 ) + "║" )
+        print( "║" + " Stack trace to find the caller:".ljust( 78 ) + "║" )
+        print( "╚" + "═" * 78 + "╝" )
+
+        import traceback
+        traceback.print_stack( limit=5 )
+
+        print( "" )
+        print( "🔥" * 40 )
+        print( "" )
+
+        # Still execute for backward compatibility, but they'll know it happened!
         regex = re.compile( "[^a-zA-Z0-9 ]" )
         cleaned_output = regex.sub( replacement_char, input ).lower()
-        
+
         return cleaned_output
     
     @staticmethod
@@ -151,12 +173,12 @@ class SolutionSnapshot( RunnableCode ):
         return np.dot( this_embedding, that_embedding ) * 100
     
     def __init__( self, push_counter: int=-1, question: str="", question_normalized: str="", question_gist: str="", synonymous_questions: OrderedDict=OrderedDict(), synonymous_question_gists: OrderedDict=OrderedDict(), non_synonymous_questions: list=[],
-                  last_question_asked: str="", answer: str="", answer_conversational: str="", error: str="", routing_command: str="",
-                  created_date: str=get_timestamp(), updated_date: str=get_timestamp(), run_date: str=get_timestamp(),
+                  last_question_asked: str="", answer: str="", answer_conversational: str="", error: str="", routing_command: str="", agent_class_name: Optional[str]=None,
+                  created_date: str=None, updated_date: str=None, run_date: str=None,
                   runtime_stats: dict=get_default_stats_dict(),
-                  id_hash: str="", solution_summary: str="", code: list[str]=[], code_returns: str="", code_example: str="", code_type: str="raw", thoughts: str="",
+                  id_hash: str="", solution_summary: str="", code: list[str]=[], solution_summary_gist: str="", code_returns: str="", code_example: str="", code_type: str="raw", thoughts: str="",
                   programming_language: str="Python", language_version: str="3.10",
-                  question_embedding: list[float]=[ ], question_normalized_embedding: list[float]=[ ], question_gist_embedding: list[float]=[ ], solution_embedding: list[float]=[ ], code_embedding: list[float]=[ ], thoughts_embedding: list[float]=[ ],
+                  question_embedding: list[float]=[ ], question_normalized_embedding: list[float]=[ ], question_gist_embedding: list[float]=[ ], solution_embedding: list[float]=[ ], code_embedding: list[float]=[ ], thoughts_embedding: list[float]=[ ], solution_gist_embedding: list[float]=[ ],
                   solution_directory: str="/src/conf/long-term-memory/solutions/", solution_file: Optional[str]=None, user_id: str="ricardo_felipe_ruiz_6bdc", debug: bool=False, verbose: bool=False
                   ) -> None:
         """
@@ -180,24 +202,32 @@ class SolutionSnapshot( RunnableCode ):
         """
         
         super().__init__( debug=debug, verbose=verbose )
-        
+
         # Initialize embedding manager
         self._embedding_mgr = EmbeddingManager( debug=debug, verbose=verbose )
-        
+
+        # Initialize normalizer for consistent question normalization
+        from cosa.memory.normalizer import Normalizer
+        self._normalizer = Normalizer()
+
         # track updates to internal state as the object is instantiated
         dirty                      = False
-        
+
         self.push_counter          = push_counter
-        self.question              = SolutionSnapshot.remove_non_alphanumerics( question )
-        self.question_normalized   = question_normalized
+        # Store verbatim question (don't normalize - that destroys original operators like +, -, etc.)
+        self.question              = question if question else ""
+        # Populate normalized version (with operators preserved via MATH_OPERATORS in Normalizer)
+        self.question_normalized   = question_normalized if question_normalized else (
+            self._normalizer.normalize( question ) if question else ""
+        )
         self.question_gist         = question_gist
-        # self.question_gist         = SolutionSnapshot.remove_non_alphanumerics( question_gist )
         self.thoughts              = thoughts
         
         self.answer                = answer
         self.answer_conversational = answer_conversational
         self.error                 = error
         self.routing_command       = routing_command
+        self.agent_class_name      = agent_class_name  # e.g., "MathAgent", "CalendarAgent", etc.
         self.user_id               = user_id
         
         # Is there is no synonymous questions to be found then just recycle the current question
@@ -229,16 +259,20 @@ class SolutionSnapshot( RunnableCode ):
         self.last_question_asked   = last_question_asked
         
         self.solution_summary      = solution_summary
-        
+
         self.code                  = code
+        self.solution_summary_gist = solution_summary_gist  # Gist of solution_summary (generated after first successful execution)
         self.code_returns          = code_returns
         self.code_example          = code_example
         self.code_type             = code_type
         
         # metadata surrounding the question and the solution
-        self.updated_date          = updated_date
-        self.created_date          = created_date
-        self.run_date              = run_date
+        # NOTE: These timestamps use None defaults to avoid Python's mutable default argument bug
+        # where get_timestamp() would be evaluated ONCE at module load time, causing all snapshots
+        # to share the same timestamp and generate identical id_hash values (collision bug).
+        self.updated_date          = updated_date if updated_date else self.get_timestamp()
+        self.created_date          = created_date if created_date else self.get_timestamp()
+        self.run_date              = run_date if run_date else self.get_timestamp( microseconds=True )
         self.runtime_stats         = runtime_stats
         
         if id_hash == "":
@@ -259,20 +293,20 @@ class SolutionSnapshot( RunnableCode ):
 
         # If the normalized embedding is empty, generate it
         if question_normalized != "" and not question_normalized_embedding:
-            self.question_normalized_embedding = self._embedding_mgr.generate_embedding( question_normalized, normalize_for_cache=True )
+            self.question_normalized_embedding = self._embedding_mgr.generate_embedding( question_normalized, normalize_for_cache=False )
             dirty = True
         else:
             self.question_normalized_embedding = question_normalized_embedding
 
         # If the gist embedding is empty, generate it
         if question_gist != "" and not question_gist_embedding:
-            self.question_gist_embedding = self._embedding_mgr.generate_embedding( question_gist, normalize_for_cache=True )
+            self.question_gist_embedding = self._embedding_mgr.generate_embedding( question_gist, normalize_for_cache=False )
             dirty = True
         else:
             self.question_gist_embedding = question_gist_embedding
         
         # If the code embedding is empty, generate it
-        if code and not code_embedding:
+        if len( code ) > 0 and not code_embedding:
             self.code_embedding = self._embedding_mgr.generate_embedding( " ".join( code ), normalize_for_cache=False )
             dirty = True
         else:
@@ -291,7 +325,14 @@ class SolutionSnapshot( RunnableCode ):
             dirty = True
         else:
             self.thoughts_embedding = thoughts_embedding
-            
+
+        # If the solution gist embedding is empty, generate it
+        if solution_summary_gist and not solution_gist_embedding:
+            self.solution_gist_embedding = self._embedding_mgr.generate_embedding( solution_summary_gist, normalize_for_cache=False )
+            dirty = True
+        else:
+            self.solution_gist_embedding = solution_gist_embedding
+
         # Note: Auto-save removed - serialization is now handled by managers
         # If embeddings were generated during loading, they will be persisted
         # when the manager calls add_snapshot() or equivalent method
@@ -337,26 +378,40 @@ class SolutionSnapshot( RunnableCode ):
     def create( cls, agent: Any ) -> 'SolutionSnapshot':
         """
         Create snapshot from agent instance.
-        
+
         Requires:
             - agent has required attributes (question, code, etc.)
             - agent.prompt_response_dict is populated
-            
+
         Ensures:
             - Returns new SolutionSnapshot with agent data
             - Copies all relevant fields from agent
-            
+            - Populates all three question representations (verbatim, normalized, gist)
+
         Raises:
             - AttributeError if agent missing required fields
         """
         print( "(create_solution_snapshot) TODO: Reconcile how we're going to get a dynamic path to the solution file's directory" )
-        
+
+        # Get normalizer to create normalized representation
+        from cosa.memory.normalizer import Normalizer
+        normalizer = Normalizer()
+
+        # Extract all three question representations
+        verbatim_question = agent.last_question_asked  # Original user input
+        normalized_question = normalizer.normalize( verbatim_question )  # Normalized with operators preserved
+
+        # Capture the agent's class name for formatting logic preservation
+        agent_class_name = type( agent ).__name__  # e.g., "MathAgent", "CalendarAgent", etc.
+
         # Instantiate a new SolutionSnapshot object using the contents of the calendaring or function mapping agent
         return SolutionSnapshot(
-                         question=agent.question,
+                         question=verbatim_question,
+               question_normalized=normalized_question,
                     question_gist=agent.question_gist,
               last_question_asked=agent.last_question_asked,
                   routing_command=agent.routing_command,
+               agent_class_name=agent_class_name,  # NEW: Preserve agent type for formatting
              synonymous_questions=OrderedDict( { agent.question: 100.0 } ),
         synonymous_question_gists=OrderedDict( { agent.question_gist: 100.0 } ),
                             error=agent.prompt_response_dict.get( "error", "" ),
@@ -375,16 +430,16 @@ class SolutionSnapshot( RunnableCode ):
     def add_synonymous_question( self, question: str, salutation: str="", score: float=100.0 ) -> None:
         """
         Add a synonymous question to the snapshot.
-        
+
         Requires:
             - question is a non-empty string
             - score is between 0 and 100
-            
+
         Ensures:
             - Adds question to synonymous_questions if not present
             - Updates last_question_asked with full text
             - Updates timestamp if question added
-            
+
         Raises:
             - None
         """
@@ -394,14 +449,13 @@ class SolutionSnapshot( RunnableCode ):
             self.last_question_asked = salutation + " " + question
         else:
             self.last_question_asked = question
-        
-        question = SolutionSnapshot.remove_non_alphanumerics( question )
-        
+
+        # Store verbatim question - normalization causes signal loss
         if question not in self.synonymous_questions:
-            self.synonymous_questions[ question ] = score
+            self.synonymous_questions[ self.last_question_asked ] = score
             self.updated_date = self.get_timestamp()
         else:
-            print( f"Question [{question}] is already listed as a synonymous question." )
+            print( f"Question [{self.last_question_asked}] is already listed as a synonymous question." )
         
     def get_last_synonymous_question( self ) -> str:
         """
@@ -477,7 +531,26 @@ class SolutionSnapshot( RunnableCode ):
         self.code           = code
         self.code_embedding = self._embedding_mgr.generate_embedding( " ".join( code ), normalize_for_cache=False )
         self.updated_date   = self.get_timestamp()
-    
+
+    def set_solution_summary_gist( self, solution_summary_gist: str ) -> None:
+        """
+        Set solution summary gist and generate embedding.
+
+        Requires:
+            - solution_summary_gist is a string
+
+        Ensures:
+            - Updates solution_summary_gist field
+            - Generates new embedding
+            - Updates timestamp
+
+        Raises:
+            - None
+        """
+        self.solution_summary_gist   = solution_summary_gist
+        self.solution_gist_embedding = self._embedding_mgr.generate_embedding( solution_summary_gist, normalize_for_cache=False )
+        self.updated_date            = self.get_timestamp()
+
     def get_question_similarity( self, other_snapshot: 'SolutionSnapshot' ) -> float:
         """
         Calculate question similarity with another snapshot.
@@ -758,27 +831,73 @@ class SolutionSnapshot( RunnableCode ):
     
     def run_formatter( self ) -> str:
         """
-        Format raw output for conversational response.
-        
+        Format raw output using the same logic as the original agent.
+
+        This method preserves agent-specific formatting behavior during replay.
+        For example, MathAgent's terse mode skips LLM formatting to prevent
+        hallucination of mathematical facts.
+
         Requires:
             - last_question_asked, answer, routing_command are set
-            
+            - agent_class_name may be set (for agent-specific formatting)
+
         Ensures:
-            - Creates formatted conversational answer
-            - Extracts rephrased answer if available
-            - Returns formatted string
-            
+            - Uses agent-specific formatting logic if agent_class_name is set
+            - Falls back to default LLM formatter if not set or on error
+            - Returns formatted conversational answer
+            - Updates self.answer_conversational
+
         Raises:
-            - None
+            - None (handles errors gracefully with fallback)
         """
-        # du.print_banner( f"Formatting output for {self.routing_command}" )
-        formatter                  = RawOutputFormatter( self.last_question_asked, self.answer, self.routing_command, debug=self.debug, verbose=self.verbose )
-        self.answer_conversational = formatter.run_formatter()
-        
-        if self.debug and self.verbose: print( f" PRE self.answer_conversational: [{self.answer_conversational}]" )
-        self.answer_conversational = dux.get_value_by_xml_tag_name( self.answer_conversational, "rephrased-answer", default_value=self.answer_conversational )
-        if self.debug and self.verbose: print( f"POST self.answer_conversational: [{self.answer_conversational}]" )
-        
+
+        # Try agent-specific formatting if we know the agent type
+        if self.agent_class_name == "MathAgent":
+            try:
+                # Import MathAgent to use its formatting logic
+                from cosa.agents.math_agent import MathAgent
+                from cosa.config.configuration_manager import ConfigurationManager
+
+                # Create config manager to check terse flag
+                config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+
+                # Use MathAgent's formatting logic (checks terse flag)
+                formatted = MathAgent.apply_formatting(
+                    self.answer,  # Raw output like "4" or "99"
+                    config_mgr,
+                    self.debug,
+                    self.verbose
+                )
+
+                if formatted is not None:
+                    # Terse mode: Use raw output directly, skip LLM formatting
+                    self.answer_conversational = formatted
+                    if self.debug and self.verbose:
+                        print( f"SolutionSnapshot: Used MathAgent terse formatting. Result: [{self.answer_conversational}]" )
+                    return self.answer_conversational
+
+                # Verbose mode: Fall through to default LLM formatter
+                if self.debug and self.verbose:
+                    print( "SolutionSnapshot: MathAgent signaled to use default LLM formatter." )
+
+            except Exception as e:
+                if self.debug:
+                    print( f"⚠ Failed to apply MathAgent formatting: {e}" )
+                    print( "  Falling back to default LLM formatter" )
+
+        # Default LLM formatter (for unknown agents, non-terse mode, or errors)
+        formatter = RawOutputFormatter(
+            self.last_question_asked,
+            self.answer,
+            self.routing_command,
+            debug=self.debug,
+            verbose=self.verbose
+        )
+        self.answer_conversational = formatter.run_formatter()  # Already returns extracted string via Pydantic XML parsing
+
+        if self.debug and self.verbose:
+            print( f"SolutionSnapshot: Used default LLM formatter. Result: [{self.answer_conversational}]" )
+
         return self.answer_conversational
     
     def formatter_ran_to_completion( self ) -> bool:

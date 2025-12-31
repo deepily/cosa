@@ -353,7 +353,32 @@ class MultiModalMunger:
         raw_transcription = multimodal_regex.sub( "toggle", raw_transcription, 1 )
         
         return raw_transcription
-    
+
+    def _tokenize( self, text: str ) -> list[str]:
+        """
+        Split text into tokens: words (with apostrophes), spaces, and punctuation.
+        Preserves everything for exact reconstruction when joined.
+
+        Requires:
+            - text is a string
+
+        Ensures:
+            - Returns list of tokens
+            - Words include apostrophes (e.g., "What's" stays as one token)
+            - Spaces preserved as separate tokens
+            - Punctuation preserved as separate tokens
+            - ''.join( result ) == original text
+
+        Raises:
+            - None
+
+        Examples:
+            "What's five?" → ["What's", " ", "five", "?"]
+            "Five plus five" → ["Five", " ", "plus", " ", "five"]
+        """
+        # Match: words (including apostrophes), spaces, or single punctuation chars
+        return re.findall( r"[\w']+|[ ]+|[^\w\s']", text )
+
     def _remove_protocols( self, words: str ) -> str:
         """
         Remove URL protocols from text.
@@ -631,44 +656,113 @@ class MultiModalMunger:
     
     def munge_text_punctuation( self, raw_transcription: str, mode: str ) -> tuple[str, str]:
         """
-        Process text with proper punctuation.
-        
+        Process text with proper punctuation while preserving original case.
+
+        Uses TOKENIZATION approach for reliable word-level replacement without
+        fragile regex boundary handling.
+
         Requires:
             - raw_transcription is a string
             - mode is a valid mode string
-            - Punctuation dictionary is loaded
-            
+            - Punctuation and number dictionaries are loaded
+
         Ensures:
             - Returns tuple of (prose, mode)
+            - Preserves original case from raw_transcription (e.g., "What's" stays capitalized)
             - Handles URL protocols
-            - Converts punctuation words to symbols
+            - Converts punctuation words to symbols (case-insensitive matching)
+            - Converts number words to digits (e.g., "two" → "2", case-insensitive)
             - Normalizes spacing
-            
+
         Raises:
             - None
-        """
-    
-        # print( "BEFORE raw_transcription:", raw_transcription )
-        prose = raw_transcription.lower()
-        
-        # Remove the protocol from URLs
-        prose = self._remove_protocols( prose )
-    
-        # Encode domain names as plain text before removing dots below
-        for key, value in self.domain_names.items():
-            prose = prose.replace( key, value )
 
+        Implementation Notes (2024.11.30):
+            TOKENIZATION APPROACH:
+                Instead of regex patterns on continuous text (which fails at boundaries),
+                we tokenize first, match tokens against dictionaries, then rejoin.
+
+                "What's five plus five?" → ["What's", " ", "five", " ", "plus", " ", "five", "?"]
+                                        → ["What's", " ", "5",    " ", "+",    " ", "5",    "?"]
+                                        → "What's 5 + 5?"
+
+            Benefits:
+                - Word boundaries are implicit (tokens are pre-separated)
+                - Works at sentence start/end (no space boundary issues)
+                - Case preservation is natural (check lowercase, keep/replace original)
+                - No complex regex patterns to maintain
+                - The `|` space-delimiter in .map files is now irrelevant - just strip keys
+
+            Previous approaches (regex-based) failed because:
+                - ` five ` pattern couldn't match "five?" at end of sentence
+                - ` five ` pattern couldn't match "Five" at start of sentence
+                - Order of operations mangled spacing around punctuation
+
+            To rollback: See commented OLD APPROACHES below.
+        """
+
+        # ============================================================================
+        # OLD APPROACHES - Preserved for rollback reference
+        # ============================================================================
+        # APPROACH 1 (case-destructive, simple .replace()):
+        #     prose = raw_transcription.lower()
+        #     for key, value in self.punctuation.items():
+        #         prose = prose.replace( key, value )
+        #     Problem: Lost case - "What's 2 plus 2?" → "what's 2 + 2?"
+        #
+        # APPROACH 2 (regex with space-boundary detection):
+        #     if key.startswith( ' ' ) or key.endswith( ' ' ):
+        #         pattern = r'(?i)' + re.escape( key )
+        #     else:
+        #         pattern = r'(?i)\b' + re.escape( key ) + r'\b'
+        #     prose = re.sub( pattern, lambda m: value, prose )
+        #     Problem: Failed at boundaries - "five?" couldn't match " five "
+        # ============================================================================
+
+        # ============================================================================
+        # TOKENIZATION APPROACH
+        # ============================================================================
+
+        prose = raw_transcription
+
+        # Remove URL protocols first (before tokenization)
+        prose = self._remove_protocols( prose )
+
+        # Build case-insensitive lookup dictionaries (strip spaces from keys)
+        # The `|` delimiter in .map files adds spaces, but tokenization makes them irrelevant
+        domain_lookup = { k.strip().lower(): v for k, v in self.domain_names.items() if k.strip() }
+        punct_lookup  = { k.strip().lower(): v for k, v in self.punctuation.items() if k.strip() }
+        number_lookup = { k.strip().lower(): v for k, v in self.numbers.items() if k.strip() }
+
+        # Tokenize: split into words, spaces, and punctuation
+        tokens = self._tokenize( prose )
+
+        # Replace tokens (order: domains, then punctuation, then numbers)
+        result = []
+        for token in tokens:
+            token_lower = token.lower()
+            if token_lower in domain_lookup:
+                result.append( domain_lookup[ token_lower ] )
+            elif token_lower in punct_lookup:
+                result.append( punct_lookup[ token_lower ] )
+            elif token_lower in number_lookup:
+                result.append( number_lookup[ token_lower ] )
+            else:
+                result.append( token )  # Keep original (preserves case)
+
+        prose = ''.join( result )
+
+        # Remove commas and periods
         prose = re.sub( r'[,.]', '', prose )
 
-        # Translate punctuation mark words into single characters.
-        for key, value in self.punctuation.items():
-            prose = prose.replace( key, value )
-            
-        # Remove extra spaces.
+        # ============================================================================
+
+        # Remove extra spaces around punctuation
         prose = self._remove_spaces_around_punctuation( prose )
-        
+
+        # Remove dashed spellings (e.g., "t-h-i-s" → "this")
         prose = self._remove_dashed_spellings( prose )
-        
+
         return prose, mode
     
     def munge_text_contact( self, raw_transcription: str, mode: str, extra_words: str="" ) -> tuple[str, str]:

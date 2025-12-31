@@ -128,7 +128,7 @@ class CompletionClient( LlmClientInterface ):
         async with self.model.run_stream( prompt, **generation_args ) as result:
             counter = 0
             async for chunk in result.stream_text( delta=True ):
-                if self.debug:
+                if self.debug and self.verbose:
                     print( chunk, end="", flush=True )
                 else:
                     counter += 1
@@ -185,7 +185,7 @@ class CompletionClient( LlmClientInterface ):
             return cleaned_response
         
         # Streaming mode
-        if self.debug: print( f"🔄 Streaming from completion model: {self.model_name}\n" )
+        if self.debug and self.verbose: print( f"🔄 Streaming from completion model: {self.model_name}\n" )
         start_time = time.perf_counter()
         
         output = await self._stream_async( prompt, **updated_gen_args )

@@ -4,6 +4,8 @@ from cosa.config.configuration_manager import ConfigurationManager
 from cosa.agents.llm_client_factory import LlmClientFactory
 from cosa.agents.io_models.xml_models import SimpleResponse
 from cosa.agents.io_models.utils.prompt_template_processor import PromptTemplateProcessor
+from cosa.memory.gist_cache_table import GistCacheTable
+from cosa.memory.normalizer import Normalizer
 
 
 class Gister:
@@ -36,13 +38,26 @@ class Gister:
         # Check if Pydantic parsing is enabled for Gister
         self.use_pydantic = self.config_mgr.get( "gister use pydantic xml parsing", default=False, return_type="boolean" )
 
+        # Initialize normalizer for cache key generation
+        self._normalizer = Normalizer()
+
+        # Initialize gist cache if enabled
+        self.cache_enabled = self.config_mgr.get( "gister cache enabled", default=True, return_type="boolean" )
+        self._gist_cache = None
+
+        if self.cache_enabled:
+            db_uri      = du.get_project_root() + self.config_mgr.get( "solution snapshots lancedb path" )
+            table_name  = self.config_mgr.get( "gister cache table name", default="gist_cache" )
+            self._gist_cache = GistCacheTable( db_uri, table_name=table_name, debug=self.debug, verbose=self.verbose )
+
         if self.debug:
             parsing_mode = "Pydantic (structured)" if self.use_pydantic else "baseline"
-            print( f"Gister initialized with {parsing_mode} XML parsing" )
+            cache_status = "enabled" if self.cache_enabled else "disabled"
+            print( f"Gister initialized with {parsing_mode} XML parsing, cache {cache_status}" )
 
     def get_gist( self, utterance: str ) -> str:
         """
-        Extract the gist of a question using LLM.
+        Extract the gist of a question using LLM with caching.
 
         Requires:
             - utterance is a non-empty string
@@ -50,18 +65,61 @@ class Gister:
 
         Ensures:
             - Returns a concise gist of the question
+            - Uses cached gist if available (5ms vs 500ms)
             - Uses LLM to extract main intent for multi-word utterances
             - Returns utterance directly if it contains no spaces
+            - Caches LLM results for future lookups
             - Returns empty string if extraction fails
 
         Raises:
             - FileNotFoundError if prompt template missing
+
+        Performance:
+            - Cache hit: ~5ms
+            - Cache miss: ~525ms (500ms LLM + 25ms cache write)
+            - Expected hit rate: 70-80%
         """
         # Shortcut: if utterance has no spaces, return it directly
         if " " not in utterance.strip():
             if self.debug: print( f"Shortcut: returning single word/token '{utterance}' without LLM" )
             return utterance.strip()
 
+        # Check cache first if enabled
+        if self.cache_enabled and self._gist_cache is not None:
+            cached_gist = self._gist_cache.get_cached_gist( utterance )
+            if cached_gist is not None:
+                if self.debug: print( f"Cache HIT for '{du.truncate_string( utterance )}' → '{cached_gist}'" )
+                return cached_gist
+
+            if self.debug: print( f"Cache MISS for '{du.truncate_string( utterance )}' - calling LLM" )
+
+        # Cache miss or cache disabled - generate via LLM
+        gist = self._generate_gist_via_llm( utterance )
+
+        # Store in cache if enabled and gist was generated successfully
+        if self.cache_enabled and self._gist_cache is not None and gist:
+            normalized = self._normalizer.normalize( utterance )
+            self._gist_cache.cache_gist( utterance, gist, normalized=normalized )
+
+        return gist
+
+    def _generate_gist_via_llm( self, utterance: str ) -> str:
+        """
+        Generate gist by calling LLM (internal helper method).
+
+        Requires:
+            - utterance is a non-empty string with spaces
+
+        Ensures:
+            - Returns gist extracted from LLM response
+            - Returns empty string if extraction fails
+
+        Raises:
+            - FileNotFoundError if prompt template missing
+
+        Performance:
+            - ~500ms per call (LLM latency)
+        """
         prompt_template_path = self.config_mgr.get( "prompt template for gist generation" )
         prompt_template = du.get_file_as_string( du.get_project_root() + prompt_template_path )
 

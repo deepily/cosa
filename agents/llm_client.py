@@ -8,6 +8,7 @@ from cosa.agents.llm_completion import LlmCompletion
 from cosa.agents.token_counter import TokenCounter
 
 from pydantic_ai import Agent
+from pydantic_ai.settings import ModelSettings
 # from pydantic_ai.models.openai import OpenAIModel
 # from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -126,7 +127,9 @@ class LlmClient:
             # For normal chat mode, use the Agent class
             # if self.debug: print( f"Using Agent with model: 'openai:{model_name}'" )
             du.print_banner( f"TODO: fetch and set system prompt HERE! for model 'openai:{model_name}'", prepend_nl=True, expletive=True )
-            self.model = Agent( f"openai:{model_name}", **generation_args )
+            # Wrap generation parameters in ModelSettings for pydantic_ai API
+            model_settings = ModelSettings( **generation_args )
+            self.model = Agent( f"openai:{model_name}", model_settings=model_settings )
     
     async def _stream_async( self, prompt: str, **generation_args: Any ) -> str:
         """
@@ -154,11 +157,13 @@ class LlmClient:
         
         if self.completion_mode:
             # Use run_stream for LlmCompletion
-            async with self.model.run_stream( prompt, **generation_args ) as result:
+            # Wrap generation parameters in ModelSettings for pydantic_ai API
+            runtime_settings = ModelSettings( **generation_args )
+            async with self.model.run_stream( prompt, model_settings=runtime_settings ) as result:
                 # Stream text as deltas
                 counter = 0
                 async for chunk in result.stream_text( delta=True ):
-                    if self.debug:
+                    if self.debug and self.verbose:
                         print( chunk, end="", flush=True )
                     else:
                         counter += 1
@@ -167,11 +172,13 @@ class LlmClient:
                     output.append( chunk )
         else:
             # Use run_stream for Agent (Chat)
-            async with self.model.run_stream( prompt, **generation_args ) as result:
+            # Wrap generation parameters in ModelSettings for pydantic_ai API
+            runtime_settings = ModelSettings( **generation_args )
+            async with self.model.run_stream( prompt, model_settings=runtime_settings ) as result:
                 # Stream text as deltas
                 async for chunk in result.stream_text( delta=True ):
                     counter = 0
-                    if self.debug:
+                    if self.debug and self.verbose:
                         print( chunk, end="", flush=True )
                     else:
                         counter += 1
@@ -224,19 +231,21 @@ class LlmClient:
         
         # Check both the explicit parameter and the updated_gen_args
         if not updated_gen_args["stream"]:
-            
+
             # Add timing for non-streaming mode too
             start_time = time.perf_counter()
-            
+
             if not self.completion_mode:
                 # For Agent, use async run
-                response = await self.model.run( prompt, **updated_gen_args )
-                response = response.data
+                # Wrap generation parameters in ModelSettings for pydantic_ai API
+                runtime_settings = ModelSettings( **updated_gen_args )
+                response = await self.model.run( prompt, model_settings=runtime_settings )
+                response = response.output
             else:
                 # For LlmCompletion, need to await the async version
                 # TODO: Check if LlmCompletion has async support
                 response = self.model.run( prompt, **updated_gen_args )
-            
+
             duration = time.perf_counter() - start_time
             completion_tokens = self.token_counter.count_tokens( self.model_name, response )
             if self.debug and self.verbose: self._print_metadata( prompt_tokens, completion_tokens, duration=duration )
@@ -244,7 +253,7 @@ class LlmClient:
         
         # Streaming mode
         output = ""
-        print( f"🔄 Streaming from model: {self.model_name}\n" )
+        if self.debug and self.verbose: print( f"🔄 Streaming from model: {self.model_name}\n" )
         start_time = time.perf_counter()
         
         # Direct async call - no event loop needed here

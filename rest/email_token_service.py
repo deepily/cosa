@@ -5,13 +5,15 @@ Handles generation and validation of:
 - Email verification tokens (24h expiration)
 - Password reset tokens (1h expiration)
 
-Tokens are cryptographically secure and stored in SQLite database.
+Tokens are cryptographically secure and stored in PostgreSQL database.
 """
 
 import secrets
-from datetime import datetime, timedelta
+import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Tuple, Optional
-from cosa.rest.auth_database import get_auth_db_connection
+from cosa.rest.db.database import get_db
+from cosa.rest.db.repositories import EmailVerificationTokenRepository, PasswordResetTokenRepository
 
 
 def generate_verification_token( user_id: str ) -> Tuple[bool, str, Optional[str]]:
@@ -40,24 +42,14 @@ def generate_verification_token( user_id: str ) -> Tuple[bool, str, Optional[str
         # Generate cryptographically secure token
         token = secrets.token_urlsafe( 32 )
 
-        # Calculate expiration (24 hours from now)
-        expires_at = (datetime.utcnow() + timedelta( hours=24 )).isoformat()
-        created_at = datetime.utcnow().isoformat()
-
-        # Store in database
-        conn = get_auth_db_connection()
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            INSERT INTO email_verification_tokens ( token, user_id, expires_at, created_at )
-            VALUES ( ?, ?, ?, ? )
-            """,
-            (token, user_id, expires_at, created_at)
-        )
-
-        conn.commit()
-        conn.close()
+        # Store in database using PostgreSQL repository
+        with get_db() as session:
+            token_repo = EmailVerificationTokenRepository( session )
+            token_repo.create_token(
+                token=token,
+                user_id=uuid.UUID( user_id ),
+                expires_hours=24
+            )
 
         return True, "Verification token generated", token
 
@@ -88,50 +80,28 @@ def validate_verification_token( token: str ) -> Tuple[bool, str, Optional[str]]
             mark_email_verified( user_id )
     """
     try:
-        conn = get_auth_db_connection()
-        cursor = conn.cursor()
+        with get_db() as session:
+            token_repo = EmailVerificationTokenRepository( session )
 
-        # Fetch token details
-        cursor.execute(
-            """
-            SELECT user_id, expires_at, used
-            FROM email_verification_tokens
-            WHERE token = ?
-            """,
-            (token,)
-        )
+            # Check if token is valid (not used, not expired)
+            if not token_repo.is_valid( token ):
+                token_obj = token_repo.get_by_token( token )
+                if token_obj is None:
+                    return False, "Invalid verification token", None
+                elif token_obj.used:
+                    return False, "Verification token already used", None
+                else:
+                    return False, "Verification token expired", None
 
-        row = cursor.fetchone()
+            # Get the token to retrieve user_id
+            token_obj = token_repo.get_by_token( token )
+            if token_obj is None:
+                return False, "Invalid verification token", None
 
-        if not row:
-            conn.close()
-            return False, "Invalid verification token", None
+            user_id = str( token_obj.user_id )
 
-        user_id, expires_at_str, used = row
-
-        # Check if already used
-        if used:
-            conn.close()
-            return False, "Verification token already used", None
-
-        # Check if expired
-        expires_at = datetime.fromisoformat( expires_at_str )
-        if datetime.utcnow() > expires_at:
-            conn.close()
-            return False, "Verification token expired", None
-
-        # Mark token as used
-        cursor.execute(
-            """
-            UPDATE email_verification_tokens
-            SET used = 1
-            WHERE token = ?
-            """,
-            (token,)
-        )
-
-        conn.commit()
-        conn.close()
+            # Mark token as used
+            token_repo.mark_used( token )
 
         return True, "Email verification token valid", user_id
 
@@ -165,24 +135,14 @@ def generate_password_reset_token( user_id: str ) -> Tuple[bool, str, Optional[s
         # Generate cryptographically secure token
         token = secrets.token_urlsafe( 32 )
 
-        # Calculate expiration (1 hour from now)
-        expires_at = (datetime.utcnow() + timedelta( hours=1 )).isoformat()
-        created_at = datetime.utcnow().isoformat()
-
-        # Store in database
-        conn = get_auth_db_connection()
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            INSERT INTO password_reset_tokens ( token, user_id, expires_at, created_at )
-            VALUES ( ?, ?, ?, ? )
-            """,
-            (token, user_id, expires_at, created_at)
-        )
-
-        conn.commit()
-        conn.close()
+        # Store in database using PostgreSQL repository
+        with get_db() as session:
+            token_repo = PasswordResetTokenRepository( session )
+            token_repo.create_token(
+                token=token,
+                user_id=uuid.UUID( user_id ),
+                expires_hours=1
+            )
 
         return True, "Password reset token generated", token
 
@@ -213,50 +173,28 @@ def validate_password_reset_token( token: str ) -> Tuple[bool, str, Optional[str
             reset_password_with_token( user_id, new_password )
     """
     try:
-        conn = get_auth_db_connection()
-        cursor = conn.cursor()
+        with get_db() as session:
+            token_repo = PasswordResetTokenRepository( session )
 
-        # Fetch token details
-        cursor.execute(
-            """
-            SELECT user_id, expires_at, used
-            FROM password_reset_tokens
-            WHERE token = ?
-            """,
-            (token,)
-        )
+            # Check if token is valid (not used, not expired)
+            if not token_repo.is_valid( token ):
+                token_obj = token_repo.get_by_token( token )
+                if token_obj is None:
+                    return False, "Invalid password reset token", None
+                elif token_obj.used:
+                    return False, "Password reset token already used", None
+                else:
+                    return False, "Password reset token expired", None
 
-        row = cursor.fetchone()
+            # Get the token to retrieve user_id
+            token_obj = token_repo.get_by_token( token )
+            if token_obj is None:
+                return False, "Invalid password reset token", None
 
-        if not row:
-            conn.close()
-            return False, "Invalid password reset token", None
+            user_id = str( token_obj.user_id )
 
-        user_id, expires_at_str, used = row
-
-        # Check if already used
-        if used:
-            conn.close()
-            return False, "Password reset token already used", None
-
-        # Check if expired
-        expires_at = datetime.fromisoformat( expires_at_str )
-        if datetime.utcnow() > expires_at:
-            conn.close()
-            return False, "Password reset token expired", None
-
-        # Mark token as used
-        cursor.execute(
-            """
-            UPDATE password_reset_tokens
-            SET used = 1
-            WHERE token = ?
-            """,
-            (token,)
-        )
-
-        conn.commit()
-        conn.close()
+            # Mark token as used
+            token_repo.mark_used( token )
 
         return True, "Password reset token valid", user_id
 
@@ -284,32 +222,14 @@ def cleanup_expired_tokens() -> Tuple[int, int]:
         print( f"Cleaned up {ver_count} verification and {reset_count} reset tokens" )
     """
     try:
-        conn = get_auth_db_connection()
-        cursor = conn.cursor()
-        now = datetime.utcnow().isoformat()
+        with get_db() as session:
+            # Cleanup expired verification tokens
+            ver_repo = EmailVerificationTokenRepository( session )
+            ver_count = ver_repo.cleanup_expired()
 
-        # Delete expired verification tokens
-        cursor.execute(
-            """
-            DELETE FROM email_verification_tokens
-            WHERE expires_at < ?
-            """,
-            (now,)
-        )
-        ver_count = cursor.rowcount
-
-        # Delete expired password reset tokens
-        cursor.execute(
-            """
-            DELETE FROM password_reset_tokens
-            WHERE expires_at < ?
-            """,
-            (now,)
-        )
-        reset_count = cursor.rowcount
-
-        conn.commit()
-        conn.close()
+            # Cleanup expired password reset tokens
+            reset_repo = PasswordResetTokenRepository( session )
+            reset_count = reset_repo.cleanup_expired()
 
         return ver_count, reset_count
 
@@ -336,7 +256,7 @@ def quick_smoke_test():
         - None (catches all exceptions)
     """
     import cosa.utils.util as du
-    from cosa.rest.auth_database import init_auth_database
+    from cosa.rest.sqlite_database import init_auth_database
     from cosa.rest.user_service import create_user
 
     du.print_banner( "Email Token Service Smoke Test", prepend_nl=True )

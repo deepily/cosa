@@ -1,0 +1,599 @@
+#!/usr/bin/env python3
+"""
+Pydantic models for notification requests and responses (Phase 2.3).
+
+Provides type-safe validation for CLI and API interactions with the
+Lupin notification system. These models ensure data integrity for
+response-required notifications with SSE blocking.
+
+Models:
+    - NotificationRequest: Request parameters with field validation
+    - SSE Events: RespondedEvent, ExpiredEvent, OfflineEvent, ErrorEvent
+    - NotificationResponse: Typed response from notify_user_sync
+
+Usage:
+    from cosa.cli.notification_models import NotificationRequest
+
+    request = NotificationRequest(
+        message="Approve deployment?",
+        response_type="yes_no",
+        response_default="no"
+    )
+"""
+
+from pydantic import BaseModel, Field, field_validator, EmailStr
+from typing import Optional, Literal, Union
+from enum import Enum
+import re
+
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+def extract_sender_from_message( message: str ) -> Optional[str]:
+    """
+    Extract sender ID from message prefix like [LUPIN] or [COSA].
+
+    Requires:
+        - message is a string
+
+    Ensures:
+        - Returns claude.code@{project}.deepily.ai if [PREFIX] found
+        - Returns None if no prefix found
+        - Project name is lowercased
+
+    Examples:
+        "[LUPIN] Build complete" -> "claude.code@lupin.deepily.ai"
+        "[COSA] Tests passed"    -> "claude.code@cosa.deepily.ai"
+        "No prefix message"      -> None
+
+    Args:
+        message: Notification message text
+
+    Returns:
+        str or None: Sender ID in email format, or None if no prefix
+    """
+    match = re.match( r'^\[([A-Z]+)\]', message )
+    if match:
+        project = match.group( 1 ).lower()
+        return f"claude.code@{project}.deepily.ai"
+    return None
+
+
+# ============================================================================
+# Enums (Type-Safe Choices)
+# ============================================================================
+
+class NotificationType(str, Enum):
+    """Notification type enumeration."""
+    TASK = "task"
+    PROGRESS = "progress"
+    ALERT = "alert"
+    CUSTOM = "custom"
+
+
+class NotificationPriority(str, Enum):
+    """Notification priority enumeration."""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    URGENT = "urgent"
+
+
+class ResponseType(str, Enum):
+    """Response type for notifications."""
+    YES_NO = "yes_no"
+    OPEN_ENDED = "open_ended"
+
+
+# ============================================================================
+# Request Model
+# ============================================================================
+
+class NotificationRequest(BaseModel):
+    """
+    Request model for response-required notifications.
+
+    Validates all parameters before sending to Lupin API, ensuring
+    data integrity and providing clear error messages for invalid input.
+
+    Attributes:
+        message: Notification message text (required, non-empty)
+        response_type: Response type (yes_no or open_ended)
+        notification_type: Type of notification (task, progress, alert, custom)
+        priority: Priority level (low, medium, high, urgent)
+        target_user: Target user email address
+        timeout_seconds: Response timeout (1-600 seconds)
+        response_default: Default response for timeout/offline
+        title: Terse technical title for voice-first UX
+    """
+
+    message: str = Field(
+        ...,
+        min_length=1,
+        max_length=5000,
+        description="Notification message text"
+    )
+
+    response_type: ResponseType = Field(
+        ...,
+        description="Response type (yes_no or open_ended)"
+    )
+
+    notification_type: NotificationType = Field(
+        default=NotificationType.CUSTOM,
+        description="Notification type"
+    )
+
+    priority: NotificationPriority = Field(
+        default=NotificationPriority.MEDIUM,
+        description="Priority level"
+    )
+
+    target_user: str = Field(
+        default="ricardo.felipe.ruiz@gmail.com",
+        description="Target user email address"
+    )
+
+    timeout_seconds: int = Field(
+        default=120,
+        ge=1,
+        le=600,
+        description="Response timeout in seconds (1-600)"
+    )
+
+    response_default: Optional[str] = Field(
+        default=None,
+        description="Default response value for timeout/offline"
+    )
+
+    title: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        description="Terse technical title for voice-first UX"
+    )
+
+    sender_id: Optional[str] = Field(
+        default=None,
+        pattern=r'^claude\.code@[a-z]+\.deepily\.ai$',
+        description="Sender ID (e.g., claude.code@lupin.deepily.ai). Auto-extracted from [PREFIX] if not provided."
+    )
+
+    @field_validator( 'message' )
+    @classmethod
+    def message_not_whitespace( cls, v: str ) -> str:
+        """
+        Ensure message is not just whitespace.
+
+        Requires:
+            - v is a string
+
+        Ensures:
+            - Returns stripped string
+            - Raises ValueError if whitespace-only
+
+        Raises:
+            - ValueError if message is empty after stripping
+        """
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError( 'Message cannot be empty or whitespace-only' )
+        return stripped
+
+    @field_validator( 'response_default' )
+    @classmethod
+    def validate_yes_no_default( cls, v: Optional[str], info ) -> Optional[str]:
+        """
+        For yes_no type, default must be 'yes' or 'no'.
+
+        Requires:
+            - v is None or a string
+            - info contains validated field data
+
+        Ensures:
+            - For yes_no type: returns 'yes', 'no', or None
+            - For open_ended type: returns any string or None
+            - Raises ValueError for invalid yes_no defaults
+
+        Raises:
+            - ValueError if yes_no default is not 'yes' or 'no'
+        """
+        if v is not None:
+            response_type = info.data.get( 'response_type' )
+            if response_type == ResponseType.YES_NO:
+                if v not in ('yes', 'no'):
+                    raise ValueError(
+                        "For yes_no type, response_default must be 'yes' or 'no'"
+                    )
+        return v
+
+    def to_api_params( self ) -> dict:
+        """
+        Convert to API query parameters for /api/notify endpoint.
+
+        Phase 2.5: API key authentication moved to X-API-Key header.
+
+        Requires:
+            - All model fields are validated
+
+        Ensures:
+            - Returns dict with all required parameters
+            - Converts enums to string values
+            - Includes optional parameters if set
+            - Excludes None values for cleaner API calls
+            - Does NOT include api_key (moved to headers in Phase 2.5)
+
+        Returns:
+            dict: Query parameters for requests.post()
+        """
+        params = {
+            "message"            : self.message,
+            "type"               : self.notification_type.value,
+            "priority"           : self.priority.value,
+            "target_user"        : self.target_user,
+            "response_requested" : "true",
+            "response_type"      : self.response_type.value,
+            "timeout_seconds"    : self.timeout_seconds
+        }
+
+        # Add optional parameters
+        if self.response_default is not None:
+            params["response_default"] = self.response_default
+
+        if self.title is not None:
+            params["title"] = self.title
+
+        # Sender ID: explicit > extracted from message > None (API will use default)
+        resolved_sender_id = self.sender_id
+        if not resolved_sender_id:
+            resolved_sender_id = extract_sender_from_message( self.message )
+        if resolved_sender_id:
+            params["sender_id"] = resolved_sender_id
+
+        return params
+
+
+# ============================================================================
+# SSE Event Models
+# ============================================================================
+
+class SSEEventBase(BaseModel):
+    """Base model for all SSE events."""
+    status: str
+
+
+class RespondedEvent(SSEEventBase):
+    """
+    User responded to notification (success case).
+
+    Attributes:
+        status: Always "responded"
+        response: User's response value (yes/no or text)
+        default_used: Whether default value was used (always False)
+    """
+    status: Literal["responded"] = "responded"
+    response: str
+    default_used: bool = False
+
+
+class ExpiredEvent(SSEEventBase):
+    """
+    Notification expired due to timeout.
+
+    Attributes:
+        status: Always "expired"
+        response: Default value if provided, None otherwise
+        default_used: True if default provided, False otherwise
+        timeout: Always True (indicates timeout occurred)
+    """
+    status: Literal["expired"] = "expired"
+    response: Optional[str]
+    default_used: bool
+    timeout: bool = True
+
+
+class OfflineEvent(SSEEventBase):
+    """
+    User was offline, used default value immediately.
+
+    Attributes:
+        status: Always "offline"
+        response: Default value (required for offline)
+        default_used: Always True
+    """
+    status: Literal["offline"] = "offline"
+    response: str
+    default_used: bool = True
+
+
+class ErrorEvent(SSEEventBase):
+    """
+    Server error occurred during processing.
+
+    Attributes:
+        status: Always "error"
+        message: Error description
+        response: Always None (no response on error)
+    """
+    status: Literal["error"] = "error"
+    message: str
+    response: Optional[str] = None
+
+
+# Union type for all possible SSE events
+SSEEvent = Union[RespondedEvent, ExpiredEvent, OfflineEvent, ErrorEvent]
+
+
+# ============================================================================
+# Response Model
+# ============================================================================
+
+class NotificationResponse(BaseModel):
+    """
+    Response from notify_user_sync function.
+
+    Encapsulates the result of a synchronous notification request,
+    including the user's response value, exit code, and metadata.
+
+    Attributes:
+        response_value: User's response (str) or None on error
+        exit_code: 0=success, 1=error, 2=timeout
+        status: Event status (responded, expired, offline, error)
+        default_used: Whether default value was used
+        is_timeout: Whether notification timed out
+    """
+
+    response_value: Optional[str] = Field(
+        default=None,
+        description="User's response value or None on error"
+    )
+
+    exit_code: int = Field(
+        ...,
+        ge=0,
+        le=2,
+        description="Exit code: 0=success, 1=error, 2=timeout"
+    )
+
+    status: Optional[str] = Field(
+        default=None,
+        description="Event status (responded, expired, offline, error)"
+    )
+
+    default_used: bool = Field(
+        default=False,
+        description="Whether default value was used"
+    )
+
+    is_timeout: bool = Field(
+        default=False,
+        description="Whether notification timed out"
+    )
+
+    @property
+    def success( self ) -> bool:
+        """
+        Whether notification was successful.
+
+        Requires:
+            - exit_code is 0, 1, or 2
+
+        Ensures:
+            - Returns True if exit_code == 0
+            - Returns False otherwise
+
+        Returns:
+            bool: True if successful (exit_code 0)
+        """
+        return self.exit_code == 0
+
+    @property
+    def is_error( self ) -> bool:
+        """
+        Whether an error occurred.
+
+        Requires:
+            - exit_code is 0, 1, or 2
+
+        Ensures:
+            - Returns True if exit_code == 1
+            - Returns False otherwise
+
+        Returns:
+            bool: True if error (exit_code 1)
+        """
+        return self.exit_code == 1
+
+
+# ============================================================================
+# Async (Fire-and-Forget) Models - Phase 2.4
+# ============================================================================
+
+class AsyncNotificationRequest(BaseModel):
+    """
+    Request model for fire-and-forget (async) notifications.
+
+    Simpler than NotificationRequest - no response_type or timeout fields
+    since async notifications don't wait for responses.
+
+    Attributes:
+        message: Notification message text (required, non-empty)
+        notification_type: Type of notification (task, progress, alert, custom)
+        priority: Priority level (low, medium, high, urgent)
+        target_user: Target user email address
+        timeout: HTTP request timeout in seconds (1-30)
+    """
+
+    message: str = Field(
+        ...,
+        min_length=1,
+        max_length=5000,
+        description="Notification message text"
+    )
+
+    notification_type: NotificationType = Field(
+        default=NotificationType.CUSTOM,
+        description="Notification type"
+    )
+
+    priority: NotificationPriority = Field(
+        default=NotificationPriority.MEDIUM,
+        description="Priority level"
+    )
+
+    target_user: str = Field(
+        default="ricardo.felipe.ruiz@gmail.com",
+        description="Target user email address"
+    )
+
+    timeout: int = Field(
+        default=5,
+        ge=1,
+        le=30,
+        description="HTTP request timeout in seconds (1-30)"
+    )
+
+    sender_id: Optional[str] = Field(
+        default=None,
+        pattern=r'^claude\.code@[a-z]+\.deepily\.ai$',
+        description="Sender ID (e.g., claude.code@lupin.deepily.ai). Auto-extracted from [PREFIX] if not provided."
+    )
+
+    @field_validator( 'message' )
+    @classmethod
+    def message_not_whitespace( cls, v: str ) -> str:
+        """
+        Ensure message is not just whitespace.
+
+        Requires:
+            - v is a string
+
+        Ensures:
+            - Returns stripped string
+            - Raises ValueError if whitespace-only
+
+        Raises:
+            - ValueError if message is empty after stripping
+        """
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError( 'Message cannot be empty or whitespace-only' )
+        return stripped
+
+    def to_api_params( self ) -> dict:
+        """
+        Convert to API query parameters for /api/notify endpoint.
+
+        Phase 2.5: API key authentication moved to X-API-Key header.
+
+        Requires:
+            - All model fields are validated
+
+        Ensures:
+            - Returns dict with all required parameters
+            - Converts enums to string values
+            - Does NOT include response_requested (fire-and-forget mode)
+            - Does NOT include api_key (moved to headers in Phase 2.5)
+
+        Returns:
+            dict: Query parameters for requests.post()
+        """
+        params = {
+            "message"     : self.message,
+            "type"        : self.notification_type.value,
+            "priority"    : self.priority.value,
+            "target_user" : self.target_user
+        }
+
+        # Sender ID: explicit > extracted from message > None (API will use default)
+        resolved_sender_id = self.sender_id
+        if not resolved_sender_id:
+            resolved_sender_id = extract_sender_from_message( self.message )
+        if resolved_sender_id:
+            params["sender_id"] = resolved_sender_id
+
+        return params
+
+
+class AsyncNotificationResponse(BaseModel):
+    """
+    Response from async notification (fire-and-forget).
+
+    More informative than simple bool return - captures delivery status,
+    connection count, and error details.
+
+    Attributes:
+        success: Whether notification was sent successfully
+        status: Status code (queued, user_not_available, error, etc.)
+        message: Status message or error description
+        target_user: Target user email address
+        target_system_id: System UUID if user found
+        connection_count: Number of active WebSocket connections
+    """
+
+    success: bool = Field(
+        ...,
+        description="Whether notification was sent successfully"
+    )
+
+    status: str = Field(
+        ...,
+        description="Status: queued, user_not_available, error, connection_error, timeout"
+    )
+
+    message: Optional[str] = Field(
+        default=None,
+        description="Status message or error description"
+    )
+
+    target_user: str = Field(
+        ...,
+        description="Target user email address"
+    )
+
+    target_system_id: Optional[str] = Field(
+        default=None,
+        description="System UUID if user found"
+    )
+
+    connection_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of active WebSocket connections"
+    )
+
+    @property
+    def is_queued( self ) -> bool:
+        """
+        Whether notification was queued for delivery.
+
+        Requires:
+            - status is a valid status string
+
+        Ensures:
+            - Returns True if status == "queued"
+            - Returns False otherwise
+
+        Returns:
+            bool: True if notification was queued successfully
+        """
+        return self.status == "queued"
+
+    @property
+    def is_error( self ) -> bool:
+        """
+        Whether an error occurred.
+
+        Requires:
+            - status is a valid status string
+
+        Ensures:
+            - Returns True for error statuses
+            - Returns False for success statuses
+
+        Returns:
+            bool: True if error occurred
+        """
+        return self.status in ("error", "connection_error", "timeout")

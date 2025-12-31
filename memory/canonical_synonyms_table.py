@@ -30,12 +30,12 @@ class CanonicalSynonymsTable:
     with exact matching at verbatim, normalized, and gist levels.
     """
 
-    def __init__( self, debug: bool = False, verbose: bool = False ) -> None:
+    def __init__( self, db_path: Optional[str] = None, debug: bool = False, verbose: bool = False ) -> None:
         """
         Initialize the canonical synonyms table.
 
         Requires:
-            - LUPIN_CONFIG_MGR_CLI_ARGS environment variable is set
+            - If db_path not provided: LUPIN_CONFIG_MGR_CLI_ARGS environment variable is set
             - Database path is valid in configuration
 
         Ensures:
@@ -51,14 +51,19 @@ class CanonicalSynonymsTable:
 
         self.debug   = debug
         self.verbose = verbose
-        self._config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
 
         # Initialize text processors
         self._normalizer = Normalizer()
         self._embedding_manager = EmbeddingManager( debug=debug, verbose=verbose )
 
-        # Get database path from config
-        uri = du.get_project_root() + self._config_mgr.get( "database_path_wo_root" )
+        # Get database path from parameter or config
+        if db_path:
+            # Use provided path (for testing or custom scenarios)
+            uri = db_path
+        else:
+            # Load from configuration (production use)
+            self._config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+            uri = du.get_project_root() + self._config_mgr.get( "database_path_wo_root" )
 
         if self.debug:
             print( f"Connecting to LanceDB at: {uri}" )
@@ -193,10 +198,15 @@ class CanonicalSynonymsTable:
             if self.find_exact_verbatim( question_verbatim ):
                 if self.debug:
                     timer.print( "Duplicate - not added", use_millis=True )
+                if self.verbose:
+                    print( f"│ 📝 SYNONYM ADDITION: SKIPPED (duplicate exists)".ljust( 78 ) + "│" )
+                    print( f"│   Question: '{du.truncate_string( question_verbatim, 50 )}'".ljust( 78 ) + "│" )
+                    print( "└" + "─" * 77 + "┘" )
                 return False
 
             # Generate three-level representation
             question_normalized = self._normalizer.normalize( question_verbatim )
+
             # For gist, we'd need GistNormalizer but for now use normalized
             question_gist = question_normalized  # Simplified for now
 
@@ -269,22 +279,20 @@ class CanonicalSynonymsTable:
             timer = Stopwatch( msg=f"Exact verbatim search: '{du.truncate_string( question )}'" )
 
         try:
-            # Escape single quotes for SQL
-            escaped_question = question.replace( "'", "''" )
+            # Use pandas filtering for exact match (NOT search().where() which requires vector)
+            # LanceDB's search() without a query vector returns arbitrary results
+            df = self._canonical_synonyms_table.to_pandas()
+            matches = df[df['question_verbatim'] == question]
 
-            # Direct exact match query
-            results = self._canonical_synonyms_table.search().where(
-                f"question_verbatim = '{escaped_question}'"
-            ).limit( 1 ).to_list()
-
-            if results:
+            if len( matches ) > 0:
                 # Update usage stats
                 self._update_usage_stats( question )
+                snapshot_id = matches.iloc[0]['snapshot_id']
 
                 if self.debug:
-                    timer.print( f"✓ Found snapshot: {results[0]['snapshot_id']}", use_millis=True )
+                    timer.print( f"✓ Found snapshot: {snapshot_id}", use_millis=True )
 
-                return results[0]['snapshot_id']
+                return snapshot_id
 
             if self.debug:
                 timer.print( "No match found", use_millis=True )
@@ -320,22 +328,20 @@ class CanonicalSynonymsTable:
             timer = Stopwatch( msg=f"Exact normalized search: '{du.truncate_string( question_normalized )}'" )
 
         try:
-            # Escape single quotes for SQL
-            escaped_question = question_normalized.replace( "'", "''" )
+            # Use pandas filtering for exact match (NOT search().where() which requires vector)
+            # LanceDB's search() without a query vector returns arbitrary results
+            df = self._canonical_synonyms_table.to_pandas()
+            matches = df[ df[ 'question_normalized' ] == question_normalized ]
 
-            # Direct exact match query
-            results = self._canonical_synonyms_table.search().where(
-                f"question_normalized = '{escaped_question}'"
-            ).limit( 1 ).to_list()
-
-            if results:
+            if len( matches ) > 0:
                 # Update usage stats using verbatim question
-                self._update_usage_stats( results[0]['question_verbatim'] )
+                self._update_usage_stats( matches.iloc[ 0 ][ 'question_verbatim' ] )
+                snapshot_id = matches.iloc[ 0 ][ 'snapshot_id' ]
 
                 if self.debug:
-                    timer.print( f"✓ Found snapshot: {results[0]['snapshot_id']}", use_millis=True )
+                    timer.print( f"✓ Found snapshot: {snapshot_id}", use_millis=True )
 
-                return results[0]['snapshot_id']
+                return snapshot_id
 
             if self.debug:
                 timer.print( "No match found", use_millis=True )
@@ -371,22 +377,20 @@ class CanonicalSynonymsTable:
             timer = Stopwatch( msg=f"Exact gist search: '{du.truncate_string( question_gist )}'" )
 
         try:
-            # Escape single quotes for SQL
-            escaped_question = question_gist.replace( "'", "''" )
+            # Use pandas filtering for exact match (NOT search().where() which requires vector)
+            # LanceDB's search() without a query vector returns arbitrary results
+            df = self._canonical_synonyms_table.to_pandas()
+            matches = df[ df[ 'question_gist' ] == question_gist ]
 
-            # Direct exact match query
-            results = self._canonical_synonyms_table.search().where(
-                f"question_gist = '{escaped_question}'"
-            ).limit( 1 ).to_list()
-
-            if results:
+            if len( matches ) > 0:
                 # Update usage stats using verbatim question
-                self._update_usage_stats( results[0]['question_verbatim'] )
+                self._update_usage_stats( matches.iloc[ 0 ][ 'question_verbatim' ] )
+                snapshot_id = matches.iloc[ 0 ][ 'snapshot_id' ]
 
                 if self.debug:
-                    timer.print( f"✓ Found snapshot: {results[0]['snapshot_id']}", use_millis=True )
+                    timer.print( f"✓ Found snapshot: {snapshot_id}", use_millis=True )
 
-                return results[0]['snapshot_id']
+                return snapshot_id
 
             if self.debug:
                 timer.print( "No match found", use_millis=True )

@@ -4,6 +4,7 @@ from typing import Optional, Any
 import cosa.utils.util as du
 from cosa.memory.embedding_manager import EmbeddingManager
 from cosa.memory import solution_snapshot as ss
+from cosa.memory.normalizer import Normalizer
 # from lib.memory.question_embeddings_dict import QuestionEmbeddingsDict
 from cosa.memory.question_embeddings_table import QuestionEmbeddingsTable
 
@@ -58,12 +59,13 @@ class SolutionSnapshotManager:
         self.verbose                            = verbose
         self.path                               = path
         self._embedding_mgr                     = EmbeddingManager( debug=debug, verbose=verbose )
-       
+        self._normalizer                        = Normalizer()  # For consistent normalization
+
         self._snapshots_by_question             = None
         self._snapshots_by_synonymous_questions = None
         self._snapshots_by_question_gist        = None
         self._question_embeddings_tbl           = None
-        
+
         self.load_snapshots()
         
     def load_snapshots( self ) -> None:
@@ -190,23 +192,27 @@ class SolutionSnapshotManager:
         print()
         return snapshots_by_synomymous_questions
     
-    def add_snapshot( self, snapshot: ss.SolutionSnapshot ) -> None:
+    def save_snapshot( self, snapshot: ss.SolutionSnapshot ) -> bool:
         """
-        Add a new snapshot to the manager.
-        
+        Save snapshot to file-based storage using upsert semantics.
+
+        Performs INSERT for new snapshots or UPDATE for existing ones.
+
         Requires:
             - snapshot is a valid SolutionSnapshot
             - snapshot.question is set
-            
+
         Ensures:
-            - Adds snapshot to question index
+            - Adds/updates snapshot in question index
             - Writes snapshot to file
-            
+            - Returns True if successful
+
         Raises:
             - None
         """
         self._snapshots_by_question[ snapshot.question ] = snapshot
         snapshot.write_current_state_to_file()
+        return True
     
     def _question_exists( self, question: str ) -> bool:
         """
@@ -288,8 +294,8 @@ class SolutionSnapshotManager:
             - None
         """
         # clean up the question string before querying
-        question = ss.SolutionSnapshot.remove_non_alphanumerics( question )
-        
+        question = self._normalizer.normalize( question )
+
         if self._question_exists( question ):
             if delete_file:
                 print( f"Deleting snapshot file [{question}]...", end="" )
@@ -456,8 +462,8 @@ class SolutionSnapshotManager:
         Raises:
             - None
         """
-        question = ss.SolutionSnapshot.remove_non_alphanumerics( question )
-        
+        question = self._normalizer.normalize( question )
+
         # escape single quotes in the question gist, instead of nuking all the valuable non-alphanumeric characters in a gist string
         if question_gist is not None:
             question_gist = ss.SolutionSnapshot.escape_single_quotes( question_gist )
