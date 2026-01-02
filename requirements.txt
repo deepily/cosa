@@ -22,6 +22,7 @@ catalogue==2.0.10
 certifi==2025.4.26
 chardet==5.2.0
 charset-normalizer==3.4.2
+claude-agent-sdk==0.1.18
 click==8.1.8
 cloudpathlib==0.21.1
 cohere==5.16.3

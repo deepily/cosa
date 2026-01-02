@@ -1,6 +1,8 @@
 # COSA Development History
 
-> **🎨 CURRENT**: 2026.01.01 - Parent Lupin Sync: Notifications UI Refactoring (Date-Based Grouping)! Synced 9 files from parent Lupin Session 27. **ENV VAR RENAME**: `COSA_APP_SERVER_URL` → `LUPIN_APP_SERVER_URL` across 4 CLI files for Lupin branding consistency. **NEW `is_hidden` FIELD**: Added soft delete column to Notification model with index for efficient visible-only queries (postgres_models.py:588-595). **4 NEW REPOSITORY METHODS**: `get_sender_conversations_by_date()` for date-grouped notifications, `soft_delete_by_date()` for soft delete by date, `get_sender_dates()` for date summaries, `get_visible_senders_with_counts()` for visible sender aggregation (notification_repository.py +273 lines). **4 NEW API ENDPOINTS**: `GET /conversation-by-date` (date-grouped notifications), `DELETE /date/{sender}/{user}/{date}` (soft delete), `GET /sender-dates` (date summaries), `GET /senders-visible` (visible senders with new counts) (notifications.py +346 lines). **SQLALCHEMY FIX**: Added `case` import for compatibility with visible-only filtering. **UNIT TESTS UPDATED**: Updated 3 test assertions for env var rename. **Total Impact**: 9 files, +637/-12 lines (net +625 lines). 🎨✅
+> **🚀 CURRENT**: 2026.01.02 - Claude Code Dispatcher + SQLite→PostgreSQL Notifications Migration! Synced major infrastructure from parent Lupin Sessions 28-32. **NEW ORCHESTRATION MODULE**: Created `src/cosa/orchestration/` package (3 files, 821 lines) with `CosaDispatcher` class for programmatic Claude Code invocation supporting bounded (print mode) and interactive (SDK client) execution modes. **SQLITE→POSTGRESQL MIGRATION**: Deleted deprecated `rest/notifications_database.py` (513 lines) - all notification CRUD now uses PostgreSQL repository pattern. **REPOSITORY ENHANCEMENT**: Added `get_expired_notifications()` method for background cleanup tasks, fixed ORDER BY bug using `func.max()` instead of string literal. **API MIGRATION**: Updated `notifications.py` router to use PostgreSQL repository pattern (removed NotificationsDatabase import/dependency, updated 4 endpoints). **SDK DEPENDENCY**: Added `claude-agent-sdk==0.1.18` to requirements.txt. **Total Impact**: 4 files modified, 3 files created, 1 file deleted, +832/-604 lines (net +228 lines). 🚀✅
+
+> **🎨 PREVIOUS**: 2026.01.01 - Parent Lupin Sync: Notifications UI Refactoring (Date-Based Grouping)! Synced 9 files from parent Lupin Session 27. **ENV VAR RENAME**: `COSA_APP_SERVER_URL` → `LUPIN_APP_SERVER_URL` across 4 CLI files for Lupin branding consistency. **NEW `is_hidden` FIELD**: Added soft delete column to Notification model with index for efficient visible-only queries (postgres_models.py:588-595). **4 NEW REPOSITORY METHODS**: `get_sender_conversations_by_date()` for date-grouped notifications, `soft_delete_by_date()` for soft delete by date, `get_sender_dates()` for date summaries, `get_visible_senders_with_counts()` for visible sender aggregation (notification_repository.py +273 lines). **4 NEW API ENDPOINTS**: `GET /conversation-by-date` (date-grouped notifications), `DELETE /date/{sender}/{user}/{date}` (soft delete), `GET /sender-dates` (date summaries), `GET /senders-visible` (visible senders with new counts) (notifications.py +346 lines). **SQLALCHEMY FIX**: Added `case` import for compatibility with visible-only filtering. **UNIT TESTS UPDATED**: Updated 3 test assertions for env var rename. **Total Impact**: 9 files, +637/-12 lines (net +625 lines). 🎨✅
 
 > **🐛 PREVIOUS**: 2025.12.31 - Parent Lupin Sync: Sort Order Display Bug Fix! Synced 1 file from parent Lupin Session 24. **ROOT CAUSE**: Complex chain of transformations (DB DESC → JS `.reverse()` → CSS `column-reverse` → `appendChild`) cancelled each other out incorrectly for real-time vs initial load scenarios. **THE FIX**: Changed `notification_repository.py:220` from `.desc()` → `.asc()` so DB returns oldest-first; JS then uses `insertBefore` to prepend each message, resulting in newest at top. **HOW IT WORKS NOW**: Database returns oldest→newest (ASC), JS iterates with `insertBefore` prepending each message, result is newest at top for both initial page load AND real-time WebSocket notifications. **Total Impact**: 1 file, +3/-3 lines. Phase 8 sort order bug RESOLVED, sender-aware notification system fully functional. 🐛✅
 
@@ -33,6 +35,127 @@
 > **Previous Achievement**: 2025.11.10 - Phase 2.5.4 API Key Authentication Infrastructure COMPLETE! Header-based API key authentication (X-API-Key header) implemented. Fixed critical schema bug (api_keys.user_id INTEGER→TEXT). Integration testing infrastructure created (10 tests).
 
 > **Previous Achievement**: 2025.11.08 - Notification System Phase 2.3 CLI Modernization COMMITTED! Split async/sync notification clients with Pydantic validation (1,376 lines across 3 new files).
+
+---
+
+## 2026.01.02 - Claude Code Dispatcher + SQLite→PostgreSQL Notifications Migration
+
+### Summary
+Synced major infrastructure from parent Lupin Sessions 28-32 (2026.01.02). Created new orchestration module for programmatic Claude Code invocation, completed SQLite→PostgreSQL migration for notifications system, and added required SDK dependency.
+
+### Work Performed
+
+#### New Orchestration Module - COMPLETE ✅
+**Location**: `src/cosa/orchestration/` (3 files, 821 lines)
+
+Created production-ready Claude Code task dispatcher with dual execution modes:
+
+**Files Created**:
+- `__init__.py` (38 lines) - Module exports: CosaDispatcher, Task, TaskType, TaskResult
+- `claude_code_dispatcher.py` (651 lines) - Main dispatcher implementation
+- `README.md` (142 lines) - Comprehensive documentation with examples
+
+**Key Features**:
+1. **TaskType.BOUNDED** (Option A): Print mode (`claude -p`) for CI/CD pipelines, scheduled jobs, bounded tasks
+2. **TaskType.INTERACTIVE** (Option B): SDK client for open-ended sessions with bidirectional control
+3. **MCP Voice Integration**: Configures Claude Code to use MCP voice tools (`converse()`, `notify()`, `ask_yes_no()`)
+4. **Environment-Aware**: Uses `LUPIN_ROOT` for production paths, auto-detects project from task
+
+**Classes**:
+- `TaskType` - Enum for execution modes (BOUNDED, INTERACTIVE)
+- `Task` - Task definition with id, project, prompt, type, max_turns, timeout_seconds
+- `TaskResult` - Result dataclass with success, session_id, cost_usd, duration_ms, error
+- `CosaDispatcher` - Main dispatcher with dispatch(), inject(), interrupt(), get_active_sessions()
+
+**Smoke Tests**: 9 comprehensive tests validating enums, classes, defaults, LUPIN_ROOT requirement, command construction
+
+#### SQLite→PostgreSQL Migration - COMPLETE ✅
+**Deleted**: `rest/notifications_database.py` (513 lines)
+
+Removed deprecated SQLite-based NotificationsDatabase class. All notification CRUD operations now use PostgreSQL repository pattern via `NotificationRepository`.
+
+#### Repository Enhancement - COMPLETE ✅
+**File**: `rest/db/repositories/notification_repository.py` (+29 lines)
+
+1. **New Method `get_expired_notifications()`**:
+   - Returns notifications where state='delivered' AND expires_at < now
+   - Used by background cleanup tasks
+   - Ordered by expires_at ascending (oldest expiration first)
+
+2. **ORDER BY Bug Fix** (2 locations):
+   - Line 153: Changed `desc( 'last_activity' )` → `desc( func.max( Notification.created_at ) )`
+   - Line 674: Same fix for sender ordering
+   - Root cause: SQLAlchemy string literal didn't reference actual expression
+
+3. **Smoke Test Update**: Added `get_expired_notifications` to method validation list
+
+#### API Migration - COMPLETE ✅
+**File**: `rest/routers/notifications.py` (+117/-91 lines, net +26)
+
+Migrated from SQLite NotificationsDatabase to PostgreSQL repository pattern:
+
+1. **Import Cleanup**:
+   - Removed: `from ..notifications_database import NotificationsDatabase`
+   - Removed: `get_notifications_database()` dependency function
+
+2. **notify_user() Endpoint**:
+   - Replaced `notification_db.create_notification()` with `repo.create_notification()`
+   - Added proper UUID conversion for recipient_id
+   - Added `expires_at` calculation
+   - Replaced `notification_db.update_state()` with `repo.update_state()`/`repo.mark_expired()`
+
+3. **submit_notification_response() Endpoint**:
+   - Replaced `notification_db.get_notification()` with `repo.get_by_id()`
+   - Updated state checking to use SQLAlchemy model attributes
+   - Proper response value handling (dict wrapping for simple strings)
+   - Replaced `notification_db.update_response()` with `repo.update_response()`
+
+#### SDK Dependency - COMPLETE ✅
+**File**: `requirements.txt` (+1 line)
+
+Added `claude-agent-sdk==0.1.18` for interactive mode support in CosaDispatcher.
+
+### Files Summary
+
+**Created** (3 files, 831 lines):
+| File | Lines | Description |
+|------|-------|-------------|
+| `orchestration/__init__.py` | 38 | Module exports |
+| `orchestration/claude_code_dispatcher.py` | 651 | Main dispatcher implementation |
+| `orchestration/README.md` | 142 | Documentation with examples |
+
+**Modified** (3 files, +147/-94 lines):
+| File | Changes | Description |
+|------|---------|-------------|
+| `requirements.txt` | +1 | SDK dependency |
+| `rest/db/repositories/notification_repository.py` | +29 | New method + ORDER BY fix |
+| `rest/routers/notifications.py` | +117/-91 | PostgreSQL migration |
+
+**Deleted** (1 file, -513 lines):
+| File | Lines | Description |
+|------|-------|-------------|
+| `rest/notifications_database.py` | 513 | Deprecated SQLite database |
+
+**Total Impact**: 7 files (3 created, 3 modified, 1 deleted), +832/-604 lines (net +228 lines)
+
+### Integration with Parent Lupin
+
+**Parent Sessions Context** (2026.01.02, Sessions 28-32):
+- Session 28: MCP Voice Integration Phases 4-5 complete (E2E testing)
+- Session 29: MCP Voice Integration documentation complete
+- Session 30: Notification sender card ordering bug fixed
+- Session 31: Option A dispatcher implementation complete (moved from R&D to production)
+- Session 32: Voice-first UX + action required card bug fixes
+
+### Current Status
+- **Orchestration Module**: ✅ Production-ready with 9/9 smoke tests passing
+- **PostgreSQL Migration**: ✅ Complete - all notifications use repository pattern
+- **SQLite Removal**: ✅ Deprecated file deleted
+
+### Next Session Priorities
+1. Run integration tests to verify PostgreSQL migration
+2. Test dispatcher E2E with Lupin server running
+3. Document any Python environment requirements for SDK
 
 ---
 

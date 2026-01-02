@@ -21,7 +21,6 @@ import re
 # Import dependencies and services
 from ..notification_fifo_queue import NotificationFifoQueue
 from ..websocket_manager import WebSocketManager
-from ..notifications_database import NotificationsDatabase
 from ..middleware.api_key_auth import require_api_key
 from ..db.database import get_db
 from ..db.repositories.notification_repository import NotificationRepository
@@ -74,24 +73,6 @@ def get_websocket_manager():
     """
     import fastapi_app.main as main_module
     return main_module.websocket_manager
-
-def get_notifications_database():
-    """
-    Dependency to get notifications database instance.
-
-    Requires:
-        - NotificationsDatabase class is importable
-        - Database file exists at canonical path
-
-    Ensures:
-        - Returns NotificationsDatabase instance
-        - Uses canonical path for production database
-        - Provides access to notifications CRUD operations
-
-    Raises:
-        - FileNotFoundError if database file not found
-    """
-    return NotificationsDatabase( debug=False )
 
 def get_local_timestamp():
     """
@@ -185,8 +166,7 @@ async def notify_user(
     title: Optional[str] = Query(None, description="Terse technical title for voice-first UX (Phase 2.1)"),
     sender_id: Optional[str] = Query(None, description="Sender ID (e.g., claude.code@lupin.deepily.ai). Auto-extracted from [PREFIX] in message if not provided."),
     notification_queue: NotificationFifoQueue = Depends(get_notification_queue),
-    ws_manager: WebSocketManager = Depends(get_websocket_manager),
-    notification_db: NotificationsDatabase = Depends(get_notifications_database)
+    ws_manager: WebSocketManager = Depends(get_websocket_manager)
 ):
     """
     Claude Code notification endpoint for user communication.
@@ -377,21 +357,26 @@ async def notify_user(
             if response_default:
                 print(f"[NOTIFY] User offline - returning default immediately: {response_default}")
 
-                # Create notification in database with state='expired'
-                notification_id = notification_db.create_notification(
-                    sender_id          = resolved_sender_id,  # Use resolved sender_id
-                    recipient_id       = target_system_id,
-                    title              = title or message.strip()[:50],  # Fallback to first 50 chars
-                    message            = message.strip(),
-                    type               = type,
-                    priority           = priority,
-                    source_context     = "claude_code",
-                    response_requested = True,
-                    response_type      = response_type,
-                    response_default   = response_default,
-                    timeout_seconds    = timeout_seconds
-                )
-                notification_db.update_state( notification_id, "expired" )
+                # Create notification in PostgreSQL with state='expired'
+                with get_db() as session:
+                    repo = NotificationRepository( session )
+                    # Calculate expiration time
+                    expires_at = datetime.utcnow() + timedelta( seconds=timeout_seconds )
+                    db_notification = repo.create_notification(
+                        sender_id          = resolved_sender_id,
+                        recipient_id       = uuid.UUID( target_system_id ),
+                        title              = title or message.strip()[:50],
+                        message            = message.strip(),
+                        type               = type,
+                        priority           = priority,
+                        response_requested = True,
+                        response_type      = response_type,
+                        response_default   = response_default,
+                        timeout_seconds    = timeout_seconds,
+                        expires_at         = expires_at
+                    )
+                    repo.update_state( db_notification.id, "expired" )
+                    notification_id = str( db_notification.id )
 
                 return JSONResponse({
                     "status"             : "offline",
@@ -405,20 +390,27 @@ async def notify_user(
                     detail      = "User is offline and no default response provided"
                 )
 
-        # User is online - create notification in database
-        notification_id = notification_db.create_notification(
-            sender_id          = resolved_sender_id,  # Use resolved sender_id
-            recipient_id       = target_system_id,
-            title              = title or message.strip()[:50],
-            message            = message.strip(),
-            type               = type,
-            priority           = priority,
-            source_context     = "claude_code",
-            response_requested = True,
-            response_type      = response_type,
-            response_default   = response_default,
-            timeout_seconds    = timeout_seconds
-        )
+        # User is online - create notification in PostgreSQL
+        with get_db() as session:
+            repo = NotificationRepository( session )
+            # Calculate expiration time
+            expires_at = datetime.utcnow() + timedelta( seconds=timeout_seconds )
+            db_notification = repo.create_notification(
+                sender_id          = resolved_sender_id,
+                recipient_id       = uuid.UUID( target_system_id ),
+                title              = title or message.strip()[:50],
+                message            = message.strip(),
+                type               = type,
+                priority           = priority,
+                response_requested = True,
+                response_type      = response_type,
+                response_default   = response_default,
+                timeout_seconds    = timeout_seconds,
+                expires_at         = expires_at
+            )
+            # Mark as delivered since user is connected
+            repo.update_state( db_notification.id, "delivered" )
+            notification_id = str( db_notification.id )
 
         print(f"[NOTIFY] Created response-required notification: {notification_id}")
 
@@ -475,7 +467,10 @@ async def notify_user(
                 # Task 4: Timeout - use default value
                 print(f"[NOTIFY] ⏱️ Timeout for notification {notification_id}, using default: {response_default}")
 
-                notification_db.update_state( notification_id, "expired" )
+                # Mark as expired in PostgreSQL
+                with get_db() as session:
+                    repo = NotificationRepository( session )
+                    repo.mark_expired( uuid.UUID( notification_id ) )
 
                 # Task 7: Broadcast notification_expired WebSocket event
                 try:
@@ -536,7 +531,6 @@ async def notify_user(
 @router.post("/notify/response")
 async def submit_notification_response(
     request_body: Dict[str, Any] = Body(..., description="Request body with notification_id and response_value"),
-    notification_db: NotificationsDatabase = Depends(get_notifications_database),
     ws_manager: WebSocketManager = Depends(get_websocket_manager)
 ):
     """
@@ -609,49 +603,57 @@ async def submit_notification_response(
 
         print(f"[NOTIFY] Response submission for {notification_id}: {response_value}")
 
-        # Get notification from database
-        notification = notification_db.get_notification( notification_id )
+        # Get notification from PostgreSQL
+        with get_db() as session:
+            repo = NotificationRepository( session )
+            notification = repo.get_by_id( uuid.UUID( notification_id ) )
 
-        if not notification:
-            raise HTTPException(
-                status_code = 404,
-                detail      = f"Notification {notification_id} not found"
-            )
-
-        # Check state - must be 'delivered' or within grace period
-        if notification["state"] == "responded":
-            raise HTTPException(
-                status_code = 400,
-                detail      = "Notification already responded to"
-            )
-
-        # Grace period check (30 seconds - from config in Phase 2.2)
-        grace_period_seconds = 30
-
-        if notification["state"] == "expired":
-            # Check if within grace period
-            expires_at    = datetime.fromisoformat( notification["expires_at"] ) if notification["expires_at"] else None
-            now           = datetime.utcnow()
-
-            if expires_at and (now - expires_at).total_seconds() > grace_period_seconds:
+            if not notification:
                 raise HTTPException(
-                    status_code = 400,
-                    detail      = f"Notification expired more than {grace_period_seconds}s ago (grace period exceeded)"
+                    status_code = 404,
+                    detail      = f"Notification {notification_id} not found"
                 )
 
-            print(f"[NOTIFY] Accepting late response within grace period ({grace_period_seconds}s)")
+            # Check state - must be 'delivered' or within grace period
+            if notification.state == "responded":
+                raise HTTPException(
+                    status_code = 400,
+                    detail      = "Notification already responded to"
+                )
 
-        # Update database with response
-        success = notification_db.update_response(
-            notification_id,
-            json.dumps( response_value )
-        )
+            # Grace period check (30 seconds - from config in Phase 2.2)
+            grace_period_seconds = 30
 
-        if not success:
-            raise HTTPException(
-                status_code = 500,
-                detail      = "Failed to update notification response in database"
-            )
+            if notification.state == "expired":
+                # Check if within grace period
+                expires_at = notification.expires_at
+                now        = datetime.utcnow()
+
+                if expires_at and (now - expires_at).total_seconds() > grace_period_seconds:
+                    raise HTTPException(
+                        status_code = 400,
+                        detail      = f"Notification expired more than {grace_period_seconds}s ago (grace period exceeded)"
+                    )
+
+                print(f"[NOTIFY] Accepting late response within grace period ({grace_period_seconds}s)")
+
+            # Capture recipient_id before session closes (for WebSocket broadcast)
+            recipient_id = str( notification.recipient_id )
+
+            # Update database with response (pass dict, not JSON string)
+            # Wrap in dict if response_value is a simple string like "yes" or "no"
+            if isinstance( response_value, str ):
+                response_dict = { "value": response_value, "source": "ui" }
+            else:
+                response_dict = response_value
+
+            updated = repo.update_response( uuid.UUID( notification_id ), response_dict )
+
+            if not updated:
+                raise HTTPException(
+                    status_code = 500,
+                    detail      = "Failed to update notification response in database"
+                )
 
         print(f"[NOTIFY] ✓ Updated database with response for {notification_id}")
 
@@ -666,7 +668,7 @@ async def submit_notification_response(
         # Task 7: Broadcast WebSocket event (notification_responded)
         try:
             await ws_manager.emit_to_user(
-                notification["recipient_id"],
+                recipient_id,
                 "notification_responded",
                 {
                     "notification_id"  : notification_id,

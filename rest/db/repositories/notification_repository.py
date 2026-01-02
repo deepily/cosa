@@ -150,7 +150,7 @@ class NotificationRepository( BaseRepository[Notification] ):
         ).group_by(
             Notification.sender_id
         ).order_by(
-            desc( 'last_activity' )
+            desc( func.max( Notification.created_at ) )
         ).all()
 
         return [
@@ -305,6 +305,29 @@ class NotificationRepository( BaseRepository[Notification] ):
             Notification.state.in_( ['created', 'queued', 'delivered'] )
         ).order_by(
             Notification.created_at.asc()
+        ).all()
+
+    def get_expired_notifications( self ) -> List[Notification]:
+        """
+        Get all notifications in 'delivered' state past their expires_at.
+
+        Used by background cleanup tasks to identify and expire timed-out notifications.
+
+        Ensures:
+            - Returns notifications where state='delivered' AND expires_at < now
+            - Only includes notifications with non-null expires_at
+            - Ordered by expires_at ascending (oldest expiration first)
+
+        Returns:
+            List of expired Notification instances
+        """
+        now = datetime.utcnow()
+        return self.session.query( Notification ).filter(
+            Notification.state == 'delivered',
+            Notification.expires_at.isnot( None ),
+            Notification.expires_at < now
+        ).order_by(
+            Notification.expires_at.asc()
         ).all()
 
     def mark_expired( self, notification_id: uuid.UUID ) -> Optional[Notification]:
@@ -648,7 +671,7 @@ class NotificationRepository( BaseRepository[Notification] ):
         results = query.group_by(
             Notification.sender_id
         ).order_by(
-            desc( 'last_activity' )
+            desc( func.max( Notification.created_at ) )
         ).all()
 
         return [
@@ -690,7 +713,7 @@ def quick_smoke_test():
         methods = [
             'create_notification', 'get_by_recipient', 'get_sender_last_activities',
             'get_sender_conversation', 'update_state', 'update_response',
-            'get_pending_for_recipient', 'mark_expired', 'count_by_sender'
+            'get_pending_for_recipient', 'get_expired_notifications', 'mark_expired', 'count_by_sender'
         ]
         for method in methods:
             assert hasattr( NotificationRepository, method ), f"Missing method: {method}"
