@@ -588,6 +588,14 @@ class Notification( Base ):
         index=True
     )
 
+    # Soft delete / archive flag for hiding notifications without deletion
+    is_hidden: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default="false",
+        index=True
+    )
+
     # Relationship to User
     recipient: Mapped["User"] = relationship(
         "User",

@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 import uuid
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, case
 
 from cosa.rest.postgres_models import Notification
 from cosa.rest.db.repositories.base import BaseRepository
@@ -389,6 +389,277 @@ class NotificationRepository( BaseRepository[Notification] ):
 
         self.session.flush()
         return deleted
+
+    def get_sender_conversations_by_date(
+        self,
+        sender_id: str,
+        recipient_id: uuid.UUID,
+        anchor: Optional[datetime] = None,
+        window_hours: int = 168,  # Default 7 days
+        include_hidden: bool = False,
+        timezone_name: str = "America/New_York"
+    ) -> Dict[str, List[Notification]]:
+        """
+        Load conversation grouped by date (ISO format).
+
+        Requires:
+            - sender_id: Sender identifier
+            - recipient_id: Valid user UUID
+            - anchor: Reference timestamp (defaults to sender's last activity)
+            - window_hours: Hours before anchor to include (default: 168 = 7 days)
+            - include_hidden: Whether to include hidden notifications (default: False)
+            - timezone_name: IANA timezone for date grouping (default: America/New_York)
+
+        Ensures:
+            - Returns dict of date_string -> list of notifications
+            - Date keys sorted descending (newest first: 2025-01-02, 2025-01-01, ...)
+            - Each date key is ISO format (YYYY-MM-DD) in specified timezone
+            - Notifications within each date ordered by created_at ascending
+
+        Returns:
+            Dict mapping date strings to notification lists
+
+        Example:
+            conversations = repo.get_sender_conversations_by_date(
+                sender_id    = "claude.code@lupin.deepily.ai",
+                recipient_id = user.id,
+                window_hours = 168  # 7 days
+            )
+            # {"2025-01-01": [notif1, notif2], "2024-12-31": [notif3]}
+        """
+        import zoneinfo
+
+        # If no anchor provided, find sender's last activity
+        if anchor is None:
+            last_activity = self.session.query(
+                func.max( Notification.created_at )
+            ).filter(
+                Notification.sender_id == sender_id,
+                Notification.recipient_id == recipient_id
+            ).scalar()
+
+            if last_activity is None:
+                return {}  # No notifications from this sender
+
+            anchor = last_activity
+
+        # Calculate window start
+        window_start = anchor - timedelta( hours=window_hours )
+
+        # Build query
+        query = self.session.query( Notification ).filter(
+            Notification.sender_id == sender_id,
+            Notification.recipient_id == recipient_id,
+            Notification.created_at >= window_start,
+            Notification.created_at <= anchor
+        )
+
+        # Filter hidden unless explicitly requested
+        if not include_hidden:
+            query = query.filter( Notification.is_hidden == False )
+
+        notifications = query.order_by( Notification.created_at.asc() ).all()
+
+        # Group by date in specified timezone
+        try:
+            tz = zoneinfo.ZoneInfo( timezone_name )
+        except Exception:
+            tz = zoneinfo.ZoneInfo( "America/New_York" )  # Fallback
+
+        date_groups: Dict[str, List[Notification]] = {}
+        for notif in notifications:
+            # Convert to local timezone and extract date
+            local_time = notif.created_at.astimezone( tz )
+            date_key = local_time.strftime( "%Y-%m-%d" )
+
+            if date_key not in date_groups:
+                date_groups[ date_key ] = []
+            date_groups[ date_key ].append( notif )
+
+        # Sort dates descending (newest first)
+        return dict( sorted( date_groups.items(), reverse=True ) )
+
+    def soft_delete_by_date(
+        self,
+        sender_id: str,
+        recipient_id: uuid.UUID,
+        date_string: str,
+        timezone_name: str = "America/New_York"
+    ) -> int:
+        """
+        Soft delete all notifications for a sender on a specific date.
+
+        Requires:
+            - sender_id: Sender identifier (e.g., claude.code@lupin.deepily.ai)
+            - recipient_id: Valid user UUID
+            - date_string: ISO format date (YYYY-MM-DD)
+            - timezone_name: IANA timezone for date interpretation
+
+        Ensures:
+            - Sets is_hidden=True for all matching notifications
+            - Uses timezone-aware date boundaries
+            - Returns count of hidden notifications
+
+        Returns:
+            Number of notifications hidden
+
+        Example:
+            with get_db() as session:
+                repo = NotificationRepository( session )
+                count = repo.soft_delete_by_date(
+                    sender_id    = "claude.code@lupin.deepily.ai",
+                    recipient_id = user.id,
+                    date_string  = "2025-01-01"
+                )
+                print( f"Hidden {count} notifications" )
+        """
+        import zoneinfo
+        from datetime import date
+
+        try:
+            tz = zoneinfo.ZoneInfo( timezone_name )
+        except Exception:
+            tz = zoneinfo.ZoneInfo( "America/New_York" )  # Fallback
+
+        # Parse date string and create timezone-aware boundaries
+        target_date = date.fromisoformat( date_string )
+        day_start = datetime( target_date.year, target_date.month, target_date.day, 0, 0, 0, tzinfo=tz )
+        day_end = datetime( target_date.year, target_date.month, target_date.day, 23, 59, 59, 999999, tzinfo=tz )
+
+        # Update matching notifications to hidden
+        updated = self.session.query( Notification ).filter(
+            Notification.sender_id == sender_id,
+            Notification.recipient_id == recipient_id,
+            Notification.created_at >= day_start,
+            Notification.created_at <= day_end,
+            Notification.is_hidden == False  # Only hide visible ones
+        ).update( { "is_hidden": True }, synchronize_session="fetch" )
+
+        self.session.flush()
+        return updated
+
+    def get_sender_date_summaries(
+        self,
+        sender_id: str,
+        recipient_id: uuid.UUID,
+        include_hidden: bool = False,
+        timezone_name: str = "America/New_York"
+    ) -> List[Dict]:
+        """
+        Get date-grouped summaries for a sender with counts.
+
+        Requires:
+            - sender_id: Sender identifier
+            - recipient_id: Valid user UUID
+            - include_hidden: Whether to include hidden notifications
+            - timezone_name: IANA timezone for date grouping
+
+        Ensures:
+            - Returns list of date summaries ordered by date descending
+            - Each summary includes date, count, and new_count
+
+        Returns:
+            List of date summary dicts
+
+        Example:
+            summaries = repo.get_sender_date_summaries(
+                sender_id    = "claude.code@lupin.deepily.ai",
+                recipient_id = user.id
+            )
+            # [{"date": "2025-01-01", "count": 5, "new_count": 2}, ...]
+        """
+        import zoneinfo
+
+        try:
+            tz = zoneinfo.ZoneInfo( timezone_name )
+        except Exception:
+            tz = zoneinfo.ZoneInfo( "America/New_York" )  # Fallback
+
+        # Build query
+        query = self.session.query( Notification ).filter(
+            Notification.sender_id == sender_id,
+            Notification.recipient_id == recipient_id
+        )
+
+        if not include_hidden:
+            query = query.filter( Notification.is_hidden == False )
+
+        notifications = query.order_by( Notification.created_at.desc() ).all()
+
+        # Group by date and calculate counts
+        date_counts: Dict[str, Dict] = {}
+        for notif in notifications:
+            local_time = notif.created_at.astimezone( tz )
+            date_key = local_time.strftime( "%Y-%m-%d" )
+
+            if date_key not in date_counts:
+                date_counts[ date_key ] = { "count": 0, "new_count": 0 }
+
+            date_counts[ date_key ][ "count" ] += 1
+
+            # Count "new" as notifications not yet delivered/responded
+            if notif.state in [ "created", "queued" ]:
+                date_counts[ date_key ][ "new_count" ] += 1
+
+        # Convert to sorted list (newest first)
+        return [
+            { "date": date_key, **counts }
+            for date_key, counts in sorted( date_counts.items(), reverse=True )
+        ]
+
+    def get_sender_last_activities_visible(
+        self,
+        recipient_id: uuid.UUID,
+        include_hidden: bool = False
+    ) -> List[Dict]:
+        """
+        Get last activity timestamp per sender for a recipient (excluding hidden).
+
+        Requires:
+            - recipient_id: Valid user UUID
+            - include_hidden: Whether to include hidden notifications in counts
+
+        Ensures:
+            - Returns list of {sender_id, last_activity, notification_count, new_count}
+            - Excludes senders with all notifications hidden (unless include_hidden)
+            - Ordered by last_activity descending (most recent first)
+
+        Returns:
+            List of sender activity summaries
+        """
+        # Build base query
+        query = self.session.query(
+            Notification.sender_id,
+            func.max( Notification.created_at ).label( 'last_activity' ),
+            func.count( Notification.id ).label( 'notification_count' ),
+            func.sum(
+                case(
+                    ( Notification.state.in_( [ 'created', 'queued' ] ), 1 ),
+                    else_=0
+                )
+            ).label( 'new_count' )
+        ).filter(
+            Notification.recipient_id == recipient_id
+        )
+
+        if not include_hidden:
+            query = query.filter( Notification.is_hidden == False )
+
+        results = query.group_by(
+            Notification.sender_id
+        ).order_by(
+            desc( 'last_activity' )
+        ).all()
+
+        return [
+            {
+                "sender_id"     : row.sender_id,
+                "last_activity" : row.last_activity,
+                "count"         : row.notification_count,
+                "new_count"     : row.new_count or 0
+            }
+            for row in results
+        ]
 
 
 def quick_smoke_test():

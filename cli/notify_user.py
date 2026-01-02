@@ -11,7 +11,7 @@ Usage:
     python3 notify_user.py "Build completed" --type task
     
 Environment Variables:
-    COSA_APP_SERVER_URL: Server URL (default: http://localhost:7999)
+    LUPIN_APP_SERVER_URL: Server URL (default: http://localhost:7999)
 """
 
 import os
@@ -218,7 +218,7 @@ Examples:
   %(prog)s "Custom message" --type custom
 
 Environment Variables:
-  COSA_APP_SERVER_URL   Server URL (default: http://localhost:7999)
+  LUPIN_APP_SERVER_URL   Server URL (default: http://localhost:7999)
         """
     )
     

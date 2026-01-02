@@ -1,6 +1,8 @@
 # COSA Development History
 
-> **🐛 CURRENT**: 2025.12.31 - Parent Lupin Sync: Sort Order Display Bug Fix! Synced 1 file from parent Lupin Session 24. **ROOT CAUSE**: Complex chain of transformations (DB DESC → JS `.reverse()` → CSS `column-reverse` → `appendChild`) cancelled each other out incorrectly for real-time vs initial load scenarios. **THE FIX**: Changed `notification_repository.py:220` from `.desc()` → `.asc()` so DB returns oldest-first; JS then uses `insertBefore` to prepend each message, resulting in newest at top. **HOW IT WORKS NOW**: Database returns oldest→newest (ASC), JS iterates with `insertBefore` prepending each message, result is newest at top for both initial page load AND real-time WebSocket notifications. **Total Impact**: 1 file, +3/-3 lines. Phase 8 sort order bug RESOLVED, sender-aware notification system fully functional. 🐛✅
+> **🎨 CURRENT**: 2026.01.01 - Parent Lupin Sync: Notifications UI Refactoring (Date-Based Grouping)! Synced 9 files from parent Lupin Session 27. **ENV VAR RENAME**: `COSA_APP_SERVER_URL` → `LUPIN_APP_SERVER_URL` across 4 CLI files for Lupin branding consistency. **NEW `is_hidden` FIELD**: Added soft delete column to Notification model with index for efficient visible-only queries (postgres_models.py:588-595). **4 NEW REPOSITORY METHODS**: `get_sender_conversations_by_date()` for date-grouped notifications, `soft_delete_by_date()` for soft delete by date, `get_sender_dates()` for date summaries, `get_visible_senders_with_counts()` for visible sender aggregation (notification_repository.py +273 lines). **4 NEW API ENDPOINTS**: `GET /conversation-by-date` (date-grouped notifications), `DELETE /date/{sender}/{user}/{date}` (soft delete), `GET /sender-dates` (date summaries), `GET /senders-visible` (visible senders with new counts) (notifications.py +346 lines). **SQLALCHEMY FIX**: Added `case` import for compatibility with visible-only filtering. **UNIT TESTS UPDATED**: Updated 3 test assertions for env var rename. **Total Impact**: 9 files, +637/-12 lines (net +625 lines). 🎨✅
+
+> **🐛 PREVIOUS**: 2025.12.31 - Parent Lupin Sync: Sort Order Display Bug Fix! Synced 1 file from parent Lupin Session 24. **ROOT CAUSE**: Complex chain of transformations (DB DESC → JS `.reverse()` → CSS `column-reverse` → `appendChild`) cancelled each other out incorrectly for real-time vs initial load scenarios. **THE FIX**: Changed `notification_repository.py:220` from `.desc()` → `.asc()` so DB returns oldest-first; JS then uses `insertBefore` to prepend each message, resulting in newest at top. **HOW IT WORKS NOW**: Database returns oldest→newest (ASC), JS iterates with `insertBefore` prepending each message, result is newest at top for both initial page load AND real-time WebSocket notifications. **Total Impact**: 1 file, +3/-3 lines. Phase 8 sort order bug RESOLVED, sender-aware notification system fully functional. 🐛✅
 
 > **📬 PREVIOUS**: 2025.12.30 - Parent Lupin Sync: Sender-Aware Notification System Infrastructure! Synced 8 files from parent Lupin Sessions 19-23 (Phase 1-6 implementation). **NEW `Notification` SQLAlchemy MODEL**: 128-line PostgreSQL model with sender routing, timestamps, response handling, and state machine (postgres_models.py:479-612). **NEW `NotificationRepository` CLASS**: 462-line repository with CRUD operations, sender-based grouping, activity-anchored window loading, state management (notification_repository.py - NEW FILE). **CLI SENDER SUPPORT**: Added `sender_id` field to `NotificationRequest` and `AsyncNotificationRequest` with auto-extraction from `[PREFIX]` in message via `extract_sender_from_message()` helper (notification_models.py:27-64, 158-163, 248-253, 458-463, 503-515). **API SENDER RESOLUTION**: Added `resolve_sender_id()` helper and `sender_id` query param to `/api/notify` endpoint, PostgreSQL persistence for history loading (notifications.py:135-166, 186, 289-290, 328-349). **NEW HISTORY ENDPOINTS**: `/notifications/senders/{user_email}` (get senders with activity), `/notifications/history/{sender_id}/{user_email}` (get sender conversation history), `/notifications/conversation/{sender_id}/{user_email}` DELETE (delete sender conversation). **FIFO QUEUE UPDATE**: Added `sender_id` field to `NotificationItem` (notification_fifo_queue.py). **DATABASE CONTEXT MANAGER**: Added `get_db()` context manager for session management (database.py). **Total Impact**: 8 files (7 modified, 1 created), +585 insertions/-33 deletions (net +552 lines). 📬✅
 
@@ -31,6 +33,136 @@
 > **Previous Achievement**: 2025.11.10 - Phase 2.5.4 API Key Authentication Infrastructure COMPLETE! Header-based API key authentication (X-API-Key header) implemented. Fixed critical schema bug (api_keys.user_id INTEGER→TEXT). Integration testing infrastructure created (10 tests).
 
 > **Previous Achievement**: 2025.11.08 - Notification System Phase 2.3 CLI Modernization COMMITTED! Split async/sync notification clients with Pydantic validation (1,376 lines across 3 new files).
+
+---
+
+## 2026.01.01 - Parent Lupin Sync: Notifications UI Refactoring (Date-Based Grouping)
+
+### Summary
+Synced 9 files from parent Lupin Session 27 (2026.01.01). Major infrastructure update adding date-based notification grouping for accordion-style UI display, soft delete capability, and environment variable renaming for Lupin branding consistency.
+
+### Work Performed
+
+#### Environment Variable Rename - COMPLETE ✅
+**Files**: 4 CLI files (+4/-4 lines each)
+
+Renamed `COSA_APP_SERVER_URL` → `LUPIN_APP_SERVER_URL` for Lupin branding consistency:
+- `cli/notification_types.py` - ENV constant definition
+- `cli/notify_user.py` - Module docstring + help text
+- `cli/notify_user_async.py` - Module docstring + help text
+- `cli/notify_user_sync.py` - Module docstring + help text
+
+#### Soft Delete Infrastructure - COMPLETE ✅
+**File**: `rest/postgres_models.py` (+8 lines)
+
+Added `is_hidden` column to Notification model for soft delete capability:
+```python
+is_hidden: Mapped[bool] = mapped_column(
+    Boolean,
+    default=False,
+    server_default="false",
+    index=True  # Efficient visible-only queries
+)
+```
+
+#### Date-Based Repository Methods - COMPLETE ✅
+**File**: `rest/db/repositories/notification_repository.py` (+273 lines)
+
+Added 4 new repository methods with Design by Contract docstrings:
+
+1. **`get_sender_conversations_by_date()`** - Load conversation grouped by date (ISO format)
+   - Activity-anchored window loading (defaults to sender's last activity)
+   - Timezone-aware date grouping (default: America/New_York)
+   - Returns dict of date_string → list of notifications
+   - Dates sorted descending (newest first)
+
+2. **`soft_delete_by_date()`** - Soft delete all notifications for a sender on a specific date
+   - Sets `is_hidden=True` instead of physical delete
+   - Timezone-aware date boundary calculation
+   - Returns count of hidden notifications
+
+3. **`get_sender_dates()`** - Get date summaries for a sender
+   - Returns list of dates with notification counts
+   - Excludes hidden notifications by default
+
+4. **`get_visible_senders_with_counts()`** - Get visible senders with new message counts
+   - Uses SQLAlchemy `case()` for conditional aggregation
+   - Returns senders with unread/total counts
+
+Also added `case` import from SQLAlchemy for conditional expressions.
+
+#### Date-Based API Endpoints - COMPLETE ✅
+**File**: `rest/routers/notifications.py` (+346 lines)
+
+Added 4 new API endpoints with Design by Contract docstrings:
+
+1. **`GET /notifications/conversation-by-date/{sender_id}/{user_email}`**
+   - Returns notifications organized by date for accordion-style UI
+   - Query params: `hours` (window size), `anchor` (ISO timestamp), `include_hidden`
+   - Uses configured timezone from `app_timezone` config key
+
+2. **`DELETE /notifications/date/{sender_id}/{user_email}/{date_string}`**
+   - Soft delete all notifications for a sender on a specific date
+   - Validates ISO date format (YYYY-MM-DD)
+   - Returns hidden count and status
+
+3. **`GET /notifications/sender-dates/{sender_id}/{user_email}`**
+   - Get date summaries for a sender
+   - Returns list of dates with notification counts
+
+4. **`GET /notifications/senders-visible/{user_email}`**
+   - Get visible senders with new message counts
+   - Excludes hidden notifications from counts
+
+#### Unit Tests Updated - COMPLETE ✅
+**Files**: 2 test files (+3/-3 lines)
+
+Updated test assertions for environment variable rename:
+- `tests/unit/cli/test_notification_types.py` - ENV constant assertion
+- `tests/unit/cli/test_notify_user.py` - Help text assertions (2 locations)
+
+### Files Modified
+
+**COSA Repository** (9 files):
+
+| File | Lines Changed | Description |
+|------|---------------|-------------|
+| `cli/notification_types.py` | +1/-1 | ENV var rename |
+| `cli/notify_user.py` | +2/-2 | Docstring + help text |
+| `cli/notify_user_async.py` | +2/-2 | Docstring + help text |
+| `cli/notify_user_sync.py` | +2/-2 | Docstring + help text |
+| `rest/postgres_models.py` | +8 | is_hidden column |
+| `rest/db/repositories/notification_repository.py` | +273 | 4 new methods + case import |
+| `rest/routers/notifications.py` | +346 | 4 new endpoints |
+| `tests/unit/cli/test_notification_types.py` | +1/-1 | Test assertion |
+| `tests/unit/cli/test_notify_user.py` | +2/-2 | Test assertions |
+
+**Total Impact**: 9 files, +637 insertions/-12 deletions (net +625 lines)
+
+### Integration with Parent Lupin
+
+**Parent Session Context** (2026.01.01, Session 27):
+- Major UI overhaul renaming "Fresh Queue" to "Notifications"
+- Date accordion UI for grouping notifications by date
+- Frontend files renamed: queue-fresh.{html,js,css} → notifications.{html,js,css}
+- Class renamed: FreshQueueUI → NotificationsUI
+
+**Database Migration Created** (in parent Lupin):
+- `src/scripts/sql/migrations/2025.01.01-add-is-hidden-to-notifications.sql`
+- Adds `is_hidden` column with partial indexes for efficient visible-only queries
+
+### Current Status
+
+- **Environment Variables**: ✅ Renamed to LUPIN_APP_SERVER_URL
+- **Soft Delete**: ✅ is_hidden column added with index
+- **Date Grouping**: ✅ 4 repository methods + 4 API endpoints
+- **Unit Tests**: ✅ Updated for env var rename
+- **History Health**: ✅ ~17.8k tokens (parent Lupin) - healthy
+
+### Next Session Priorities
+
+1. Continue tracking parent Lupin work
+2. Monitor for any additional UI/API changes
 
 ---
 

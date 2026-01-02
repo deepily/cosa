@@ -1145,3 +1145,349 @@ async def delete_sender_conversation( sender_id: str, user_email: str ):
             status_code = 500,
             detail      = f"Failed to delete conversation: {str( e )}"
         )
+
+
+@router.get( "/notifications/conversation-by-date/{sender_id}/{user_email}" )
+async def get_sender_conversation_by_date(
+    sender_id: str,
+    user_email: str,
+    hours: int = Query( 168, description="Window size in hours (default: 168 = 7 days)" ),
+    anchor: Optional[str] = Query( None, description="ISO timestamp to anchor window around" ),
+    include_hidden: bool = Query( False, description="Include hidden/archived notifications" )
+):
+    """
+    Get conversation history grouped by date (ISO format).
+
+    Returns notifications organized by date for accordion-style UI display.
+    Each date key contains notifications in chronological order.
+
+    Requires:
+        - sender_id is a valid sender identifier (e.g., claude.code@lupin.deepily.ai)
+        - user_email is a valid registered email address
+        - User exists in auth database
+
+    Ensures:
+        - Returns dict of date_string -> list of notifications
+        - Date keys are ISO format (YYYY-MM-DD) in user's timezone
+        - Notifications within each date sorted chronologically
+
+    Args:
+        sender_id: Sender identifier
+        user_email: User's email address
+        hours: Window size in hours (default: 168 = 7 days)
+        anchor: Optional ISO timestamp to anchor window around
+        include_hidden: Whether to include hidden/archived notifications
+
+    Returns:
+        Dict mapping date strings to notification lists
+    """
+    from cosa.config.configuration_manager import ConfigurationManager
+
+    try:
+        # Look up user to get UUID
+        from cosa.rest.user_service import get_user_by_email
+
+        user_data = get_user_by_email( user_email )
+        if not user_data:
+            raise HTTPException(
+                status_code = 404,
+                detail      = f"User not found: {user_email}"
+            )
+
+        user_id = uuid.UUID( user_data["id"] ) if isinstance( user_data["id"], str ) else user_data["id"]
+
+        # Parse anchor timestamp if provided
+        anchor_dt = None
+        if anchor:
+            try:
+                anchor_dt = datetime.fromisoformat( anchor.replace( 'Z', '+00:00' ) )
+            except ValueError:
+                raise HTTPException(
+                    status_code = 400,
+                    detail      = f"Invalid anchor timestamp format: {anchor}"
+                )
+
+        # Get timezone from configuration
+        config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+        timezone_name = config_mgr.get( "app_timezone", default="America/New_York" )
+
+        with get_db() as session:
+            repo = NotificationRepository( session )
+            date_groups = repo.get_sender_conversations_by_date(
+                sender_id     = sender_id,
+                recipient_id  = user_id,
+                anchor        = anchor_dt,
+                window_hours  = hours,
+                include_hidden = include_hidden,
+                timezone_name = timezone_name
+            )
+
+            # Convert to dict for JSON serialization
+            result = {}
+            for date_key, notifications in date_groups.items():
+                result[ date_key ] = []
+                for notif in notifications:
+                    result[ date_key ].append( {
+                        "id"                 : str( notif.id ),
+                        "sender_id"          : notif.sender_id,
+                        "message"            : notif.message,
+                        "title"              : notif.title,
+                        "type"               : notif.type,
+                        "priority"           : notif.priority,
+                        "state"              : notif.state,
+                        "is_hidden"          : notif.is_hidden,
+                        "created_at"         : notif.created_at.isoformat() if notif.created_at else None,
+                        "delivered_at"       : notif.delivered_at.isoformat() if notif.delivered_at else None,
+                        "responded_at"       : notif.responded_at.isoformat() if notif.responded_at else None,
+                        "response_requested" : notif.response_requested,
+                        "response_type"      : notif.response_type,
+                        "response_value"     : notif.response_value,
+                        "timestamp"          : notif.created_at.isoformat() if notif.created_at else None
+                    } )
+
+            total_count = sum( len( v ) for v in result.values() )
+            print( f"[NOTIFY] Returning {total_count} notifications in {len( result )} date groups for {sender_id} → {user_email}" )
+
+            return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print( f"[NOTIFY] Error getting date-grouped conversation for {sender_id}: {str( e )}" )
+        raise HTTPException(
+            status_code = 500,
+            detail      = f"Failed to get date-grouped conversation: {str( e )}"
+        )
+
+
+@router.delete( "/notifications/date/{sender_id}/{user_email}/{date_string}" )
+async def soft_delete_by_date( sender_id: str, user_email: str, date_string: str ):
+    """
+    Soft delete all notifications for a sender on a specific date.
+
+    Sets is_hidden=True for matching notifications instead of permanently deleting.
+    This preserves data for analysis while hiding from the UI.
+
+    Requires:
+        - sender_id is a valid sender identifier (e.g., claude.code@lupin.deepily.ai)
+        - user_email is a valid registered email address
+        - date_string is ISO format (YYYY-MM-DD)
+        - User exists in auth database
+
+    Ensures:
+        - Sets is_hidden=True for all matching notifications
+        - Uses configured timezone for date interpretation
+        - Returns count of hidden notifications
+
+    Args:
+        sender_id: Sender identifier
+        user_email: User's email address
+        date_string: ISO format date (YYYY-MM-DD)
+
+    Returns:
+        JSON with hidden count and status
+    """
+    from cosa.config.configuration_manager import ConfigurationManager
+
+    try:
+        # Validate date format
+        try:
+            from datetime import date as date_type
+            date_type.fromisoformat( date_string )
+        except ValueError:
+            raise HTTPException(
+                status_code = 400,
+                detail      = f"Invalid date format: {date_string}. Expected YYYY-MM-DD."
+            )
+
+        # Look up user to get UUID
+        from cosa.rest.user_service import get_user_by_email
+
+        user_data = get_user_by_email( user_email )
+        if not user_data:
+            raise HTTPException(
+                status_code = 404,
+                detail      = f"User not found: {user_email}"
+            )
+
+        user_id = uuid.UUID( user_data["id"] ) if isinstance( user_data["id"], str ) else user_data["id"]
+
+        # Get timezone from configuration
+        config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+        timezone_name = config_mgr.get( "app_timezone", default="America/New_York" )
+
+        with get_db() as session:
+            repo = NotificationRepository( session )
+            hidden_count = repo.soft_delete_by_date(
+                sender_id     = sender_id,
+                recipient_id  = user_id,
+                date_string   = date_string,
+                timezone_name = timezone_name
+            )
+
+            print( f"[NOTIFY] Soft deleted {hidden_count} notifications for {sender_id} on {date_string}" )
+
+            return {
+                "status"       : "success",
+                "sender_id"    : sender_id,
+                "user_email"   : user_email,
+                "date"         : date_string,
+                "hidden_count" : hidden_count
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print( f"[NOTIFY] Error soft deleting notifications for {sender_id} on {date_string}: {str( e )}" )
+        raise HTTPException(
+            status_code = 500,
+            detail      = f"Failed to soft delete notifications: {str( e )}"
+        )
+
+
+@router.get( "/notifications/sender-dates/{sender_id}/{user_email}" )
+async def get_sender_date_summaries(
+    sender_id: str,
+    user_email: str,
+    include_hidden: bool = Query( False, description="Include hidden/archived notifications" )
+):
+    """
+    Get date-grouped summaries for a sender with counts.
+
+    Returns a list of dates with notification counts, useful for
+    building the date accordion headers without loading full notifications.
+
+    Requires:
+        - sender_id is a valid sender identifier (e.g., claude.code@lupin.deepily.ai)
+        - user_email is a valid registered email address
+        - User exists in auth database
+
+    Ensures:
+        - Returns list of date summaries ordered by date descending
+        - Each summary includes date, count, and new_count
+
+    Args:
+        sender_id: Sender identifier
+        user_email: User's email address
+        include_hidden: Whether to include hidden notifications in counts
+
+    Returns:
+        List of date summary objects
+    """
+    from cosa.config.configuration_manager import ConfigurationManager
+
+    try:
+        # Look up user to get UUID
+        from cosa.rest.user_service import get_user_by_email
+
+        user_data = get_user_by_email( user_email )
+        if not user_data:
+            raise HTTPException(
+                status_code = 404,
+                detail      = f"User not found: {user_email}"
+            )
+
+        user_id = uuid.UUID( user_data["id"] ) if isinstance( user_data["id"], str ) else user_data["id"]
+
+        # Get timezone from configuration
+        config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+        timezone_name = config_mgr.get( "app_timezone", default="America/New_York" )
+
+        with get_db() as session:
+            repo = NotificationRepository( session )
+            summaries = repo.get_sender_date_summaries(
+                sender_id      = sender_id,
+                recipient_id   = user_id,
+                include_hidden = include_hidden,
+                timezone_name  = timezone_name
+            )
+
+            print( f"[NOTIFY] Returning {len( summaries )} date summaries for {sender_id} → {user_email}" )
+
+            return summaries
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print( f"[NOTIFY] Error getting date summaries for {sender_id}: {str( e )}" )
+        raise HTTPException(
+            status_code = 500,
+            detail      = f"Failed to get date summaries: {str( e )}"
+        )
+
+
+@router.get( "/notifications/senders-visible/{user_email}" )
+async def get_visible_senders(
+    user_email: str,
+    hours: Optional[int] = Query( None, description="Filter to senders with activity within N hours" ),
+    include_hidden: bool = Query( False, description="Include hidden notifications in counts" )
+):
+    """
+    Get list of senders with visible notifications for a user.
+
+    Enhanced version of get_senders that respects is_hidden flag and
+    includes new_count for unread notification badges.
+
+    Requires:
+        - user_email is a valid registered email address
+        - User exists in auth database
+
+    Ensures:
+        - Returns list of sender activity summaries
+        - Excludes senders with all notifications hidden (unless include_hidden)
+        - Ordered by last_activity descending (most recent first)
+        - Includes new_count for unread badges
+
+    Args:
+        user_email: User's email address
+        hours: Optional filter for recent activity window
+        include_hidden: Whether to include hidden notifications
+
+    Returns:
+        List of sender activity summaries with counts
+    """
+    try:
+        # Look up user to get UUID
+        from cosa.rest.user_service import get_user_by_email
+
+        user_data = get_user_by_email( user_email )
+        if not user_data:
+            raise HTTPException(
+                status_code = 404,
+                detail      = f"User not found: {user_email}"
+            )
+
+        user_id = uuid.UUID( user_data["id"] ) if isinstance( user_data["id"], str ) else user_data["id"]
+
+        with get_db() as session:
+            repo = NotificationRepository( session )
+            activities = repo.get_sender_last_activities_visible(
+                recipient_id   = user_id,
+                include_hidden = include_hidden
+            )
+
+            # Apply hours filter if specified
+            if hours is not None:
+                cutoff = datetime.now( timezone.utc ) - timedelta( hours=hours )
+                activities = [
+                    a for a in activities
+                    if a["last_activity"] >= cutoff
+                ]
+
+            # Convert datetime to ISO string for JSON serialization
+            for activity in activities:
+                if activity["last_activity"]:
+                    activity["last_activity"] = activity["last_activity"].isoformat()
+
+            print( f"[NOTIFY] Returning {len( activities )} visible senders for {user_email}" )
+
+            return activities
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print( f"[NOTIFY] Error getting visible senders for {user_email}: {str( e )}" )
+        raise HTTPException(
+            status_code = 500,
+            detail      = f"Failed to get visible sender list: {str( e )}"
+        )
