@@ -7,9 +7,9 @@ Supports two modes:
     Option B (INTERACTIVE): SDK client for open-ended sessions with bidirectional control
 
 Usage:
-    from cosa.orchestration import CosaDispatcher, Task, TaskType
+    from cosa.orchestration import ClaudeCodeDispatcher, Task, TaskType
 
-    dispatcher = CosaDispatcher()
+    dispatcher = ClaudeCodeDispatcher()
 
     # Bounded task
     result = await dispatcher.dispatch( Task(
@@ -110,7 +110,7 @@ class TaskResult:
     exit_code: Optional[int] = None
 
 
-class CosaDispatcher:
+class ClaudeCodeDispatcher:
     """
     Routes tasks to appropriate Claude Code runtime.
 
@@ -495,13 +495,13 @@ def quick_smoke_test():
         print( f"✓ TaskResult success case: success={result_success.success}" )
         print( f"✓ TaskResult failure case: error={result_failure.error}" )
 
-        # Test 6: Create CosaDispatcher
-        print( "\nTest 6: Creating CosaDispatcher instance..." )
-        dispatcher = CosaDispatcher()
+        # Test 6: Create ClaudeCodeDispatcher
+        print( "\nTest 6: Creating ClaudeCodeDispatcher instance..." )
+        dispatcher = ClaudeCodeDispatcher()
         assert dispatcher is not None
         assert dispatcher.mcp_config_path.endswith( "cosa_mcp.json" )
         assert dispatcher.mcp_server_path.endswith( "cosa_voice_mcp.py" )
-        print( f"✓ CosaDispatcher created" )
+        print( f"✓ ClaudeCodeDispatcher created" )
         print( f"✓ mcp_config_path: ...{dispatcher.mcp_config_path[-40:]}" )
 
         # Test 7: Verify dispatcher methods exist
@@ -517,7 +517,7 @@ def quick_smoke_test():
         original_root = os.environ.pop( 'LUPIN_ROOT', None )
         try:
             try:
-                CosaDispatcher()
+                ClaudeCodeDispatcher()
                 assert False, "Expected RuntimeError"
             except RuntimeError as e:
                 assert "LUPIN_ROOT" in str( e )
@@ -582,7 +582,7 @@ def quick_smoke_test():
 # ============================================================================
 
 async def main():
-    """CLI entry point for CosaDispatcher."""
+    """CLI entry point for ClaudeCodeDispatcher."""
     import argparse
 
     parser = argparse.ArgumentParser( description="Cosa Task Dispatcher" )
@@ -612,7 +612,7 @@ async def main():
     if not args.project:
         parser.error( "--project is required" )
 
-    dispatcher = CosaDispatcher()
+    dispatcher = ClaudeCodeDispatcher()
 
     task = Task(
         id=f"{args.project}-{datetime.now().strftime( '%Y%m%d%H%M%S' )}",

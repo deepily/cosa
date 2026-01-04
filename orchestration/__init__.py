@@ -5,15 +5,15 @@ This module provides infrastructure for programmatically invoking Claude Code
 with voice I/O capabilities via MCP tools.
 
 Classes:
-    CosaDispatcher: Routes tasks to appropriate Claude Code runtime
+    ClaudeCodeDispatcher: Routes tasks to appropriate Claude Code runtime
     Task: Task definition dataclass
     TaskType: Enum for bounded vs interactive execution modes
     TaskResult: Result dataclass from task execution
 
 Example:
-    from cosa.orchestration import CosaDispatcher, Task, TaskType
+    from cosa.orchestration import ClaudeCodeDispatcher, Task, TaskType
 
-    dispatcher = CosaDispatcher()
+    dispatcher = ClaudeCodeDispatcher()
     result = await dispatcher.dispatch( Task(
         id="task-001",
         project="lupin",
@@ -23,14 +23,14 @@ Example:
 """
 
 from cosa.orchestration.claude_code_dispatcher import (
-    CosaDispatcher,
+    ClaudeCodeDispatcher,
     Task,
     TaskType,
     TaskResult
 )
 
 __all__ = [
-    "CosaDispatcher",
+    "ClaudeCodeDispatcher",
     "Task",
     "TaskType",
     "TaskResult"
