@@ -52,6 +52,7 @@ class NotificationRepository( BaseRepository[Notification] ):
         response_requested: bool = False,
         response_type: Optional[str] = None,
         response_default: Optional[str] = None,
+        response_options: Optional[dict] = None,
         timeout_seconds: Optional[int] = None,
         expires_at: Optional[datetime] = None
     ) -> Notification:
@@ -94,6 +95,7 @@ class NotificationRepository( BaseRepository[Notification] ):
             response_requested = response_requested,
             response_type      = response_type,
             response_default   = response_default,
+            response_options   = response_options,
             timeout_seconds    = timeout_seconds,
             expires_at         = expires_at,
             state              = "created"

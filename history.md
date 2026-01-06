@@ -1,6 +1,8 @@
 # COSA Development History
 
-> **🔄 CURRENT**: 2026.01.03 - Parent Lupin Sync: ClaudeCodeDispatcher Rename! Synced class rename from parent Lupin Session 33. **RENAME**: `CosaDispatcher` → `ClaudeCodeDispatcher` across 2 files (18 total occurrences) for clearer branding - the dispatcher invokes Claude Code, not just COSA. **FILES MODIFIED**: `orchestration/__init__.py` (5 renames in imports, exports, docstring, example), `orchestration/claude_code_dispatcher.py` (13 renames in class definition, docstring, smoke tests, CLI entry point). **Total Impact**: 2 files, +15/-15 lines (pure rename, no functional changes). All 9 smoke tests passing. 🔄✅
+> **🔄 CURRENT**: 2026.01.05 - Parent Lupin Sync: Multiple-Choice Question Support! Synced infrastructure from parent Lupin Sessions 37-38. **NEW RESPONSE TYPE**: Added `multiple_choice` to `ResponseType` enum for Claude Code's `AskUserQuestion` tool support. **MODEL CHANGES**: Added `response_options` field (JSONB) to `NotificationRequest`, `NotificationItem`, `Notification` PostgreSQL model, and `NotificationRepository.create_notification()`. **VALIDATION**: New `validate_multiple_choice_options()` validator ensures proper question structure (2-4 options, required labels). **API UPDATES**: `/api/notify` endpoint now accepts `response_options` JSON query param with validation for `multiple_choice` type. **README**: Added Option B interactive session examples, bidirectional control docs, and test coverage table. **Total Impact**: 6 files, +158/-15 lines. 🔄✅
+
+> **🔄 PREVIOUS**: 2026.01.03 - Parent Lupin Sync: ClaudeCodeDispatcher Rename! Synced class rename from parent Lupin Session 33. **RENAME**: `CosaDispatcher` → `ClaudeCodeDispatcher` across 2 files (18 total occurrences) for clearer branding - the dispatcher invokes Claude Code, not just COSA. **FILES MODIFIED**: `orchestration/__init__.py` (5 renames in imports, exports, docstring, example), `orchestration/claude_code_dispatcher.py` (13 renames in class definition, docstring, smoke tests, CLI entry point). **Total Impact**: 2 files, +15/-15 lines (pure rename, no functional changes). All 9 smoke tests passing. 🔄✅
 
 > **🚀 PREVIOUS**: 2026.01.02 - Claude Code Dispatcher + SQLite→PostgreSQL Notifications Migration! Synced major infrastructure from parent Lupin Sessions 28-32. **NEW ORCHESTRATION MODULE**: Created `src/cosa/orchestration/` package (3 files, 821 lines) with `CosaDispatcher` class for programmatic Claude Code invocation supporting bounded (print mode) and interactive (SDK client) execution modes. **SQLITE→POSTGRESQL MIGRATION**: Deleted deprecated `rest/notifications_database.py` (513 lines) - all notification CRUD now uses PostgreSQL repository pattern. **REPOSITORY ENHANCEMENT**: Added `get_expired_notifications()` method for background cleanup tasks, fixed ORDER BY bug using `func.max()` instead of string literal. **API MIGRATION**: Updated `notifications.py` router to use PostgreSQL repository pattern (removed NotificationsDatabase import/dependency, updated 4 endpoints). **SDK DEPENDENCY**: Added `claude-agent-sdk==0.1.18` to requirements.txt. **Total Impact**: 4 files modified, 3 files created, 1 file deleted, +832/-604 lines (net +228 lines). 🚀✅
 
@@ -37,6 +39,113 @@
 > **Previous Achievement**: 2025.11.10 - Phase 2.5.4 API Key Authentication Infrastructure COMPLETE! Header-based API key authentication (X-API-Key header) implemented. Fixed critical schema bug (api_keys.user_id INTEGER→TEXT). Integration testing infrastructure created (10 tests).
 
 > **Previous Achievement**: 2025.11.08 - Notification System Phase 2.3 CLI Modernization COMMITTED! Split async/sync notification clients with Pydantic validation (1,376 lines across 3 new files).
+
+---
+
+## 2026.01.05 - Parent Lupin Sync: Multiple-Choice Question Support
+
+### Summary
+Synced 6 files from parent Lupin Sessions 37-38 (2026.01.05). Added multiple-choice question response type to the notification system, enabling full support for Claude Code's `AskUserQuestion` tool with multi-question flows.
+
+### Work Performed
+
+#### New Response Type: MULTIPLE_CHOICE - COMPLETE ✅
+**File**: `cli/notification_models.py` (+52 lines)
+
+Added `MULTIPLE_CHOICE = "multiple_choice"` to `ResponseType` enum alongside existing `YES_NO` and `OPEN_ENDED` types.
+
+**New Fields**:
+- `response_options: Optional[dict]` - Structure for multiple-choice questions containing `{questions: [{question, header, multi_select, options: [{label, description}]}]}`
+
+**New Validator**: `validate_multiple_choice_options()` (30 lines)
+- Validates `questions` array exists for `multiple_choice` type
+- Each question must have `question` field and `options` array
+- Each question must have 2-4 options
+- Each option must have a `label` field
+- Design by Contract docstring included
+
+**Query Param Serialization**: Added JSON serialization of `response_options` in `to_query_params()` method
+
+#### PostgreSQL Model Update - COMPLETE ✅
+**File**: `rest/postgres_models.py` (+4 lines)
+
+Added `response_options` JSONB column to `Notification` model:
+```python
+response_options: Mapped[Optional[dict]] = mapped_column(
+    JSONB,
+    nullable=True
+)
+```
+
+#### Repository Update - COMPLETE ✅
+**File**: `rest/db/repositories/notification_repository.py` (+2 lines)
+
+Added `response_options: Optional[dict] = None` parameter to `create_notification()` method and passed through to model instantiation.
+
+#### FIFO Queue Update - COMPLETE ✅
+**File**: `rest/notification_fifo_queue.py` (+7/-4 lines)
+
+Added `response_options` field throughout the notification queue infrastructure:
+- `NotificationItem.__init__()` - New parameter and attribute
+- `NotificationItem.to_dict()` - Include in serialization
+- `NotificationFifoQueue.push_notification()` - Accept and pass through
+
+#### API Endpoint Update - COMPLETE ✅
+**File**: `rest/routers/notifications.py` (+39/-6 lines)
+
+Enhanced `/api/notify` endpoint:
+- New query parameter: `response_options: Optional[str]` (JSON string)
+- Added `"multiple_choice"` to `valid_response_types`
+- Validation: `multiple_choice` requires `response_options`
+- JSON parsing with error handling for malformed input
+- Passed `parsed_response_options` to all notification creation paths (DB, queue, WebSocket)
+
+#### README Documentation - COMPLETE ✅
+**File**: `orchestration/README.md` (+62/-3 lines)
+
+Added comprehensive documentation:
+- Option B: Interactive Sessions example with `on_message` callback
+- Bidirectional Control section (`inject()`, `interrupt()`, `get_active_sessions()`)
+- Test Coverage table (3 test files, 42 total tests)
+- Related Documents section update
+
+### Files Modified
+
+**COSA Repository** (6 files):
+
+| File | Lines Changed | Description |
+|------|---------------|-------------|
+| `cli/notification_models.py` | +52 | ResponseType enum + response_options field + validator |
+| `rest/postgres_models.py` | +4 | response_options JSONB column |
+| `rest/db/repositories/notification_repository.py` | +2 | create_notification() parameter |
+| `rest/notification_fifo_queue.py` | +7/-4 | NotificationItem field + serialization |
+| `rest/routers/notifications.py` | +39/-6 | API endpoint with validation |
+| `orchestration/README.md` | +62/-3 | Option B docs + test coverage |
+
+**Total Impact**: 6 files, +158 insertions/-15 deletions (net +143 lines)
+
+### Integration with Parent Lupin
+
+**Parent Sessions Context** (2026.01.05, Sessions 37-38):
+- Session 37: Option B Phase 1 manual testing complete
+- Session 38: Multiple-choice question notifications - all 5 phases complete
+  - Phase 4: Multi-question navigation (state tracking, navigation buttons)
+  - Phase 5: MCP voice tool `ask_multiple_choice()` added
+
+**Database Migration Note**: Parent Lupin already has the `response_options` column via ALTER TABLE. COSA models updated to match.
+
+### Current Status
+
+- **ResponseType.MULTIPLE_CHOICE**: ✅ Added to enum
+- **response_options Field**: ✅ Added to all layers (model, request, queue, API)
+- **Validation**: ✅ Pydantic validator for question structure
+- **API Endpoint**: ✅ Updated with JSON parsing and validation
+- **README**: ✅ Comprehensive Option B documentation added
+
+### Next Session Priorities
+
+1. Sync any additional parent Lupin changes
+2. Monitor for frontend changes requiring backend updates
 
 ---
 

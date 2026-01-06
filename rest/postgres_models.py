@@ -574,6 +574,10 @@ class Notification( Base ):
         String( 255 ),
         nullable=True
     )
+    response_options: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True
+    )
     timeout_seconds: Mapped[Optional[int]] = mapped_column(
         BigInteger,
         nullable=True

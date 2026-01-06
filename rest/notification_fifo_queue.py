@@ -16,8 +16,8 @@ class NotificationItem:
                  source: str = "claude_code", user_id: Optional[str] = None,
                  id: Optional[str] = None, title: Optional[str] = None,
                  response_requested: bool = False, response_type: Optional[str] = None,
-                 response_default: Optional[str] = None, timeout_seconds: Optional[int] = None,
-                 sender_id: Optional[str] = None ) -> None:
+                 response_default: Optional[str] = None, response_options: Optional[dict] = None,
+                 timeout_seconds: Optional[int] = None, sender_id: Optional[str] = None ) -> None:
         """
         Initialize a notification item.
 
@@ -55,6 +55,7 @@ class NotificationItem:
         self.response_requested = response_requested
         self.response_type      = response_type
         self.response_default   = response_default
+        self.response_options   = response_options  # Multiple-choice options
         self.timeout_seconds    = timeout_seconds
 
         # Sender identification for multi-project grouping
@@ -104,6 +105,7 @@ class NotificationItem:
             "response_requested" : self.response_requested,
             "response_type"      : self.response_type,
             "response_default"   : self.response_default,
+            "response_options"   : self.response_options,  # Multiple-choice options
             "timeout_seconds"    : self.timeout_seconds,
             # Sender identification
             "sender_id"          : self.sender_id
@@ -195,8 +197,8 @@ class NotificationFifoQueue( FifoQueue ):
                          source: str = "claude_code", user_id: Optional[str] = None,
                          id: Optional[str] = None, title: Optional[str] = None,
                          response_requested: bool = False, response_type: Optional[str] = None,
-                         response_default: Optional[str] = None, timeout_seconds: Optional[int] = None,
-                         sender_id: Optional[str] = None ) -> NotificationItem:
+                         response_default: Optional[str] = None, response_options: Optional[dict] = None,
+                         timeout_seconds: Optional[int] = None, sender_id: Optional[str] = None ) -> NotificationItem:
         """
         Push a notification with priority handling and io_tbl logging.
 
@@ -228,6 +230,7 @@ class NotificationFifoQueue( FifoQueue ):
             response_requested = response_requested,
             response_type      = response_type,
             response_default   = response_default,
+            response_options   = response_options,  # Multiple-choice options
             timeout_seconds    = timeout_seconds,
             sender_id          = sender_id
         )

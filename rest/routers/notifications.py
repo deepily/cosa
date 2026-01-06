@@ -165,6 +165,7 @@ async def notify_user(
     response_default: Optional[str] = Query(None, description="Default response value for timeout/offline (Phase 2.1)"),
     title: Optional[str] = Query(None, description="Terse technical title for voice-first UX (Phase 2.1)"),
     sender_id: Optional[str] = Query(None, description="Sender ID (e.g., claude.code@lupin.deepily.ai). Auto-extracted from [PREFIX] in message if not provided."),
+    response_options: Optional[str] = Query(None, description="JSON string of options for multiple_choice type. Structure: {questions: [{question, header, multi_select, options: [{label, description}]}]}"),
     notification_queue: NotificationFifoQueue = Depends(get_notification_queue),
     ws_manager: WebSocketManager = Depends(get_websocket_manager)
 ):
@@ -253,11 +254,18 @@ async def notify_user(
                 detail="response_type is required when response_requested=True (yes_no or open_ended)"
             )
 
-        valid_response_types = ["yes_no", "open_ended"]
+        valid_response_types = ["yes_no", "open_ended", "multiple_choice"]
         if response_type not in valid_response_types:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid response_type: {response_type}. Valid types: {', '.join(valid_response_types)}"
+            )
+
+        # Validate multiple_choice requires response_options
+        if response_type == "multiple_choice" and not response_options:
+            raise HTTPException(
+                status_code=400,
+                detail="response_options is required when response_type=multiple_choice"
             )
 
         if timeout_seconds <= 0:
@@ -265,7 +273,18 @@ async def notify_user(
                 status_code=400,
                 detail="timeout_seconds must be positive"
             )
-    
+
+    # Parse response_options JSON string if provided
+    parsed_response_options = None
+    if response_options:
+        try:
+            parsed_response_options = json.loads( response_options )
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid JSON in response_options: {str(e)}"
+            )
+
     # Resolve sender_id using precedence: explicit > extracted from [PREFIX] > default
     resolved_sender_id = resolve_sender_id( sender_id, message )
 
@@ -314,12 +333,13 @@ async def notify_user(
                 with get_db() as session:
                     repo = NotificationRepository( session )
                     db_notification = repo.create_notification(
-                        sender_id    = resolved_sender_id,
-                        recipient_id = uuid.UUID( target_system_id ),
-                        message      = message.strip(),
-                        type         = type,
-                        priority     = priority,
-                        title        = title
+                        sender_id        = resolved_sender_id,
+                        recipient_id     = uuid.UUID( target_system_id ),
+                        message          = message.strip(),
+                        type             = type,
+                        priority         = priority,
+                        title            = title,
+                        response_options = parsed_response_options
                     )
                     # Update state to delivered if user is connected
                     if is_connected:
@@ -372,6 +392,7 @@ async def notify_user(
                         response_requested = True,
                         response_type      = response_type,
                         response_default   = response_default,
+                        response_options   = parsed_response_options,
                         timeout_seconds    = timeout_seconds,
                         expires_at         = expires_at
                     )
@@ -405,6 +426,7 @@ async def notify_user(
                 response_requested = True,
                 response_type      = response_type,
                 response_default   = response_default,
+                response_options   = parsed_response_options,
                 timeout_seconds    = timeout_seconds,
                 expires_at         = expires_at
             )
@@ -437,6 +459,7 @@ async def notify_user(
             response_requested = True,
             response_type      = response_type,
             response_default   = response_default,
+            response_options   = parsed_response_options,  # Multiple-choice options
             timeout_seconds    = timeout_seconds,
             sender_id          = resolved_sender_id  # Sender-aware notification system
         )

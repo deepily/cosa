@@ -85,6 +85,7 @@ class ResponseType(str, Enum):
     """Response type for notifications."""
     YES_NO = "yes_no"
     OPEN_ENDED = "open_ended"
+    MULTIPLE_CHOICE = "multiple_choice"
 
 
 # ============================================================================
@@ -161,6 +162,11 @@ class NotificationRequest(BaseModel):
         description="Sender ID (e.g., claude.code@lupin.deepily.ai). Auto-extracted from [PREFIX] if not provided."
     )
 
+    response_options: Optional[dict] = Field(
+        default=None,
+        description="Options for multiple_choice type. Structure: {questions: [{question, header, multi_select, options: [{label, description}]}]}"
+    )
+
     @field_validator( 'message' )
     @classmethod
     def message_not_whitespace( cls, v: str ) -> str:
@@ -181,6 +187,47 @@ class NotificationRequest(BaseModel):
         if not stripped:
             raise ValueError( 'Message cannot be empty or whitespace-only' )
         return stripped
+
+    @field_validator( 'response_options' )
+    @classmethod
+    def validate_multiple_choice_options( cls, v: Optional[dict], info ) -> Optional[dict]:
+        """
+        Validate response_options for multiple_choice type.
+
+        Requires:
+            - v is None or a dict with 'questions' array
+            - Each question has 'question', 'header', 'multi_select', 'options'
+            - Each option has 'label' and optional 'description'
+
+        Ensures:
+            - Returns validated dict or None
+            - Raises ValueError if structure is invalid
+
+        Raises:
+            - ValueError if options structure is malformed
+        """
+        if v is None:
+            return v
+
+        response_type = info.data.get( 'response_type' )
+        if response_type == ResponseType.MULTIPLE_CHOICE:
+            if 'questions' not in v or not isinstance( v['questions'], list ):
+                raise ValueError( "response_options must have 'questions' array for multiple_choice type" )
+
+            for i, q in enumerate( v['questions'] ):
+                if not isinstance( q, dict ):
+                    raise ValueError( f"Question {i} must be a dict" )
+                if 'question' not in q:
+                    raise ValueError( f"Question {i} missing 'question' field" )
+                if 'options' not in q or not isinstance( q['options'], list ):
+                    raise ValueError( f"Question {i} missing 'options' array" )
+                if len( q['options'] ) < 2 or len( q['options'] ) > 4:
+                    raise ValueError( f"Question {i} must have 2-4 options" )
+                for j, opt in enumerate( q['options'] ):
+                    if not isinstance( opt, dict ) or 'label' not in opt:
+                        raise ValueError( f"Question {i} option {j} must have 'label'" )
+
+        return v
 
     @field_validator( 'response_default' )
     @classmethod
@@ -251,6 +298,11 @@ class NotificationRequest(BaseModel):
             resolved_sender_id = extract_sender_from_message( self.message )
         if resolved_sender_id:
             params["sender_id"] = resolved_sender_id
+
+        # Add response_options for multiple_choice type (JSON serialized)
+        if self.response_options is not None:
+            import json
+            params["response_options"] = json.dumps( self.response_options )
 
         return params
 

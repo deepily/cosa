@@ -4,7 +4,7 @@ This module provides infrastructure for programmatically invoking Claude Code wi
 
 ## Overview
 
-The `CosaDispatcher` routes tasks to Claude Code using two execution modes:
+The `ClaudeCodeDispatcher` routes tasks to Claude Code using two execution modes:
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
@@ -16,9 +16,9 @@ The `CosaDispatcher` routes tasks to Claude Code using two execution modes:
 ### Option A: Bounded Tasks (Print Mode)
 
 ```python
-from cosa.orchestration import CosaDispatcher, Task, TaskType
+from cosa.orchestration import ClaudeCodeDispatcher, Task, TaskType
 
-dispatcher = CosaDispatcher()
+dispatcher = ClaudeCodeDispatcher()
 
 result = await dispatcher.dispatch( Task(
     id="task-001",
@@ -31,6 +31,44 @@ if result.success:
     print( f"Completed: {result.result}" )
 else:
     print( f"Failed: {result.error}" )
+```
+
+### Option B: Interactive Sessions (SDK Client)
+
+```python
+from cosa.orchestration import ClaudeCodeDispatcher, Task, TaskType
+
+# Custom callback to handle streaming messages
+def on_message( task_id: str, message ):
+    print( f"[{task_id}] {type( message ).__name__}" )
+
+dispatcher = ClaudeCodeDispatcher( on_message=on_message )
+
+# Interactive session with bidirectional control
+result = await dispatcher.dispatch( Task(
+    id="session-001",
+    project="lupin",
+    prompt="Let's work on the authentication refactor together",
+    type=TaskType.INTERACTIVE,
+    max_turns=50
+) )
+
+if result.success:
+    print( f"Session: {result.session_id}" )
+    print( f"Cost: ${result.cost_usd:.4f}" )
+```
+
+### Bidirectional Control (Option B Only)
+
+```python
+# Inject a message into an active session
+success = await dispatcher.inject( "session-001", "Actually, let's focus on the JWT module first" )
+
+# Interrupt an active session
+success = await dispatcher.interrupt( "session-001" )
+
+# Get list of active sessions
+sessions = dispatcher.get_active_sessions()
 ```
 
 ### CLI Usage
@@ -134,8 +172,29 @@ python -m cosa.orchestration.claude_code_dispatcher \
     --timeout 7200
 ```
 
+## Test Coverage
+
+| Test File | Tests | Description |
+|-----------|-------|-------------|
+| `test_sdk_validation.py` | 11 | SDK import and options validation |
+| `test_dispatcher_e2e.py` | 23 | Bounded and interactive E2E tests |
+| `test_dispatcher_bidirectional.py` | 8 | inject() and interrupt() tests |
+
+Run tests:
+```bash
+# All dispatcher tests
+pytest src/tests/integration/test_dispatcher_*.py -v
+
+# Quick tests (no Claude invocation)
+pytest src/tests/integration/test_dispatcher_*.py -v -m "not e2e"
+
+# Full E2E tests
+pytest src/tests/integration/test_dispatcher_*.py -v -m "e2e"
+```
+
 ## Related Documents
 
 - `src/rnd/2025.12.31-mcp-implementation-plan.md` - Original MCP implementation plan
 - `src/rnd/2025.12.30-claude_code_voice_mcp_guide.md` - Voice MCP design guide
+- `src/rnd/2026.01.02-02-option-b-sdk-client-planning.md` - Option B planning document
 - `src/lupin_mcp/README.md` - MCP server documentation
