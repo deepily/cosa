@@ -53,7 +53,7 @@ class TestXMLParsingBaseline:
         self.debug = debug
         self.verbose = verbose
         self.baseline_results = {}
-        self.prompt_base_path = Path( "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/conf/prompts" )
+        self.prompt_base_path = Path( "/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/conf/prompts" )
         
         # Sample XML responses that would come from actual LLM calls
         self.realistic_xml_responses = {

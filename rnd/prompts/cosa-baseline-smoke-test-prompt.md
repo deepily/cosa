@@ -28,8 +28,8 @@ Create a todo list to track the baseline data collection process:
 **If notification system is available**, send notification that baseline collection is starting:
 ```bash
 # Check if notification script exists
-if [ -f "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh" ]; then
-    /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh "[COSA] 🔍 COSA framework baseline smoke test collection STARTED - Establishing pre-change framework health metrics" --type=progress --priority=medium --target-user=ricardo.felipe.ruiz@gmail.com
+if [ -f "/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/scripts/notify.sh" ]; then
+    /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/scripts/notify.sh "[COSA] 🔍 COSA framework baseline smoke test collection STARTED - Establishing pre-change framework health metrics" --type=progress --priority=medium --target-user=ricardo.felipe.ruiz@gmail.com
 else
     echo "✓ Notification system not available - proceeding with COSA baseline collection"
 fi
@@ -41,14 +41,14 @@ Execute the following commands to prepare for COSA framework testing:
 
 ```bash
 # Navigate to COSA root directory
-cd /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa
+cd /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa
 
 # Create results directory structure
 mkdir -p tests/results/logs
 mkdir -p tests/results/reports
 
 # Set up COSA framework environment
-export PYTHONPATH="/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src:$PYTHONPATH"
+export PYTHONPATH="/mnt/DATA01/include/www.deepily.ai/projects/lupin/src:$PYTHONPATH"
 echo "✓ COSA PYTHONPATH configured"
 
 # Verify COSA framework can be imported
@@ -174,8 +174,8 @@ Add the baseline collection to your session history:
 **If notification system is available**, send notification that baseline is complete:
 ```bash
 # Check if notification script exists
-if [ -f "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh" ]; then
-    /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh "[COSA] ✅ COSA framework baseline collection COMPLETE - [XX.X%] overall pass rate established, ready for changes" --type=progress --priority=medium --target-user=ricardo.felipe.ruiz@gmail.com
+if [ -f "/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/scripts/notify.sh" ]; then
+    /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/scripts/notify.sh "[COSA] ✅ COSA framework baseline collection COMPLETE - [XX.X%] overall pass rate established, ready for changes" --type=progress --priority=medium --target-user=ricardo.felipe.ruiz@gmail.com
 else
     echo "✓ COSA framework baseline collection complete - notification system not available"
 fi

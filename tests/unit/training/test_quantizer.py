@@ -516,7 +516,7 @@ class TestQuantizer( unittest.TestCase ):
             mock_quantizer_class.return_value = mock_quantizer
             
             # Execute main block
-            exec( compile( open( "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa/training/quantizer.py" ).read(), 
+            exec( compile( open( "/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa/training/quantizer.py" ).read(), 
                           "quantizer.py", "exec" ) )
             
             # Verify quantizer creation
@@ -545,7 +545,7 @@ class TestQuantizer( unittest.TestCase ):
             mock_quantizer_class.return_value = mock_quantizer
             
             # Execute main block
-            exec( compile( open( "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa/training/quantizer.py" ).read(), 
+            exec( compile( open( "/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa/training/quantizer.py" ).read(), 
                           "quantizer.py", "exec" ) )
             
             # Verify quantization called with default bits
@@ -566,7 +566,7 @@ class TestQuantizer( unittest.TestCase ):
              patch( 'sys.exit' ) as mock_exit:
             
             # Execute main block
-            exec( compile( open( "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa/training/quantizer.py" ).read(), 
+            exec( compile( open( "/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa/training/quantizer.py" ).read(), 
                           "quantizer.py", "exec" ) )
             
             # Verify usage message

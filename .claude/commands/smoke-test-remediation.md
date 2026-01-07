@@ -29,7 +29,7 @@ First, validate prerequisites and setup the remediation environment:
 
 ```bash
 # Navigate to COSA root directory
-cd /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa
+cd /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa
 
 # Auto-detect baseline report if not provided
 if [ "${1}" = "auto" ] || [ -z "${1}" ]; then
@@ -65,7 +65,7 @@ git diff > "tests/results/cosa_pre_remediation_$(date +%Y%m%d_%H%M%S).patch"
 echo "✅ Git state captured for potential rollback"
 
 # Verify COSA framework operational
-export PYTHONPATH="/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src:$PYTHONPATH"
+export PYTHONPATH="/mnt/DATA01/include/www.deepily.ai/projects/lupin/src:$PYTHONPATH"
 python -c "import cosa; print('✅ COSA framework import successful')" || {
     echo "❌ COSA framework import failed - critical blocker"
     exit 1

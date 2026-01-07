@@ -75,7 +75,7 @@ sessions = dispatcher.get_active_sessions()
 
 ```bash
 # Set required environment variable
-export LUPIN_ROOT=/path/to/genie-in-the-box
+export LUPIN_ROOT=/path/to/lupin
 
 # Run a bounded task
 python -m cosa.orchestration.claude_code_dispatcher \
@@ -89,7 +89,7 @@ python -m cosa.orchestration.claude_code_dispatcher \
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `LUPIN_ROOT` | Yes | Path to genie-in-the-box project root |
+| `LUPIN_ROOT` | Yes | Path to lupin project root |
 | `MCP_PROJECT` | No | Project name fallback (auto-detected from task) |
 | `LUPIN_APP_SERVER_URL` | No | Server URL (default: http://localhost:7999) |
 
@@ -150,7 +150,7 @@ class TaskResult:
 #!/bin/bash
 # Run in GitHub Actions or GitLab CI
 
-export LUPIN_ROOT=/workspace/genie-in-the-box
+export LUPIN_ROOT=/workspace/lupin
 
 python -m cosa.orchestration.claude_code_dispatcher \
     "Review the changes in this PR and suggest improvements" \

@@ -291,7 +291,7 @@ The console output includes comprehensive comparison context followed by detaile
 BRANCH COMPARISON ANALYSIS
 ================================================================================
 
-Repository:     /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa
+Repository:     /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa
 Base branch:    main
 Current branch: wip-v0.0.9-2025.09.27-refactoring-snapshot-lookups
 
@@ -339,7 +339,7 @@ The JSON format includes resolved branch names and repository path:
 {
   "base_branch": "main",
   "head_branch": "wip-v0.0.9-2025.09.27-refactoring-snapshot-lookups",
-  "repository": "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa",
+  "repository": "/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa",
   "metadata": {
     "generated_at": "2025-10-06T14:30:00",
     "format": "json",
@@ -389,7 +389,7 @@ The Markdown format includes branch information in the header:
 ```markdown
 # Branch Comparison Analysis: wip-v0.0.9-2025.09.27-refactoring-snapshot-lookups → main
 
-**Repository**: `/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa`
+**Repository**: `/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa`
 **Base branch**: `main`
 **Current branch**: `wip-v0.0.9-2025.09.27-refactoring-snapshot-lookups`
 **Generated**: 2025-10-06 14:30:00

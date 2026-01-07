@@ -12,9 +12,9 @@
 
 1. **MUST use the following project-specific configuration**:
    - **[SHORT_PROJECT_PREFIX]**: [COSA]
-   - **History file**: /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa/history.md
-   - **Planning documents**: /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa/rnd/
-   - **Archive directory**: /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa/history/
+   - **History file**: /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa/history.md
+   - **Planning documents**: /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa/rnd/
+   - **Archive directory**: /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa/history/
    - **Nested repositories to exclude from git operations**:
      - None (COSA is a nested repo itself; do not manage parent or sibling repos)
    - Do NOT proceed without these parameters

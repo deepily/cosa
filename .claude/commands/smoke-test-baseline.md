@@ -42,7 +42,7 @@ Execute the following commands to prepare for COSA framework testing:
 
 ```bash
 # Navigate to COSA root directory
-cd /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa
+cd /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa
 
 # Create results directory structure
 mkdir -p tests/results/logs
@@ -53,7 +53,7 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 echo "COSA baseline collection timestamp: ${TIMESTAMP}"
 
 # Set up COSA framework environment
-export PYTHONPATH="/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src:$PYTHONPATH"
+export PYTHONPATH="/mnt/DATA01/include/www.deepily.ai/projects/lupin/src:$PYTHONPATH"
 echo "✓ COSA PYTHONPATH configured"
 
 # Verify COSA framework can be imported

@@ -13,8 +13,8 @@
 
 1. **MUST use the following project-specific configuration**:
    - **[SHORT_PROJECT_PREFIX]**: [COSA]
-   - **History file**: /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa/history.md
-   - **Archive directory**: /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa/history/
+   - **History file**: /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa/history.md
+   - **Archive directory**: /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa/history/
    - **Token thresholds**: 20k warning, 22k critical, 25k limit (defaults)
    - **Retention targets**: 8-12k tokens, 7-14 days (defaults)
    - **Mode parameter**: mode=check (default), mode=archive, mode=analyze, mode=dry-run

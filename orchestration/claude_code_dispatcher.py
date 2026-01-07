@@ -43,7 +43,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, TypedDict
 from datetime import datetime
 
 # SDK imports - graceful fallback if not installed
@@ -110,6 +110,13 @@ class TaskResult:
     exit_code: Optional[int] = None
 
 
+class SessionInfo( TypedDict ):
+    """Session state for interactive sessions with message injection support."""
+    client: Any  # ClaudeSDKClient
+    pending_messages: asyncio.Queue
+    running: bool
+
+
 class ClaudeCodeDispatcher:
     """
     Routes tasks to appropriate Claude Code runtime.
@@ -157,7 +164,7 @@ class ClaudeCodeDispatcher:
             raise RuntimeError(
                 "LUPIN_ROOT environment variable not set.\n"
                 "Set it before running:\n"
-                "  export LUPIN_ROOT=/path/to/genie-in-the-box\n"
+                "  export LUPIN_ROOT=/path/to/lupin\n"
             )
 
         # Set default paths based on LUPIN_ROOT
@@ -305,6 +312,13 @@ class ClaudeCodeDispatcher:
         Creates persistent session with bidirectional control.
         User can inject messages, interrupt, suspend, and resume.
 
+        The session stays open in a continuous loop to allow message injection:
+        1. Initial query is sent
+        2. Response is streamed to callback
+        3. After response completes (or interrupt), check for pending messages
+        4. If pending messages exist, send next message and loop
+        5. Exit when no pending messages and session complete
+
         Note: Requires claude-agent-sdk to be installed.
         """
         options = ClaudeAgentOptions(
@@ -336,24 +350,44 @@ Use notify() for progress. Use converse() when you need input."""
 
         try:
             async with ClaudeSDKClient( options=options ) as client:
-                self.active_sessions[task.id] = client
+                # Initialize session info with queue and running flag
+                self.active_sessions[task.id] = {
+                    "client": client,
+                    "pending_messages": asyncio.Queue(),
+                    "running": True
+                }
 
+                # Send initial query
                 await client.query( task.prompt )
 
                 result_data = None
-                async for message in client.receive_response():
-                    # Stream to callback
-                    self.on_message( task.id, message )
 
-                    # Capture final result
-                    if isinstance( message, ResultMessage ):
-                        result_data = {
-                            "session_id": message.session_id,
-                            "result": message.result,
-                            "cost_usd": message.total_cost_usd,
-                            "duration_ms": message.duration_ms
-                        }
+                # Continuous session loop - stays connected for message injection
+                while self.active_sessions[task.id]["running"]:
+                    # Stream responses
+                    async for message in client.receive_response():
+                        self.on_message( task.id, message )
 
+                        # Capture final result
+                        if isinstance( message, ResultMessage ):
+                            result_data = {
+                                "session_id": message.session_id,
+                                "result": message.result,
+                                "cost_usd": message.total_cost_usd,
+                                "duration_ms": message.duration_ms
+                            }
+
+                    # Response loop exited - check for pending messages
+                    session = self.active_sessions.get( task.id )
+                    if session and not session["pending_messages"].empty():
+                        next_message = await session["pending_messages"].get()
+                        await client.query( next_message )
+                        # Continue the while loop to process the new response
+                    else:
+                        # No more pending messages, exit the loop
+                        break
+
+                # Cleanup
                 del self.active_sessions[task.id]
 
                 if result_data:
@@ -378,22 +412,39 @@ Use notify() for progress. Use converse() when you need input."""
                 error=str( e )
             )
 
-    async def inject( self, task_id: str, message: str ) -> bool:
+    async def inject( self, task_id: str, message: str, force_interrupt: bool = True ) -> bool:
         """
         Inject a message into an active interactive session.
 
-        Only works for TaskType.INTERACTIVE sessions.
+        Queues the message for the session to process. If force_interrupt is True,
+        also interrupts the current response so the queued message is processed
+        immediately after the current response loop exits.
+
+        Requires:
+            - task_id corresponds to an active INTERACTIVE session
+            - Session is in active_sessions dictionary
+
+        Ensures:
+            - Message is queued for the session
+            - If force_interrupt=True: Current response is stopped
+            - Returns True if session found and message queued
 
         Args:
             task_id: ID of active session
             message: Message to inject
+            force_interrupt: If True, interrupt current work (default: True)
 
         Returns:
-            True if message was injected, False if session not found
+            True if message was queued, False if session not found
         """
-        client = self.active_sessions.get( task_id )
-        if client:
-            await client.query( message )
+        session = self.active_sessions.get( task_id )
+        if session:
+            # Queue the message for processing
+            await session["pending_messages"].put( message )
+
+            if force_interrupt:
+                await session["client"].interrupt()
+
             return True
         return False
 
@@ -401,7 +452,7 @@ Use notify() for progress. Use converse() when you need input."""
         """
         Interrupt an active interactive session.
 
-        Session can be resumed later with inject().
+        Session can be resumed with inject() which queues a message.
 
         Args:
             task_id: ID of active session
@@ -409,9 +460,28 @@ Use notify() for progress. Use converse() when you need input."""
         Returns:
             True if session was interrupted, False if not found
         """
-        client = self.active_sessions.get( task_id )
-        if client:
-            await client.interrupt()
+        session = self.active_sessions.get( task_id )
+        if session:
+            await session["client"].interrupt()
+            return True
+        return False
+
+    def end_session( self, task_id: str ) -> bool:
+        """
+        End an active interactive session gracefully.
+
+        Sets the running flag to False, causing the session loop to exit
+        after the current response completes or when next checked.
+
+        Args:
+            task_id: ID of active session
+
+        Returns:
+            True if session was found and flagged for end, False if not found
+        """
+        session = self.active_sessions.get( task_id )
+        if session:
+            session["running"] = False
             return True
         return False
 
@@ -510,7 +580,10 @@ def quick_smoke_test():
         assert hasattr( dispatcher, '_run_interactive' )
         assert hasattr( dispatcher, 'dispatch' )
         assert hasattr( dispatcher, 'get_active_sessions' )
-        print( "✓ All required methods exist" )
+        assert hasattr( dispatcher, 'inject' )
+        assert hasattr( dispatcher, 'interrupt' )
+        assert hasattr( dispatcher, 'end_session' )
+        print( "✓ All required methods exist (including inject, interrupt, end_session)" )
 
         # Test 8: Verify LUPIN_ROOT requirement
         print( "\nTest 8: Verifying LUPIN_ROOT requirement..." )
