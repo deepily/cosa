@@ -78,12 +78,14 @@ def get_current_datetime_raw(tz_name: str = "US/Eastern", days_offset: int = 0) 
     Raises:
         pytz.exceptions.UnknownTimeZoneError: If tz_name is not a valid timezone
     """
-    # Get the current date plus or minus the specified days_offset
-    now = dt.now()
-    delta = td(days=days_offset)
+    # Get the current UTC time plus or minus the specified days_offset
+    # FIXED: Start with UTC-aware datetime to ensure correct timezone conversion
+    # (Previously used naive dt.now() which assumes system local timezone)
+    now = dt.now( pytz.UTC )
+    delta = td( days=days_offset )
     now = now + delta
-    tz = pytz.timezone(tz_name)
-    tz_date = now.astimezone(tz)
+    tz = pytz.timezone( tz_name )
+    tz_date = now.astimezone( tz )
 
     return tz_date
 

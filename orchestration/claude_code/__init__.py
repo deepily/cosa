@@ -1,7 +1,7 @@
 """
-Orchestration module for Claude Code task dispatch.
+Claude Code SDK integration subpackage.
 
-This module provides infrastructure for programmatically invoking Claude Code
+This subpackage provides infrastructure for programmatically invoking Claude Code
 with voice I/O capabilities via MCP tools.
 
 Classes:
@@ -14,7 +14,7 @@ Constants:
     SDK_AVAILABLE: Boolean indicating if claude-agent-sdk is installed
 
 Example:
-    from cosa.orchestration import ClaudeCodeDispatcher, Task, TaskType
+    from cosa.orchestration.claude_code import ClaudeCodeDispatcher, Task, TaskType
 
     dispatcher = ClaudeCodeDispatcher()
     result = await dispatcher.dispatch( Task(
@@ -23,21 +23,17 @@ Example:
         prompt="Run tests and fix failures",
         type=TaskType.BOUNDED
     ) )
-
-Subpackages:
-    claude_code: Claude Code SDK integration (dispatcher, message history)
 """
 
-# Re-export from claude_code subpackage for backwards compatibility
-from cosa.orchestration.claude_code import (
+from cosa.orchestration.claude_code.dispatcher import (
     ClaudeCodeDispatcher,
     Task,
     TaskType,
     TaskResult,
     SessionInfo,
-    SDK_AVAILABLE,
-    MessageHistory
+    SDK_AVAILABLE
 )
+from cosa.orchestration.claude_code.message_history import MessageHistory
 
 __all__ = [
     "ClaudeCodeDispatcher",

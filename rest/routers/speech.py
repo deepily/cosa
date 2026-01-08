@@ -856,8 +856,9 @@ Speed            : {speed:.2f}"""
             "provider": "elevenlabs"
         })
         
-        # ElevenLabs WebSocket streaming endpoint with dynamic model
-        elevenlabs_ws_url = f"wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}"
+        # ElevenLabs WebSocket streaming endpoint with dynamic model and PCM 24000 format
+        # PCM 24000 enables smooth Web Audio API playback without MP3 decoding gaps
+        elevenlabs_ws_url = f"wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}&output_format=pcm_24000"
         
         # Connect to ElevenLabs WebSocket with authentication header
         elevenlabs_ws = await websockets.connect(

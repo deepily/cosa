@@ -84,7 +84,8 @@ class NotificationItem:
         except Exception as e:
             # Fallback to UTC if configuration or timezone is invalid
             print( f"[TIMEZONE] Warning: NotificationItem falling back to UTC: {e}" )
-            return datetime.now().isoformat()
+            from datetime import timezone
+            return datetime.now( timezone.utc ).isoformat()
         
     def to_dict( self ) -> Dict[str, Any]:
         """Convert notification to dictionary for JSON serialization."""

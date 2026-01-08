@@ -115,6 +115,7 @@ class SessionInfo( TypedDict ):
     client: Any  # ClaudeSDKClient
     pending_messages: asyncio.Queue
     running: bool
+    history: Any  # MessageHistory - imported lazily to avoid circular imports
 
 
 class ClaudeCodeDispatcher:
@@ -349,12 +350,20 @@ Use notify() for progress. Use converse() when you need input."""
         )
 
         try:
+            # Import MessageHistory here to avoid circular imports
+            from cosa.orchestration.claude_code.message_history import MessageHistory
+
             async with ClaudeSDKClient( options=options ) as client:
-                # Initialize session info with queue and running flag
+                # Initialize history to track conversation
+                history = MessageHistory()
+                history.set_original_prompt( task.prompt )
+
+                # Initialize session info with queue, running flag, and history
                 self.active_sessions[task.id] = {
                     "client": client,
                     "pending_messages": asyncio.Queue(),
-                    "running": True
+                    "running": True,
+                    "history": history
                 }
 
                 # Send initial query
@@ -367,6 +376,14 @@ Use notify() for progress. Use converse() when you need input."""
                     # Stream responses
                     async for message in client.receive_response():
                         self.on_message( task.id, message )
+
+                        # Track assistant text for history
+                        if isinstance( message, TextBlock ):
+                            history.add_assistant_text( message.text )
+                        elif isinstance( message, AssistantMessage ):
+                            for block in message.content:
+                                if hasattr( block, 'text' ):
+                                    history.add_assistant_text( block.text )
 
                         # Capture final result
                         if isinstance( message, ResultMessage ):
@@ -412,26 +429,32 @@ Use notify() for progress. Use converse() when you need input."""
                 error=str( e )
             )
 
-    async def inject( self, task_id: str, message: str, force_interrupt: bool = True ) -> bool:
+    async def inject( self, task_id: str, message: str,
+                      preserve_context: bool = True,
+                      force_interrupt: bool = True ) -> bool:
         """
         Inject a message into an active interactive session.
 
-        Queues the message for the session to process. If force_interrupt is True,
-        also interrupts the current response so the queued message is processed
-        immediately after the current response loop exits.
+        Queues the message for the session to process. If preserve_context is True,
+        the conversation history from the current session is prepended to the message
+        so Claude has context when the new session starts.
+
+        If force_interrupt is True, also interrupts the current response so the
+        queued message is processed immediately after the current response loop exits.
 
         Requires:
             - task_id corresponds to an active INTERACTIVE session
             - Session is in active_sessions dictionary
 
         Ensures:
-            - Message is queued for the session
+            - Message is queued for the session (with context if preserve_context=True)
             - If force_interrupt=True: Current response is stopped
             - Returns True if session found and message queued
 
         Args:
             task_id: ID of active session
             message: Message to inject
+            preserve_context: If True, prepend conversation history (default: True)
             force_interrupt: If True, interrupt current work (default: True)
 
         Returns:
@@ -439,8 +462,19 @@ Use notify() for progress. Use converse() when you need input."""
         """
         session = self.active_sessions.get( task_id )
         if session:
+            history = session.get( "history" )
+
+            # Build message with context if requested and history exists
+            if preserve_context and history:
+                context = history.get_context_prompt()
+                full_message = f"{context}New message from user:\n{message}"
+                # Track the user's message in history for future context
+                history.add_user_message( message )
+            else:
+                full_message = message
+
             # Queue the message for processing
-            await session["pending_messages"].put( message )
+            await session["pending_messages"].put( full_message )
 
             if force_interrupt:
                 await session["client"].interrupt()
