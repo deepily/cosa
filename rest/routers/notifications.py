@@ -105,13 +105,71 @@ def get_local_timestamp():
         tz = zoneinfo.ZoneInfo(timezone_name)
         local_time = datetime.now(tz)
         result = local_time.isoformat()
-        
-        
+
+
         return result
     except Exception as e:
         # Fallback to UTC if timezone is invalid
         if app_debug: print(f"[TIMEZONE] Warning: Invalid timezone '{timezone_name}', falling back to UTC: {e}")
         return datetime.now().isoformat()
+
+
+def get_formatted_time_display():
+    """
+    Get formatted time display string with timezone abbreviation.
+    Format: "HH:MM TZ" (e.g., "17:45 EST")
+
+    Requires:
+        - fastapi_app.main module is available
+        - config_mgr is accessible
+        - zoneinfo module is available
+
+    Ensures:
+        - Returns formatted time string like "17:45 EST"
+        - Uses configured timezone or defaults to America/New_York
+        - Falls back to simple time format if timezone configuration is invalid
+    """
+    import fastapi_app.main as main_module
+    config_mgr = main_module.config_mgr
+
+    timezone_name = config_mgr.get( "app_timezone", default="America/New_York" )
+
+    try:
+        tz = zoneinfo.ZoneInfo( timezone_name )
+        local_time = datetime.now( tz )
+        return local_time.strftime( '%H:%M %Z' )
+    except Exception as e:
+        # Fallback to simple time format
+        return datetime.now().strftime( '%H:%M' )
+
+
+def get_formatted_date_display():
+    """
+    Get formatted date display string in ISO format (YYYY-MM-DD).
+    Uses configured timezone to ensure correct date near midnight.
+
+    Requires:
+        - fastapi_app.main module is available
+        - config_mgr is accessible
+        - zoneinfo module is available
+
+    Ensures:
+        - Returns formatted date string like "2026-01-08"
+        - Uses configured timezone or defaults to America/New_York
+        - Falls back to local date if timezone configuration is invalid
+    """
+    import fastapi_app.main as main_module
+    config_mgr = main_module.config_mgr
+
+    timezone_name = config_mgr.get( "app_timezone", default="America/New_York" )
+
+    try:
+        tz = zoneinfo.ZoneInfo( timezone_name )
+        local_time = datetime.now( tz )
+        return local_time.strftime( '%Y-%m-%d' )
+    except Exception:
+        # Fallback to simple date format
+        return datetime.now().strftime( '%Y-%m-%d' )
 
 
 def resolve_sender_id( explicit_sender_id: Optional[str], message: str ) -> str:
@@ -696,7 +754,9 @@ async def submit_notification_response(
                 {
                     "notification_id"  : notification_id,
                     "response_value"   : response_value,
-                    "timestamp"        : datetime.utcnow().isoformat()
+                    "timestamp"        : datetime.utcnow().isoformat(),
+                    "time_display"     : get_formatted_time_display(),
+                    "date_display"     : get_formatted_date_display()
                 }
             )
             print(f"[NOTIFY] ✓ Broadcast notification_responded event for {notification_id}")
@@ -708,7 +768,9 @@ async def submit_notification_response(
             "message"          : f"Response recorded for notification {notification_id}",
             "notification_id"  : notification_id,
             "response_value"   : response_value,
-            "timestamp"        : datetime.utcnow().isoformat()
+            "timestamp"        : datetime.utcnow().isoformat(),
+            "time_display"     : get_formatted_time_display(),
+            "date_display"     : get_formatted_date_display()
         }
 
     except HTTPException:
@@ -1037,6 +1099,8 @@ async def get_sender_conversation(
     Returns:
         List of notification objects for the conversation
     """
+    from cosa.config.configuration_manager import ConfigurationManager
+
     try:
         # Look up user to get UUID
         from cosa.rest.user_service import get_user_by_email
@@ -1061,6 +1125,22 @@ async def get_sender_conversation(
                     detail      = f"Invalid anchor timestamp format: {anchor}"
                 )
 
+        # Get timezone from configuration for consistent timestamp serialization
+        config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+        timezone_name = config_mgr.get( "app_timezone", default="America/New_York" )
+        tz = zoneinfo.ZoneInfo( timezone_name )
+
+        # Helper to convert timestamp to local timezone before serialization
+        def format_ts( dt ):
+            if dt is None:
+                return None
+            return dt.astimezone( tz ).isoformat()
+
+        def format_time_display( dt ):
+            if dt is None:
+                return None
+            return dt.astimezone( tz ).strftime( '%H:%M %Z' )
+
         with get_db() as session:
             repo = NotificationRepository( session )
             notifications = repo.get_sender_conversation(
@@ -1081,13 +1161,14 @@ async def get_sender_conversation(
                     "type"               : notif.type,
                     "priority"           : notif.priority,
                     "state"              : notif.state,
-                    "created_at"         : notif.created_at.isoformat() if notif.created_at else None,
-                    "delivered_at"       : notif.delivered_at.isoformat() if notif.delivered_at else None,
-                    "responded_at"       : notif.responded_at.isoformat() if notif.responded_at else None,
+                    "created_at"         : format_ts( notif.created_at ),
+                    "delivered_at"       : format_ts( notif.delivered_at ),
+                    "responded_at"       : format_ts( notif.responded_at ),
                     "response_requested" : notif.response_requested,
                     "response_type"      : notif.response_type,
                     "response_value"     : notif.response_value,
-                    "timestamp"          : notif.created_at.isoformat() if notif.created_at else None
+                    "timestamp"          : format_ts( notif.created_at ),
+                    "time_display"       : format_time_display( notif.created_at )
                 } )
 
             print( f"[NOTIFY] Returning {len( result )} notifications for {sender_id} → {user_email}" )
@@ -1235,6 +1316,18 @@ async def get_sender_conversation_by_date(
         # Get timezone from configuration
         config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         timezone_name = config_mgr.get( "app_timezone", default="America/New_York" )
+        tz = zoneinfo.ZoneInfo( timezone_name )
+
+        # Helper to convert timestamp to local timezone before serialization
+        def format_ts( dt ):
+            if dt is None:
+                return None
+            return dt.astimezone( tz ).isoformat()
+
+        def format_time_display( dt ):
+            if dt is None:
+                return None
+            return dt.astimezone( tz ).strftime( '%H:%M %Z' )
 
         with get_db() as session:
             repo = NotificationRepository( session )
@@ -1261,13 +1354,14 @@ async def get_sender_conversation_by_date(
                         "priority"           : notif.priority,
                         "state"              : notif.state,
                         "is_hidden"          : notif.is_hidden,
-                        "created_at"         : notif.created_at.isoformat() if notif.created_at else None,
-                        "delivered_at"       : notif.delivered_at.isoformat() if notif.delivered_at else None,
-                        "responded_at"       : notif.responded_at.isoformat() if notif.responded_at else None,
+                        "created_at"         : format_ts( notif.created_at ),
+                        "delivered_at"       : format_ts( notif.delivered_at ),
+                        "responded_at"       : format_ts( notif.responded_at ),
                         "response_requested" : notif.response_requested,
                         "response_type"      : notif.response_type,
                         "response_value"     : notif.response_value,
-                        "timestamp"          : notif.created_at.isoformat() if notif.created_at else None
+                        "timestamp"          : format_ts( notif.created_at ),
+                        "time_display"       : format_time_display( notif.created_at )
                     } )
 
             total_count = sum( len( v ) for v in result.values() )
