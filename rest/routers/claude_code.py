@@ -89,6 +89,8 @@ async def dispatch_task( request: DispatchRequest, background_tasks: BackgroundT
     Raises:
         - HTTPException 400 if prompt is empty
     """
+    print( f"[DEBUG] dispatch_task called: project={request.project}, task_type={request.task_type}" )
+
     if not request.prompt.strip():
         raise HTTPException( status_code=400, detail="Prompt cannot be empty" )
 
@@ -116,8 +118,10 @@ async def dispatch_task( request: DispatchRequest, background_tasks: BackgroundT
         "error"      : None
     }
 
-    # Dispatch in background
-    background_tasks.add_task( _run_dispatch, task_id )
+    # Dispatch in background - use asyncio.create_task for async function
+    print( f"[DEBUG] Creating async task for _run_dispatch({task_id})" )
+    asyncio.create_task( _run_dispatch( task_id ) )
+    print( f"[DEBUG] Async task created, returning response" )
 
     return DispatchResponse(
         task_id       = task_id,
@@ -132,20 +136,68 @@ async def _send_websocket_message( task_id: str, message ):
 
     Requires:
         - task_id is a valid string
-        - message is a Claude Code SDK message object
+        - message is either a dict (from stream-json) or SDK object (from interactive mode)
 
     Ensures:
         - Formats message as JSON
         - Sends to WebSocket if connected
-        - Handles TextBlock, ToolUseBlock, ToolResultBlock, ResultMessage, etc.
+        - Handles both stream-json dicts and SDK message objects
     """
     ws = websocket_connections.get( task_id )
     if not ws:
         return
 
-    msg_type = type( message ).__name__
-
     try:
+        # Handle dict messages from stream-json format (Option A bounded mode)
+        if isinstance( message, dict ):
+            msg_type = message.get( "type", "unknown" )
+
+            if msg_type == "assistant":
+                # Assistant message with content
+                content = message.get( "message", {} )
+                if isinstance( content, dict ):
+                    text_content = content.get( "content", [] )
+                    for block in text_content if isinstance( text_content, list ) else []:
+                        if isinstance( block, dict ) and block.get( "type" ) == "text":
+                            await ws.send_json( { "type": "text", "content": block.get( "text", "" ) } )
+                else:
+                    await ws.send_json( { "type": "text", "content": str( content ) } )
+
+            elif msg_type == "user":
+                # User message (tool results)
+                content = message.get( "message", {} )
+                if isinstance( content, dict ):
+                    text_content = content.get( "content", [] )
+                    for block in text_content if isinstance( text_content, list ) else []:
+                        if isinstance( block, dict ) and block.get( "type" ) == "tool_result":
+                            await ws.send_json( { "type": "tool_result", "content": str( block.get( "content", "" ) )[ :500 ] } )
+
+            elif msg_type == "result":
+                # Final result
+                await ws.send_json( {
+                    "type"        : "complete",
+                    "success"     : True,
+                    "cost_usd"    : message.get( "cost_usd" ) or message.get( "total_cost_usd" ),
+                    "duration_ms" : message.get( "duration_ms" ),
+                    "session_id"  : message.get( "session_id" )
+                } )
+
+            elif msg_type == "text":
+                # Plain text wrapped by dispatcher
+                await ws.send_json( { "type": "text", "content": message.get( "content", "" ) } )
+
+            elif msg_type == "system":
+                await ws.send_json( { "type": "status", "state": "system_loaded" } )
+
+            else:
+                # Pass through other stream-json types
+                await ws.send_json( message )
+
+            return
+
+        # Handle SDK message objects (Option B interactive mode)
+        msg_type = type( message ).__name__
+
         if msg_type == "TextBlock":
             text = getattr( message, "text", str( message ) )
             await ws.send_json( { "type": "text", "content": text } )
@@ -211,24 +263,33 @@ async def _run_dispatch( task_id: str ):
         - Updates session with result or error
         - Sends final status to WebSocket
     """
+    print( f"[DEBUG] _run_dispatch starting for task_id={task_id}" )
+
     session = active_sessions.get( task_id )
     if not session:
+        print( f"[DEBUG] No session found for task_id={task_id}" )
         return
 
     session[ "status" ] = "running"
     dispatcher = session[ "dispatcher" ]
     task = session[ "task" ]
 
+    print( f"[DEBUG] Dispatching task: project={task.project}, prompt={task.prompt[:50]}..." )
+
     # Send running status to WebSocket
     ws = websocket_connections.get( task_id )
     if ws:
         try:
             await ws.send_json( { "type": "status", "state": "running" } )
-        except Exception:
-            pass
+            print( f"[DEBUG] Sent 'running' status to WebSocket" )
+        except Exception as e:
+            print( f"[DEBUG] Failed to send running status: {e}" )
 
     try:
+        print( f"[DEBUG] Calling dispatcher.dispatch()..." )
         result = await dispatcher.dispatch( task )
+        print( f"[DEBUG] Dispatch returned: success={result.success}, error={result.error}" )
+
         session[ "status" ] = "complete" if result.success else "failed"
         session[ "result" ] = result
 
@@ -241,10 +302,15 @@ async def _run_dispatch( task_id: str ):
                     "cost_usd" : result.cost_usd,
                     "error"    : result.error
                 } )
-            except Exception:
-                pass
+                print( f"[DEBUG] Sent 'complete' status to WebSocket" )
+            except Exception as e:
+                print( f"[DEBUG] Failed to send complete status: {e}" )
 
     except Exception as e:
+        print( f"[DEBUG] Exception in dispatch: {type(e).__name__}: {e}" )
+        import traceback
+        traceback.print_exc()
+
         session[ "status" ] = "error"
         session[ "error" ] = str( e )
 

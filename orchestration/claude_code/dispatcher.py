@@ -229,11 +229,20 @@ class ClaudeCodeDispatcher:
 
     async def _run_bounded( self, task: Task ) -> TaskResult:
         """
-        Option A: Print mode for bounded tasks.
+        Option A: Print mode for bounded tasks with streaming output.
 
-        Runs Claude Code with -p flag, waits for completion.
+        Runs Claude Code with -p flag and stream-json output format.
+        Streams output line by line to the on_message callback.
         Claude can use MCP tools to ask questions, but user cannot
         inject input unprompted.
+
+        Requires:
+            - task is a valid Task with BOUNDED type
+            - self.on_message callback is set
+
+        Ensures:
+            - Streams JSON output to callback as it arrives
+            - Returns TaskResult with final status
         """
         env = os.environ.copy()
         env["MCP_PROJECT"] = task.project.lower()
@@ -251,53 +260,111 @@ class ClaudeCodeDispatcher:
             "--mcp-config", self.mcp_config_path,
             "--allowedTools", allowed_tools,
             "--permission-mode", "acceptEdits",
-            "--output-format", "json",
+            "--output-format", "stream-json",
             "--max-turns", str( task.max_turns )
         ]
 
+        start_time = datetime.now()
+        final_result = None
+
+        print( f"[DEBUG] _run_bounded: Starting subprocess with cmd: {' '.join(cmd[:5])}..." )
+        print( f"[DEBUG] _run_bounded: working_dir={task.working_dir}" )
+
         try:
-            result = subprocess.run(
-                cmd,
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
                 env=env,
-                cwd=task.working_dir,
-                capture_output=True,
-                text=True,
-                timeout=task.timeout_seconds
+                cwd=task.working_dir
             )
 
-            if result.returncode == 0:
-                data = json.loads( result.stdout )
-                return TaskResult(
-                    task_id=task.id,
-                    success=True,
-                    session_id=data.get( "session_id" ),
-                    result=data.get( "result" ),
-                    cost_usd=data.get( "total_cost_usd" ),
-                    duration_ms=data.get( "duration_ms" ),
-                    exit_code=0
-                )
-            else:
+            print( f"[DEBUG] _run_bounded: Subprocess started, pid={process.pid}" )
+
+            # Stream stdout line by line
+            async def read_stream():
+                nonlocal final_result
+                line_count = 0
+                async for line in process.stdout:
+                    line_text = line.decode().strip()
+                    if not line_text:
+                        continue
+
+                    line_count += 1
+                    print( f"[DEBUG] _run_bounded: Line {line_count}: {line_text[:100]}..." )
+
+                    try:
+                        data = json.loads( line_text )
+                        msg_type = data.get( "type", "unknown" )
+
+                        print( f"[DEBUG] _run_bounded: Parsed JSON type={msg_type}, calling on_message" )
+
+                        # Send to WebSocket callback
+                        self.on_message( task.id, data )
+
+                        # Capture final result
+                        if msg_type == "result":
+                            final_result = data
+
+                    except json.JSONDecodeError:
+                        # Plain text output - wrap in dict for callback
+                        print( f"[DEBUG] _run_bounded: Plain text, calling on_message" )
+                        self.on_message( task.id, { "type": "text", "content": line_text } )
+
+                print( f"[DEBUG] _run_bounded: Stream finished, total lines={line_count}" )
+
+            # Run with timeout
+            try:
+                print( f"[DEBUG] _run_bounded: Starting read_stream with timeout={task.timeout_seconds}s" )
+                await asyncio.wait_for( read_stream(), timeout=task.timeout_seconds )
+                await process.wait()
+                print( f"[DEBUG] _run_bounded: Process completed, returncode={process.returncode}" )
+            except asyncio.TimeoutError:
+                print( f"[DEBUG] _run_bounded: Timeout after {task.timeout_seconds}s" )
+                process.kill()
                 return TaskResult(
                     task_id=task.id,
                     success=False,
-                    error=result.stderr or "Unknown error",
-                    exit_code=result.returncode
+                    error=f"Task timed out after {task.timeout_seconds}s",
+                    exit_code=-1
                 )
 
-        except subprocess.TimeoutExpired:
-            return TaskResult(
-                task_id=task.id,
-                success=False,
-                error=f"Task timed out after {task.timeout_seconds}s",
-                exit_code=-1
-            )
-        except json.JSONDecodeError as e:
-            return TaskResult(
-                task_id=task.id,
-                success=False,
-                error=f"Failed to parse output: {e}",
-                exit_code=-1
-            )
+            duration_ms = int( ( datetime.now() - start_time ).total_seconds() * 1000 )
+
+            # Read stderr for debugging
+            stderr_data = await process.stderr.read()
+            if stderr_data:
+                print( f"[DEBUG] _run_bounded: stderr: {stderr_data.decode()[:500]}" )
+
+            print( f"[DEBUG] _run_bounded: duration={duration_ms}ms, final_result={final_result is not None}" )
+
+            if process.returncode == 0 and final_result:
+                return TaskResult(
+                    task_id=task.id,
+                    success=True,
+                    session_id=final_result.get( "session_id" ),
+                    result=final_result.get( "result" ),
+                    cost_usd=final_result.get( "cost_usd" ) or final_result.get( "total_cost_usd" ),
+                    duration_ms=duration_ms,
+                    exit_code=0
+                )
+            elif process.returncode == 0:
+                # Process succeeded but no result message - still success
+                return TaskResult(
+                    task_id=task.id,
+                    success=True,
+                    duration_ms=duration_ms,
+                    exit_code=0
+                )
+            else:
+                stderr = await process.stderr.read()
+                return TaskResult(
+                    task_id=task.id,
+                    success=False,
+                    error=stderr.decode() if stderr else "Unknown error",
+                    exit_code=process.returncode
+                )
+
         except Exception as e:
             return TaskResult(
                 task_id=task.id,
