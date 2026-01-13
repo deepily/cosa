@@ -1,6 +1,6 @@
 import random
 import threading
-from typing import Any, Optional
+from typing import Any, Optional, Dict, Type, List
 
 from cosa.agents.confirmation_dialog import ConfirmationDialogue
 from cosa.rest.fifo_queue import FifoQueue
@@ -26,6 +26,27 @@ from cosa.utils import util_xml as dux
 
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.rest.queue_extensions import user_job_tracker
+
+# Mode-to-Agent mapping for direct routing (bypasses LLM router)
+MODE_TO_AGENT = {
+    "math"        : MathAgent,
+    "calendar"    : CalendaringAgent,
+    "weather"     : WeatherAgent,
+    "receptionist": ReceptionistAgent,
+    "todo"        : TodoListAgent,
+    "datetime"    : DateAndTimeAgent,
+}
+
+# Mode metadata for UI display
+MODE_METADATA = {
+    "system"      : { "display_name": "System",        "description": "Normal LLM-based routing" },
+    "math"        : { "display_name": "Math Agent",    "description": "Direct math calculations" },
+    "calendar"    : { "display_name": "Calendar",      "description": "Calendar management" },
+    "weather"     : { "display_name": "Weather",       "description": "Weather queries" },
+    "receptionist": { "display_name": "Receptionist",  "description": "General assistance" },
+    "todo"        : { "display_name": "Todo List",     "description": "Task management" },
+    "datetime"    : { "display_name": "Date & Time",   "description": "Date/time queries" },
+}
 
 class TodoFifoQueue( FifoQueue ):
     """
@@ -101,6 +122,10 @@ class TodoFifoQueue( FifoQueue ):
         # Producer-consumer coordination
         self.condition = threading.Condition()
         self.consumer_running = False
+
+        # User mode state for direct agent routing (bypasses LLM router)
+        # Key: user_id (str), Value: mode name (str) or None for system mode
+        self.user_mode_state: Dict[str, Optional[str]] = {}
         
     def parse_salutations( self, transcription: str ) -> tuple[str, str]:
         """
@@ -134,9 +159,107 @@ class TodoFifoQueue( FifoQueue ):
         
         # Get the remaining string after salutations
         remaining_string = ' '.join( words[ index: ] )
-        
+
         return ' '.join( prefix_holder ), remaining_string
-    
+
+    # ========================================================================
+    # User Mode Management Methods
+    # ========================================================================
+
+    def get_user_mode( self, user_id: str ) -> Optional[str]:
+        """
+        Get the current mode for a user.
+
+        Requires:
+            - user_id is a non-empty string
+
+        Ensures:
+            - Returns mode string if set, None if in system mode
+
+        Raises:
+            - None
+        """
+        return self.user_mode_state.get( user_id )
+
+    def set_user_mode( self, user_id: str, mode: Optional[str] ) -> Optional[str]:
+        """
+        Set the mode for a user.
+
+        Requires:
+            - user_id is a non-empty string
+            - mode is None (system) or a valid mode key from MODE_TO_AGENT
+
+        Ensures:
+            - User's mode is updated in state dictionary
+            - Returns the previous mode (or None)
+
+        Raises:
+            - ValueError if mode is not a valid mode key
+        """
+        if mode is not None and mode not in MODE_TO_AGENT:
+            valid_modes = list( MODE_TO_AGENT.keys() )
+            raise ValueError( f"Invalid mode '{mode}'. Available modes: {valid_modes}" )
+
+        previous = self.user_mode_state.get( user_id )
+
+        if mode is None:
+            self.user_mode_state.pop( user_id, None )
+        else:
+            self.user_mode_state[ user_id ] = mode
+
+        if self.debug:
+            prev_display = previous or "system"
+            new_display  = mode or "system"
+            print( f"[MODE] User {user_id}: {prev_display} -> {new_display}" )
+
+        return previous
+
+    def clear_user_mode( self, user_id: str ) -> Optional[str]:
+        """
+        Clear the mode for a user (return to system mode).
+
+        Requires:
+            - user_id is a non-empty string
+
+        Ensures:
+            - User is removed from mode state dictionary
+            - Returns the previous mode (or None)
+
+        Raises:
+            - None
+        """
+        previous = self.user_mode_state.pop( user_id, None )
+
+        if self.debug:
+            prev_display = previous or "system"
+            print( f"[MODE] User {user_id}: {prev_display} -> system (cleared)" )
+
+        return previous
+
+    def get_available_modes( self ) -> List[Dict[str, str]]:
+        """
+        Get list of available modes with display names and descriptions.
+
+        Ensures:
+            - Returns list of mode dictionaries with key, display_name, description
+            - Includes "system" mode as first option
+
+        Raises:
+            - None
+        """
+        modes = []
+        for key, metadata in MODE_METADATA.items():
+            modes.append( {
+                "key"         : key,
+                "display_name": metadata[ "display_name" ],
+                "description" : metadata[ "description" ]
+            } )
+        return modes
+
+    # ========================================================================
+    # End User Mode Management Methods
+    # ========================================================================
+
     def _is_fit( self, question: str ) -> bool:
         """
         Validate if job is suitable for processing.
@@ -390,9 +513,23 @@ class TodoFifoQueue( FifoQueue ):
             # The receptionist gets the salutation plus the question to help it decide how it will respond.
             salutation_plus_question = ( salutations + " " + question ).strip()
 
-            # We're going to give the routing function maximum information, hence including the salutation with the question
-            # ¡OJO! I know this is a tad adhoc-ish, but it's what we want... for the moment at least
-            command, args = self._get_routing_command( salutation_plus_question )
+            # NEW: Check user mode BEFORE LLM routing
+            user_mode = self.get_user_mode( user_id )
+
+            if user_mode and user_mode in MODE_TO_AGENT:
+                # Direct routing - bypass LLM router when user is in agent mode
+                command = f"agent router go to {user_mode}"
+                args = ""
+                if self.debug:
+                    print( f"[MODE] User {user_id} in '{user_mode}' mode - bypassing LLM router" )
+                    print( f"[MODE] Direct routing to: {command}" )
+            else:
+                # Normal LLM-based routing (system mode)
+                # We're going to give the routing function maximum information, hence including the salutation with the question
+                # ¡OJO! I know this is a tad adhoc-ish, but it's what we want... for the moment at least
+                command, args = self._get_routing_command( salutation_plus_question )
+                if self.debug:
+                    print( f"[ROUTER] LLM selected: {command}" )
             
             starting_a_new_job = "New {agent_type} job..."
             ding_for_new_job   = False
@@ -647,13 +784,12 @@ class TodoFifoQueue( FifoQueue ):
         if self.debug:
             print( f"[TODO-QUEUE] Added job and notified consumer: {item.id_hash}" )
     
-# Add me
 def quick_smoke_test():
     """Quick smoke test to validate TodoFifoQueue functionality."""
     import cosa.utils.util as du
-    
+
     du.print_banner( "TodoFifoQueue Smoke Test", prepend_nl=True )
-    
+
     # Test salutation parsing functionality
     test_cases = [
         "Good morning, my dearest receptionist. How are you feeling today?",
@@ -661,20 +797,69 @@ def quick_smoke_test():
         "Hello there! Can you help me with my schedule?",
         "What's the weather like today?"  # No salutation case
     ]
-    
+
     try:
-        queue = TodoFifoQueue( None, None, None )
+        queue = TodoFifoQueue( None, None, None, debug=True )
         print( "✓ TodoFifoQueue instantiated successfully" )
-        
+
+        # Test 1: Salutation parsing
+        print( "\n--- Salutation Parsing Tests ---" )
         for i, input_string in enumerate( test_cases, 1 ):
             print( f"\nTest {i}: '{input_string}'" )
             salutations, question = queue.parse_salutations( input_string )
             print( f"  Salutations: '{salutations}'" )
             print( f"  Question: '{question}'" )
-        
+
+        # Test 2: Mode management
+        print( "\n--- Mode Management Tests ---" )
+        test_user = "test_user_123"
+
+        # Test get mode (should be None/system by default)
+        mode = queue.get_user_mode( test_user )
+        assert mode is None, f"Expected None, got {mode}"
+        print( f"✓ Default mode is None (system)" )
+
+        # Test set mode
+        previous = queue.set_user_mode( test_user, "math" )
+        assert previous is None, f"Expected previous=None, got {previous}"
+        mode = queue.get_user_mode( test_user )
+        assert mode == "math", f"Expected 'math', got {mode}"
+        print( f"✓ Set mode to 'math' successfully" )
+
+        # Test change mode
+        previous = queue.set_user_mode( test_user, "calendar" )
+        assert previous == "math", f"Expected previous='math', got {previous}"
+        mode = queue.get_user_mode( test_user )
+        assert mode == "calendar", f"Expected 'calendar', got {mode}"
+        print( f"✓ Changed mode to 'calendar' successfully" )
+
+        # Test invalid mode
+        try:
+            queue.set_user_mode( test_user, "invalid_mode" )
+            print( "✗ Should have raised ValueError for invalid mode" )
+        except ValueError as e:
+            print( f"✓ Correctly rejected invalid mode: {e}" )
+
+        # Test clear mode
+        previous = queue.clear_user_mode( test_user )
+        assert previous == "calendar", f"Expected previous='calendar', got {previous}"
+        mode = queue.get_user_mode( test_user )
+        assert mode is None, f"Expected None after clear, got {mode}"
+        print( f"✓ Cleared mode successfully" )
+
+        # Test get_available_modes
+        available = queue.get_available_modes()
+        assert len( available ) > 0, "Expected at least one mode"
+        assert any( m[ "key" ] == "system" for m in available ), "Expected 'system' in available modes"
+        print( f"✓ get_available_modes() returns {len( available )} modes" )
+        for m in available:
+            print( f"    - {m[ 'key' ]}: {m[ 'display_name' ]}" )
+
     except Exception as e:
         print( f"✗ Error testing TodoFifoQueue: {e}" )
-    
+        import traceback
+        traceback.print_exc()
+
     print( "\n✓ TodoFifoQueue smoke test completed" )
 
 

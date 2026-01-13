@@ -169,8 +169,14 @@ class ClaudeCodeDispatcher:
             )
 
         # Set default paths based on LUPIN_ROOT
+        # Detect Docker environment (LUPIN_ROOT=/var/lupin) and use Docker-specific config
         if mcp_config_path is None:
-            mcp_config_path = os.path.join( lupin_root, "src/conf/mcp/cosa_mcp.json" )
+            if lupin_root == "/var/lupin":
+                # Docker environment - use config with hardcoded container paths
+                mcp_config_path = os.path.join( lupin_root, "src/conf/mcp/cosa_mcp_docker.json" )
+            else:
+                # Host environment - use config with variable expansion
+                mcp_config_path = os.path.join( lupin_root, "src/conf/mcp/cosa_mcp.json" )
         if mcp_server_path is None:
             mcp_server_path = os.path.join( lupin_root, "src/lupin_mcp/cosa_voice_mcp.py" )
 
@@ -261,6 +267,7 @@ class ClaudeCodeDispatcher:
             "--allowedTools", allowed_tools,
             "--permission-mode", "acceptEdits",
             "--output-format", "stream-json",
+            "--verbose",  # Required when using stream-json with -p
             "--max-turns", str( task.max_turns )
         ]
 
@@ -312,6 +319,9 @@ class ClaudeCodeDispatcher:
                         self.on_message( task.id, { "type": "text", "content": line_text } )
 
                 print( f"[DEBUG] _run_bounded: Stream finished, total lines={line_count}" )
+                print( f"[DEBUG] ═══════════════════════════════════════════════════════════" )
+                print( f"[DEBUG] TASK FINISHED: {task.id}" )
+                print( f"[DEBUG] ═══════════════════════════════════════════════════════════" )
 
             # Run with timeout
             try:
@@ -337,6 +347,8 @@ class ClaudeCodeDispatcher:
                 print( f"[DEBUG] _run_bounded: stderr: {stderr_data.decode()[:500]}" )
 
             print( f"[DEBUG] _run_bounded: duration={duration_ms}ms, final_result={final_result is not None}" )
+            cost_str = f"${final_result.get( 'cost_usd' ) or final_result.get( 'total_cost_usd' )}" if final_result else "N/A"
+            print( f"[DEBUG] _run_bounded: RESULT → success={process.returncode == 0}, cost={cost_str}" )
 
             if process.returncode == 0 and final_result:
                 return TaskResult(

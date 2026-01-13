@@ -708,7 +708,7 @@ async def submit_notification_response(
             if notification.state == "expired":
                 # Check if within grace period
                 expires_at = notification.expires_at
-                now        = datetime.utcnow()
+                now        = datetime.now( timezone.utc )
 
                 if expires_at and (now - expires_at).total_seconds() > grace_period_seconds:
                     raise HTTPException(

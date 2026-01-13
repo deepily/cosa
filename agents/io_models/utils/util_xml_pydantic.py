@@ -126,12 +126,36 @@ class BaseXMLModel( BaseModel ):
         """
         if not xml_string or not xml_string.strip():
             raise XMLParsingError( "XML string is empty or whitespace" )
-        
+
+        # Strip any prefix before XML declaration or root tag
+        # LLMs sometimes output text like "Output" or "Here is the response:" before XML
+        xml_cleaned = xml_string.strip()
+        xml_start = -1
+
+        # Look for XML declaration first
+        decl_pos = xml_cleaned.find( '<?xml' )
+        if decl_pos > 0:
+            xml_start = decl_pos
+            print( f"[XML-PARSER] WARNING: Stripping {decl_pos} chars before XML declaration: '{xml_cleaned[:min( decl_pos, 50 )]}...'" )
+
+        # If no declaration, look for common root tags
+        if xml_start < 0:
+            for tag in [ '<response>', '<response ', '<result>', '<result ', '<output>', '<output ' ]:
+                tag_pos = xml_cleaned.find( tag )
+                if tag_pos > 0:
+                    xml_start = tag_pos
+                    print( f"[XML-PARSER] WARNING: Stripping {tag_pos} chars before root tag: '{xml_cleaned[:min( tag_pos, 50 )]}...'" )
+                    break
+
+        # Apply the fix if we found a prefix to strip
+        if xml_start > 0:
+            xml_cleaned = xml_cleaned[xml_start:]
+
         try:
             # Parse XML to dictionary
             # Preserve whitespace in XML text content to maintain code indentation
             # See: https://github.com/deepily/lupin/issues/5 - Math Agent code generation fails due to stripped indentation
-            xml_dict = xmltodict.parse( xml_string.strip(), strip_whitespace=False )
+            xml_dict = xmltodict.parse( xml_cleaned, strip_whitespace=False )
             
             # Extract data based on root tag
             if root_tag is None:

@@ -147,6 +147,10 @@ async def _send_websocket_message( task_id: str, message ):
     if not ws:
         return
 
+    # Debug: Show incoming message type
+    msg_type_str = message.get( 'type', 'dict' ) if isinstance( message, dict ) else type( message ).__name__
+    print( f"[DEBUG] _send_websocket_message: Received message, type={msg_type_str}" )
+
     try:
         # Handle dict messages from stream-json format (Option A bounded mode)
         if isinstance( message, dict ):
@@ -154,12 +158,20 @@ async def _send_websocket_message( task_id: str, message ):
 
             if msg_type == "assistant":
                 # Assistant message with content
+                # DEBUG: Trace the message structure
+                print( f"[DEBUG] _send_websocket_message: ASSISTANT msg keys: {list( message.keys() )}" )
                 content = message.get( "message", {} )
+                print( f"[DEBUG] _send_websocket_message: message field type: {type( content ).__name__}, keys: {list( content.keys() ) if isinstance( content, dict ) else 'N/A'}" )
                 if isinstance( content, dict ):
                     text_content = content.get( "content", [] )
+                    print( f"[DEBUG] _send_websocket_message: content field type: {type( text_content ).__name__}, len: {len( text_content ) if isinstance( text_content, list ) else 'N/A'}" )
+                    for i, block in enumerate( text_content if isinstance( text_content, list ) else [] ):
+                        print( f"[DEBUG] _send_websocket_message: block[{i}] type field: {block.get( 'type' ) if isinstance( block, dict ) else 'not dict'}" )
                     for block in text_content if isinstance( text_content, list ) else []:
                         if isinstance( block, dict ) and block.get( "type" ) == "text":
-                            await ws.send_json( { "type": "text", "content": block.get( "text", "" ) } )
+                            text_val = block.get( "text", "" )
+                            print( f"[DEBUG] _send_websocket_message: Sending TEXT to WebSocket ({len( text_val )} chars)" )
+                            await ws.send_json( { "type": "text", "content": text_val } )
                 else:
                     await ws.send_json( { "type": "text", "content": str( content ) } )
 
@@ -174,10 +186,12 @@ async def _send_websocket_message( task_id: str, message ):
 
             elif msg_type == "result":
                 # Final result
+                cost_val = message.get( "cost_usd" ) or message.get( "total_cost_usd" )
+                print( f"[DEBUG] _send_websocket_message: Sending COMPLETE to WebSocket, success=True, cost=${cost_val}" )
                 await ws.send_json( {
                     "type"        : "complete",
                     "success"     : True,
-                    "cost_usd"    : message.get( "cost_usd" ) or message.get( "total_cost_usd" ),
+                    "cost_usd"    : cost_val,
                     "duration_ms" : message.get( "duration_ms" ),
                     "session_id"  : message.get( "session_id" )
                 } )
