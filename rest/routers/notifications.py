@@ -403,6 +403,20 @@ async def notify_user(
                     if is_connected:
                         repo.update_state( db_notification.id, "delivered" )
                     print( f"[NOTIFY] ✓ Persisted notification {db_notification.id} to PostgreSQL" )
+
+                    # Broadcast active_conversation_changed event (Conversation Identity Phase 2)
+                    try:
+                        await ws_manager.emit_to_user(
+                            target_system_id,
+                            "active_conversation_changed",
+                            {
+                                "active_sender_id" : resolved_sender_id,
+                                "timestamp"        : datetime.now( timezone.utc ).isoformat()
+                            }
+                        )
+                    except Exception as ws_error:
+                        print( f"[NOTIFY] ⚠️ Failed to broadcast active_conversation_changed: {ws_error}" )
+
             except Exception as db_error:
                 # Log but don't fail - FIFO queue is the primary delivery mechanism
                 print( f"[NOTIFY] ⚠️ Failed to persist to PostgreSQL (non-fatal): {db_error}" )
@@ -493,6 +507,19 @@ async def notify_user(
             notification_id = str( db_notification.id )
 
         print(f"[NOTIFY] Created response-required notification: {notification_id}")
+
+        # Broadcast active_conversation_changed event (Conversation Identity Phase 2)
+        try:
+            await ws_manager.emit_to_user(
+                target_system_id,
+                "active_conversation_changed",
+                {
+                    "active_sender_id" : resolved_sender_id,
+                    "timestamp"        : datetime.now( timezone.utc ).isoformat()
+                }
+            )
+        except Exception as ws_error:
+            print( f"[NOTIFY] ⚠️ Failed to broadcast active_conversation_changed: {ws_error}" )
 
         # Task 3: Create in-memory event for SSE blocking
         response_event = asyncio.Event()
@@ -1609,4 +1636,124 @@ async def get_visible_senders(
         raise HTTPException(
             status_code = 500,
             detail      = f"Failed to get visible sender list: {str( e )}"
+        )
+
+
+@router.get( "/notifications/active-conversation/{user_email}" )
+async def get_active_conversation(
+    user_email: str
+):
+    """
+    Get the currently active conversation (most recent sender) for a user.
+
+    Used for voice response routing - responses go to the most recent sender.
+    Supports new session-aware sender_id format: claude.code@project.deepily.ai#session_id
+
+    Requires:
+        - user_email is a valid registered email address
+        - User exists in auth database
+
+    Ensures:
+        - Returns the sender_id of the most recent notification
+        - Returns null if no notifications exist
+
+    Args:
+        user_email: User's email address
+
+    Returns:
+        JSON with active_sender_id and user_email
+    """
+    try:
+        from cosa.rest.user_service import get_user_by_email
+
+        user_data = get_user_by_email( user_email )
+        if not user_data:
+            raise HTTPException(
+                status_code = 404,
+                detail      = f"User not found: {user_email}"
+            )
+
+        user_id = uuid.UUID( user_data[ "id" ] ) if isinstance( user_data[ "id" ], str ) else user_data[ "id" ]
+
+        with get_db() as session:
+            repo = NotificationRepository( session )
+            active_sender = repo.get_active_conversation( user_id )
+
+            print( f"[NOTIFY] Active conversation for {user_email}: {active_sender}" )
+
+            return {
+                "active_sender_id" : active_sender,
+                "user_email"       : user_email
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print( f"[NOTIFY] Error getting active conversation: {str( e )}" )
+        raise HTTPException(
+            status_code = 500,
+            detail      = f"Failed to get active conversation: {str( e )}"
+        )
+
+
+@router.get( "/notifications/project-sessions/{project}/{user_email}" )
+async def get_project_sessions(
+    project: str,
+    user_email: str
+):
+    """
+    Get all sessions for a project with activity details.
+
+    Returns session-level breakdown for a project, showing which session
+    is currently active (most recent across all projects).
+    Supports parsing session_id from sender_id format: claude.code@project.deepily.ai#session_id
+
+    Requires:
+        - project is a valid project name (e.g., "lupin")
+        - user_email is a valid registered email address
+
+    Ensures:
+        - Returns list of session summaries with is_active indicator
+        - Sessions ordered by last_activity descending
+        - is_active is true for globally most recent sender
+
+    Args:
+        project: Project name (e.g., "lupin")
+        user_email: User's email address
+
+    Returns:
+        List of session summaries: [{ session_id, sender_id, last_activity, count, is_active }]
+    """
+    try:
+        from cosa.rest.user_service import get_user_by_email
+
+        user_data = get_user_by_email( user_email )
+        if not user_data:
+            raise HTTPException(
+                status_code = 404,
+                detail      = f"User not found: {user_email}"
+            )
+
+        user_id = uuid.UUID( user_data[ "id" ] ) if isinstance( user_data[ "id" ], str ) else user_data[ "id" ]
+
+        with get_db() as session:
+            repo = NotificationRepository( session )
+            sessions = repo.get_sessions_for_project( user_id, project.lower() )
+
+            # Convert datetime to ISO string for JSON serialization
+            for sess in sessions:
+                if sess[ "last_activity" ]:
+                    sess[ "last_activity" ] = sess[ "last_activity" ].isoformat()
+
+            print( f"[NOTIFY] Returning {len( sessions )} sessions for {project} → {user_email}" )
+
+            return sessions
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print( f"[NOTIFY] Error getting project sessions: {str( e )}" )
+        raise HTTPException(
+            status_code = 500,
+            detail      = f"Failed to get project sessions: {str( e )}"
         )

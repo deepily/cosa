@@ -686,6 +686,79 @@ class NotificationRepository( BaseRepository[Notification] ):
             for row in results
         ]
 
+    def get_active_conversation( self, recipient_id: uuid.UUID ) -> Optional[ str ]:
+        """
+        Get the most recently active sender_id for a recipient.
+
+        Requires:
+            - recipient_id: Valid user UUID
+
+        Ensures:
+            - Returns the sender_id of the most recent notification
+            - Returns None if no notifications exist
+            - Used for voice response routing
+
+        Args:
+            recipient_id: User's UUID
+
+        Returns:
+            Most recent sender_id or None
+        """
+        result = self.session.query(
+            Notification.sender_id
+        ).filter(
+            Notification.recipient_id == recipient_id,
+            Notification.is_hidden == False
+        ).order_by(
+            desc( Notification.created_at )
+        ).first()
+
+        return result.sender_id if result else None
+
+    def get_sessions_for_project( self, recipient_id: uuid.UUID, project: str ) -> List[ Dict ]:
+        """
+        Get all unique session_ids for a project with activity info.
+
+        Requires:
+            - recipient_id: Valid user UUID
+            - project: Project name (e.g., "lupin")
+
+        Ensures:
+            - Returns list of session dicts with activity info
+            - Includes is_active indicator (most recent sender globally)
+            - Ordered by last_activity descending
+
+        Args:
+            recipient_id: User's UUID
+            project: Project name (lowercase)
+
+        Returns:
+            List of session summaries: [{ session_id, sender_id, last_activity, count, is_active }]
+        """
+        from cosa.cli.notification_models import parse_sender_id
+
+        # Get all sender activities for this user
+        all_activities = self.get_sender_last_activities_visible( recipient_id )
+
+        # Get the globally active sender
+        active_sender = self.get_active_conversation( recipient_id )
+
+        # Filter to requested project and parse session_ids
+        project_sessions = []
+        for activity in all_activities:
+            parsed = parse_sender_id( activity[ "sender_id" ] )
+            if parsed[ "project" ] == project:
+                project_sessions.append( {
+                    "session_id"    : parsed[ "session_id" ],
+                    "sender_id"     : activity[ "sender_id" ],
+                    "last_activity" : activity[ "last_activity" ],
+                    "count"         : activity[ "count" ],
+                    "new_count"     : activity.get( "new_count", 0 ),
+                    "is_active"     : activity[ "sender_id" ] == active_sender
+                } )
+
+        return project_sessions
+
 
 def quick_smoke_test():
     """

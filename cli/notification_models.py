@@ -61,6 +61,56 @@ def extract_sender_from_message( message: str ) -> Optional[str]:
     return None
 
 
+def parse_sender_id( sender_id: str ) -> dict:
+    """
+    Parse sender_id into components (backward compatible).
+
+    Requires:
+        - sender_id is a string in format: agent@project.deepily.ai
+          or agent@project.deepily.ai#session_id
+
+    Ensures:
+        - Returns dict with agent_type, project, session_id, full_sender_id, base_sender_id
+        - session_id is None for old format (backward compatible)
+        - Works with both old and new formats
+
+    Examples:
+        parse_sender_id( "claude.code@lupin.deepily.ai" )
+        -> { "agent_type": "claude.code", "project": "lupin", "session_id": None, ... }
+
+        parse_sender_id( "claude.code@lupin.deepily.ai#a1b2c3d4" )
+        -> { "agent_type": "claude.code", "project": "lupin", "session_id": "a1b2c3d4", ... }
+
+    Args:
+        sender_id: Full sender_id string
+
+    Returns:
+        dict with parsed components
+    """
+    # Handle new format with session_id
+    if "#" in sender_id:
+        base, session_id = sender_id.rsplit( "#", 1 )
+    else:
+        base = sender_id
+        session_id = None
+
+    # Parse agent type and project
+    try:
+        agent_part, domain = base.split( "@", 1 )
+        project = domain.split( "." )[ 0 ]
+    except ( ValueError, IndexError ):
+        agent_part = "unknown"
+        project = "unknown"
+
+    return {
+        "agent_type"     : agent_part,
+        "project"        : project,
+        "session_id"     : session_id,
+        "full_sender_id" : sender_id,
+        "base_sender_id" : base
+    }
+
+
 # ============================================================================
 # Enums (Type-Safe Choices)
 # ============================================================================
@@ -158,8 +208,8 @@ class NotificationRequest(BaseModel):
 
     sender_id: Optional[str] = Field(
         default=None,
-        pattern=r'^claude\.code@[a-z]+\.deepily\.ai$',
-        description="Sender ID (e.g., claude.code@lupin.deepily.ai). Auto-extracted from [PREFIX] if not provided."
+        pattern=r'^claude\.code@[a-z]+\.deepily\.ai(#[a-f0-9]{8})?$',
+        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4). Auto-extracted from [PREFIX] if not provided."
     )
 
     response_options: Optional[dict] = Field(
@@ -509,8 +559,8 @@ class AsyncNotificationRequest(BaseModel):
 
     sender_id: Optional[str] = Field(
         default=None,
-        pattern=r'^claude\.code@[a-z]+\.deepily\.ai$',
-        description="Sender ID (e.g., claude.code@lupin.deepily.ai). Auto-extracted from [PREFIX] if not provided."
+        pattern=r'^claude\.code@[a-z]+\.deepily\.ai(#[a-f0-9]{8})?$',
+        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4). Auto-extracted from [PREFIX] if not provided."
     )
 
     @field_validator( 'message' )
