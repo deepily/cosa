@@ -1757,3 +1757,71 @@ async def get_project_sessions(
             status_code = 500,
             detail      = f"Failed to get project sessions: {str( e )}"
         )
+
+
+# =============================================================================
+# GIST GENERATION ENDPOINT (Session 57 - Semantic Session Names)
+# =============================================================================
+
+@router.post( "/notifications/generate-gist" )
+async def generate_session_gist(
+    request_body: Dict[ str, Any ] = Body( ..., description="Request body with messages list" )
+):
+    """
+    Generate a 3-4 word gist from a list of conversation messages.
+
+    Uses the Gister class (LLM-powered) to extract a concise summary
+    from session notifications for semantic session naming.
+
+    Requires:
+        - messages is a list of strings (notification message contents)
+        - At least one message with content
+
+    Ensures:
+        - Returns {"gist": "short summary"} with 3-4 words
+        - Truncates longer gists to 4 words
+        - Returns "Empty session" for empty message lists
+
+    Raises:
+        - HTTPException with 500 for gist generation failures
+
+    Args:
+        request_body: Dict containing "messages" list
+
+    Returns:
+        dict: {"gist": "short summary"}
+    """
+    from cosa.memory.gister import Gister
+
+    try:
+        messages = request_body.get( "messages", [] )
+
+        if not messages:
+            return { "gist": "Empty session" }
+
+        # Combine first 10 messages into single text for gisting
+        combined = " ".join( messages[ :10 ] )
+
+        if not combined.strip():
+            return { "gist": "Empty session" }
+
+        print( f"[NOTIFY] Generating gist from {len( messages )} messages ({len( combined )} chars)" )
+
+        # Use Gister to extract concise summary
+        gister = Gister()
+        gist = gister.get_gist( combined )
+
+        # Truncate to ~4 words if longer
+        words = gist.split()[ :4 ]
+        short_gist = " ".join( words )
+
+        print( f"[NOTIFY] Generated gist: '{short_gist}'" )
+
+        return { "gist": short_gist }
+
+    except Exception as e:
+        print( f"[NOTIFY] Error generating gist: {str( e )}" )
+        raise HTTPException(
+            status_code = 500,
+            detail      = f"Failed to generate gist: {str( e )}"
+        )

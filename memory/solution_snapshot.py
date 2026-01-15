@@ -179,7 +179,7 @@ class SolutionSnapshot( RunnableCode ):
                   id_hash: str="", solution_summary: str="", code: list[str]=[], solution_summary_gist: str="", code_returns: str="", code_example: str="", code_type: str="raw", thoughts: str="",
                   programming_language: str="Python", language_version: str="3.10",
                   question_embedding: list[float]=[ ], question_normalized_embedding: list[float]=[ ], question_gist_embedding: list[float]=[ ], solution_embedding: list[float]=[ ], code_embedding: list[float]=[ ], thoughts_embedding: list[float]=[ ], solution_gist_embedding: list[float]=[ ],
-                  solution_directory: str="/src/conf/long-term-memory/solutions/", solution_file: Optional[str]=None, user_id: str="ricardo_felipe_ruiz_6bdc", debug: bool=False, verbose: bool=False
+                  solution_directory: str="/src/conf/long-term-memory/solutions/", solution_file: Optional[str]=None, user_id: str="ricardo_felipe_ruiz_6bdc", session_id: str="", debug: bool=False, verbose: bool=False
                   ) -> None:
         """
         Initialize a solution snapshot.
@@ -229,6 +229,7 @@ class SolutionSnapshot( RunnableCode ):
         self.routing_command       = routing_command
         self.agent_class_name      = agent_class_name  # e.g., "MathAgent", "CalendarAgent", etc.
         self.user_id               = user_id
+        self.session_id            = session_id  # WebSocket session ID for job-notification correlation
         
         # Is there is no synonymous questions to be found then just recycle the current question
         # Handle corrupted data: ensure synonymous_questions is a valid dict/OrderedDict

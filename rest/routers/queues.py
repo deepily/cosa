@@ -306,15 +306,20 @@ async def get_queue(
         # Extract structured job data from SolutionSnapshot objects
         structured_jobs = []
         for snapshot in jobs:
+            # Get session_id safely (may not exist on older snapshots)
+            session_id = getattr( snapshot, 'session_id', '' )
             # Generate job metadata from SolutionSnapshot fields
             job_data = {
-                "html": snapshot.get_html(),
-                "job_id": snapshot.id_hash,
-                "question_text": snapshot.last_question_asked or snapshot.question,
-                "response_text": snapshot.answer_conversational or snapshot.answer,
-                "timestamp": snapshot.run_date or snapshot.created_date,
-                "user_id": authorized_filter,
-                "has_audio_cache": False  # Will be determined by frontend cache check
+                "html"            : snapshot.get_html(),
+                "job_id"          : snapshot.id_hash,
+                "question_text"   : snapshot.last_question_asked or snapshot.question,
+                "response_text"   : snapshot.answer_conversational or snapshot.answer,
+                "timestamp"       : snapshot.run_date or snapshot.created_date,
+                "user_id"         : authorized_filter,
+                "session_id"      : session_id,  # For job-notification correlation
+                "agent_type"      : snapshot.agent_class_name,  # e.g., "MathAgent", "CalendarAgent"
+                "has_interactions": bool( session_id ),  # True if can query notifications
+                "has_audio_cache" : False  # Will be determined by frontend cache check
             }
             structured_jobs.append( job_data )
 
@@ -405,3 +410,131 @@ async def reset_queues(
     except Exception as e:
         print( f"[ERROR] Failed to reset queues: {e}" )
         raise HTTPException( status_code=500, detail=f"Failed to reset queues: {str(e)}" )
+
+
+@router.get( "/get-job-interactions/{job_id}" )
+async def get_job_interactions(
+    job_id: str,
+    current_user: dict = Depends( get_current_user ),
+    done_queue = Depends( get_done_queue )
+):
+    """
+    Get notification interaction history for a completed job.
+
+    Requires:
+        - job_id is a valid job identifier
+        - current_user is authenticated
+        - Job belongs to current user OR user is admin
+
+    Ensures:
+        - Returns job metadata + interaction history
+        - Interactions ordered chronologically
+        - Returns empty interactions list if job has no session_id
+
+    Returns:
+        dict: {job_id, session_id, job_metadata, interactions: [...]}
+    """
+    from datetime import timezone, timedelta
+    from cosa.rest.queue_extensions import user_job_tracker
+    from cosa.rest.db.database import get_db
+    from cosa.rest.db.repositories.notification_repository import NotificationRepository
+    from cosa.rest.db.repositories.user_repository import UserRepository
+    from cosa.rest.db.models.notification import Notification
+
+    print( f"[API] /api/get-job-interactions/{job_id} called by user: {current_user['uid']}" )
+
+    # Find job in done queue
+    job = None
+    for snapshot in done_queue.get_all_jobs():
+        if snapshot.id_hash == job_id:
+            job = snapshot
+            break
+
+    if not job:
+        print( f"[API] Job not found: {job_id}" )
+        raise HTTPException( status_code=404, detail=f"Job not found: {job_id}" )
+
+    # Authorization check
+    job_owner = user_job_tracker.get_user_for_job( job_id )
+    if job_owner and job_owner != current_user["uid"] and not is_admin( current_user ):
+        print( f"[API] Unauthorized access to job {job_id} by {current_user['uid']}" )
+        raise HTTPException( status_code=403, detail="Not authorized to view this job" )
+
+    # Get session_id from job (new field) or fallback to empty
+    session_id = getattr( job, 'session_id', '' )
+
+    # Build response
+    response = {
+        "job_id"       : job_id,
+        "session_id"   : session_id,
+        "job_metadata" : {
+            "question"   : job.last_question_asked or job.question,
+            "answer"     : job.answer_conversational or job.answer,
+            "agent_type" : job.agent_class_name,
+            "run_date"   : job.run_date,
+            "created_date": job.created_date
+        },
+        "interactions"      : [],
+        "interaction_count" : 0
+    }
+
+    # Query notifications if session_id available
+    if session_id:
+        try:
+            with get_db() as db:
+                user_repo = UserRepository( db )
+                user = user_repo.get_by_uid( current_user["uid"] )
+
+                if user:
+                    # Parse job run_date to datetime for time window query
+                    # Format: "2026-01-14 @ 10:30:45.123456 EST"
+                    try:
+                        run_date_str = job.run_date.replace( ' @ ', 'T' ).replace( ' EST', '' ).replace( ' EDT', '' )
+                        # Handle microseconds
+                        if '.' in run_date_str:
+                            job_run_time = datetime.fromisoformat( run_date_str )
+                        else:
+                            job_run_time = datetime.fromisoformat( run_date_str )
+                        # Make timezone-aware if naive
+                        if job_run_time.tzinfo is None:
+                            from pytz import timezone as pytz_tz
+                            eastern = pytz_tz( 'America/New_York' )
+                            job_run_time = eastern.localize( job_run_time )
+                    except Exception as parse_err:
+                        print( f"[API] Error parsing run_date '{job.run_date}': {parse_err}" )
+                        job_run_time = datetime.now( timezone.utc )
+
+                    # Query notifications within ±5 minute window of job execution
+                    window_start = job_run_time - timedelta( minutes=5 )
+                    window_end = job_run_time + timedelta( minutes=5 )
+
+                    print( f"[API] Querying notifications for user {user.id} in window {window_start} to {window_end}" )
+
+                    notifications = db.query( Notification ).filter(
+                        Notification.recipient_id == user.id,
+                        Notification.created_at >= window_start,
+                        Notification.created_at <= window_end
+                    ).order_by( Notification.created_at.asc() ).all()
+
+                    response["interactions"] = [
+                        {
+                            "id"                 : str( n.id ),
+                            "type"               : n.type,
+                            "message"            : n.message,
+                            "timestamp"          : n.created_at.isoformat(),
+                            "response_requested" : n.response_requested,
+                            "response_value"     : n.response_value,
+                            "priority"           : n.priority
+                        }
+                        for n in notifications
+                    ]
+                    response["interaction_count"] = len( notifications )
+
+                    print( f"[API] Found {len(notifications)} interactions for job {job_id}" )
+
+        except Exception as e:
+            print( f"[API] Error querying notifications: {e}" )
+            # Return empty interactions rather than failing
+            pass
+
+    return response
