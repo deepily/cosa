@@ -215,7 +215,7 @@ class Normalizer:
             # Check if token text (lowercased) is a filler word
             if token.text.lower() not in self.FILLER_WORDS:
                 tokens.append( token )
-            elif self.debug:
+            elif self.debug and self.verbose:
                 print( f"Removing filler: '{token.text}'" )
                 
         return tokens

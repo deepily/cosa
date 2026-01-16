@@ -1799,25 +1799,23 @@ async def generate_session_gist(
         if not messages:
             return { "gist": "Empty session" }
 
-        # Combine first 10 messages into single text for gisting
+        # Combine first 10 messages into single text for session title generation
         combined = " ".join( messages[ :10 ] )
 
         if not combined.strip():
             return { "gist": "Empty session" }
 
-        print( f"[NOTIFY] Generating gist from {len( messages )} messages ({len( combined )} chars)" )
+        print( f"[NOTIFY] Generating session title from {len( messages )} messages ({len( combined )} chars)" )
+        print( f"[NOTIFY] Combined text preview: {combined[ :200 ]}..." )
 
-        # Use Gister to extract concise summary
-        gister = Gister()
-        gist = gister.get_gist( combined )
+        # Use Gister with session title prompt (cache bypassed for this prompt type)
+        # The prompt enforces 3-5 words, so no truncation needed
+        gister = Gister( debug=True )
+        title = gister.get_gist( combined, prompt_key="prompt template for session title" )
 
-        # Truncate to ~4 words if longer
-        words = gist.split()[ :4 ]
-        short_gist = " ".join( words )
+        print( f"[NOTIFY] Generated session title: '{title}'" )
 
-        print( f"[NOTIFY] Generated gist: '{short_gist}'" )
-
-        return { "gist": short_gist }
+        return { "gist": title }
 
     except Exception as e:
         print( f"[NOTIFY] Error generating gist: {str( e )}" )

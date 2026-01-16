@@ -13,7 +13,7 @@ class TodoListAgent( AgentBase ):
     questions about todo lists stored in a pandas DataFrame.
     """
     
-    def __init__( self, question: str="", question_gist: str="", last_question_asked: str="", push_counter: int=-1, routing_command: str="agent router go to todo list", user_id: str="ricardo_felipe_ruiz_6bdc", debug: bool=False, verbose: bool=False, auto_debug: bool=False, inject_bugs: bool=False ) -> None:
+    def __init__( self, question: str="", question_gist: str="", last_question_asked: str="", push_counter: int=-1, routing_command: str="agent router go to todo list", user_id: str="ricardo_felipe_ruiz_6bdc", session_id: str="", debug: bool=False, verbose: bool=False, auto_debug: bool=False, inject_bugs: bool=False ) -> None:
         """
         Initialize the todo list agent.
         
@@ -31,7 +31,7 @@ class TodoListAgent( AgentBase ):
             - ConfigException if required config missing
         """
         
-        super().__init__( df_path_key="path_to_todolist_df_wo_root", question=question, question_gist=question_gist, last_question_asked=last_question_asked, routing_command=routing_command, push_counter=push_counter, user_id=user_id, debug=debug, verbose=verbose, auto_debug=auto_debug, inject_bugs=inject_bugs )
+        super().__init__( df_path_key="path_to_todolist_df_wo_root", question=question, question_gist=question_gist, last_question_asked=last_question_asked, routing_command=routing_command, push_counter=push_counter, user_id=user_id, session_id=session_id, debug=debug, verbose=verbose, auto_debug=auto_debug, inject_bugs=inject_bugs )
         
         self.prompt = self._get_prompt()
         self.xml_response_tag_names   = [ "thoughts", "code", "example", "returns", "explanation" ]

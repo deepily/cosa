@@ -1,6 +1,6 @@
 from collections import OrderedDict
 from typing import Any, Optional
-from cosa.rest.queue_extensions import UserJobTracker
+from cosa.rest.queue_extensions import user_job_tracker
 
 
 class FifoQueue:
@@ -50,7 +50,7 @@ class FifoQueue:
         self.emit_enabled    = emit_enabled
         
         # User job tracking singleton for user-based routing
-        self.user_job_tracker = UserJobTracker()
+        self.user_job_tracker = user_job_tracker
         
     def pop_blocking_object( self ) -> Optional[Any]:
         """

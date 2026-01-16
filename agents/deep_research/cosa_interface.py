@@ -11,6 +11,7 @@ This allows other async tasks to continue while waiting for human feedback.
 
 import asyncio
 import logging
+import os
 from typing import Optional
 
 # Import from cosa.cli (the notification library)
@@ -27,6 +28,44 @@ from cosa.cli.notify_user_sync import notify_user_sync as _notify_user_sync
 from cosa.cli.notify_user_async import notify_user_async as _notify_user_async
 
 logger = logging.getLogger( __name__ )
+
+
+# =============================================================================
+# Sender Identity Configuration
+# =============================================================================
+
+def _get_sender_id() -> str:
+    """
+    Get sender_id for Deep Research Agent notifications.
+
+    Ensures:
+        - Returns sender_id in format: deep.research@{project}.deepily.ai
+        - Project is detected from current working directory
+        - Handles nested directory structures correctly
+
+    Returns:
+        str: Sender ID for notification identity
+    """
+    # Project detection - check more specific paths FIRST
+    # (cosa is a subdirectory of lupin, so check cosa before lupin)
+    cwd = os.getcwd()
+
+    if "/cosa" in cwd.lower() and "/lupin" not in cwd.lower():
+        # Standalone cosa repo (not nested in lupin)
+        project = "cosa"
+    elif "/planning-is-prompting" in cwd.lower():
+        project = "plan"
+    elif "/lupin" in cwd.lower():
+        # Lupin project (includes nested cosa subdirectory)
+        project = "lupin"
+    else:
+        project = os.path.basename( cwd ).lower()
+
+    return f"deep.research@{project}.deepily.ai"
+
+
+# Cache sender_id at module load (avoids repeated os.getcwd calls)
+SENDER_ID = _get_sender_id()
 
 
 # =============================================================================
@@ -60,6 +99,7 @@ async def notify_progress(
             message           = message,
             notification_type = NotificationType.PROGRESS,
             priority          = NotificationPriority( priority ),
+            sender_id         = SENDER_ID,
         )
 
         # Run blocking call in thread pool
@@ -104,6 +144,7 @@ async def ask_confirmation(
             priority          = NotificationPriority.MEDIUM,
             timeout_seconds   = timeout,
             response_default  = default,
+            sender_id         = SENDER_ID,
         )
 
         response: NotificationResponse = await asyncio.to_thread( _notify_user_sync, request )
@@ -150,6 +191,7 @@ async def get_feedback(
             notification_type = NotificationType.CUSTOM,
             priority          = NotificationPriority.MEDIUM,
             timeout_seconds   = timeout,
+            sender_id         = SENDER_ID,
         )
 
         response: NotificationResponse = await asyncio.to_thread( _notify_user_sync, request )
@@ -199,6 +241,7 @@ async def present_choices(
             priority          = NotificationPriority.MEDIUM,
             timeout_seconds   = timeout,
             response_options  = { "questions": questions },
+            sender_id         = SENDER_ID,
         )
 
         response: NotificationResponse = await asyncio.to_thread( _notify_user_sync, request )

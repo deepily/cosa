@@ -103,16 +103,16 @@ class EmbeddingCacheTable:
         Raises:
             - None (handles errors gracefully)
         """
-        if self.debug: timer = Stopwatch( msg=f"has_cached_embedding( '{normalized_text}' )" )
-        
+        if self.debug and self.verbose: timer = Stopwatch( msg=f"has_cached_embedding( '{normalized_text}' )" )
+
         try:
             # Escape single quotes by doubling them to prevent SQL parsing errors
             escaped_text = normalized_text.replace( "'", "''" )
             results = self._embedding_cache_tbl.search().where( f"normalized_text = '{escaped_text}'" ).limit( 1 ).select( [ "normalized_text" ] ).to_list()
-            if self.debug: timer.print( "Done!", use_millis=True )
+            if self.debug and self.verbose: timer.print( "Done!", use_millis=True )
             return len( results ) > 0
         except Exception as e:
-            if self.debug: timer.print( f"Error: {e}", use_millis=True )
+            if self.debug and self.verbose: timer.print( f"Error: {e}", use_millis=True )
             du.print_stack_trace( e, explanation="has_cached_embedding() failed", caller="EmbeddingCacheTable.has_cached_embedding()" )
             return False
     
@@ -132,21 +132,21 @@ class EmbeddingCacheTable:
         Raises:
             - None (handles exceptions internally)
         """
-        if self.debug: timer = Stopwatch( msg=f"get_cached_embedding( '{normalized_text}' )", silent=True )
-        
+        if self.debug and self.verbose: timer = Stopwatch( msg=f"get_cached_embedding( '{normalized_text}' )", silent=True )
+
         try:
             # Escape single quotes by doubling them to prevent SQL parsing errors
             escaped_text = normalized_text.replace( "'", "''" )
             rows_returned = self._embedding_cache_tbl.search().where( f"normalized_text = '{escaped_text}'" ).limit( 1 ).select( [ "embedding" ] ).to_list()
-            if self.debug: timer.print( f"Done! w/ {len( rows_returned )} rows returned", use_millis=True )
-            
+            if self.debug and self.verbose: timer.print( f"Done! w/ {len( rows_returned )} rows returned", use_millis=True )
+
             if rows_returned:
                 return rows_returned[ 0 ][ "embedding" ]
             else:
                 return None
-                
+
         except Exception as e:
-            if self.debug: timer.print( f"Error: {e}", use_millis=True )
+            if self.debug and self.verbose: timer.print( f"Error: {e}", use_millis=True )
             du.print_stack_trace( e, explanation="get_cached_embedding() failed", caller="EmbeddingCacheTable.get_cached_embedding()" )
             return None
         
@@ -170,7 +170,7 @@ class EmbeddingCacheTable:
         
         try:
             self._embedding_cache_tbl.add( new_row )
-            if self.debug: print( f"Cached embedding for normalized text: '{du.truncate_string( normalized_text )}'" )
+            if self.debug and self.verbose: print( f"Cached embedding for normalized text: '{du.truncate_string( normalized_text )}'" )
         except Exception as e:
             du.print_stack_trace( e, explanation="cache_embedding() failed", caller="EmbeddingCacheTable.cache_embedding()" )
     

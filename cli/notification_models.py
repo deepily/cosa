@@ -31,25 +31,28 @@ import re
 # Helper Functions
 # ============================================================================
 
-def extract_sender_from_message( message: str ) -> Optional[str]:
+def extract_sender_from_message( message: str, agent_type: str = "claude.code" ) -> Optional[str]:
     """
     Extract sender ID from message prefix like [LUPIN] or [COSA].
 
     Requires:
         - message is a string
+        - agent_type is a valid agent identifier (e.g., "claude.code", "deep.research")
 
     Ensures:
-        - Returns claude.code@{project}.deepily.ai if [PREFIX] found
+        - Returns {agent_type}@{project}.deepily.ai if [PREFIX] found
         - Returns None if no prefix found
         - Project name is lowercased
 
     Examples:
         "[LUPIN] Build complete" -> "claude.code@lupin.deepily.ai"
         "[COSA] Tests passed"    -> "claude.code@cosa.deepily.ai"
+        "[LUPIN] Research done", "deep.research" -> "deep.research@lupin.deepily.ai"
         "No prefix message"      -> None
 
     Args:
         message: Notification message text
+        agent_type: Agent type identifier (default: "claude.code")
 
     Returns:
         str or None: Sender ID in email format, or None if no prefix
@@ -57,7 +60,7 @@ def extract_sender_from_message( message: str ) -> Optional[str]:
     match = re.match( r'^\[([A-Z]+)\]', message )
     if match:
         project = match.group( 1 ).lower()
-        return f"claude.code@{project}.deepily.ai"
+        return f"{agent_type}@{project}.deepily.ai"
     return None
 
 
@@ -208,8 +211,8 @@ class NotificationRequest(BaseModel):
 
     sender_id: Optional[str] = Field(
         default=None,
-        pattern=r'^claude\.code@[a-z]+\.deepily\.ai(#[a-f0-9]{8})?$',
-        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4). Auto-extracted from [PREFIX] if not provided."
+        pattern=r'^[a-z]+\.[a-z]+@[a-z]+\.deepily\.ai(#[a-f0-9]{8})?$',
+        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, deep.research@lupin.deepily.ai). Auto-extracted from [PREFIX] if not provided."
     )
 
     response_options: Optional[dict] = Field(
@@ -559,8 +562,8 @@ class AsyncNotificationRequest(BaseModel):
 
     sender_id: Optional[str] = Field(
         default=None,
-        pattern=r'^claude\.code@[a-z]+\.deepily\.ai(#[a-f0-9]{8})?$',
-        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4). Auto-extracted from [PREFIX] if not provided."
+        pattern=r'^[a-z]+\.[a-z]+@[a-z]+\.deepily\.ai(#[a-f0-9]{8})?$',
+        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, deep.research@lupin.deepily.ai). Auto-extracted from [PREFIX] if not provided."
     )
 
     @field_validator( 'message' )

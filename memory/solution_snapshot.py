@@ -388,6 +388,7 @@ class SolutionSnapshot( RunnableCode ):
             - Returns new SolutionSnapshot with agent data
             - Copies all relevant fields from agent
             - Populates all three question representations (verbatim, normalized, gist)
+            - Preserves agent's id_hash if available (for user job tracking)
 
         Raises:
             - AttributeError if agent missing required fields
@@ -405,8 +406,12 @@ class SolutionSnapshot( RunnableCode ):
         # Capture the agent's class name for formatting logic preservation
         agent_class_name = type( agent ).__name__  # e.g., "MathAgent", "CalendarAgent", etc.
 
+        # Preserve agent's id_hash if available (maintains user job tracking association)
+        agent_id_hash = getattr( agent, 'id_hash', '' )
+
         # Instantiate a new SolutionSnapshot object using the contents of the calendaring or function mapping agent
         return SolutionSnapshot(
+                          id_hash=agent_id_hash,
                          question=verbatim_question,
                question_normalized=normalized_question,
                     question_gist=agent.question_gist,

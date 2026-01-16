@@ -389,7 +389,7 @@ class TodoFifoQueue( FifoQueue ):
             'gist': len( embedding_gist ) > 0
         }
 
-        if self.debug:
+        if self.debug and self.verbose:
             print( f"Three-level representation:" )
             print( f"  Verbatim:   '{query_verbatim}'" )
             print( f"  Normalized: '{query_normalized}'" )

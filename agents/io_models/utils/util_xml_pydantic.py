@@ -151,6 +151,21 @@ class BaseXMLModel( BaseModel ):
         if xml_start > 0:
             xml_cleaned = xml_cleaned[xml_start:]
 
+        # Strip any suffix after closing root tag
+        # LLMs sometimes echo prompt content or continue generating after valid XML
+        # Use find() not rfind() - we want the FIRST closing tag (the actual XML),
+        # not a later mention of "</response>" in explanation text
+        for closing_tag in [ '</response>', '</result>', '</output>' ]:
+            closing_pos = xml_cleaned.find( closing_tag )  # find = first occurrence
+            if closing_pos > 0:
+                end_pos = closing_pos + len( closing_tag )
+                if end_pos < len( xml_cleaned ):
+                    suffix_len = len( xml_cleaned ) - end_pos
+                    suffix_preview = xml_cleaned[ end_pos : end_pos + 50 ].replace( '\n', '\\n' )
+                    print( f"[XML-PARSER] WARNING: Stripping {suffix_len} chars after closing tag: '{suffix_preview}...'" )
+                    xml_cleaned = xml_cleaned[ :end_pos ]
+                break
+
         try:
             # Parse XML to dictionary
             # Preserve whitespace in XML text content to maintain code indentation
