@@ -164,7 +164,8 @@ class RunningFifoQueue( FifoQueue ):
                     if self.debug: print( f"[CACHE] 🎯 CACHE HIT: Found cached solution from {cached_snapshot.run_date} (score: {score:.1f}%)" )
 
                     # Convert cached snapshot to proper format and use it
-                    running_job = self._format_cached_result( cached_snapshot, truncated_question, run_timer )
+                    # Pass original running_job to get current user context for done queue
+                    running_job = self._format_cached_result( cached_snapshot, running_job, truncated_question, run_timer )
                 else:
                     # CACHE MISS - Continue with normal agent execution
                     if self.debug: print( f"[CACHE] ❌ CACHE MISS: Running agent for new question" )
@@ -371,21 +372,23 @@ class RunningFifoQueue( FifoQueue ):
         
         return running_job
 
-    def _format_cached_result( self, cached_snapshot: Any, truncated_question: str, run_timer: sw.Stopwatch ) -> Any:
+    def _format_cached_result( self, cached_snapshot: Any, original_job: Any, truncated_question: str, run_timer: sw.Stopwatch ) -> Any:
         """
         Format cached snapshot result to behave like a freshly executed job.
 
         Requires:
             - cached_snapshot is a valid SolutionSnapshot with results
+            - original_job is the job from which to get current user context
             - truncated_question is a string for logging
             - run_timer is a running Stopwatch
 
         Ensures:
             - Emits speech for cached result
-            - Updates queues (moves to done queue)
+            - Updates queues (moves user-contextualized copy to done queue)
+            - Records replay on canonical snapshot for analytics
             - Emits websocket updates
             - Updates runtime stats
-            - Returns a properly formatted cached result
+            - Returns a properly formatted cached result with current user context
 
         Raises:
             - None (handles errors gracefully)
@@ -393,28 +396,52 @@ class RunningFifoQueue( FifoQueue ):
         msg = f"Using CACHED result for [{truncated_question}]..."
         du.print_banner( msg=msg, prepend_nl=True )
 
-        # Emit the cached answer as speech
-        self._emit_speech( cached_snapshot.answer_conversational, job=cached_snapshot )
+        # Calculate time saved (first_run_ms - current cache retrieval time)
+        run_timer.stop()
+        cache_retrieval_ms = run_timer.get_elapsed_millis()
+        first_run_ms       = cached_snapshot.runtime_stats.get( "first_run_ms", 0 )
+        time_saved_ms      = max( 0, first_run_ms - cache_retrieval_ms )
+
+        # Get current user context from original job
+        current_user_id    = getattr( original_job, 'user_id', '' )
+        current_session_id = getattr( original_job, 'session_id', '' )
+
+        # Record replay on canonical snapshot (updates LanceDB record for analytics)
+        cached_snapshot.record_replay(
+            user_id=current_user_id,
+            session_id=current_session_id,
+            time_saved_ms=time_saved_ms
+        )
+
+        # Update runtime stats on canonical snapshot
+        cached_snapshot.update_runtime_stats( run_timer )
+
+        # Persist updated stats to LanceDB (canonical snapshot with replay history)
+        self.snapshot_mgr.save_snapshot( cached_snapshot )
+
+        # Create user-contextualized copy for done queue (FIX: use current user, not original creator)
+        done_queue_entry = cached_snapshot.for_current_user(
+            user_id=current_user_id,
+            session_id=current_session_id
+        )
+
+        # Emit the cached answer as speech (use done_queue_entry for routing)
+        self._emit_speech( cached_snapshot.answer_conversational, job=done_queue_entry )
 
         # Move job through the queue system properly
         self.pop()  # Remove from running queue, auto-emits 'run_update'
-        self.jobs_done_queue.push( cached_snapshot )  # Add to done queue, auto-emits 'done_update'
+        self.jobs_done_queue.push( done_queue_entry )  # Add COPY to done queue, auto-emits 'done_update'
 
-        # Update runtime stats to show this was a cache hit
         run_timer.print( "CACHE HIT - result retrieved in ", use_millis=True )
-        cached_snapshot.update_runtime_stats( run_timer )
-
-        # Persist updated runtime stats to LanceDB (fixes runtime stats not persisting on cache hits)
-        self.snapshot_mgr.save_snapshot( cached_snapshot )
-
-        # Update the run_date to current time to show when it was retrieved
-        cached_snapshot.run_date = cached_snapshot.get_timestamp()
+        print( f"⏱️ Time saved by cache hit: {time_saved_ms}ms" )
 
         du.print_banner( f"CACHED Job [{cached_snapshot.question}] complete!", prepend_nl=True, end="\n" )
 
         if self.debug:
             du.print_banner( "cached_snapshot.runtime_stats", prepend_nl=True )
             pprint.pprint( cached_snapshot.runtime_stats )
+            print( f"Done queue entry user_id: {done_queue_entry.user_id} (current user)" )
+            print( f"Canonical snapshot user_id: {cached_snapshot.user_id} (original creator)" )
 
         # Write to database to track cache hit
         self.io_tbl.insert_io_row(
@@ -424,7 +451,7 @@ class RunningFifoQueue( FifoQueue ):
             output_final=cached_snapshot.answer_conversational
         )
 
-        return cached_snapshot
+        return done_queue_entry
 
 def quick_smoke_test():
     """

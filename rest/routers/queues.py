@@ -319,7 +319,8 @@ async def get_queue(
                 "session_id"      : session_id,  # For job-notification correlation
                 "agent_type"      : snapshot.agent_class_name,  # e.g., "MathAgent", "CalendarAgent"
                 "has_interactions": bool( session_id ),  # True if can query notifications
-                "has_audio_cache" : False  # Will be determined by frontend cache check
+                "has_audio_cache" : False,  # Will be determined by frontend cache check
+                "is_cache_hit"    : getattr( snapshot, 'is_cache_hit', False )  # For Time Saved Dashboard
             }
             structured_jobs.append( job_data )
 

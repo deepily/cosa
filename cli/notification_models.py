@@ -211,13 +211,19 @@ class NotificationRequest(BaseModel):
 
     sender_id: Optional[str] = Field(
         default=None,
-        pattern=r'^[a-z]+\.[a-z]+@[a-z]+\.deepily\.ai(#[a-f0-9]{8})?$',
-        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, deep.research@lupin.deepily.ai). Auto-extracted from [PREFIX] if not provided."
+        pattern=r'^[a-z]+\.[a-z]+@[a-z]+\.deepily\.ai(#([a-f0-9]{8}|[a-z]+-[a-z]+-[a-z]+))?$',
+        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, deep.research@lupin.deepily.ai#dogs-cats-comparison). Supports hex suffix or 3-word hyphenated topic."
     )
 
     response_options: Optional[dict] = Field(
         default=None,
         description="Options for multiple_choice type. Structure: {questions: [{question, header, multi_select, options: [{label, description}]}]}"
+    )
+
+    abstract: Optional[str] = Field(
+        default=None,
+        max_length=5000,
+        description="Supplementary context for the notification (plan details, URLs, markdown). Displayed alongside message in action-required cards."
     )
 
     @field_validator( 'message' )
@@ -356,6 +362,10 @@ class NotificationRequest(BaseModel):
         if self.response_options is not None:
             import json
             params["response_options"] = json.dumps( self.response_options )
+
+        # Add abstract for supplementary context
+        if self.abstract is not None:
+            params["abstract"] = self.abstract
 
         return params
 
@@ -562,8 +572,14 @@ class AsyncNotificationRequest(BaseModel):
 
     sender_id: Optional[str] = Field(
         default=None,
-        pattern=r'^[a-z]+\.[a-z]+@[a-z]+\.deepily\.ai(#[a-f0-9]{8})?$',
-        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, deep.research@lupin.deepily.ai). Auto-extracted from [PREFIX] if not provided."
+        pattern=r'^[a-z]+\.[a-z]+@[a-z]+\.deepily\.ai(#([a-f0-9]{8}|[a-z]+-[a-z]+-[a-z]+))?$',
+        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, deep.research@lupin.deepily.ai#dogs-cats-comparison). Supports hex suffix or 3-word hyphenated topic."
+    )
+
+    abstract: Optional[str] = Field(
+        default=None,
+        max_length=5000,
+        description="Supplementary context for the notification (plan details, URLs, markdown). Displayed alongside message in action-required cards."
     )
 
     @field_validator( 'message' )
@@ -618,6 +634,10 @@ class AsyncNotificationRequest(BaseModel):
             resolved_sender_id = extract_sender_from_message( self.message )
         if resolved_sender_id:
             params["sender_id"] = resolved_sender_id
+
+        # Add abstract for supplementary context
+        if self.abstract is not None:
+            params["abstract"] = self.abstract
 
         return params
 

@@ -526,6 +526,10 @@ class Notification( Base ):
         Text,
         nullable=False
     )
+    abstract: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True
+    )
     type: Mapped[str] = mapped_column(
         String( 50 ),
         nullable=False,

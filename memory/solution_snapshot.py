@@ -179,7 +179,9 @@ class SolutionSnapshot( RunnableCode ):
                   id_hash: str="", solution_summary: str="", code: list[str]=[], solution_summary_gist: str="", code_returns: str="", code_example: str="", code_type: str="raw", thoughts: str="",
                   programming_language: str="Python", language_version: str="3.10",
                   question_embedding: list[float]=[ ], question_normalized_embedding: list[float]=[ ], question_gist_embedding: list[float]=[ ], solution_embedding: list[float]=[ ], code_embedding: list[float]=[ ], thoughts_embedding: list[float]=[ ], solution_gist_embedding: list[float]=[ ],
-                  solution_directory: str="/src/conf/long-term-memory/solutions/", solution_file: Optional[str]=None, user_id: str="ricardo_felipe_ruiz_6bdc", session_id: str="", debug: bool=False, verbose: bool=False
+                  solution_directory: str="/src/conf/long-term-memory/solutions/", solution_file: Optional[str]=None, user_id: str="ricardo_felipe_ruiz_6bdc", session_id: str="",
+                  replay_history: list=None, replay_stats: dict=None, is_cache_hit: bool=False,
+                  debug: bool=False, verbose: bool=False
                   ) -> None:
         """
         Initialize a solution snapshot.
@@ -230,7 +232,18 @@ class SolutionSnapshot( RunnableCode ):
         self.agent_class_name      = agent_class_name  # e.g., "MathAgent", "CalendarAgent", etc.
         self.user_id               = user_id
         self.session_id            = session_id  # WebSocket session ID for job-notification correlation
-        
+
+        # Replay tracking for Time Saved Dashboard analytics
+        self.replay_history        = replay_history if replay_history is not None else []
+        self.replay_stats          = replay_stats if replay_stats is not None else {
+            "total_replays"       : 0,
+            "total_time_saved_ms" : 0,
+            "unique_users"        : [],           # List of user_ids who replayed
+            "first_replayed"      : None,
+            "last_replayed"       : None
+        }
+        self.is_cache_hit          = is_cache_hit
+
         # Is there is no synonymous questions to be found then just recycle the current question
         # Handle corrupted data: ensure synonymous_questions is a valid dict/OrderedDict
         if not isinstance( synonymous_questions, dict ):
@@ -782,13 +795,13 @@ class SolutionSnapshot( RunnableCode ):
     def update_runtime_stats( self, timer ) -> None:
         """
         Updates the runtime stats for this object
-        
+
         Uses the timer object to calculate the delta between now and when this object was instantiated
 
         :return: None
         """
         delta_ms = timer.get_delta_ms()
-        
+
         # We're now tracking the first time which is expensive to calculate, after that we're tracking all subsequent cashed runs
         if self.runtime_stats[ "run_count" ] == -1:
             self.runtime_stats[ "first_run_ms"  ]  = delta_ms
@@ -799,7 +812,72 @@ class SolutionSnapshot( RunnableCode ):
             self.runtime_stats[ "mean_run_ms"   ]  = int( self.runtime_stats[ "total_ms" ] / self.runtime_stats[ "run_count" ] )
             self.runtime_stats[ "last_run_ms"   ]  = delta_ms
             self.runtime_stats[ "time_saved_ms" ]  = ( self.runtime_stats[ "first_run_ms" ] * self.runtime_stats[ "run_count" ] ) - self.runtime_stats[ "total_ms" ]
-    
+
+    def record_replay( self, user_id: str, session_id: str, time_saved_ms: int, max_history: int = 100 ) -> None:
+        """
+        Record a replay event for analytics tracking.
+
+        Requires:
+            - user_id is a non-empty string
+            - session_id is a non-empty string
+            - time_saved_ms is a non-negative integer
+
+        Ensures:
+            - Adds entry to replay_history (bounded by max_history)
+            - Updates aggregate replay_stats
+            - Tracks unique users without duplicates
+        """
+        timestamp = self.get_timestamp()
+
+        entry = {
+            "user_id"       : user_id,
+            "session_id"    : session_id,
+            "timestamp"     : timestamp,
+            "time_saved_ms" : time_saved_ms
+        }
+
+        # Update aggregates (permanent)
+        self.replay_stats[ "total_replays" ] += 1
+        self.replay_stats[ "total_time_saved_ms" ] += time_saved_ms
+        self.replay_stats[ "last_replayed" ] = timestamp
+
+        if not self.replay_stats[ "first_replayed" ]:
+            self.replay_stats[ "first_replayed" ] = timestamp
+
+        if user_id not in self.replay_stats[ "unique_users" ]:
+            self.replay_stats[ "unique_users" ].append( user_id )
+
+        # Update rolling history (bounded)
+        self.replay_history.append( entry )
+        if len( self.replay_history ) > max_history:
+            self.replay_history.pop( 0 )  # Remove oldest
+
+    def for_current_user( self, user_id: str, session_id: str ) -> 'SolutionSnapshot':
+        """
+        Create a shallow copy with current user context for done queue display.
+
+        Requires:
+            - user_id is the current requesting user's ID
+            - session_id is the current WebSocket session
+
+        Ensures:
+            - Returns a copy with updated user_id, session_id, run_date
+            - Original snapshot remains unchanged
+            - Copy is suitable for done queue filtering
+        """
+        # Shallow copy - embeddings and large fields are shared (memory efficient)
+        user_copy = copy.copy( self )
+
+        # Override user context
+        user_copy.user_id    = user_id
+        user_copy.session_id = session_id
+        user_copy.run_date   = self.get_timestamp()
+
+        # Mark as cache hit for UI display
+        user_copy.is_cache_hit = True
+
+        return user_copy
+
     def run_code( self, debug: bool=False, verbose: bool=False ) -> dict:
         """
         Execute stored code.

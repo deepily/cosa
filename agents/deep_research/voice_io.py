@@ -165,7 +165,8 @@ async def notify( message: str, priority: str = "medium" ) -> None:
 async def ask_yes_no(
     question: str,
     default: str = "no",
-    timeout: int = 60
+    timeout: int = 60,
+    abstract: Optional[str] = None
 ) -> bool:
     """
     Ask a yes/no question (voice-first).
@@ -187,12 +188,15 @@ async def ask_yes_no(
         question: The yes/no question to ask
         default: Default answer if timeout ("yes" or "no")
         timeout: Seconds to wait for response
+        abstract: Optional supplementary context (plan details, URLs, markdown)
 
     Returns:
         bool: True if user approved, False otherwise
     """
     if _force_cli_mode or not await is_voice_available():
-        # CLI fallback
+        # CLI fallback - show abstract if provided
+        if abstract:
+            print( f"\n  Context:\n{abstract}\n" )
         default_hint = "Y/n" if default == "yes" else "y/N"
         response = input( f"  {question} [{default_hint}]: " ).strip().lower()
         if not response:
@@ -200,10 +204,12 @@ async def ask_yes_no(
         return response in [ "y", "yes", "yeah", "yep", "sure", "ok", "okay" ]
 
     try:
-        return await cosa_interface.ask_confirmation( question, default, timeout )
+        return await cosa_interface.ask_confirmation( question, default, timeout, abstract )
     except Exception as e:
         logger.warning( f"Voice ask_yes_no failed: {e}" )
         # Fallback to CLI
+        if abstract:
+            print( f"\n  Context:\n{abstract}\n" )
         response = input( f"  {question} [y/N]: " ).strip().lower()
         return response in [ "y", "yes" ]
 

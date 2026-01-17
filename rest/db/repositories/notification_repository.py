@@ -49,6 +49,7 @@ class NotificationRepository( BaseRepository[Notification] ):
         type: str,
         priority: str,
         title: Optional[str] = None,
+        abstract: Optional[str] = None,
         response_requested: bool = False,
         response_type: Optional[str] = None,
         response_default: Optional[str] = None,
@@ -70,6 +71,7 @@ class NotificationRepository( BaseRepository[Notification] ):
             - Notification created with 'created' state
             - created_at set to current timestamp
             - Response fields populated if response_requested
+            - Abstract stored if provided (for supplementary context)
 
         Returns:
             Created Notification instance
@@ -92,6 +94,7 @@ class NotificationRepository( BaseRepository[Notification] ):
             type               = type,
             priority           = priority,
             title              = title,
+            abstract           = abstract,
             response_requested = response_requested,
             response_type      = response_type,
             response_default   = response_default,

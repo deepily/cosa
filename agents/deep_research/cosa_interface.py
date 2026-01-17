@@ -112,7 +112,8 @@ async def notify_progress(
 async def ask_confirmation(
     question: str,
     default: str = "no",
-    timeout: int = 60
+    timeout: int = 60,
+    abstract: Optional[str] = None
 ) -> bool:
     """
     Ask a yes/no question and return boolean result.
@@ -132,6 +133,7 @@ async def ask_confirmation(
         question: The yes/no question to ask
         default: Default answer if timeout ("yes" or "no")
         timeout: Seconds to wait for response
+        abstract: Optional supplementary context (plan details, URLs, markdown)
 
     Returns:
         bool: True if user said yes, False otherwise
@@ -145,6 +147,7 @@ async def ask_confirmation(
             timeout_seconds   = timeout,
             response_default  = default,
             sender_id         = SENDER_ID,
+            abstract          = abstract,
         )
 
         response: NotificationResponse = await asyncio.to_thread( _notify_user_sync, request )

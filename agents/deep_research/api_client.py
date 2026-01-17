@@ -33,6 +33,7 @@ except ImportError:
 
 from .config import ResearchConfig
 from .cost_tracker import CostTracker, BudgetExceededError
+from .rate_limiter import WebSearchRateLimiter
 
 logger = logging.getLogger( __name__ )
 
@@ -163,9 +164,63 @@ class ResearchAPIClient:
         # Initialize async client
         self._client = AsyncAnthropic( api_key=self.api_key )
 
+        # Initialize rate limiter for web search calls
+        # Get configuration from ConfigurationManager
+        try:
+            from cosa.config.configuration_manager import ConfigurationManager
+            config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+
+            tokens_per_minute = config_mgr.get(
+                "deep research web search tokens per minute", 30_000, return_type="int"
+            )
+            window_seconds = config_mgr.get(
+                "deep research web search window seconds", 60.0, return_type="float"
+            )
+            notify_threshold = config_mgr.get(
+                "deep research rate limit notify threshold", 5.0, return_type="float"
+            )
+        except Exception as e:
+            # Fall back to defaults if ConfigurationManager unavailable
+            if self.debug:
+                print( f"[ResearchAPIClient] ConfigurationManager unavailable, using defaults: {e}" )
+            tokens_per_minute = 30_000
+            window_seconds    = 60.0
+            notify_threshold  = 5.0
+
+        self._rate_limiter = WebSearchRateLimiter(
+            tokens_per_minute = tokens_per_minute,
+            window_seconds    = window_seconds,
+            notify_threshold  = notify_threshold,
+            notify_callback   = self._rate_limit_notify,
+            debug             = debug,
+        )
+
         if self.debug:
             print( f"[ResearchAPIClient] API key source: {self.key_source}" )
             print( f"[ResearchAPIClient] Initialized with models: lead={self.config.lead_model}, subagent={self.config.subagent_model}" )
+            print( f"[ResearchAPIClient] Rate limiter: {tokens_per_minute:,} tokens/min, {window_seconds}s window" )
+
+    async def _rate_limit_notify( self, message: str, priority: str ) -> None:
+        """
+        Callback for rate limiter to notify user about delays.
+
+        Uses voice_io if available, otherwise prints to console.
+
+        Args:
+            message: Notification message
+            priority: Notification priority (low, medium, high)
+        """
+        try:
+            from . import voice_io
+            await voice_io.notify( message, priority=priority )
+        except Exception as e:
+            # Fall back to console if voice_io unavailable
+            if self.debug:
+                print( f"[ResearchAPIClient] Rate limit notification: {message}" )
+
+    def get_rate_limiter( self ) -> WebSearchRateLimiter:
+        """Get the rate limiter instance for external access (e.g., CLI progress reporting)."""
+        return self._rate_limiter
 
     async def call_lead_agent(
         self,
@@ -217,6 +272,8 @@ class ResearchAPIClient:
         Call a research subagent (uses Sonnet model).
 
         Subagents handle focused research tasks with web search.
+        Includes rate limiting for web search calls to stay within
+        Anthropic's 30,000 tokens/minute limit.
 
         Args:
             system_prompt: System prompt for the subagent
@@ -230,7 +287,14 @@ class ResearchAPIClient:
         Returns:
             APIResponse: Structured response with content and search results
         """
-        return await self._call_api(
+        # Rate limit check BEFORE making web search calls
+        if use_web_search:
+            delay = await self._rate_limiter.wait_if_needed()
+            if self.debug and delay > 0:
+                print( f"[ResearchAPIClient] Rate limiter applied {delay:.1f}s delay before subquery {subquery_index}" )
+
+        # Make the API call
+        response = await self._call_api(
             model             = self.config.subagent_model,
             system_prompt     = system_prompt,
             user_message      = user_message,
@@ -241,6 +305,15 @@ class ResearchAPIClient:
             max_tokens        = max_tokens,
             temperature       = temperature,
         )
+
+        # Record actual token usage for rate limiter (input tokens include search results)
+        if use_web_search:
+            self._rate_limiter.record_usage(
+                tokens    = response.input_tokens,
+                call_type = "web_search"
+            )
+
+        return response
 
     async def call_with_json_output(
         self,
@@ -365,8 +438,8 @@ class ResearchAPIClient:
             if use_extended_thinking:
                 print( f"[ResearchAPIClient] Extended thinking enabled (budget: {self.config.extended_thinking_budget})" )
 
-        # Make the API call with retry
-        response = await self._call_with_retry( kwargs )
+        # Make the API call with retry (longer delays for web search due to rate limits)
+        response = await self._call_with_retry( kwargs, use_web_search=use_web_search )
 
         # Extract content and usage
         content = ""
@@ -418,7 +491,8 @@ class ResearchAPIClient:
         self,
         kwargs: dict,
         max_retries: int = 3,
-        initial_delay: float = 1.0
+        initial_delay: float = 1.0,
+        use_web_search: bool = False
     ) -> Any:
         """
         Call API with exponential backoff retry.
@@ -428,14 +502,24 @@ class ResearchAPIClient:
         - Server errors (5xx)
         - Network timeouts
 
+        For web search calls, uses longer delays due to Anthropic's strict
+        rate limits (30,000 tokens/minute, but each search returns ~80,000+ tokens).
+
         Args:
             kwargs: API call parameters
             max_retries: Maximum retry attempts
             initial_delay: Initial delay in seconds
+            use_web_search: If True, use longer delays for rate-limited web searches
 
         Returns:
             API response object
         """
+        # Web search calls need much longer delays due to rate limits
+        # Each search can return 80,000+ tokens but limit is 30,000/minute
+        if use_web_search:
+            max_retries = 2
+            initial_delay = 30.0  # Start with 30s wait for web search rate limits
+
         last_error = None
         delay = initial_delay
 
@@ -446,7 +530,7 @@ class ResearchAPIClient:
             except anthropic.RateLimitError as e:
                 last_error = e
                 if attempt < max_retries:
-                    logger.warning( f"Rate limited, retrying in {delay}s (attempt {attempt + 1}/{max_retries})" )
+                    logger.warning( f"Rate limited, retrying in {delay:.0f}s (attempt {attempt + 1}/{max_retries})" )
                     await asyncio.sleep( delay )
                     delay *= 2  # Exponential backoff
 
@@ -454,7 +538,7 @@ class ResearchAPIClient:
                 if e.status_code >= 500:
                     last_error = e
                     if attempt < max_retries:
-                        logger.warning( f"Server error {e.status_code}, retrying in {delay}s" )
+                        logger.warning( f"Server error {e.status_code}, retrying in {delay:.0f}s" )
                         await asyncio.sleep( delay )
                         delay *= 2
                 else:
@@ -463,7 +547,7 @@ class ResearchAPIClient:
             except Exception as e:
                 last_error = e
                 if attempt < max_retries:
-                    logger.warning( f"API call failed: {e}, retrying in {delay}s" )
+                    logger.warning( f"API call failed: {e}, retrying in {delay:.0f}s" )
                     await asyncio.sleep( delay )
                     delay *= 2
 

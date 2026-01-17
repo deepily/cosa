@@ -17,7 +17,8 @@ class NotificationItem:
                  id: Optional[str] = None, title: Optional[str] = None,
                  response_requested: bool = False, response_type: Optional[str] = None,
                  response_default: Optional[str] = None, response_options: Optional[dict] = None,
-                 timeout_seconds: Optional[int] = None, sender_id: Optional[str] = None ) -> None:
+                 timeout_seconds: Optional[int] = None, sender_id: Optional[str] = None,
+                 abstract: Optional[str] = None ) -> None:
         """
         Initialize a notification item.
 
@@ -33,6 +34,7 @@ class NotificationItem:
             - Initializes tracking fields
             - Stores Phase 2.2 response-required fields
             - Sets sender_id with fallback to unknown sender
+            - Stores abstract for supplementary context
 
         Raises:
             - None
@@ -60,7 +62,10 @@ class NotificationItem:
 
         # Sender identification for multi-project grouping
         self.sender_id          = sender_id or "claude.code@unknown.deepily.ai"
-        
+
+        # Supplementary context for notification (plan details, URLs, markdown)
+        self.abstract           = abstract
+
     def _get_local_timestamp( self ) -> str:
         """Get timezone-aware timestamp using configured timezone from ConfigurationManager"""
         try:
@@ -130,7 +135,9 @@ class NotificationItem:
             "response_options"   : self.response_options,  # Multiple-choice options
             "timeout_seconds"    : self.timeout_seconds,
             # Sender identification
-            "sender_id"          : self.sender_id
+            "sender_id"          : self.sender_id,
+            # Supplementary context
+            "abstract"           : self.abstract
         }
 
 
@@ -220,7 +227,8 @@ class NotificationFifoQueue( FifoQueue ):
                          id: Optional[str] = None, title: Optional[str] = None,
                          response_requested: bool = False, response_type: Optional[str] = None,
                          response_default: Optional[str] = None, response_options: Optional[dict] = None,
-                         timeout_seconds: Optional[int] = None, sender_id: Optional[str] = None ) -> NotificationItem:
+                         timeout_seconds: Optional[int] = None, sender_id: Optional[str] = None,
+                         abstract: Optional[str] = None ) -> NotificationItem:
         """
         Push a notification with priority handling and io_tbl logging.
 
@@ -236,11 +244,12 @@ class NotificationFifoQueue( FifoQueue ):
             - Auto-emits WebSocket event via parent class
             - Includes Phase 2.2 response-required fields if provided
             - Sets sender_id for multi-project grouping
+            - Includes abstract for supplementary context if provided
 
         Raises:
             - None (handles errors gracefully)
         """
-        # Create notification item with Phase 2.2 fields and sender_id
+        # Create notification item with Phase 2.2 fields, sender_id, and abstract
         notification = NotificationItem(
             message            = message,
             type               = type,
@@ -254,7 +263,8 @@ class NotificationFifoQueue( FifoQueue ):
             response_default   = response_default,
             response_options   = response_options,  # Multiple-choice options
             timeout_seconds    = timeout_seconds,
-            sender_id          = sender_id
+            sender_id          = sender_id,
+            abstract           = abstract
         )
         
         # Priority handling - urgent/high go to front, but after other urgent/high

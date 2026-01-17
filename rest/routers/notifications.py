@@ -224,6 +224,7 @@ async def notify_user(
     title: Optional[str] = Query(None, description="Terse technical title for voice-first UX (Phase 2.1)"),
     sender_id: Optional[str] = Query(None, description="Sender ID (e.g., claude.code@lupin.deepily.ai). Auto-extracted from [PREFIX] in message if not provided."),
     response_options: Optional[str] = Query(None, description="JSON string of options for multiple_choice type. Structure: {questions: [{question, header, multi_select, options: [{label, description}]}]}"),
+    abstract: Optional[str] = Query(None, description="Supplementary context for the notification (plan details, URLs, markdown). Displayed alongside message in action-required cards."),
     notification_queue: NotificationFifoQueue = Depends(get_notification_queue),
     ws_manager: WebSocketManager = Depends(get_websocket_manager)
 ):
@@ -383,7 +384,8 @@ async def notify_user(
                 source      = "claude_code",
                 user_id     = target_system_id,
                 title       = title,  # Phase 2.2 - include title for consistency
-                sender_id   = resolved_sender_id  # Sender-aware notification system
+                sender_id   = resolved_sender_id,  # Sender-aware notification system
+                abstract    = abstract  # Supplementary context for action-required cards
             )
 
             # Persist to PostgreSQL for history loading
@@ -397,6 +399,7 @@ async def notify_user(
                         type             = type,
                         priority         = priority,
                         title            = title,
+                        abstract         = abstract,
                         response_options = parsed_response_options
                     )
                     # Update state to delivered if user is connected
@@ -461,6 +464,7 @@ async def notify_user(
                         message            = message.strip(),
                         type               = type,
                         priority           = priority,
+                        abstract           = abstract,
                         response_requested = True,
                         response_type      = response_type,
                         response_default   = response_default,
@@ -495,6 +499,7 @@ async def notify_user(
                 message            = message.strip(),
                 type               = type,
                 priority           = priority,
+                abstract           = abstract,
                 response_requested = True,
                 response_type      = response_type,
                 response_default   = response_default,
@@ -546,7 +551,8 @@ async def notify_user(
             response_default   = response_default,
             response_options   = parsed_response_options,  # Multiple-choice options
             timeout_seconds    = timeout_seconds,
-            sender_id          = resolved_sender_id  # Sender-aware notification system
+            sender_id          = resolved_sender_id,  # Sender-aware notification system
+            abstract           = abstract  # Supplementary context for action-required cards
         )
 
         # DEBUG: Log the notification_item after creation
@@ -729,8 +735,10 @@ async def submit_notification_response(
                     detail      = "Notification already responded to"
                 )
 
-            # Grace period check (30 seconds - from config in Phase 2.2)
-            grace_period_seconds = 30
+            # Grace period check - read from config (supports pause button feature)
+            import fastapi_app.main as main_module
+            config_mgr = main_module.config_mgr
+            grace_period_seconds = config_mgr.get( "notification grace period seconds", default=300, return_type="int" )
 
             if notification.state == "expired":
                 # Check if within grace period
