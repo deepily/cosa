@@ -126,6 +126,13 @@ Examples:
     )
 
     parser.add_argument(
+        "--user-email",
+        type=str,
+        default=None,
+        help="User email for report folder prefix (multi-tenancy). Required for GCS mode."
+    )
+
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable debug output"
@@ -299,8 +306,112 @@ async def run_research(
             plan_summary += f" and {len( topics ) - 3} more"
         await voice_io.notify( plan_summary, priority="medium" )
 
-        if not no_confirm:
-            # Build plan summary for abstract - helps user understand what they're approving
+        # ═══════════════════════════════════════════════════════════════════
+        # Plan Approval: Progressive Narrowing or Simple Yes/No
+        # ═══════════════════════════════════════════════════════════════════
+
+        if not no_confirm and len( subqueries ) > 3:
+            # Complex plan (>3 topics) - use progressive narrowing
+
+            # Step A: Cluster into themes
+            await voice_io.notify( "Organizing topics into themes for easier selection...", priority="low" )
+
+            from .prompts import THEME_CLUSTERING_PROMPT, get_theme_clustering_prompt
+
+            theme_response = await api_client.call_with_json_output(
+                system_prompt = THEME_CLUSTERING_PROMPT,
+                user_message  = get_theme_clustering_prompt( subqueries ),
+                call_type     = "theme_clustering",
+            )
+            themes = theme_response.get( "themes", [] )
+
+            # Handle edge cases for theme count (API requires 2-6 options)
+            if len( themes ) == 0:
+                # Fallback: treat all as single theme
+                themes = [ {
+                    "name"             : "All Topics",
+                    "description"      : f"All {len( subqueries )} research topics",
+                    "subquery_indices" : list( range( len( subqueries ) ) )
+                } ]
+
+            if len( themes ) == 1:
+                # Single theme - skip theme selection, auto-select the only theme
+                await voice_io.notify(
+                    f"Topics grouped into one theme: {themes[ 0 ][ 'name' ]}. Proceeding to topic selection.",
+                    priority="low"
+                )
+                selected_theme_indices = [ 0 ]
+
+            elif len( themes ) > 6:
+                # Too many themes - truncate to first 6 with warning
+                await voice_io.notify(
+                    f"Found {len( themes )} themes. Showing top 6 for selection.",
+                    priority="low"
+                )
+                themes = themes[ :6 ]
+                # Step B: Theme selection (Round 1)
+                await voice_io.notify(
+                    f"I've organized your research into {len( themes )} themes. "
+                    "Sending to your screen for selection.",
+                    priority="medium"
+                )
+                selected_theme_indices = await voice_io.select_themes( themes )
+
+            else:
+                # Normal case (2-6 themes) - proceed with selection
+                # Step B: Theme selection (Round 1)
+                await voice_io.notify(
+                    f"I've organized your research into {len( themes )} themes. "
+                    "Sending to your screen for selection.",
+                    priority="medium"
+                )
+                selected_theme_indices = await voice_io.select_themes( themes )
+
+            if not selected_theme_indices:
+                await voice_io.notify( "No themes selected. Research cancelled.", priority="medium" )
+                return None
+
+            # Gather topics from selected themes
+            selected_subquery_indices = set()
+            for ti in selected_theme_indices:
+                selected_subquery_indices.update( themes[ ti ].get( "subquery_indices", [] ) )
+
+            candidate_subqueries = [
+                ( i, subqueries[ i ] )
+                for i in sorted( selected_subquery_indices )
+            ]
+
+            # Step C: Topic refinement (Round 2) - only if multiple topics
+            if len( candidate_subqueries ) > 2:
+                await voice_io.notify(
+                    f"You selected {len( candidate_subqueries )} topics. "
+                    "Let me show you the details so you can refine further.",
+                    priority="low"
+                )
+
+                selected_indices = await voice_io.select_topics(
+                    [ sq for _, sq in candidate_subqueries ]
+                )
+
+                if not selected_indices:
+                    await voice_io.notify( "No topics selected. Research cancelled.", priority="medium" )
+                    return None
+
+                # Map back to original indices
+                final_indices = [ candidate_subqueries[ i ][ 0 ] for i in selected_indices ]
+            else:
+                final_indices = [ i for i, _ in candidate_subqueries ]
+
+            # Filter subqueries to final selection
+            subqueries = [ subqueries[ i ] for i in final_indices ]
+
+            await voice_io.notify(
+                f"Proceeding with {len( subqueries )} selected topics.",
+                priority="medium"
+            )
+
+        elif not no_confirm:
+            # Simple plan (≤3 topics) - use existing yes/no
             plan_abstract = "Research Plan:\n"
             for i, sq in enumerate( subqueries, 1 ):
                 topic = sq.get( 'topic', 'Unknown' )
@@ -544,19 +655,25 @@ def save_report_with_frontmatter(
     cost_tracker: CostTracker,
     config: ResearchConfig,
     output_dir: str,
+    user_email: str,
+    storage_backend: str = "local",
+    gcs_bucket: Optional[ str ] = None,
     debug: bool = False
 ) -> str:
     """
-    Save research report with YAML frontmatter to specified directory.
+    Save research report with YAML frontmatter to local filesystem or GCS.
 
     Requires:
         - report is a non-empty string
-        - output_dir is a valid directory path
+        - user_email is a valid email address for folder prefix
+        - For local: output_dir is a valid directory path
+        - For GCS: gcs_bucket is a valid GCS bucket URI (gs://...)
 
     Ensures:
-        - Creates output directory if needed
-        - Writes report with YAML frontmatter
-        - Returns the file path
+        - Creates output directory/path with user email prefix
+        - Writes report with YAML frontmatter including storage metadata
+        - Returns the file path (local path or GCS URI)
+        - On GCS failure, falls back to local temp file with warning
 
     Args:
         report: The research report content
@@ -566,33 +683,47 @@ def save_report_with_frontmatter(
         session_id: Session identifier
         cost_tracker: Cost tracker with usage data
         config: Research configuration
-        output_dir: Directory to save report to
+        output_dir: Local directory to save report to (used for local backend or fallback)
+        user_email: User email for folder prefix (multi-tenancy)
+        storage_backend: Storage backend - 'local' or 'gcs'
+        gcs_bucket: GCS bucket URI when storage_backend='gcs'
         debug: Enable debug output
 
     Returns:
-        str: Path to saved file
+        str: Path to saved file (local path or GCS URI)
     """
-
-    # Ensure directory exists
-    os.makedirs( output_dir, exist_ok=True )
+    import cosa.utils.util as cu
 
     # Generate filename: YYYY.MM.DD-{semantic-topic}.md
     date_str = datetime.now().strftime( "%Y.%m.%d" )
     filename = f"{date_str}-{semantic_topic}.md"
-    file_path = f"{output_dir}/{filename}"
 
-    # Get cost summary
+    # Build file path with user email prefix
+    if storage_backend == "gcs" and gcs_bucket:
+        # GCS path: gs://bucket/{user_email}/{filename}
+        # Remove trailing slash from bucket if present
+        bucket = gcs_bucket.rstrip( "/" )
+        file_path = f"{bucket}/{user_email}/{filename}"
+    else:
+        # Local path: {output_dir}/{user_email}/{filename}
+        user_dir = f"{output_dir}/{user_email}"
+        os.makedirs( user_dir, exist_ok=True )
+        file_path = f"{user_dir}/{filename}"
+
+    # Get cost summary (SessionSummary is a dataclass, use attribute access)
     summary = cost_tracker.get_summary()
-    duration_seconds = summary.get( "duration_seconds", 0 )
-    cost_usd = summary.get( "total_cost_usd", 0.0 )
-    tokens_used = summary.get( "total_tokens", 0 )
+    duration_seconds = summary.duration_seconds
+    cost_usd = summary.total_cost_usd
+    tokens_used = summary.total_input_tokens + summary.total_output_tokens
 
-    # Build YAML frontmatter
+    # Build YAML frontmatter with storage metadata
     frontmatter = {
         "query"            : query,
         "abstract"         : abstract,
         "file_path"        : file_path,
         "session_id"       : session_id,
+        "user_email"       : user_email,
+        "storage_backend"  : storage_backend,
         "generated"        : datetime.now().isoformat() + "Z",
         "duration_seconds" : round( duration_seconds, 1 ),
         "cost_usd"         : round( cost_usd, 4 ),
@@ -612,13 +743,55 @@ def save_report_with_frontmatter(
     # Combine frontmatter and report
     full_content = f"---\n{yaml_content}---\n\n{report}"
 
-    # Write file
-    with open( file_path, "w", encoding="utf-8" ) as f:
-        f.write( full_content )
+    # Save based on storage backend
+    if storage_backend == "gcs" and gcs_bucket:
+        try:
+            from cosa.utils.util_gcs import write_text_to_gcs
+            write_text_to_gcs(
+                gcs_uri      = file_path,
+                content      = full_content,
+                content_type = "text/markdown",
+                debug        = debug
+            )
+            if debug: print( f"[CLI] Report saved to GCS: {file_path}" )
+            return file_path
 
-    if debug: print( f"[CLI] Report saved to: {file_path}" )
+        except Exception as e:
+            # GCS write failed - fall back to local temp file
+            print( f"\nWARNING: GCS write failed: {e}" )
+            print( "  Falling back to local temp file..." )
 
-    return file_path
+            # Create temp file in /tmp with similar naming
+            import tempfile
+            fallback_dir = tempfile.gettempdir()
+            fallback_path = f"{fallback_dir}/deep-research-{user_email.replace( '@', '_' )}-{filename}"
+
+            # Update frontmatter to reflect fallback
+            frontmatter[ "file_path" ] = fallback_path
+            frontmatter[ "storage_backend" ] = "local_fallback"
+            frontmatter[ "gcs_error" ] = str( e )
+
+            yaml_content = yaml.dump(
+                frontmatter,
+                default_flow_style = False,
+                allow_unicode      = True,
+                sort_keys          = False,
+                width              = 120,
+            )
+            full_content = f"---\n{yaml_content}---\n\n{report}"
+
+            with open( fallback_path, "w", encoding="utf-8" ) as f:
+                f.write( full_content )
+
+            print( f"  Report saved to fallback location: {fallback_path}" )
+            return fallback_path
+    else:
+        # Local storage
+        with open( file_path, "w", encoding="utf-8" ) as f:
+            f.write( full_content )
+
+        if debug: print( f"[CLI] Report saved to: {file_path}" )
+        return file_path
 
 
 def main():
@@ -627,6 +800,47 @@ def main():
 
     # Initialize configuration manager
     config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+
+    # Get storage configuration
+    storage_backend = config_mgr.get( "deep research storage backend", default="local" )
+    gcs_bucket      = config_mgr.get( "deep research gcs bucket", default=None )
+    gcs_fallback    = False  # Track if we fell back from GCS to local
+
+    # Resolve user_email: CLI arg > config default > error for GCS
+    user_email = args.user_email
+    if not user_email:
+        user_email = config_mgr.get( "deep research default user email", default=None )
+
+    if not user_email:
+        # user_email is required for both backends (multi-tenancy)
+        print( "ERROR: --user-email is required for multi-tenancy." )
+        print( "  Usage: --user-email your@email.com" )
+        print( "  Or set 'deep research default user email' in config (Development only)" )
+        sys.exit( 1 )
+
+    # Validate user_email format (basic check)
+    if "@" not in user_email:
+        print( f"ERROR: Invalid email format: {user_email}" )
+        print( "  Email must contain '@' character" )
+        sys.exit( 1 )
+
+    # Pre-flight GCS check if using GCS backend
+    if storage_backend == "gcs":
+        if not gcs_bucket:
+            print( "ERROR: GCS backend requires 'deep research gcs bucket' config" )
+            print( "  Example: deep research gcs bucket = gs://your-bucket/" )
+            sys.exit( 1 )
+
+        from cosa.utils.util_gcs import validate_gcs_bucket_access, GCS_AVAILABLE
+        if not GCS_AVAILABLE:
+            print( "WARNING: GCS SDK not available. Falling back to local storage." )
+            storage_backend = "local"
+            gcs_fallback = True
+        elif not validate_gcs_bucket_access( gcs_bucket, debug=args.debug ):
+            print( f"WARNING: GCS bucket not accessible: {gcs_bucket}" )
+            print( "  Falling back to local storage." )
+            storage_backend = "local"
+            gcs_fallback = True
 
     # Configure voice I/O mode
     if args.cli_mode:
@@ -683,17 +897,39 @@ def main():
 
     # Dry run mode
     if args.dry_run:
+        import cosa.utils.util as cu
         print( "DRY RUN MODE - No API calls will be made" )
         print( f"\nSession name: {session_name}" )
         print( f"Semantic topic (for files): {semantic_topic}" )
         print( f"Session ID: {session_id}" )
+        print( f"User email: {user_email}" )
         print( f"Notification sender: {cosa_interface.SENDER_ID}" )
+        print( f"\nStorage backend: {storage_backend}" )
+        if storage_backend == "gcs":
+            print( f"GCS bucket: {gcs_bucket}" )
+            print( f"Output location: {gcs_bucket.rstrip( '/' )}/{user_email}/" )
+        else:
+            local_path = cu.get_project_root() + config_mgr.get( "deep research output path" )
+            print( f"Output location: {local_path}/{user_email}/" )
+        if gcs_fallback:
+            print( "  (Fell back from GCS due to access issues)" )
         print( "\nUI will display: lupin#cli {session_name}" )
         print( "\nWould execute:" )
         print( "  1. Query clarification analysis" )
         print( "  2. Research plan generation" )
         print( "  3. Parallel subagent research" )
         print( "  4. Report synthesis" )
+
+        # Send test notification ONLY if voice mode is enabled
+        if not args.cli_mode:
+            asyncio.run( voice_io.notify(
+                f"Dry-run test: session '{session_name}'",
+                priority="medium"
+            ) )
+            print( "\n  ✓ Test notification sent - check UI for sender_id and session_name display" )
+        else:
+            print( "\n  [Voice mode disabled - skipping test notification]" )
+
         sys.exit( 0 )
 
     # Run research
@@ -740,15 +976,18 @@ def main():
                 ) )
 
                 file_path = save_report_with_frontmatter(
-                    report         = report,
-                    query          = args.query,
-                    abstract       = abstract,
-                    semantic_topic = semantic_topic,
-                    session_id     = session_id,
-                    cost_tracker   = cost_tracker,
-                    config         = config,
-                    output_dir     = output_dir,
-                    debug          = args.debug,
+                    report          = report,
+                    query           = args.query,
+                    abstract        = abstract,
+                    semantic_topic  = semantic_topic,
+                    session_id      = session_id,
+                    cost_tracker    = cost_tracker,
+                    config          = config,
+                    output_dir      = output_dir,
+                    user_email      = user_email,
+                    storage_backend = storage_backend,
+                    gcs_bucket      = gcs_bucket,
+                    debug           = args.debug,
                 )
 
                 # ALWAYS print file path and abstract to stdout
@@ -757,10 +996,27 @@ def main():
 
                 # Enhanced notification with frontmatter markdown in abstract field
                 summary = cost_tracker.get_summary()
-                duration_secs = summary.get( "duration_seconds", 0 )
+                duration_secs = summary.duration_seconds
                 duration_str = f"{int( duration_secs // 60 )}m {int( duration_secs % 60 )}s" if duration_secs >= 60 else f"{duration_secs:.0f}s"
-                cost_usd = summary.get( "total_cost_usd", 0.0 )
-                tokens_used = summary.get( "total_tokens", 0 )
+                cost_usd = summary.total_cost_usd
+                tokens_used = summary.total_input_tokens + summary.total_output_tokens
+
+                # Determine actual storage backend from file_path (may have changed in fallback)
+                actual_backend = "gcs" if file_path.startswith( "gs://" ) else "local"
+
+                # Build links based on storage backend
+                import urllib.parse
+                if actual_backend == "gcs":
+                    from cosa.utils.util_gcs import gcs_uri_to_console_url
+                    console_url = gcs_uri_to_console_url( file_path )
+                    encoded_path = urllib.parse.quote( file_path, safe="" )
+                    view_url = f"http://localhost:7999/api/deep-research/report?path={encoded_path}"
+                    links_section = f"""🔗 **View Report**: [Open in Browser]({view_url})
+🔗 **Cloud Console**: [View in GCS]({console_url})"""
+                else:
+                    encoded_path = urllib.parse.quote( file_path, safe="" )
+                    view_url = f"http://localhost:7999/api/deep-research/report?path={encoded_path}"
+                    links_section = f"""🔗 **View Report**: [Open in Browser]({view_url})"""
 
                 # Build markdown for notification abstract field
                 notification_abstract = f"""**Query**: {args.query}
@@ -771,12 +1027,14 @@ def main():
 
 📄 **Report**: `{file_path}`
 
+{links_section}
+
 | Metric | Value |
 |--------|-------|
 | Duration | {duration_str} |
 | Cost | ${cost_usd:.4f} |
 | Tokens | {tokens_used:,} |
-| Model | {config.lead_model} |
+| Storage | {actual_backend.upper()} |
 """
                 asyncio.run( voice_io.notify(
                     "Research complete! Your report is ready.",

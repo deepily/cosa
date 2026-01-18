@@ -21,6 +21,8 @@ from .planning import (
     PLANNING_SYSTEM_PROMPT,
     get_planning_prompt,
     parse_planning_response,
+    THEME_CLUSTERING_PROMPT,
+    get_theme_clustering_prompt,
 )
 
 from .subagent import (
@@ -48,6 +50,8 @@ __all__ = [
     "PLANNING_SYSTEM_PROMPT",
     "get_planning_prompt",
     "parse_planning_response",
+    "THEME_CLUSTERING_PROMPT",
+    "get_theme_clustering_prompt",
 
     # Subagent
     "SUBAGENT_SYSTEM_PROMPT",

@@ -246,12 +246,116 @@ def quick_smoke_test():
         assert len( result[ "subqueries" ] ) == 1
         print( "✓ Parsed valid planning response" )
 
+        # Test 5: Theme clustering prompt exists
+        print( "Testing theme clustering prompt..." )
+        assert len( THEME_CLUSTERING_PROMPT ) > 500
+        assert "themes" in THEME_CLUSTERING_PROMPT
+        assert "subquery_indices" in THEME_CLUSTERING_PROMPT
+        print( f"✓ Theme clustering prompt exists ({len( THEME_CLUSTERING_PROMPT )} chars)" )
+
+        # Test 6: Theme clustering user prompt generation
+        print( "Testing get_theme_clustering_prompt..." )
+        test_subqueries = [
+            { "topic": "React features", "objective": "Summarize React" },
+            { "topic": "Vue features", "objective": "Summarize Vue" },
+            { "topic": "Performance", "objective": "Compare benchmarks" },
+        ]
+        cluster_prompt = get_theme_clustering_prompt( test_subqueries )
+        assert "3 research topics" in cluster_prompt
+        assert "React features" in cluster_prompt
+        print( f"✓ Theme clustering prompt generated ({len( cluster_prompt )} chars)" )
+
         print( "\n✓ Planning prompt smoke test completed successfully" )
 
     except Exception as e:
         print( f"\n✗ Smoke test failed: {e}" )
         import traceback
         traceback.print_exc()
+
+
+# =============================================================================
+# Theme Clustering (for Progressive Narrowing UX)
+# =============================================================================
+
+THEME_CLUSTERING_PROMPT = """You are organizing research topics into thematic groups for user selection.
+
+Given a list of research subqueries, cluster them into 3-4 high-level themes.
+
+## Rules
+- Create 3-4 themes (never more than 4, never fewer than 2)
+- Each theme should group related subqueries
+- Theme names should be concise (2-4 words)
+- Every subquery must belong to exactly one theme
+
+## Output Format
+
+```json
+{
+    "themes": [
+        {
+            "name": "Theme Name",
+            "description": "One sentence describing this theme",
+            "subquery_indices": [0, 2, 5]
+        }
+    ]
+}
+```
+
+## Example
+
+Input topics:
+0. React core concepts: Summarize React's key features
+1. Vue core concepts: Summarize Vue's key features
+2. Performance benchmarks: Compare performance metrics
+3. Community size: Compare ecosystem activity
+4. Learning curve: Analyze documentation quality
+
+Output:
+```json
+{
+    "themes": [
+        {
+            "name": "Framework Foundations",
+            "description": "Core architecture and key features of each framework",
+            "subquery_indices": [0, 1]
+        },
+        {
+            "name": "Technical Comparison",
+            "description": "Performance benchmarks and metrics",
+            "subquery_indices": [2]
+        },
+        {
+            "name": "Ecosystem & Adoption",
+            "description": "Community, learning resources, and adoption factors",
+            "subquery_indices": [3, 4]
+        }
+    ]
+}
+```
+"""
+
+
+def get_theme_clustering_prompt( subqueries: list ) -> str:
+    """
+    Generate prompt for clustering subqueries into themes.
+
+    Requires:
+        - subqueries is a non-empty list of dicts with 'topic' and optionally 'objective'
+
+    Ensures:
+        - Returns formatted prompt listing all subqueries for clustering
+
+    Args:
+        subqueries: List of subquery dicts from planning response
+
+    Returns:
+        str: User message for theme clustering API call
+    """
+    topics_list = "\n".join(
+        f"{i}. {sq.get( 'topic', 'Unknown' )}: {sq.get( 'objective', '' )[ :60 ]}"
+        for i, sq in enumerate( subqueries )
+    )
+    return f"Cluster these {len( subqueries )} research topics into 3-4 themes:\n\n{topics_list}"
 
 
 if __name__ == "__main__":

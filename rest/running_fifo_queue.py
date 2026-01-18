@@ -3,6 +3,7 @@ from cosa.agents.receptionist_agent import ReceptionistAgent
 from cosa.agents.weather_agent import WeatherAgent
 from cosa.rest.fifo_queue import FifoQueue
 from cosa.agents.agent_base import AgentBase
+from cosa.agents.agentic_job_base import AgenticJobBase
 from cosa.memory.input_and_output_table import InputAndOutputTable
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.memory.gist_normalizer import GistNormalizer
@@ -146,9 +147,14 @@ class RunningFifoQueue( FifoQueue ):
             truncated_question = du.truncate_string( running_job.last_question_asked, max_len=64 )
 
             run_timer = sw.Stopwatch( "Starting job run timer..." )
-            
+
             # Process based on job type
-            if isinstance( running_job, AgentBase ):
+            # IMPORTANT: Check AgenticJobBase FIRST since it's a separate hierarchy from AgentBase
+            if isinstance( running_job, AgenticJobBase ):
+                # Agentic jobs (Deep Research, Podcast, etc.) - long-running, non-cacheable
+                running_job = self._handle_agentic_job( running_job, truncated_question, run_timer )
+
+            elif isinstance( running_job, AgentBase ):
                 # NEW: Check cache BEFORE agent execution
                 question = running_job.last_question_asked
 
@@ -213,23 +219,112 @@ class RunningFifoQueue( FifoQueue ):
         self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
         
         return running_job
-    
+
+    def _handle_agentic_job( self, running_job: AgenticJobBase, truncated_question: str, job_timer: sw.Stopwatch ) -> Any:
+        """
+        Handle execution of AgenticJobBase instances (Deep Research, Podcast, etc.).
+
+        Agentic jobs are long-running background tasks that:
+        - Run for minutes (not seconds)
+        - Send progress notifications during execution
+        - Don't cache results (each run is unique)
+        - Generate artifacts (reports, audio files, etc.)
+
+        Requires:
+            - running_job is an AgenticJobBase instance
+            - truncated_question is a string
+            - job_timer is a running Stopwatch
+
+        Ensures:
+            - Executes job's do_all() method
+            - Moves job to done queue on success, dead queue on failure
+            - NO snapshot caching (is_cacheable = False)
+            - Emits speech with conversational answer
+            - Returns the job instance
+
+        Raises:
+            - None (exceptions handled internally)
+        """
+        msg = f"Running AgenticJob [{running_job.JOB_TYPE}] for [{truncated_question}]..."
+        du.print_banner( msg=msg, prepend_nl=True )
+
+        try:
+            # Execute the job (synchronous wrapper around async execution)
+            formatted_output = running_job.do_all()
+
+            du.print_banner( f"AgenticJob [{running_job.id_hash}] complete!", prepend_nl=True, end="\n" )
+            job_timer.print( "Done!", use_millis=True )
+
+            if running_job.code_ran_to_completion() and running_job.formatter_ran_to_completion():
+                # Success path
+                self._emit_speech( running_job.answer_conversational, job=running_job )
+
+                # Move through queue system
+                self.pop()  # Auto-emits 'run_update'
+                self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
+
+                # Log to I/O table (skip if not available)
+                try:
+                    self.io_tbl.insert_io_row(
+                        input_type   = running_job.routing_command,
+                        input        = running_job.last_question_asked,
+                        output_raw   = str( running_job.artifacts ),
+                        output_final = running_job.answer_conversational
+                    )
+                except Exception as io_e:
+                    if self.debug: print( f"[AGENTIC] I/O table write skipped: {io_e}" )
+
+            else:
+                # Job reported failure via status
+                error_msg = running_job.error or "Unknown error"
+                du.print_banner( f"AgenticJob failed: {error_msg}", prepend_nl=True )
+
+                self._emit_speech(
+                    f"The {running_job.JOB_TYPE} job encountered an error: {error_msg[ :100 ]}",
+                    job=running_job
+                )
+
+                self.pop()  # Auto-emits 'run_update'
+                self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
+
+        except Exception as e:
+            # Unexpected exception during execution
+            du.print_stack_trace(
+                e,
+                explanation=f"AgenticJob do_all() failed",
+                caller="RunningFifoQueue._handle_agentic_job()",
+                debug=self.debug
+            )
+
+            running_job.status = "failed"
+            running_job.error  = str( e )
+
+            self._emit_speech(
+                f"The {running_job.JOB_TYPE} job crashed unexpectedly. Please check the logs.",
+                job=running_job
+            )
+
+            self.pop()  # Auto-emits 'run_update'
+            self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
+
+        return running_job
+
     def _handle_base_agent( self, running_job: AgentBase, truncated_question: str, agent_timer: sw.Stopwatch ) -> Any:
         """
         Handle execution of AgentBase instances.
-        
+
         Requires:
             - running_job is an AgentBase instance
             - truncated_question is a string
             - agent_timer is a running Stopwatch
-            
+
         Ensures:
             - Executes agent's do_all() method
             - Handles serialization for eligible agents
             - Updates queues and database
             - Emits socket updates
             - Returns the job (possibly converted to SolutionSnapshot)
-            
+
         Raises:
             - Catches and handles all exceptions internally
         """

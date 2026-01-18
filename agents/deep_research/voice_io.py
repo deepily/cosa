@@ -341,6 +341,154 @@ async def choose(
 
 
 # =============================================================================
+# Progressive Narrowing Functions (Theme/Topic Selection)
+# =============================================================================
+
+async def select_themes(
+    themes: list,
+    timeout: int = 180
+) -> list:
+    """
+    Present themes for multi-select and return selected theme indices.
+
+    Requires:
+        - themes is a list of {"name": str, "description": str, "subquery_indices": list}
+        - At least 2 themes provided
+
+    Ensures:
+        - Returns list of selected theme indices (0-based)
+        - Returns empty list if user cancels
+
+    Args:
+        themes: List of theme dicts from clustering response
+        timeout: Seconds to wait for response
+
+    Returns:
+        list[int]: Selected theme indices (0-based)
+    """
+    if _force_cli_mode or not await is_voice_available():
+        # CLI fallback
+        print( "\n  Select research themes (comma-separated numbers, or 'all'):" )
+        for i, theme in enumerate( themes, 1 ):
+            topic_count = len( theme.get( "subquery_indices", [] ) )
+            print( f"    {i}. {theme[ 'name' ]} ({topic_count} topics)" )
+            print( f"       {theme.get( 'description', '' )}" )
+
+        response = input( "  Your selection: " ).strip().lower()
+        if response == "all":
+            return list( range( len( themes ) ) )
+
+        try:
+            indices = [ int( x.strip() ) - 1 for x in response.split( "," ) ]
+            return [ i for i in indices if 0 <= i < len( themes ) ]
+        except ValueError:
+            return []
+
+    # Voice mode - use present_choices with multiSelect
+    questions = [ {
+        "question"    : "Which research themes interest you? Select all that apply.",
+        "header"      : "Themes",
+        "multiSelect" : True,
+        "options"     : [
+            {
+                "label"       : theme[ "name" ],
+                "description" : f"{len( theme.get( 'subquery_indices', [] ) )} topics: {theme.get( 'description', '' )}"
+            }
+            for theme in themes
+        ]
+    } ]
+
+    try:
+        result = await cosa_interface.present_choices( questions, timeout )
+        selected_names = result.get( "answers", {} ).get( "Themes", [] )
+
+        # Handle single selection (string) vs multi (list)
+        if isinstance( selected_names, str ):
+            selected_names = [ selected_names ]
+
+        # Map names back to indices
+        return [
+            i for i, theme in enumerate( themes )
+            if theme[ "name" ] in selected_names
+        ]
+
+    except Exception as e:
+        logger.warning( f"Voice select_themes failed: {e}" )
+        return []
+
+
+async def select_topics(
+    topics: list,
+    preselected: bool = True,
+    timeout: int = 180
+) -> list:
+    """
+    Present specific topics for refinement.
+
+    Requires:
+        - topics is a list of {"topic": str, "objective": str}
+
+    Ensures:
+        - Returns list of selected topic indices
+        - Returns empty list if user cancels
+
+    Args:
+        topics: List of topic dicts (subqueries)
+        preselected: Whether topics should be pre-selected (for deselection flow)
+        timeout: Seconds to wait for response
+
+    Returns:
+        list[int]: Selected topic indices (0-based)
+    """
+    if _force_cli_mode or not await is_voice_available():
+        # CLI fallback
+        print( "\n  Refine topic selection (comma-separated numbers, 'all', or 'none'):" )
+        for i, topic in enumerate( topics, 1 ):
+            print( f"    {i}. {topic.get( 'topic', 'Unknown' )}" )
+
+        response = input( "  Your selection: " ).strip().lower()
+        if response == "all":
+            return list( range( len( topics ) ) )
+        if response == "none":
+            return []
+
+        try:
+            indices = [ int( x.strip() ) - 1 for x in response.split( "," ) ]
+            return [ i for i in indices if 0 <= i < len( topics ) ]
+        except ValueError:
+            return list( range( len( topics ) ) )  # Default to all on error
+
+    # Voice mode
+    questions = [ {
+        "question"    : "Which specific topics should I research? Deselect any you want to skip.",
+        "header"      : "Topics",
+        "multiSelect" : True,
+        "options"     : [
+            {
+                "label"       : topic.get( "topic", "Unknown" )[ :50 ],
+                "description" : topic.get( "objective", "" )[ :80 ]
+            }
+            for topic in topics
+        ]
+    } ]
+
+    try:
+        result = await cosa_interface.present_choices( questions, timeout )
+        selected = result.get( "answers", {} ).get( "Topics", [] )
+
+        if isinstance( selected, str ):
+            selected = [ selected ]
+
+        # Map back to indices
+        topic_names = [ t.get( "topic", "" )[ :50 ] for t in topics ]
+        return [ i for i, name in enumerate( topic_names ) if name in selected ]
+
+    except Exception as e:
+        logger.warning( f"Voice select_topics failed: {e}" )
+        return list( range( len( topics ) ) )  # Default to all on error
+
+
+# =============================================================================
 # Smoke Test
 # =============================================================================
 
@@ -388,6 +536,8 @@ def quick_smoke_test():
         assert inspect.iscoroutinefunction( ask_yes_no )
         assert inspect.iscoroutinefunction( get_input )
         assert inspect.iscoroutinefunction( choose )
+        assert inspect.iscoroutinefunction( select_themes )
+        assert inspect.iscoroutinefunction( select_topics )
         print( "✓ All async functions have correct signatures" )
 
         # Test 5: CLI mode fallback (force CLI mode for safe testing)

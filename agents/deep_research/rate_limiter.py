@@ -282,7 +282,7 @@ class WebSearchRateLimiter:
         Calculate required delay before next call.
 
         Uses DYNAMIC calculation based on actual tokens in window.
-        No arbitrary minimums - purely based on observed usage.
+        Waits until ENOUGH records expire to get back under limit.
 
         Returns:
             float: Seconds to wait (0 if no delay needed)
@@ -297,13 +297,25 @@ class WebSearchRateLimiter:
             if tokens_in_window < self.tokens_per_minute:
                 return 0
 
-            # Over limit - wait until oldest record expires from window
+            # Over limit - find how long until enough records expire
             if not self._records:
                 return 0
 
-            oldest = self._records[ 0 ]
-            time_until_expires = ( oldest.timestamp + self.window_seconds ) - now
-            return max( 0, time_until_expires )
+            # Calculate how many tokens need to expire to get under limit
+            tokens_to_remove = tokens_in_window - self.tokens_per_minute + 1
+
+            # Find the record whose expiration brings us under the limit
+            cumulative_tokens = 0
+            for record in self._records:
+                cumulative_tokens += record.tokens
+                if cumulative_tokens >= tokens_to_remove:
+                    # This record's expiration will bring us under limit
+                    time_until_expires = ( record.timestamp + self.window_seconds ) - now
+                    return max( 0, time_until_expires )
+
+            # Fallback: wait for all records to expire (shouldn't reach here)
+            last_record = self._records[ -1 ]
+            return max( 0, ( last_record.timestamp + self.window_seconds ) - now )
 
     def _get_window_tokens( self ) -> int:
         """Get sum of tokens in current window (must hold lock)."""
@@ -418,6 +430,29 @@ def quick_smoke_test():
         tokens_after = expiry_limiter.get_tokens_in_window()
         assert tokens_after == 0, f"Expected 0 tokens after expiry, got {tokens_after}"
         print( "✓ Window expiration clears old records" )
+
+        # Test 9: Multi-record delay calculation
+        print( "Testing multi-record delay calculation..." )
+        multi_limiter = WebSearchRateLimiter(
+            tokens_per_minute = 30_000,
+            window_seconds    = 60.0,
+            debug             = True
+        )
+        # Simulate 3 calls of ~90k tokens each
+        multi_limiter.record_usage( 90_000 )
+        time.sleep( 0.01 )  # Small gap between records
+        multi_limiter.record_usage( 90_000 )
+        time.sleep( 0.01 )
+        multi_limiter.record_usage( 90_000 )
+
+        tokens = multi_limiter.get_tokens_in_window()
+        delay = multi_limiter._calculate_delay()
+        # With 270k tokens, need to remove 240k to get under 30k
+        # That means waiting for 3rd record to expire (all 3 records)
+        # Delay should be ~60s (waiting for 3rd record, not just 1st)
+        print( f"  Multi-record scenario: {tokens:,} tokens, delay: {delay:.1f}s" )
+        assert delay > 50, f"Expected delay > 50s for 270k tokens, got {delay:.1f}s"
+        print( "✓ Multi-record delay calculation correct" )
 
         print( "\n✓ WebSearchRateLimiter smoke test completed successfully" )
         return True
