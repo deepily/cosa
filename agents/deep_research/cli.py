@@ -23,7 +23,10 @@ import asyncio
 import os
 import sys
 import uuid
+from datetime import datetime
 from typing import Optional
+
+import yaml
 
 from .config import ResearchConfig
 from .cost_tracker import CostTracker, BudgetExceededError
@@ -31,6 +34,8 @@ from .api_client import ResearchAPIClient, ANTHROPIC_AVAILABLE, ENV_VAR_NAME, KE
 from .orchestrator import ResearchOrchestratorAgent, OrchestratorState
 from . import cosa_interface
 from . import voice_io
+
+from cosa.config.configuration_manager import ConfigurationManager
 
 # Import anthropic for RateLimitError handling
 if ANTHROPIC_AVAILABLE:
@@ -104,6 +109,20 @@ Examples:
         type=str,
         default=None,
         help="Output file for the research report"
+    )
+
+    parser.add_argument(
+        "--no-save",
+        action="store_true",
+        default=False,
+        help="Disable auto-save of report (default: save enabled)"
+    )
+
+    parser.add_argument(
+        "--save-to-directory",
+        type=str,
+        default=None,
+        help="Override save directory (default: from config manager)"
     )
 
     parser.add_argument(
@@ -435,7 +454,7 @@ async def run_research(
         )
 
         report = synthesis_response.content
-        await voice_io.notify( "Research complete! Your report is ready.", priority="high" )
+        # Note: Completion notification is sent in main() with enhanced details
 
         return report
 
@@ -447,33 +466,196 @@ async def run_research(
         await api_client.close()
 
 
+async def generate_abstract_for_cli(
+    report: str,
+    config: ResearchConfig,
+    cost_tracker: CostTracker,
+    debug: bool = False
+) -> str:
+    """
+    Generate a 2-3 sentence abstract of the research report for CLI use.
+
+    Uses Haiku model for cost efficiency since abstracts are simple
+    summarization tasks.
+
+    Requires:
+        - report is a non-empty markdown string
+
+    Ensures:
+        - Returns concise abstract suitable for YAML frontmatter
+        - Captures key findings and conclusions
+
+    Args:
+        report: The full research report in markdown format
+        config: Research configuration
+        cost_tracker: Cost tracker for usage
+        debug: Enable debug output
+
+    Returns:
+        str: 2-3 sentence abstract summarizing key findings
+    """
+    api_client = ResearchAPIClient(
+        config       = config,
+        cost_tracker = cost_tracker,
+        debug        = debug,
+    )
+
+    try:
+        system_prompt = """You are a research summarizer. Generate a concise 2-3 sentence abstract of the research report.
+Focus on:
+- The main topic/question investigated
+- Key findings or conclusions
+- One notable insight or recommendation
+
+Keep it factual and direct. No introductory phrases like "This report..." - just state the findings."""
+
+        user_message = f"""Summarize this research report in 2-3 sentences:
+
+{report[:8000]}"""  # Truncate to avoid token limits
+
+        response = await api_client.call_lead_agent(
+            system_prompt = system_prompt,
+            user_message  = user_message,
+            call_type     = "abstract",
+            max_tokens    = 256,
+        )
+
+        return response.content.strip()
+
+    except Exception as e:
+        if debug: print( f"[CLI] Abstract generation error: {e}" )
+        # Fallback: extract first meaningful paragraph
+        lines = report.split( "\n\n" )
+        for line in lines:
+            if line.strip() and not line.startswith( "#" ):
+                return line.strip()[ :300 ] + "..."
+        return "Research report generated."
+
+    finally:
+        await api_client.close()
+
+
+def save_report_with_frontmatter(
+    report: str,
+    query: str,
+    abstract: str,
+    semantic_topic: str,
+    session_id: str,
+    cost_tracker: CostTracker,
+    config: ResearchConfig,
+    output_dir: str,
+    debug: bool = False
+) -> str:
+    """
+    Save research report with YAML frontmatter to specified directory.
+
+    Requires:
+        - report is a non-empty string
+        - output_dir is a valid directory path
+
+    Ensures:
+        - Creates output directory if needed
+        - Writes report with YAML frontmatter
+        - Returns the file path
+
+    Args:
+        report: The research report content
+        query: Original research query
+        abstract: Generated abstract
+        semantic_topic: Semantic topic for filename
+        session_id: Session identifier
+        cost_tracker: Cost tracker with usage data
+        config: Research configuration
+        output_dir: Directory to save report to
+        debug: Enable debug output
+
+    Returns:
+        str: Path to saved file
+    """
+
+    # Ensure directory exists
+    os.makedirs( output_dir, exist_ok=True )
+
+    # Generate filename: YYYY.MM.DD-{semantic-topic}.md
+    date_str = datetime.now().strftime( "%Y.%m.%d" )
+    filename = f"{date_str}-{semantic_topic}.md"
+    file_path = f"{output_dir}/{filename}"
+
+    # Get cost summary
+    summary = cost_tracker.get_summary()
+    duration_seconds = summary.get( "duration_seconds", 0 )
+    cost_usd = summary.get( "total_cost_usd", 0.0 )
+    tokens_used = summary.get( "total_tokens", 0 )
+
+    # Build YAML frontmatter
+    frontmatter = {
+        "query"            : query,
+        "abstract"         : abstract,
+        "file_path"        : file_path,
+        "session_id"       : session_id,
+        "generated"        : datetime.now().isoformat() + "Z",
+        "duration_seconds" : round( duration_seconds, 1 ),
+        "cost_usd"         : round( cost_usd, 4 ),
+        "tokens_used"      : tokens_used,
+        "model"            : config.lead_model,
+    }
+
+    # Format YAML with proper string handling
+    yaml_content = yaml.dump(
+        frontmatter,
+        default_flow_style = False,
+        allow_unicode      = True,
+        sort_keys          = False,
+        width              = 120,
+    )
+
+    # Combine frontmatter and report
+    full_content = f"---\n{yaml_content}---\n\n{report}"
+
+    # Write file
+    with open( file_path, "w", encoding="utf-8" ) as f:
+        f.write( full_content )
+
+    if debug: print( f"[CLI] Report saved to: {file_path}" )
+
+    return file_path
+
+
 def main():
     """Main entry point."""
     args = parse_args()
+
+    # Initialize configuration manager
+    config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
 
     # Configure voice I/O mode
     if args.cli_mode:
         voice_io.set_cli_mode( True )
         print( "  [CLI mode enabled - voice I/O disabled]" )
 
-    # Generate semantic topic from query using existing Gister with custom prompt
+    # Generate session_name from query using Gister with custom prompt
+    # The prompt generates a human-readable name with spaces (e.g., "cats vs dogs")
     from cosa.memory.gister import Gister
     gister = Gister( debug=args.debug )
-    semantic_topic = gister.get_gist( args.query, prompt_key="prompt template for deep research session id generation" )
+    session_name = gister.get_gist( args.query, prompt_key="prompt template for deep research session name" )
 
-    # Post-process: ensure lowercase and hyphenated (defensive - expects 3 words)
-    semantic_topic = semantic_topic.lower().strip()
-    if " " in semantic_topic:
-        semantic_topic = semantic_topic.replace( " ", "-" )
-    # Validate 3-word format (should have exactly 2 hyphens)
-    if not semantic_topic or semantic_topic.count( "-" ) != 2:
-        semantic_topic = "general-research-query"
+    # Post-process session_name: ensure lowercase, preserve spaces for display
+    session_name = session_name.lower().strip()
+    if not session_name:
+        session_name = "general research query"
+
+    # Derive semantic_topic from session_name: convert spaces to hyphens for file naming
+    semantic_topic = session_name.replace( " ", "-" )
 
     if args.debug:
+        print( f"  [Session name: {session_name}]" )
         print( f"  [Semantic topic: {semantic_topic}]" )
 
-    # Update cosa_interface sender_id BEFORE any notifications
-    cosa_interface.SENDER_ID = cosa_interface._get_sender_id() + f"#{semantic_topic}"
+    # Update cosa_interface sender_id with static #cli suffix (NOT semantic topic)
+    cosa_interface.SENDER_ID = cosa_interface._get_sender_id() + "#cli"
+
+    # Set session_name for automatic inclusion in notifications
+    cosa_interface.SESSION_NAME = session_name
 
     # Check prerequisites
     if not args.dry_run and not check_prerequisites():
@@ -488,8 +670,8 @@ def main():
     if args.max_subagents:
         config.max_subagents_complex = args.max_subagents
 
-    # Create cost tracker
-    session_id = f"cli-{semantic_topic}-{uuid.uuid4().hex[:4]}"
+    # Create cost tracker with simplified session_id
+    session_id = f"cli-{uuid.uuid4().hex[:8]}"
     cost_tracker = CostTracker(
         session_id       = session_id,
         budget_limit_usd = args.budget,
@@ -502,9 +684,11 @@ def main():
     # Dry run mode
     if args.dry_run:
         print( "DRY RUN MODE - No API calls will be made" )
-        print( f"\nSemantic topic extracted: {semantic_topic}" )
-        print( f"Session ID would be: {session_id}" )
+        print( f"\nSession name: {session_name}" )
+        print( f"Semantic topic (for files): {semantic_topic}" )
+        print( f"Session ID: {session_id}" )
         print( f"Notification sender: {cosa_interface.SENDER_ID}" )
+        print( "\nUI will display: lupin#cli {session_name}" )
         print( "\nWould execute:" )
         print( "  1. Query clarification analysis" )
         print( "  2. Research plan generation" )
@@ -530,11 +714,81 @@ def main():
             print( "=" * 70 )
             print( report )
 
-            # Save to file if requested
+            # Save to file if requested (raw output without frontmatter)
             if args.output:
                 with open( args.output, "w" ) as f:
                     f.write( report )
                 print( f"\n  Report saved to: {args.output}" )
+
+            # Auto-save with YAML frontmatter (default: enabled, disable with --no-save)
+            save_enabled = not args.no_save
+            if save_enabled:
+                import cosa.utils.util as cu
+
+                # Determine output directory
+                if args.save_to_directory:
+                    output_dir = args.save_to_directory
+                else:
+                    output_dir = cu.get_project_root() + config_mgr.get( "deep research output path" )
+
+                print( "\n  Generating abstract for frontmatter..." )
+                abstract = asyncio.run( generate_abstract_for_cli(
+                    report       = report,
+                    config       = config,
+                    cost_tracker = cost_tracker,
+                    debug        = args.debug,
+                ) )
+
+                file_path = save_report_with_frontmatter(
+                    report         = report,
+                    query          = args.query,
+                    abstract       = abstract,
+                    semantic_topic = semantic_topic,
+                    session_id     = session_id,
+                    cost_tracker   = cost_tracker,
+                    config         = config,
+                    output_dir     = output_dir,
+                    debug          = args.debug,
+                )
+
+                # ALWAYS print file path and abstract to stdout
+                print( f"\n  Report saved to: {file_path}" )
+                print( f"\n  Abstract: {abstract}" )
+
+                # Enhanced notification with frontmatter markdown in abstract field
+                summary = cost_tracker.get_summary()
+                duration_secs = summary.get( "duration_seconds", 0 )
+                duration_str = f"{int( duration_secs // 60 )}m {int( duration_secs % 60 )}s" if duration_secs >= 60 else f"{duration_secs:.0f}s"
+                cost_usd = summary.get( "total_cost_usd", 0.0 )
+                tokens_used = summary.get( "total_tokens", 0 )
+
+                # Build markdown for notification abstract field
+                notification_abstract = f"""**Query**: {args.query}
+
+**Abstract**: {abstract}
+
+---
+
+📄 **Report**: `{file_path}`
+
+| Metric | Value |
+|--------|-------|
+| Duration | {duration_str} |
+| Cost | ${cost_usd:.4f} |
+| Tokens | {tokens_used:,} |
+| Model | {config.lead_model} |
+"""
+                asyncio.run( voice_io.notify(
+                    "Research complete! Your report is ready.",
+                    priority="high",
+                    abstract=notification_abstract
+                ) )
+            else:
+                # Basic notification when save is disabled
+                asyncio.run( voice_io.notify(
+                    "Research complete! Your report is displayed above.",
+                    priority="high"
+                ) )
 
         # Print cost summary
         print( "\n" + "=" * 70 )

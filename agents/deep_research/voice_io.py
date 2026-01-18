@@ -131,7 +131,12 @@ def get_mode_description() -> str:
 # Voice-First I/O Functions
 # =============================================================================
 
-async def notify( message: str, priority: str = "medium" ) -> None:
+async def notify(
+    message: str,
+    priority: str = "medium",
+    abstract: Optional[str] = None,
+    session_name: Optional[str] = None
+) -> None:
     """
     Send a progress notification (voice-first).
 
@@ -149,14 +154,18 @@ async def notify( message: str, priority: str = "medium" ) -> None:
     Args:
         message: The message to announce
         priority: Notification priority level
+        abstract: Optional supplementary context (markdown, URLs, details)
+        session_name: Optional human-readable session name for UI display
     """
     # Check for forced CLI mode or unavailable voice
     if _force_cli_mode or not await is_voice_available():
         print( f"  {message}" )
+        if abstract:
+            print( f"\n  Context:\n{abstract}\n" )
         return
 
     try:
-        await cosa_interface.notify_progress( message, priority )
+        await cosa_interface.notify_progress( message, priority, abstract, session_name )
     except Exception as e:
         logger.warning( f"Voice notification failed: {e}" )
         print( f"  {message}" )  # Fallback to print

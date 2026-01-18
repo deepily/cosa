@@ -67,6 +67,9 @@ def _get_sender_id() -> str:
 # Cache sender_id at module load (avoids repeated os.getcwd calls)
 SENDER_ID = _get_sender_id()
 
+# Session name for UI display (set by CLI before notifications)
+SESSION_NAME: Optional[str] = None
+
 
 # =============================================================================
 # Primary Interface Functions
@@ -74,7 +77,9 @@ SENDER_ID = _get_sender_id()
 
 async def notify_progress(
     message: str,
-    priority: str = "medium"
+    priority: str = "medium",
+    abstract: Optional[str] = None,
+    session_name: Optional[str] = None
 ) -> None:
     """
     Send fire-and-forget progress notification.
@@ -93,13 +98,20 @@ async def notify_progress(
     Args:
         message: Progress message to announce
         priority: "low", "medium", "high", or "urgent"
+        abstract: Optional supplementary context (markdown, URLs, details)
+        session_name: Optional human-readable session name for UI display
     """
     try:
+        # Use module-level SESSION_NAME if not explicitly provided
+        resolved_session_name = session_name if session_name is not None else SESSION_NAME
+
         request = AsyncNotificationRequest(
             message           = message,
             notification_type = NotificationType.PROGRESS,
             priority          = NotificationPriority( priority ),
             sender_id         = SENDER_ID,
+            abstract          = abstract,
+            session_name      = resolved_session_name,
         )
 
         # Run blocking call in thread pool

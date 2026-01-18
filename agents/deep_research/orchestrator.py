@@ -22,10 +22,15 @@ from .state import (
     OrchestratorState,
     ResearchState,
     ResearchPlan,
+    SubQuery,
     SubagentFinding,
+    SourceReference,
     create_initial_state
 )
 from . import cosa_interface
+from .api_client import ResearchAPIClient
+from .cost_tracker import CostTracker
+from .prompts import clarification, planning, subagent, synthesis
 
 logger = logging.getLogger( __name__ )
 
@@ -55,6 +60,7 @@ class ResearchOrchestratorAgent:
         query: str,
         user_id: str,
         config: Optional[ ResearchConfig ] = None,
+        budget_limit_usd: Optional[ float ] = None,
         debug: bool = False,
         verbose: bool = False
     ):
@@ -65,6 +71,7 @@ class ResearchOrchestratorAgent:
             query: The user's research query
             user_id: System user ID for event routing
             config: Research configuration (uses defaults if None)
+            budget_limit_usd: Optional spending cap for research session
             debug: Enable debug output
             verbose: Enable verbose output
         """
@@ -77,12 +84,25 @@ class ResearchOrchestratorAgent:
         # State management
         self.state      = OrchestratorState.CLARIFYING
         self.sub_tasks  : list[ asyncio.Task ] = []
-        self.findings   : list[ Any ] = []
+        self.findings   : list[ SubagentFinding ] = []
         self._pause_requested = False
         self._stop_requested  = False
 
         # Initialize research state (TypedDict for graph)
         self._research_state = create_initial_state( query )
+
+        # Initialize cost tracking and API client
+        self.cost_tracker = CostTracker(
+            session_id       = f"research-{user_id}-{int( time.time() )}",
+            budget_limit_usd = budget_limit_usd,
+            debug            = debug,
+        )
+        self.api_client = ResearchAPIClient(
+            config       = self.config,
+            cost_tracker = self.cost_tracker,
+            debug        = debug,
+            verbose      = verbose,
+        )
 
         # Metrics
         self.metrics = {
@@ -185,13 +205,34 @@ class ResearchOrchestratorAgent:
             self.state = OrchestratorState.RESEARCHING
             await cosa_interface.notify_progress( "Starting parallel research..." )
 
-            # TODO: Implement parallel research execution in Phase 2
-            # Placeholder: Would spawn subagent tasks here
-            # self.sub_tasks = [
-            #     asyncio.create_task( self._research_subquery_async( sq, i ) )
-            #     for i, sq in enumerate( plan.subqueries if plan else [] )
-            # ]
-            # self.findings = await asyncio.gather( *self.sub_tasks, return_exceptions=True )
+            plan = self._research_state.get( "plan" )
+            if plan and plan.subqueries:
+                # Create tasks for parallel execution
+                self.sub_tasks = [
+                    asyncio.create_task( self._research_subquery_async( sq, i ) )
+                    for i, sq in enumerate( plan.subqueries )
+                ]
+
+                # Execute all subqueries in parallel
+                results = await asyncio.gather( *self.sub_tasks, return_exceptions=True )
+
+                # Filter out exceptions and store valid findings
+                self.findings = []
+                for i, result in enumerate( results ):
+                    if isinstance( result, SubagentFinding ):
+                        self.findings.append( result )
+                    elif isinstance( result, Exception ):
+                        logger.error( f"Subquery {i} failed with exception: {result}" )
+                        if self.debug:
+                            print( f"[ResearchOrchestratorAgent] Subquery {i} exception: {result}" )
+
+                self._research_state[ "subagent_findings" ] = self.findings
+                self._research_state[ "total_sources_found" ] = sum(
+                    len( f.sources ) for f in self.findings
+                )
+
+                if self.debug:
+                    print( f"[ResearchOrchestratorAgent] Completed {len( self.findings )}/{len( plan.subqueries )} subqueries" )
 
             if self._check_stop(): return await self._handle_stop()
 
@@ -370,62 +411,264 @@ class ResearchOrchestratorAgent:
 
     async def _clarify_query_async( self ) -> dict:
         """
-        Placeholder: Analyze query for clarification needs.
+        Analyze query for clarification needs using Claude.
 
-        Phase 2 will implement with Claude API call.
+        Requires:
+            - API client is initialized
+            - Query is non-empty
+
+        Ensures:
+            - Returns dict with needs_feedback, question, understood_query
+            - Increments api_calls metric
 
         Returns:
             dict: {"needs_feedback": bool, "question": str, "understood_query": str}
         """
-        # TODO: Implement with Claude API call
-        return {
-            "needs_feedback"   : False,
-            "understood_query" : self.query
-        }
+        try:
+            response = await self.api_client.call_lead_agent(
+                system_prompt = clarification.CLARIFICATION_SYSTEM_PROMPT,
+                user_message  = clarification.get_clarification_prompt( self.query ),
+                call_type     = "clarification",
+            )
+            self.metrics[ "api_calls" ] += 1
+
+            result = clarification.parse_clarification_response( response.content )
+
+            # Map API response format to orchestrator format
+            return {
+                "needs_feedback"   : result.get( "needs_clarification", False ),
+                "question"         : result.get( "question" ),
+                "understood_query" : result.get( "understood_query", self.query ),
+                "ambiguities"      : result.get( "ambiguities", [] ),
+                "confidence"       : result.get( "confidence", 0.5 ),
+            }
+
+        except Exception as e:
+            logger.error( f"Clarification failed: {e}" )
+            if self.debug: print( f"[ResearchOrchestratorAgent] Clarification error: {e}" )
+            # Fail safe: proceed without clarification
+            return {
+                "needs_feedback"   : False,
+                "understood_query" : self.query
+            }
 
     async def _create_plan_async( self ) -> Optional[ ResearchPlan ]:
         """
-        Placeholder: Create research plan with Claude.
+        Create research plan using Claude.
 
-        Phase 2 will implement with Claude API call.
+        Requires:
+            - API client is initialized
+            - Clarification phase has completed
+
+        Ensures:
+            - Returns ResearchPlan with subqueries
+            - Increments api_calls metric
 
         Returns:
             ResearchPlan or None
         """
-        # TODO: Implement with Claude API call
-        # Return a placeholder plan for testing
-        from .state import SubQuery
+        try:
+            # Use clarified query if available
+            clarified = self._research_state.get( "clarification_response" ) or self.query
 
-        return ResearchPlan(
-            complexity="moderate",
-            subqueries=[
+            response = await self.api_client.call_lead_agent(
+                system_prompt = planning.PLANNING_SYSTEM_PROMPT,
+                user_message  = planning.get_planning_prompt(
+                    query           = self.query,
+                    clarified_query = clarified,
+                    max_subagents   = self.config.max_subagents_complex,
+                ),
+                call_type = "planning",
+            )
+            self.metrics[ "api_calls" ] += 1
+
+            plan_dict = planning.parse_planning_response( response.content )
+
+            # Convert subqueries to Pydantic models
+            subqueries = [
                 SubQuery(
-                    topic=self.query,
-                    objective="Research the topic",
-                    output_format="summary"
+                    topic         = sq.get( "topic", "" ),
+                    objective     = sq.get( "objective", "" ),
+                    output_format = sq.get( "output_format", "summary" ),
+                    tools_to_use  = sq.get( "tools_to_use", [ "web_search" ] ),
+                    priority      = sq.get( "priority", 1 ),
+                    depends_on    = sq.get( "depends_on" ),
                 )
-            ],
-            estimated_subagents=1,
-            rationale="Placeholder plan for Phase 1 testing"
-        )
+                for sq in plan_dict.get( "subqueries", [] )
+            ]
+
+            return ResearchPlan(
+                complexity                 = plan_dict.get( "complexity", "moderate" ),
+                subqueries                 = subqueries,
+                estimated_subagents        = plan_dict.get( "estimated_subagents", len( subqueries ) ),
+                rationale                  = plan_dict.get( "rationale", "" ),
+                estimated_duration_minutes = plan_dict.get( "estimated_duration_minutes", 10 ),
+            )
+
+        except Exception as e:
+            logger.error( f"Planning failed: {e}" )
+            if self.debug: print( f"[ResearchOrchestratorAgent] Planning error: {e}" )
+            # Fail safe: return a simple single-query plan
+            return ResearchPlan(
+                complexity          = "simple",
+                subqueries          = [
+                    SubQuery(
+                        topic         = self.query,
+                        objective     = "Research the topic comprehensively",
+                        output_format = "summary",
+                    )
+                ],
+                estimated_subagents = 1,
+                rationale           = "Fallback plan due to planning error",
+            )
+
+    async def _research_subquery_async(
+        self,
+        sq: SubQuery,
+        index: int
+    ) -> SubagentFinding:
+        """
+        Execute a single subquery with web search.
+
+        Requires:
+            - API client is initialized
+            - SubQuery has topic and objective
+
+        Ensures:
+            - Returns SubagentFinding with findings and sources
+            - Increments api_calls metric
+
+        Args:
+            sq: The subquery to research
+            index: Index of this subquery in the plan
+
+        Returns:
+            SubagentFinding: Research results for this subquery
+        """
+        try:
+            if self.debug:
+                print( f"[ResearchOrchestratorAgent] Researching subquery {index}: {sq.topic[:50]}..." )
+
+            response = await self.api_client.call_subagent(
+                system_prompt  = subagent.get_system_prompt_with_params(
+                    min_sources = self.config.min_sources_per_subquery,
+                    max_sources = self.config.max_sources_per_subquery,
+                ),
+                user_message   = subagent.get_subagent_prompt(
+                    topic         = sq.topic,
+                    objective     = sq.objective,
+                    output_format = sq.output_format,
+                ),
+                subquery_index = index,
+                call_type      = "research",
+                use_web_search = True,
+            )
+            self.metrics[ "api_calls" ] += 1
+
+            result = subagent.parse_subagent_response( response.content )
+
+            # Convert sources to SourceReference objects
+            sources = [
+                SourceReference(
+                    url             = src.get( "url", "" ),
+                    title           = src.get( "title", "Untitled" ),
+                    snippet         = src.get( "snippet", "" ),
+                    relevance_score = src.get( "relevance_score", 0.5 ),
+                    source_quality  = src.get( "source_quality", "unknown" ),
+                    access_date     = src.get( "access_date", "" ),
+                )
+                for src in result.get( "sources", [] )
+            ]
+
+            return SubagentFinding(
+                subquery_index = index,
+                subquery_topic = sq.topic,
+                findings       = result.get( "findings", "" ),
+                sources        = sources,
+                confidence     = result.get( "confidence", 0.5 ),
+                gaps           = result.get( "gaps", [] ),
+                quality_notes  = result.get( "quality_notes", "" ),
+            )
+
+        except Exception as e:
+            logger.error( f"Subquery {index} research failed: {e}" )
+            if self.debug: print( f"[ResearchOrchestratorAgent] Subquery {index} error: {e}" )
+            # Return a minimal finding indicating failure
+            return SubagentFinding(
+                subquery_index = index,
+                subquery_topic = sq.topic,
+                findings       = f"Research failed: {str( e )[:100]}",
+                sources        = [],
+                confidence     = 0.0,
+                gaps           = [ "Research could not be completed" ],
+                quality_notes  = f"Error during research: {type( e ).__name__}",
+            )
 
     async def _synthesize_async( self ) -> str:
         """
-        Placeholder: Synthesize findings into report.
+        Synthesize findings into report using Claude.
 
-        Phase 2 will implement synthesis logic.
+        Requires:
+            - API client is initialized
+            - Findings list is populated
+
+        Ensures:
+            - Returns comprehensive report in markdown format
+            - Increments api_calls metric
 
         Returns:
             str: Draft report
         """
-        # TODO: Implement synthesis
-        return f"Research report placeholder for: {self.query}"
+        try:
+            # Convert findings to dictionaries for the prompt
+            findings_dicts = [
+                {
+                    "subquery_topic" : f.subquery_topic,
+                    "findings"       : f.findings,
+                    "confidence"     : f.confidence,
+                    "gaps"           : f.gaps,
+                    "sources"        : [ s.model_dump() for s in f.sources ],
+                }
+                for f in self.findings
+            ]
+
+            plan = self._research_state.get( "plan" )
+            plan_summary = plan.rationale if plan else None
+
+            response = await self.api_client.call_lead_agent(
+                system_prompt = synthesis.SYNTHESIS_SYSTEM_PROMPT,
+                user_message  = synthesis.get_synthesis_prompt(
+                    query        = self.query,
+                    findings     = findings_dicts,
+                    plan_summary = plan_summary,
+                ),
+                call_type  = "synthesis",
+                max_tokens = 8192,  # Reports can be long
+            )
+            self.metrics[ "api_calls" ] += 1
+
+            return response.content
+
+        except Exception as e:
+            logger.error( f"Synthesis failed: {e}" )
+            if self.debug: print( f"[ResearchOrchestratorAgent] Synthesis error: {e}" )
+            # Fallback: return a simple concatenation of findings
+            sections = [ f"# Research Report: {self.query}\n\n## Findings\n" ]
+            for f in self.findings:
+                sections.append( f"### {f.subquery_topic}\n\n{f.findings}\n" )
+            return "\n".join( sections )
 
     async def _revise_report_async( self, report: str, feedback: str ) -> str:
         """
-        Placeholder: Revise report based on feedback.
+        Revise report based on user feedback using Claude.
 
-        Phase 2 will implement revision logic.
+        Requires:
+            - API client is initialized
+            - Report and feedback are non-empty
+
+        Ensures:
+            - Returns revised report addressing feedback
+            - Increments api_calls metric
 
         Args:
             report: Current report draft
@@ -434,23 +677,97 @@ class ResearchOrchestratorAgent:
         Returns:
             str: Revised report
         """
-        # TODO: Implement revision
-        return report
+        try:
+            response = await self.api_client.call_lead_agent(
+                system_prompt = synthesis.SYNTHESIS_SYSTEM_PROMPT,
+                user_message  = synthesis.get_revision_prompt( report, feedback ),
+                call_type     = "revision",
+                max_tokens    = 8192,
+            )
+            self.metrics[ "api_calls" ] += 1
+
+            return response.content
+
+        except Exception as e:
+            logger.error( f"Revision failed: {e}" )
+            if self.debug: print( f"[ResearchOrchestratorAgent] Revision error: {e}" )
+            # Fallback: return unchanged report with feedback note
+            return report + f"\n\n---\n*Note: Revision attempted but failed. Feedback: {feedback}*"
 
     async def _add_citations_async( self, report: str ) -> str:
         """
-        Placeholder: Add citations to report.
+        Citation pass-through (handled by synthesis prompt).
 
-        Phase 2 will implement citation addition.
+        The synthesis prompt already requests inline citations, so this
+        method serves as a pass-through. Future enhancements could:
+        - Verify citations match sources
+        - Standardize citation format
+        - Add missing citations
 
         Args:
-            report: Report without citations
+            report: Report (already contains inline citations from synthesis)
 
         Returns:
-            str: Report with citations
+            str: Report with citations (unchanged)
         """
-        # TODO: Implement citation addition
+        # Synthesis prompt already requests inline citations
+        # This method is kept for future enhancement
         return report
+
+    async def _generate_abstract_async( self, report: str ) -> str:
+        """
+        Generate a 2-3 sentence abstract of the research report.
+
+        Uses Haiku model for cost efficiency since abstracts are simple
+        summarization tasks.
+
+        Requires:
+            - report is a non-empty markdown string
+            - API client is initialized
+
+        Ensures:
+            - Returns concise abstract suitable for notifications
+            - Captures key findings and conclusions
+            - 2-3 sentences maximum
+
+        Args:
+            report: The full research report in markdown format
+
+        Returns:
+            str: 2-3 sentence abstract summarizing key findings
+        """
+        try:
+            system_prompt = """You are a research summarizer. Generate a concise 2-3 sentence abstract of the research report.
+Focus on:
+- The main topic/question investigated
+- Key findings or conclusions
+- One notable insight or recommendation
+
+Keep it factual and direct. No introductory phrases like "This report..." - just state the findings."""
+
+            user_message = f"""Summarize this research report in 2-3 sentences:
+
+{report[:8000]}"""  # Truncate to avoid token limits
+
+            response = await self.api_client.call_lead_agent(
+                system_prompt = system_prompt,
+                user_message  = user_message,
+                call_type     = "abstract",
+                max_tokens    = 256,
+            )
+            self.metrics[ "api_calls" ] += 1
+
+            return response.content.strip()
+
+        except Exception as e:
+            logger.error( f"Abstract generation failed: {e}" )
+            if self.debug: print( f"[ResearchOrchestratorAgent] Abstract error: {e}" )
+            # Fallback: extract first paragraph
+            lines = report.split( "\n\n" )
+            for line in lines:
+                if line.strip() and not line.startswith( "#" ):
+                    return line.strip()[ :300 ] + "..."
+            return "Research report generated."
 
 
 def quick_smoke_test():
@@ -490,34 +807,51 @@ def quick_smoke_test():
         assert agent._calculate_progress() == 100  # COMPLETED = 100%
         print( "✓ _calculate_progress returns correct values" )
 
-        # Test 4: Async placeholder methods (run in event loop)
-        print( "Testing async placeholder methods..." )
+        # Test 4: API integration (requires API key)
+        print( "Testing API integration..." )
 
-        async def test_placeholders():
+        async def test_api_integration():
             agent2 = ResearchOrchestratorAgent(
                 query="Test query",
-                user_id="test-user"
+                user_id="test-user",
+                budget_limit_usd=0.10,  # Low budget for testing
+                debug=True
             )
 
-            # Test _clarify_query_async
+            # Test _clarify_query_async - returns dict with expected keys
             clarification = await agent2._clarify_query_async()
             assert "needs_feedback" in clarification
-            assert clarification[ "needs_feedback" ] is False
+            assert "understood_query" in clarification
+            # Check types, not specific values (API response varies)
+            assert isinstance( clarification[ "needs_feedback" ], bool )
+            print( f"  ✓ _clarify_query_async returns valid structure" )
 
-            # Test _create_plan_async
+            # Test _create_plan_async - returns ResearchPlan
             plan = await agent2._create_plan_async()
             assert plan is not None
-            assert plan.complexity == "moderate"
+            assert plan.complexity in [ "simple", "moderate", "complex" ]
+            assert len( plan.subqueries ) >= 1
+            print( f"  ✓ _create_plan_async returns ResearchPlan (complexity={plan.complexity})" )
 
-            # Test _synthesize_async
+            # Test _synthesize_async with mock findings
+            agent2.findings = []  # Empty findings for test
             report = await agent2._synthesize_async()
-            assert "Test query" in report
+            assert isinstance( report, str )
+            print( f"  ✓ _synthesize_async returns report ({len( report )} chars)" )
 
             return True
 
-        result = asyncio.run( test_placeholders() )
-        assert result is True
-        print( "✓ Async placeholder methods work correctly" )
+        try:
+            result = asyncio.run( test_api_integration() )
+            assert result is True
+            print( "✓ API integration tests passed" )
+        except ImportError as e:
+            print( f"⚠ Skipping API tests (anthropic SDK not installed): {e}" )
+        except ValueError as e:
+            if "API key" in str( e ):
+                print( f"⚠ Skipping API tests (no API key): {e}" )
+            else:
+                raise
 
         # Test 5: pause/resume/stop
         print( "Testing control methods..." )
