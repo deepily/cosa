@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Voice-First I/O Layer for COSA Deep Research Agent.
+Voice-First I/O Layer for COSA Podcast Generator Agent.
 
 This module provides a unified interface for user interaction that:
 1. PRIMARILY uses voice I/O via cosa_interface (TTS + voice input)
@@ -18,7 +18,7 @@ Priority Order:
 
 import asyncio
 import logging
-from typing import Optional, List, Union
+from typing import Optional, List
 
 from . import cosa_interface
 
@@ -98,7 +98,6 @@ async def is_voice_available() -> bool:
     # Try to ping the voice service
     try:
         # Send a silent/minimal notification to test connectivity
-        # Using a very short message that won't be intrusive
         await cosa_interface.notify_progress( "Initializing...", priority="low" )
         _voice_available = True
         logger.info( "Voice service available - using voice-first mode" )
@@ -134,8 +133,8 @@ def get_mode_description() -> str:
 async def notify(
     message: str,
     priority: str = "medium",
-    abstract: Optional[str] = None,
-    session_name: Optional[str] = None
+    abstract: Optional[ str ] = None,
+    session_name: Optional[ str ] = None
 ) -> None:
     """
     Send a progress notification (voice-first).
@@ -175,7 +174,7 @@ async def ask_yes_no(
     question: str,
     default: str = "no",
     timeout: int = 60,
-    abstract: Optional[str] = None
+    abstract: Optional[ str ] = None
 ) -> bool:
     """
     Ask a yes/no question (voice-first).
@@ -269,259 +268,79 @@ async def get_input(
         return response if response or allow_empty else None
 
 
-async def choose(
-    question: str,
-    options: Union[ List[ str ], List[ dict ] ],
+async def present_choices(
+    questions: list,
     timeout: int = 120,
-    allow_custom: bool = False
-) -> str:
+    title: Optional[ str ] = None,
+    abstract: Optional[ str ] = None
+) -> dict:
     """
-    Present multiple-choice options (voice-first).
+    Present multiple-choice questions (voice-first).
 
-    In voice mode: Speaks options via TTS, captures voice selection
+    In voice mode: Uses TTS and voice UI
     In CLI mode: Prints numbered options, waits for number input
 
-    Options can be provided in two formats:
-    - List of strings: ["Option 1", "Option 2"]
-    - List of dicts: [{"label": "...", "description": "..."}]
-
     Requires:
-        - question is a non-empty string
-        - options is a non-empty list of strings or dicts
-        - timeout is positive integer (1-600)
+        - questions is a list of question objects
+        - Each question has: question, header, multiSelect, options
 
     Ensures:
-        - Returns one of the provided option labels (or custom input if allowed)
-        - Returns first option as default on timeout/error
+        - Returns dict with "answers" key containing selections
+        - In CLI mode, returns first option on invalid input
 
     Args:
-        question: The question introducing the choices
-        options: List of option strings or dicts with label/description
+        questions: List of question objects with options
         timeout: Seconds to wait for response
-        allow_custom: If True, user can provide custom input via "Other" (default: False)
+        title: Optional title for the notification
+        abstract: Optional supplementary context
 
     Returns:
-        str: The selected option label (or custom input)
-    """
-    if not options:
-        raise ValueError( "Options list cannot be empty" )
-
-    # Normalize options to dict format for consistent handling
-    normalized_options = []
-    for opt in options:
-        if isinstance( opt, str ):
-            normalized_options.append( { "label": opt, "description": "" } )
-        elif isinstance( opt, dict ):
-            normalized_options.append( {
-                "label"       : opt.get( "label", str( opt ) ),
-                "description" : opt.get( "description", "" )
-            } )
-        else:
-            normalized_options.append( { "label": str( opt ), "description": "" } )
-
-    # Extract labels for return values
-    labels = [ opt[ "label" ] for opt in normalized_options ]
-
-    if _force_cli_mode or not await is_voice_available():
-        # CLI fallback - numbered menu with descriptions
-        print( f"\n  {question}" )
-        for i, opt in enumerate( normalized_options, 1 ):
-            if opt[ "description" ]:
-                print( f"    {i}. {opt[ 'label' ]} - {opt[ 'description' ]}" )
-            else:
-                print( f"    {i}. {opt[ 'label' ]}" )
-
-        if allow_custom:
-            print( f"    {len( normalized_options ) + 1}. Other (type your own)" )
-
-        response = input( "  Enter number: " ).strip()
-        try:
-            idx = int( response ) - 1
-            if 0 <= idx < len( labels ):
-                return labels[ idx ]
-            elif allow_custom and idx == len( labels ):
-                custom = input( "  Enter your choice: " ).strip()
-                return custom if custom else labels[ 0 ]
-        except ValueError:
-            pass
-
-        print( f"  Invalid selection, using default: {labels[ 0 ]}" )
-        return labels[ 0 ]
-
-    try:
-        # Build question format for cosa_interface (already has descriptions)
-        questions = [ {
-            "question"    : question,
-            "header"      : "Choice",
-            "multiSelect" : False,
-            "options"     : normalized_options
-        } ]
-
-        result = await cosa_interface.present_choices( questions, timeout )
-        selection = result.get( "answers", {} ).get( "Choice" )
-
-        # Handle custom "Other" response
-        if selection and selection not in labels:
-            # User selected "Other" and provided custom text
-            return selection
-
-        if selection and selection in labels:
-            return selection
-
-        return labels[ 0 ]  # Default
-
-    except Exception as e:
-        logger.warning( f"Voice choose failed: {e}" )
-        # Fallback to CLI
-        return labels[ 0 ]
-
-
-# =============================================================================
-# Progressive Narrowing Functions (Theme/Topic Selection)
-# =============================================================================
-
-async def select_themes(
-    themes: list,
-    timeout: int = 180
-) -> list:
-    """
-    Present themes for multi-select and return selected theme indices.
-
-    Requires:
-        - themes is a list of {"name": str, "description": str, "subquery_indices": list}
-        - At least 2 themes provided
-
-    Ensures:
-        - Returns list of selected theme indices (0-based)
-        - Returns empty list if user cancels
-
-    Args:
-        themes: List of theme dicts from clustering response
-        timeout: Seconds to wait for response
-
-    Returns:
-        list[int]: Selected theme indices (0-based)
+        dict: {"answers": {...}} with selections keyed by header
     """
     if _force_cli_mode or not await is_voice_available():
-        # CLI fallback
-        print( "\n  Select research themes (comma-separated numbers, or 'all'):" )
-        for i, theme in enumerate( themes, 1 ):
-            topic_count = len( theme.get( "subquery_indices", [] ) )
-            print( f"    {i}. {theme[ 'name' ]} ({topic_count} topics)" )
-            print( f"       {theme.get( 'description', '' )}" )
+        # CLI fallback - numbered menu
+        if abstract:
+            print( f"\n{abstract}" )
 
-        response = input( "  Your selection: " ).strip().lower()
-        if response == "all":
-            return list( range( len( themes ) ) )
+        answers = {}
+        for q in questions:
+            question_text = q.get( "question", "Choose an option:" )
+            header = q.get( "header", "Choice" )
+            options = q.get( "options", [] )
 
-        try:
-            indices = [ int( x.strip() ) - 1 for x in response.split( "," ) ]
-            return [ i for i in indices if 0 <= i < len( themes ) ]
-        except ValueError:
-            return []
+            print( f"\n  {question_text}" )
+            for i, opt in enumerate( options, 1 ):
+                label = opt.get( "label", f"Option {i}" )
+                desc = opt.get( "description", "" )
+                if desc:
+                    print( f"    {i}. {label} - {desc}" )
+                else:
+                    print( f"    {i}. {label}" )
 
-    # Voice mode - use present_choices with multiSelect
-    questions = [ {
-        "question"    : "Which research themes interest you? Select all that apply.",
-        "header"      : "Themes",
-        "multiSelect" : True,
-        "options"     : [
-            {
-                "label"       : theme[ "name" ],
-                "description" : f"{len( theme.get( 'subquery_indices', [] ) )} topics: {theme.get( 'description', '' )}"
-            }
-            for theme in themes
-        ]
-    } ]
+            response = input( "  Enter number (or text for 'Other'): " ).strip()
+            try:
+                idx = int( response ) - 1
+                if 0 <= idx < len( options ):
+                    answers[ header ] = options[ idx ][ "label" ]
+                else:
+                    answers[ header ] = options[ 0 ][ "label" ] if options else ""
+            except ValueError:
+                # User typed custom text - treat as "Other"
+                answers[ header ] = response if response else ( options[ 0 ][ "label" ] if options else "" )
 
-    try:
-        result = await cosa_interface.present_choices( questions, timeout )
-        selected_names = result.get( "answers", {} ).get( "Themes", [] )
-
-        # Handle single selection (string) vs multi (list)
-        if isinstance( selected_names, str ):
-            selected_names = [ selected_names ]
-
-        # Map names back to indices
-        return [
-            i for i, theme in enumerate( themes )
-            if theme[ "name" ] in selected_names
-        ]
-
-    except Exception as e:
-        logger.warning( f"Voice select_themes failed: {e}" )
-        return []
-
-
-async def select_topics(
-    topics: list,
-    preselected: bool = True,
-    timeout: int = 180
-) -> list:
-    """
-    Present specific topics for refinement.
-
-    Requires:
-        - topics is a list of {"topic": str, "objective": str}
-
-    Ensures:
-        - Returns list of selected topic indices
-        - Returns empty list if user cancels
-
-    Args:
-        topics: List of topic dicts (subqueries)
-        preselected: Whether topics should be pre-selected (for deselection flow)
-        timeout: Seconds to wait for response
-
-    Returns:
-        list[int]: Selected topic indices (0-based)
-    """
-    if _force_cli_mode or not await is_voice_available():
-        # CLI fallback
-        print( "\n  Refine topic selection (comma-separated numbers, 'all', or 'none'):" )
-        for i, topic in enumerate( topics, 1 ):
-            print( f"    {i}. {topic.get( 'topic', 'Unknown' )}" )
-
-        response = input( "  Your selection: " ).strip().lower()
-        if response == "all":
-            return list( range( len( topics ) ) )
-        if response == "none":
-            return []
-
-        try:
-            indices = [ int( x.strip() ) - 1 for x in response.split( "," ) ]
-            return [ i for i in indices if 0 <= i < len( topics ) ]
-        except ValueError:
-            return list( range( len( topics ) ) )  # Default to all on error
-
-    # Voice mode
-    questions = [ {
-        "question"    : "Which specific topics should I research? Deselect any you want to skip.",
-        "header"      : "Topics",
-        "multiSelect" : True,
-        "options"     : [
-            {
-                "label"       : topic.get( "topic", "Unknown" )[ :50 ],
-                "description" : topic.get( "objective", "" )[ :80 ]
-            }
-            for topic in topics
-        ]
-    } ]
+        return { "answers": answers }
 
     try:
-        result = await cosa_interface.present_choices( questions, timeout )
-        selected = result.get( "answers", {} ).get( "Topics", [] )
-
-        if isinstance( selected, str ):
-            selected = [ selected ]
-
-        # Map back to indices
-        topic_names = [ t.get( "topic", "" )[ :50 ] for t in topics ]
-        return [ i for i, name in enumerate( topic_names ) if name in selected ]
-
+        return await cosa_interface.present_choices( questions, timeout, title, abstract )
     except Exception as e:
-        logger.warning( f"Voice select_topics failed: {e}" )
-        return list( range( len( topics ) ) )  # Default to all on error
+        logger.warning( f"Voice present_choices failed: {e}" )
+        # Fallback - return first option as default
+        answers = {}
+        for q in questions:
+            header = q.get( "header", "Choice" )
+            options = q.get( "options", [] )
+            answers[ header ] = options[ 0 ][ "label" ] if options else ""
+        return { "answers": answers }
 
 
 # =============================================================================
@@ -532,7 +351,7 @@ def quick_smoke_test():
     """Quick smoke test for voice_io module."""
     import cosa.utils.util as cu
 
-    cu.print_banner( "Voice I/O Smoke Test", prepend_nl=True )
+    cu.print_banner( "Podcast Generator Voice I/O Smoke Test", prepend_nl=True )
 
     try:
         # Test 1: Module state functions
@@ -571,38 +390,14 @@ def quick_smoke_test():
         assert inspect.iscoroutinefunction( notify )
         assert inspect.iscoroutinefunction( ask_yes_no )
         assert inspect.iscoroutinefunction( get_input )
-        assert inspect.iscoroutinefunction( choose )
-        assert inspect.iscoroutinefunction( select_themes )
-        assert inspect.iscoroutinefunction( select_topics )
+        assert inspect.iscoroutinefunction( present_choices )
         print( "✓ All async functions have correct signatures" )
 
-        # Test 4b: choose() accepts both List[str] and List[dict]
-        print( "Testing choose() option normalization..." )
-
-        # Test with string list
-        string_options = [ "Option A", "Option B", "Option C" ]
-
-        # Test with dict list
-        dict_options = [
-            { "label": "Choice 1", "description": "First choice description" },
-            { "label": "Choice 2", "description": "Second choice description" }
-        ]
-
-        # Verify both formats are accepted (can't run full async test without mocking)
-        # We just verify the function signature accepts both
-        sig = inspect.signature( choose )
-        params = list( sig.parameters.keys() )
-        assert "options" in params
-        assert "allow_custom" in params
-        print( "✓ choose() accepts Union[List[str], List[dict]] and allow_custom param" )
-
-        # Test 5: CLI mode fallback (force CLI mode for safe testing)
-        print( "Testing CLI mode fallback..." )
+        # Test 5: CLI mode fallback
+        print( "Testing CLI mode fallback detection..." )
         set_cli_mode( True )
 
         async def test_cli_fallback():
-            # This should use CLI fallback (print), not voice
-            # We can't fully test without mocking input()
             mode = get_mode_description()
             assert "forced" in mode.lower()
 

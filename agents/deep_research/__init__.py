@@ -116,6 +116,22 @@ from .voice_io import (
     choose as voice_choose,
 )
 
+# Phase 2: Progressive Narrowing Test Harness
+from .narrowing_harness import (
+    NarrowingHarness,
+    NarrowingResult,
+)
+
+from .narrowing_mocks import (
+    MockResearchAPIClient,
+    get_mock_theme_response,
+    get_mock_subqueries,
+    MOCK_THEMES_3,
+    MOCK_THEMES_4,
+    SAMPLE_SUBQUERIES_5,
+    SAMPLE_SUBQUERIES_8,
+)
+
 __all__ = [
     # Config
     "ResearchConfig",
@@ -178,6 +194,17 @@ __all__ = [
     "voice_ask_yes_no",
     "voice_get_input",
     "voice_choose",
+
+    # Phase 2: Progressive Narrowing Test Harness
+    "NarrowingHarness",
+    "NarrowingResult",
+    "MockResearchAPIClient",
+    "get_mock_theme_response",
+    "get_mock_subqueries",
+    "MOCK_THEMES_3",
+    "MOCK_THEMES_4",
+    "SAMPLE_SUBQUERIES_5",
+    "SAMPLE_SUBQUERIES_8",
 ]
 
-__version__ = "0.2.1"  # Updated for Voice-First I/O
+__version__ = "0.2.2"  # Updated for Progressive Narrowing Harness

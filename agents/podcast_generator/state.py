@@ -6,6 +6,7 @@ Uses Pydantic for structured outputs and TypedDict for graph state.
 Designed for the podcast generation workflow with script review checkpoints.
 """
 
+import re
 from enum import Enum
 from typing import TypedDict, Literal, Any, Optional
 from pydantic import BaseModel, Field
@@ -165,6 +166,146 @@ class PodcastScript( BaseModel ):
             words = len( segment.text.split() )
             counts[ segment.speaker ] = counts.get( segment.speaker, 0 ) + words
         return counts
+
+    @classmethod
+    def from_markdown( cls, markdown_content: str ) -> "PodcastScript":
+        """
+        Parse a saved script markdown back into PodcastScript.
+
+        Requires:
+            - markdown_content is valid podcast script markdown
+            - Contains header with title, hosts, duration
+            - Contains **[Speaker - Role]**: Text segments
+
+        Ensures:
+            - Returns fully reconstructed PodcastScript object
+            - Prosody annotations extracted from text
+            - revision_count defaults to 0 (caller may override)
+
+        Args:
+            markdown_content: Full markdown content of saved script
+
+        Returns:
+            PodcastScript: Reconstructed script object
+
+        Raises:
+            ValueError: If markdown format is invalid
+        """
+        lines = markdown_content.strip().split( "\n" )
+
+        # Parse header values
+        title        = ""
+        generated_at = datetime.now().isoformat()
+        host_a_name  = "Host A"
+        host_b_name  = "Host B"
+        duration     = 0.0
+        key_topics   = []
+        research_source = ""
+        revision_count = 0
+
+        # Header parsing patterns
+        title_pattern    = r'^#\s+Podcast:\s*(.+)$'
+        gen_pattern      = r'^##\s+Generated:\s*(.+)$'
+        hosts_pattern    = r'^##\s+Hosts:\s*(.+),\s*(.+)$'
+        duration_pattern = r'^##\s+Estimated Duration:\s*([\d.]+)\s*minutes?$'
+        source_pattern   = r'^##\s+Research Source:\s*(.+)$'
+        topics_pattern   = r'^##\s+Key Topics:\s*(.+)$'
+        revision_pattern = r'^##\s+Revision:\s*(\d+)$'
+
+        # First pass: parse header
+        for line in lines:
+            line = line.strip()
+
+            match = re.match( title_pattern, line )
+            if match:
+                title = match.group( 1 ).strip()
+                continue
+
+            match = re.match( gen_pattern, line )
+            if match:
+                generated_at = match.group( 1 ).strip()
+                continue
+
+            match = re.match( hosts_pattern, line )
+            if match:
+                host_a_name = match.group( 1 ).strip()
+                host_b_name = match.group( 2 ).strip()
+                continue
+
+            match = re.match( duration_pattern, line )
+            if match:
+                try:
+                    duration = float( match.group( 1 ) )
+                except ValueError:
+                    pass
+                continue
+
+            match = re.match( source_pattern, line )
+            if match:
+                research_source = match.group( 1 ).strip()
+                continue
+
+            match = re.match( topics_pattern, line )
+            if match:
+                topics_str = match.group( 1 ).strip()
+                key_topics = [ t.strip() for t in topics_str.split( "," ) ]
+                continue
+
+            match = re.match( revision_pattern, line )
+            if match:
+                try:
+                    revision_count = int( match.group( 1 ) )
+                except ValueError:
+                    pass
+                continue
+
+        # Parse segments
+        # Pattern: **[Speaker - Role]**: Text
+        segment_pattern = r'^\*\*\[([^\]]+)\s*-\s*([^\]]+)\]\*\*:\s*(.+)$'
+
+        # Prosody extraction pattern: *[annotation]*
+        prosody_pattern = r'\*\[([^\]]+)\]\*'
+
+        segments = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            match = re.match( segment_pattern, line )
+            if match:
+                speaker = match.group( 1 ).strip()
+                role    = match.group( 2 ).strip().lower()
+                text    = match.group( 3 ).strip()
+
+                # Extract prosody annotations
+                prosody_annotations = []
+                for prosody_match in re.finditer( prosody_pattern, text ):
+                    annotation = prosody_match.group( 1 ).lower().strip()
+                    prosody_annotations.append( annotation )
+
+                segment = ScriptSegment(
+                    speaker = speaker,
+                    role    = role,
+                    text    = text,
+                    prosody = prosody_annotations,
+                )
+                segments.append( segment )
+
+        if not title:
+            raise ValueError( "Could not parse podcast title from markdown" )
+
+        return cls(
+            title                      = title,
+            research_source            = research_source,
+            generated_at               = generated_at,
+            host_a_name                = host_a_name,
+            host_b_name                = host_b_name,
+            segments                   = segments,
+            estimated_duration_minutes = duration,
+            key_topics                 = key_topics,
+            revision_count             = revision_count,
+        )
 
 
 class ContentAnalysis( BaseModel ):
@@ -361,6 +502,34 @@ def quick_smoke_test():
         markdown_full = script.to_markdown()
         assert "# Podcast: Understanding Quantum Computing" in markdown_full
         print( "✓ PodcastScript model validates" )
+
+        # Test 4b: PodcastScript.from_markdown() round-trip
+        print( "Testing PodcastScript.from_markdown()..." )
+        test_markdown = """# Podcast: Voice Computing Revolution
+## Generated: 2026-01-19T10:30:00
+## Hosts: Alex, Jordan
+## Estimated Duration: 15.5 minutes
+
+---
+
+**[Alex - Curious]**: So what you're saying is... *[pause]* this changes everything?
+
+**[Jordan - Expert]**: Exactly! *[excited]* The market is growing from $14 billion to $61 billion by 2033.
+
+**[Alex - Curious]**: Wait, that's a huge jump! *[surprised]* How is that even possible?
+"""
+        parsed = PodcastScript.from_markdown( test_markdown )
+        assert parsed.title == "Voice Computing Revolution"
+        assert parsed.host_a_name == "Alex"
+        assert parsed.host_b_name == "Jordan"
+        assert parsed.estimated_duration_minutes == 15.5
+        assert len( parsed.segments ) == 3
+        assert parsed.segments[ 0 ].speaker == "Alex"
+        assert parsed.segments[ 0 ].role == "curious"
+        assert "pause" in parsed.segments[ 0 ].prosody
+        assert parsed.segments[ 1 ].speaker == "Jordan"
+        assert "excited" in parsed.segments[ 1 ].prosody
+        print( f"✓ from_markdown() works (parsed {len( parsed.segments )} segments)" )
 
         # Test 5: ContentAnalysis model
         print( "Testing ContentAnalysis model..." )

@@ -8,8 +8,8 @@ Usage:
     # Generate podcast script from research document
     python -m cosa.agents.podcast_generator --research path/to/research.md
 
-    # With custom output
-    python -m cosa.agents.podcast_generator --research research.md --output my-podcast.md
+    # Resume editing an existing script (skip generation, go to review)
+    python -m cosa.agents.podcast_generator --edit-script path/to/script.md
 
     # Run all module smoke tests
     python -m cosa.agents.podcast_generator --smoke-test
@@ -35,6 +35,7 @@ def run_all_smoke_tests():
         ( "prompts.script_generation", "cosa.agents.podcast_generator.prompts.script_generation" ),
         ( "prompts.personality", "cosa.agents.podcast_generator.prompts.personality" ),
         ( "cosa_interface", "cosa.agents.podcast_generator.cosa_interface" ),
+        ( "voice_io", "cosa.agents.podcast_generator.voice_io" ),
         ( "api_client", "cosa.agents.podcast_generator.api_client" ),
         ( "orchestrator", "cosa.agents.podcast_generator.orchestrator" ),
     ]
@@ -77,9 +78,15 @@ async def run_podcast_generation( args ):
     """Run the podcast generation workflow."""
     from .orchestrator import PodcastOrchestratorAgent
     from .config import PodcastConfig
+    from . import voice_io
     import cosa.utils.util as cu
 
     cu.print_banner( "COSA Podcast Generator", prepend_nl=True )
+
+    # Configure CLI mode if requested
+    if args.cli_mode:
+        voice_io.set_cli_mode( True )
+        print( "  [CLI mode enabled - text-only interaction]" )
 
     # Validate research document exists
     import os
@@ -149,6 +156,79 @@ async def run_podcast_generation( args ):
         return 1
 
 
+async def run_script_editing( args ):
+    """Run the script editing workflow (skip generation, go to review)."""
+    from .orchestrator import PodcastOrchestratorAgent
+    from .config import PodcastConfig
+    from . import voice_io
+    import cosa.utils.util as cu
+
+    cu.print_banner( "COSA Podcast Generator - Edit Mode", prepend_nl=True )
+
+    # Configure CLI mode if requested
+    if args.cli_mode:
+        voice_io.set_cli_mode( True )
+        print( "  [CLI mode enabled - text-only interaction]" )
+
+    # Validate script file exists
+    import os
+    script_path = args.edit_script
+
+    if not script_path.startswith( "/" ):
+        script_path = cu.get_project_root() + "/" + script_path
+
+    if not os.path.exists( script_path ):
+        print( f"Error: Script file not found: {script_path}" )
+        return 1
+
+    print( f"Loading script: {script_path}" )
+    print( f"User ID: {args.user_id}" )
+    print( "" )
+
+    # Create config
+    config = PodcastConfig()
+
+    try:
+        # Create orchestrator from saved script
+        agent = await PodcastOrchestratorAgent.from_saved_script(
+            script_path = script_path,
+            user_id     = args.user_id,
+            config      = config,
+            debug       = args.debug,
+            verbose     = args.verbose,
+        )
+
+        print( f"Podcast ID: {agent.podcast_id}" )
+        print( f"Loaded: {agent._podcast_state[ 'draft_script' ].title}" )
+        print( f"Segments: {agent._podcast_state[ 'draft_script' ].get_segment_count()}" )
+        print( f"Revision count: {agent._podcast_state[ 'revision_count' ]}" )
+        print( "" )
+
+        # Run review-only workflow
+        script = await agent.do_review_only_async()
+
+        if script:
+            print( f"\n✓ Script editing complete!" )
+            print( f"  Title: {script.title}" )
+            print( f"  Segments: {script.get_segment_count()}" )
+            print( f"  Revisions: {script.revision_count}" )
+            return 0
+        else:
+            print( "\n⚠ Script editing was cancelled." )
+            return 1
+
+    except KeyboardInterrupt:
+        print( "\n\n⚠ Interrupted by user." )
+        return 1
+
+    except Exception as e:
+        print( f"\n✗ Script editing failed: {e}" )
+        if args.debug:
+            import traceback
+            traceback.print_exc()
+        return 1
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -202,6 +282,17 @@ Examples:
         help = "Enable verbose output"
     )
 
+    parser.add_argument(
+        "--cli-mode",
+        action = "store_true",
+        help = "Force CLI text mode (no voice notifications)"
+    )
+
+    parser.add_argument(
+        "--edit-script", "-e",
+        help = "Path to saved script markdown to resume editing (skips generation)"
+    )
+
     args = parser.parse_args()
 
     # Run smoke tests if requested
@@ -209,10 +300,16 @@ Examples:
         success = run_all_smoke_tests()
         sys.exit( 0 if success else 1 )
 
+    # Route to edit mode or generation mode
+    if args.edit_script:
+        # Edit existing script (skip generation)
+        exit_code = asyncio.run( run_script_editing( args ) )
+        sys.exit( exit_code )
+
     # Require research document for generation
     if not args.research:
         parser.print_help()
-        print( "\nError: --research argument is required for podcast generation" )
+        print( "\nError: --research or --edit-script argument is required" )
         print( "       Use --smoke-test to run tests instead" )
         sys.exit( 1 )
 

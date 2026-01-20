@@ -42,11 +42,22 @@ You must respond with a JSON object:
 {
     "needs_clarification": true/false,
     "understood_query": "Your interpretation of what the user is asking",
-    "question": "The clarification question (only if needs_clarification is true)",
+    "question": "Brief clarification question header (when needs_clarification is true)",
+    "options": [
+        {"label": "Option 1", "description": "What this option means"},
+        {"label": "Option 2", "description": "What this option means"},
+        {"label": "Option 3", "description": "What this option means"}
+    ],
     "ambiguities": ["List of identified ambiguities"],
     "confidence": 0.0-1.0
 }
 ```
+
+IMPORTANT for options:
+- Provide 2-4 distinct options that address the main ambiguity
+- Each option MUST have a concise "label" (1-5 words) and helpful "description"
+- Options should be mutually exclusive or represent clearly different directions
+- The user can always choose "Other" to provide custom input
 
 ## Examples
 
@@ -56,7 +67,13 @@ You must respond with a JSON object:
 {
     "needs_clarification": true,
     "understood_query": "The user wants to know which programming language is optimal, but for an unspecified purpose",
-    "question": "Best for what purpose? (e.g., web development, data science, mobile apps, learning to program)",
+    "question": "Best for what purpose?",
+    "options": [
+        {"label": "Web development", "description": "Building websites and web applications"},
+        {"label": "Data science", "description": "Data analysis, ML, and scientific computing"},
+        {"label": "Mobile apps", "description": "iOS or Android app development"},
+        {"label": "Learning to program", "description": "Best language for beginners"}
+    ],
     "ambiguities": ["No purpose/domain specified", "No experience level mentioned", "'Best' is subjective without criteria"],
     "confidence": 0.3
 }
@@ -69,6 +86,7 @@ You must respond with a JSON object:
     "needs_clarification": false,
     "understood_query": "Compare React and Vue.js frameworks for modern web application development, covering their strengths, weaknesses, and use cases",
     "question": null,
+    "options": [],
     "ambiguities": [],
     "confidence": 0.9
 }
@@ -80,7 +98,13 @@ You must respond with a JSON object:
 {
     "needs_clarification": true,
     "understood_query": "The user wants information about artificial intelligence, but the scope is too broad",
-    "question": "What aspect of AI interests you most? (e.g., current capabilities, how it works technically, its impact on society, specific applications like healthcare or finance)",
+    "question": "What aspect of AI interests you most?",
+    "options": [
+        {"label": "Current capabilities", "description": "What AI can do today (ChatGPT, image generation, etc.)"},
+        {"label": "Technical deep-dive", "description": "How AI/ML algorithms work under the hood"},
+        {"label": "Societal impact", "description": "Effects on jobs, ethics, and society"},
+        {"label": "Specific applications", "description": "AI in healthcare, finance, or other industries"}
+    ],
     "ambiguities": ["Extremely broad topic", "No specific aspect mentioned", "Could be history, technology, ethics, applications, or future predictions"],
     "confidence": 0.2
 }
@@ -174,11 +198,21 @@ def quick_smoke_test():
 
         # Test 4: Parse valid JSON response
         print( "Testing parse_clarification_response..." )
-        valid_json = '{"needs_clarification": false, "understood_query": "Test", "question": null, "ambiguities": [], "confidence": 0.9}'
+        valid_json = '{"needs_clarification": false, "understood_query": "Test", "question": null, "options": [], "ambiguities": [], "confidence": 0.9}'
         result = parse_clarification_response( valid_json )
         assert result[ "needs_clarification" ] is False
         assert result[ "confidence" ] == 0.9
+        assert result[ "options" ] == []
         print( "✓ Parsed valid JSON response" )
+
+        # Test 4b: Parse JSON response with options
+        print( "Testing parse_clarification_response with options..." )
+        json_with_options = '{"needs_clarification": true, "question": "What scope?", "options": [{"label": "Web", "description": "Web apps"}, {"label": "Mobile", "description": "Mobile apps"}], "confidence": 0.4}'
+        result = parse_clarification_response( json_with_options )
+        assert result[ "needs_clarification" ] is True
+        assert len( result[ "options" ] ) == 2
+        assert result[ "options" ][ 0 ][ "label" ] == "Web"
+        print( "✓ Parsed JSON response with options" )
 
         # Test 5: Parse markdown-wrapped JSON
         print( "Testing markdown-wrapped JSON parsing..." )

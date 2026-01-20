@@ -234,16 +234,20 @@ class PodcastConfig:
         Returns:
             str: Complete file path
         """
+        import re
         import cosa.utils.util as cu
         from datetime import datetime
 
         timestamp = datetime.now().strftime( "%Y.%m.%d-%H%M%S" )
 
-        # Sanitize topic for filename
-        topic_slug = topic.lower().replace( " ", "-" )[ :50 ]
+        # Sanitize topic for filename: remove special chars, keep alphanumerics/spaces/hyphens
+        topic_clean = re.sub( r'[^a-zA-Z0-9\s-]', '', topic )
+        topic_slug = topic_clean.lower().replace( " ", "-" )[ :50 ]
+        # Collapse multiple hyphens and strip leading/trailing hyphens
+        topic_slug = re.sub( r'-+', '-', topic_slug ).strip( '-' )
 
-        # Build directory path
-        dir_path = self.output_dir_template.format( user=user_id.replace( "@", "_at_" ) )
+        # Build directory path (preserve @ in email for clean paths)
+        dir_path = self.output_dir_template.format( user=user_id )
         full_dir = cu.get_project_root() + "/" + dir_path
 
         # Build filename
@@ -332,10 +336,23 @@ def quick_smoke_test():
             topic     = "Quantum Computing Explained",
             file_type = "script",
         )
-        assert "user_at_example.com" in path
+        assert "user@example.com" in path
         assert "quantum-computing-explained" in path
         assert path.endswith( "-script.md" )
         print( f"✓ Output path: ...{path[ -60: ]}" )
+
+        # Test 8: Topic slug sanitization with special characters
+        print( "Testing topic slug sanitization..." )
+        path2 = config.get_output_path(
+            user_id   = "test@test.com",
+            topic     = "Voice Computing Revolution: From Sci-Fi? To Reality!",
+            file_type = "script",
+        )
+        assert ":" not in path2
+        assert "?" not in path2
+        assert "!" not in path2
+        assert "voice-computing-revolution-from-sci-fi-to-reality" in path2
+        print( "✓ Special characters properly sanitized from topic slug" )
 
         print( "\n✓ PodcastConfig smoke test completed successfully" )
 

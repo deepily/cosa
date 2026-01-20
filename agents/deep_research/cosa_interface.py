@@ -26,6 +26,7 @@ from cosa.cli.notification_models import (
 )
 from cosa.cli.notify_user_sync import notify_user_sync as _notify_user_sync
 from cosa.cli.notify_user_async import notify_user_async as _notify_user_async
+from cosa.utils.notification_utils import format_questions_for_tts, convert_questions_for_api
 
 logger = logging.getLogger( __name__ )
 
@@ -247,7 +248,7 @@ async def present_choices(
     """
     try:
         # Build TTS-friendly message
-        message = _format_questions_for_tts( questions )
+        message = format_questions_for_tts( questions )
 
         request = NotificationRequest(
             message           = message,
@@ -255,7 +256,7 @@ async def present_choices(
             notification_type = NotificationType.CUSTOM,
             priority          = NotificationPriority.MEDIUM,
             timeout_seconds   = timeout,
-            response_options  = _convert_questions_for_api( questions ),
+            response_options  = convert_questions_for_api( questions ),
             sender_id         = SENDER_ID,
         )
 
@@ -382,88 +383,6 @@ def extract_feedback_intent( feedback: str ) -> dict:
     }
 
 
-# =============================================================================
-# Private Helpers
-# =============================================================================
-
-def _format_questions_for_tts( questions: list ) -> str:
-    """
-    Format questions for TTS playback.
-
-    Returns ONLY the question text. Options are displayed in the UI
-    and should NOT be included in the spoken TTS message.
-
-    Requires:
-        - questions is a list of question dicts
-
-    Ensures:
-        - Returns TTS-friendly string with question text only
-        - Multi-question: "Question N of X: ..."
-        - Single question: Just the question text
-        - Adds multi-select hint when applicable
-
-    Args:
-        questions: List of question objects
-
-    Returns:
-        str: TTS-friendly message (question text only)
-    """
-    total = len( questions )
-    parts = []
-
-    for i, q in enumerate( questions, 1 ):
-        question_text = q.get( "question", "Please select an option" )
-        multi_select = q.get( "multiSelect", False )
-
-        # Build question intro (question text ONLY)
-        if total > 1:
-            part = f"Question {i} of {total}: {question_text}"
-        else:
-            part = question_text
-
-        # Add multi-select hint if needed
-        if multi_select:
-            part += " You can select multiple options."
-
-        # NOTE: Options are displayed in UI, not spoken in TTS
-        parts.append( part )
-
-    return " ".join( parts )
-
-
-def _convert_questions_for_api( questions: list ) -> dict:
-    """
-    Convert Claude Code's camelCase format to API's snake_case format.
-
-    Claude Code uses: multiSelect
-    API expects: multi_select
-
-    Requires:
-        - questions is a list of question dicts
-
-    Ensures:
-        - Returns dict with 'questions' array
-        - multiSelect converted to multi_select
-        - Other fields preserved
-
-    Args:
-        questions: List of question dicts in Claude Code format
-
-    Returns:
-        dict: API-compatible response_options
-    """
-    converted = []
-    for q in questions:
-        converted_q = {
-            "question"     : q.get( 'question', '' ),
-            "header"       : q.get( 'header', 'Selection' ),
-            "multi_select" : q.get( 'multiSelect', False ),
-            "options"      : q.get( 'options', [] )
-        }
-        converted.append( converted_q )
-    return { "questions": converted }
-
-
 def quick_smoke_test():
     """Quick smoke test for cosa_interface module."""
     import cosa.utils.util as cu
@@ -515,8 +434,8 @@ def quick_smoke_test():
         assert intent[ "feedback_type" ] == "additional_context"
         print( "✓ extract_feedback_intent works correctly" )
 
-        # Test 5: _format_questions_for_tts
-        print( "Testing _format_questions_for_tts..." )
+        # Test 5: format_questions_for_tts (imported from notification_utils)
+        print( "Testing format_questions_for_tts..." )
         questions = [ {
             "question" : "Which option?",
             "options"  : [
@@ -524,25 +443,24 @@ def quick_smoke_test():
                 { "label": "Option B" }
             ]
         } ]
-        tts = _format_questions_for_tts( questions )
+        tts = format_questions_for_tts( questions )
         assert "Which option?" in tts
-        assert "Option 1: Option A" in tts
-        assert "Option 2: Option B" in tts
-        print( "✓ _format_questions_for_tts works correctly" )
+        assert "Option" not in tts  # Options NOT in TTS - they appear in UI only
+        print( "✓ format_questions_for_tts works correctly" )
 
-        # Test 6: _convert_questions_for_api (multiSelect → multi_select)
-        print( "Testing _convert_questions_for_api..." )
+        # Test 6: convert_questions_for_api (imported from notification_utils)
+        print( "Testing convert_questions_for_api..." )
         questions = [ {
             "question"    : "Which themes?",
             "header"      : "Themes",
             "multiSelect" : True,
             "options"     : [ { "label": "A" }, { "label": "B" } ]
         } ]
-        converted = _convert_questions_for_api( questions )
+        converted = convert_questions_for_api( questions )
         assert "questions" in converted
         assert converted[ "questions" ][ 0 ][ "multi_select" ] is True
         assert "multiSelect" not in converted[ "questions" ][ 0 ]
-        print( "✓ _convert_questions_for_api correctly converts multiSelect → multi_select" )
+        print( "✓ convert_questions_for_api correctly converts multiSelect -> multi_select" )
 
         # Test 7: Async functions exist (can't fully test without running server)
         print( "Testing async function signatures..." )

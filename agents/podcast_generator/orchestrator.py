@@ -34,6 +34,7 @@ from .state import (
     create_initial_state,
 )
 from . import cosa_interface
+from . import voice_io
 from .api_client import PodcastAPIClient
 from .prompts import (
     SCRIPT_GENERATION_SYSTEM_PROMPT,
@@ -107,6 +108,9 @@ class PodcastOrchestratorAgent:
         # Initialize API client (lazy - created on first use)
         self._api_client: Optional[ PodcastAPIClient ] = None
 
+        # Track original script path for revisions (to preserve filename)
+        self._original_script_path: Optional[ str ] = None
+
         # Metrics
         self.metrics = {
             "start_time"  : None,
@@ -129,6 +133,77 @@ class PodcastOrchestratorAgent:
                 verbose = self.verbose,
             )
         return self._api_client
+
+    @classmethod
+    async def from_saved_script(
+        cls,
+        script_path: str,
+        user_id: str,
+        config: Optional[ PodcastConfig ] = None,
+        debug: bool = False,
+        verbose: bool = False
+    ) -> "PodcastOrchestratorAgent":
+        """
+        Create orchestrator from a saved script, skipping generation phases.
+
+        Loads an existing script markdown file and creates an orchestrator
+        ready to enter the review/revision workflow directly.
+
+        Requires:
+            - script_path points to a valid podcast script markdown file
+            - user_id is a valid identifier
+
+        Ensures:
+            - Returns orchestrator with script pre-loaded
+            - State is set to WAITING_SCRIPT_REVIEW
+            - Revision count is preserved from loaded script
+
+        Args:
+            script_path: Path to saved script markdown file
+            user_id: User identifier for output directory
+            config: Podcast configuration (uses defaults if None)
+            debug: Enable debug output
+            verbose: Enable verbose output
+
+        Returns:
+            PodcastOrchestratorAgent: Ready for review workflow
+        """
+        import cosa.utils.util as cu
+
+        # Resolve path
+        if not script_path.startswith( "/" ):
+            script_path = cu.get_project_root() + "/" + script_path
+
+        # Load and parse script
+        with open( script_path, "r", encoding="utf-8" ) as f:
+            markdown_content = f.read()
+
+        script = PodcastScript.from_markdown( markdown_content )
+
+        # Create orchestrator with dummy research path (not used in edit mode)
+        agent = cls(
+            research_doc_path = script.research_source or "edit-mode",
+            user_id           = user_id,
+            config            = config,
+            debug             = debug,
+            verbose           = verbose,
+        )
+
+        # Pre-populate state
+        agent._podcast_state[ "draft_script" ]      = script
+        agent._podcast_state[ "draft_script_path" ] = script_path
+        agent._podcast_state[ "revision_count" ]    = script.revision_count
+        agent.state = OrchestratorState.WAITING_SCRIPT_REVIEW
+
+        # Preserve original path for revisions (prevents filename changes)
+        agent._original_script_path = script_path
+
+        if debug:
+            print( f"[PodcastOrchestratorAgent] Loaded script from: {script_path}" )
+            print( f"[PodcastOrchestratorAgent] Title: {script.title}" )
+            print( f"[PodcastOrchestratorAgent] Segments: {script.get_segment_count()}" )
+
+        return agent
 
     async def do_all_async( self ) -> Optional[ PodcastScript ]:
         """
@@ -160,7 +235,7 @@ class PodcastOrchestratorAgent:
             # Phase 1: Load Research Document
             # =================================================================
             self.state = OrchestratorState.LOADING_RESEARCH
-            await cosa_interface.notify_progress(
+            await voice_io.notify(
                 "Starting podcast generation - loading research document..."
             )
 
@@ -176,7 +251,7 @@ class PodcastOrchestratorAgent:
             # Phase 2: Analyze Content
             # =================================================================
             self.state = OrchestratorState.ANALYZING_CONTENT
-            await cosa_interface.notify_progress( "Analyzing content for key topics..." )
+            await voice_io.notify( "Analyzing content for key topics..." )
 
             analysis = await self._analyze_content_async( research_content )
             self._podcast_state[ "content_analysis" ] = analysis
@@ -192,7 +267,7 @@ class PodcastOrchestratorAgent:
             # Phase 3: Generate Script
             # =================================================================
             self.state = OrchestratorState.GENERATING_SCRIPT
-            await cosa_interface.notify_progress(
+            await voice_io.notify(
                 f"Generating podcast script about {analysis.main_topic}..."
             )
 
@@ -205,59 +280,95 @@ class PodcastOrchestratorAgent:
             if self._check_stop(): return await self._handle_stop()
 
             # =================================================================
-            # Phase 4: Script Review
+            # Phase 4: Script Review - ITERATIVE LOOP
             # =================================================================
-            self.state = OrchestratorState.WAITING_SCRIPT_REVIEW
+            script_approved = False
+            script_path     = None  # Track current script location
 
-            # Present script preview for approval
-            script_preview = self._get_script_preview( script )
-            choice = await cosa_interface.present_choices(
-                questions = [ {
-                    "question"    : "Podcast script is ready. How would you like to proceed?",
-                    "header"      : "Script Review",
-                    "multiSelect" : False,
-                    "options"     : [
-                        { "label": "Approve script", "description": "Save and continue" },
-                        { "label": "Revise script", "description": "Provide feedback for changes" },
-                        { "label": "Cancel", "description": "Discard and stop" }
-                    ]
-                } ],
-                abstract = script_preview,
-            )
+            while not script_approved:
+                self.state = OrchestratorState.WAITING_SCRIPT_REVIEW
 
-            review_choice = choice.get( "answers", {} ).get( "Script Review", "" )
+                # Generate display path for preview (don't save yet - only save after user decision)
+                if script_path:
+                    display_path = script_path
+                elif self._original_script_path:
+                    display_path = self._original_script_path
+                else:
+                    # Preview of where it WOULD be saved (first generation)
+                    topic_slug   = script.title.replace( "Podcast: ", "" )[ :40 ]
+                    display_path = self.config.get_output_path(
+                        user_id   = self.user_id,
+                        topic     = topic_slug,
+                        file_type = "script",
+                    )
 
-            if review_choice == "Cancel":
-                self.state = OrchestratorState.STOPPED
-                await cosa_interface.notify_progress( "Podcast generation cancelled." )
-                return None
+                # Present script preview for approval, including file path
+                script_preview = self._get_script_preview( script )
+                script_preview += f"\n\n**Will save to**: `{display_path}`"
 
-            if review_choice == "Revise script":
-                # Get revision feedback
-                feedback = await cosa_interface.get_feedback(
-                    "What changes would you like to the script?",
-                    timeout = self.config.feedback_timeout_seconds
+                revision_label = f" (Revision {self._podcast_state[ 'revision_count' ]})" if self._podcast_state[ "revision_count" ] > 0 else ""
+
+                choice = await voice_io.present_choices(
+                    questions = [ {
+                        "question"    : "Podcast script is ready. How would you like to proceed?",
+                        "header"      : "Script Review",
+                        "multiSelect" : False,
+                        "options"     : [
+                            { "label": "Approve script", "description": "Keep script and continue" },
+                            { "label": "Revise script", "description": "Provide feedback for changes" },
+                            { "label": "Cancel", "description": "Discard script and stop" }
+                        ]
+                    } ],
+                    abstract = script_preview,
+                    title    = f"Script Review{revision_label}",
                 )
 
-                if feedback:
-                    self._podcast_state[ "human_feedback" ] = feedback
-                    self._podcast_state[ "revision_count" ] += 1
+                review_choice = choice.get( "answers", {} ).get( "Script Review", "" )
 
-                    # Revise script
-                    self.state = OrchestratorState.GENERATING_SCRIPT
-                    await cosa_interface.notify_progress( "Revising script based on your feedback..." )
+                if review_choice == "Cancel":
+                    self.state = OrchestratorState.STOPPED
+                    await voice_io.notify( "Podcast generation cancelled." )
+                    return None
 
-                    script = await self._revise_script_async( script, feedback )
-                    self._podcast_state[ "draft_script" ] = script
+                elif review_choice == "Approve script":
+                    # Explicit approval - save and exit loop
+                    script.revision_count = self._podcast_state[ "revision_count" ]
+                    script_path = await self._save_script_async( script )
+                    self._podcast_state[ "draft_script_path" ] = script_path
+                    script_approved = True
+
+                else:
+                    # "Revise script" or "Other" with custom text
+                    if review_choice == "Revise script":
+                        feedback = await voice_io.get_input(
+                            "What changes would you like to the script?",
+                            timeout = self.config.feedback_timeout_seconds
+                        )
+                    else:
+                        # "Other" - custom text IS the feedback
+                        feedback = review_choice
+
+                    if feedback:
+                        self._podcast_state[ "human_feedback" ] = feedback
+                        self._podcast_state[ "revision_count" ] += 1
+
+                        # Revise script
+                        self.state = OrchestratorState.GENERATING_SCRIPT
+                        await voice_io.notify( f"Revising script (revision {self._podcast_state[ 'revision_count' ]})..." )
+
+                        script = await self._revise_script_async( script, feedback )
+                        self._podcast_state[ "draft_script" ] = script
+
+                        # Save revision with version suffix (e.g., -v2.md)
+                        script.revision_count = self._podcast_state[ "revision_count" ]
+                        script_path = await self._save_script_async( script, is_revision=True )
+                        self._podcast_state[ "draft_script_path" ] = script_path
+
+                        # Loop continues - will show revised script for review again
+
+                if self._check_stop(): return await self._handle_stop()
 
             self._podcast_state[ "script_approved" ] = True
-
-            if self._check_stop(): return await self._handle_stop()
-
-            # =================================================================
-            # Phase 5: Save Script
-            # =================================================================
-            script_path = await self._save_script_async( script )
             self._podcast_state[ "final_script_path" ] = script_path
 
             # =================================================================
@@ -286,7 +397,7 @@ class PodcastOrchestratorAgent:
             )
             self._podcast_state[ "metadata" ] = metadata
 
-            await cosa_interface.notify_progress(
+            await voice_io.notify(
                 f"Podcast script complete! Saved to {script_path}",
                 abstract = f"**Segments**: {script.get_segment_count()}\n"
                            f"**Duration**: ~{script.estimated_duration_minutes:.1f} minutes\n"
@@ -299,8 +410,147 @@ class PodcastOrchestratorAgent:
             self.state = OrchestratorState.FAILED
             self.metrics[ "end_time" ] = time.time()
             logger.error( f"Podcast generation failed: {e}" )
-            await cosa_interface.notify_progress(
+            await voice_io.notify(
                 f"Podcast generation failed: {str( e )[ :100 ]}",
+                priority = "urgent"
+            )
+            raise
+
+    async def do_review_only_async( self ) -> Optional[ PodcastScript ]:
+        """
+        Run only the review/revision workflow (skip generation phases).
+
+        Used when resuming from a saved script via --edit-script flag.
+        Enters directly at Phase 4 (WAITING_SCRIPT_REVIEW).
+
+        Requires:
+            - Script already loaded via from_saved_script()
+            - State is WAITING_SCRIPT_REVIEW
+
+        Ensures:
+            - Executes review/revision workflow
+            - Returns updated PodcastScript on success
+            - Returns None on cancellation
+
+        Returns:
+            PodcastScript or None: Updated script, or None if cancelled
+        """
+        self.metrics[ "start_time" ] = time.time()
+
+        try:
+            script = self._podcast_state.get( "draft_script" )
+            if not script:
+                raise ValueError( "No script loaded - use from_saved_script() first" )
+
+            draft_script_path = self._podcast_state.get( "draft_script_path", "" )
+
+            await voice_io.notify(
+                f"Loaded script: {script.title}",
+                abstract = f"**Segments**: {script.get_segment_count()}\n"
+                           f"**Duration**: ~{script.estimated_duration_minutes:.1f} minutes\n"
+                           f"**Revisions**: {script.revision_count}"
+            )
+
+            # =================================================================
+            # Phase 4: Script Review - ITERATIVE LOOP (edit mode entry point)
+            # =================================================================
+            script_approved = False
+            script_path     = self._original_script_path  # Track current script location
+
+            while not script_approved:
+                self.state = OrchestratorState.WAITING_SCRIPT_REVIEW
+
+                # Generate display path (don't save yet - only save after user decision)
+                display_path = script_path or self._original_script_path
+
+                # Present script preview for approval
+                script_preview = self._get_script_preview( script )
+                script_preview += f"\n\n**Full script**: `{display_path}`"
+
+                revision_label = f" (Revision {self._podcast_state[ 'revision_count' ]})" if self._podcast_state[ "revision_count" ] > 0 else ""
+
+                choice = await voice_io.present_choices(
+                    questions = [ {
+                        "question"    : "How would you like to proceed with this script?",
+                        "header"      : "Script Review",
+                        "multiSelect" : False,
+                        "options"     : [
+                            { "label": "Approve script", "description": "Keep script and finish" },
+                            { "label": "Revise script", "description": "Provide feedback for changes" },
+                            { "label": "Cancel", "description": "Discard changes and stop" }
+                        ]
+                    } ],
+                    abstract = script_preview,
+                    title    = f"Script Review{revision_label}",
+                )
+
+                review_choice = choice.get( "answers", {} ).get( "Script Review", "" )
+
+                if review_choice == "Cancel":
+                    self.state = OrchestratorState.STOPPED
+                    await voice_io.notify( "Script editing cancelled." )
+                    return None
+
+                elif review_choice == "Approve script":
+                    # Explicit approval - save and exit loop
+                    script.revision_count = self._podcast_state[ "revision_count" ]
+                    script_path = await self._save_script_async( script )
+                    self._podcast_state[ "draft_script_path" ] = script_path
+                    script_approved = True
+
+                else:
+                    # "Revise script" or "Other" with custom text
+                    if review_choice == "Revise script":
+                        feedback = await voice_io.get_input(
+                            "What changes would you like to the script?",
+                            timeout = self.config.feedback_timeout_seconds
+                        )
+                    else:
+                        # "Other" - custom text IS the feedback
+                        feedback = review_choice
+
+                    if feedback:
+                        self._podcast_state[ "human_feedback" ] = feedback
+                        self._podcast_state[ "revision_count" ] += 1
+
+                        # Revise script
+                        self.state = OrchestratorState.GENERATING_SCRIPT
+                        await voice_io.notify( f"Revising script (revision {self._podcast_state[ 'revision_count' ]})..." )
+
+                        script = await self._revise_script_async( script, feedback )
+                        self._podcast_state[ "draft_script" ] = script
+
+                        # Save revision with version suffix (e.g., -v2.md)
+                        script.revision_count = self._podcast_state[ "revision_count" ]
+                        script_path = await self._save_script_async( script, is_revision=True )
+                        self._podcast_state[ "draft_script_path" ] = script_path
+
+                        # Loop continues - will show revised script for review again
+
+            self._podcast_state[ "script_approved" ] = True
+            self._podcast_state[ "final_script_path" ] = script_path
+
+            # =================================================================
+            # Completion
+            # =================================================================
+            self.state = OrchestratorState.COMPLETED
+            self.metrics[ "end_time" ] = time.time()
+
+            await voice_io.notify(
+                f"Script editing complete! Saved to {script_path}",
+                abstract = f"**Segments**: {script.get_segment_count()}\n"
+                           f"**Duration**: ~{script.estimated_duration_minutes:.1f} minutes\n"
+                           f"**Revisions**: {script.revision_count}"
+            )
+
+            return script
+
+        except Exception as e:
+            self.state = OrchestratorState.FAILED
+            self.metrics[ "end_time" ] = time.time()
+            logger.error( f"Script editing failed: {e}" )
+            await voice_io.notify(
+                f"Script editing failed: {str( e )[ :100 ]}",
                 priority = "urgent"
             )
             raise
@@ -354,7 +604,7 @@ class PodcastOrchestratorAgent:
 
     async def _handle_stop( self ) -> None:
         """Handle stop request gracefully."""
-        await cosa_interface.notify_progress( "Podcast generation stopped by user request." )
+        await voice_io.notify( "Podcast generation stopped by user request." )
         self.state = OrchestratorState.STOPPED
         return None
 
@@ -597,12 +847,17 @@ class PodcastOrchestratorAgent:
             # Return original script unchanged
             return current_script
 
-    async def _save_script_async( self, script: PodcastScript ) -> str:
+    async def _save_script_async( self, script: PodcastScript, is_revision: bool = False ) -> str:
         """
         Save the script to a markdown file.
 
+        For new scripts, generates a new path and stores it.
+        For revisions, appends version suffix (e.g., -v2.md) to preserve history.
+        For approval (final save), uses original path.
+
         Args:
             script: The script to save
+            is_revision: If True, append version suffix (e.g., -v2.md) to filename
 
         Returns:
             str: Path to saved file
@@ -610,13 +865,31 @@ class PodcastOrchestratorAgent:
         try:
             import cosa.utils.util as cu
 
-            # Generate output path
-            topic_slug = script.title.replace( "Podcast: ", "" )[ :40 ]
-            output_path = self.config.get_output_path(
-                user_id   = self.user_id,
-                topic     = topic_slug,
-                file_type = "script",
-            )
+            # Determine output path based on context
+            if self._original_script_path and is_revision:
+                # Generate versioned path: original-script-v2.md (suffix before .md)
+                base_path    = self._original_script_path
+                revision_num = self._podcast_state.get( "revision_count", 1 )
+
+                # Split: /path/to/name-script.md → /path/to/name-script + .md
+                # Result: /path/to/name-script-v2.md
+                stem, ext   = os.path.splitext( base_path )  # ext = ".md"
+                output_path = f"{stem}-v{revision_num}{ext}"
+
+            elif self._original_script_path:
+                # Non-revision save (approval) - use original path
+                output_path = self._original_script_path
+
+            else:
+                # First save - generate new path
+                topic_slug = script.title.replace( "Podcast: ", "" )[ :40 ]
+                output_path = self.config.get_output_path(
+                    user_id   = self.user_id,
+                    topic     = topic_slug,
+                    file_type = "script",
+                )
+                # Store for future reference
+                self._original_script_path = output_path
 
             # Ensure directory exists
             output_dir = os.path.dirname( output_path )
@@ -637,6 +910,29 @@ class PodcastOrchestratorAgent:
         except Exception as e:
             logger.error( f"Failed to save script: {e}" )
             raise
+
+    async def _delete_draft_script( self, script_path: str ) -> None:
+        """
+        Delete a draft script file (used when user cancels).
+
+        Args:
+            script_path: Path to the script file to delete
+        """
+        try:
+            def delete_file():
+                if os.path.exists( script_path ):
+                    os.remove( script_path )
+                    return True
+                return False
+
+            deleted = await asyncio.to_thread( delete_file )
+
+            if self.debug and deleted:
+                print( f"[PodcastOrchestratorAgent] Draft script deleted: {script_path}" )
+
+        except Exception as e:
+            logger.warning( f"Failed to delete draft script: {e}" )
+            # Non-fatal - continue anyway
 
     def _get_script_preview( self, script: PodcastScript ) -> str:
         """

@@ -274,12 +274,24 @@ async def run_research(
 
         if clarification_response.get( "needs_clarification" ):
             question = clarification_response.get( "question", "Could you clarify?" )
+            options = clarification_response.get( "options", [] )
+
             await voice_io.notify( f"Clarification needed: {question}", priority="medium" )
 
             if not no_confirm:
-                clarification = await voice_io.get_input(
-                    f"{question} Say your clarification, or say 'skip' to continue without clarifying"
-                )
+                if options and len( options ) >= 2:
+                    # Multiple-choice UI when LLM provides structured options
+                    clarification = await voice_io.choose(
+                        question     = question,
+                        options      = options,
+                        allow_custom = True  # Still allow "Other" for free-text
+                    )
+                else:
+                    # Fall back to open-ended input for truly open questions
+                    clarification = await voice_io.get_input(
+                        f"{question} Say your clarification, or say 'skip' to continue without clarifying"
+                    )
+
                 if clarification and clarification.lower().strip() not in [ "skip", "none", "no", "" ]:
                     query = f"{query} - Clarification: {clarification}"
 
@@ -1014,7 +1026,15 @@ def main():
                     links_section = f"""🔗 **View Report**: [Open in Browser]({view_url})
 🔗 **Cloud Console**: [View in GCS]({console_url})"""
                 else:
-                    encoded_path = urllib.parse.quote( file_path, safe="" )
+                    # Local path - send relative path from io/deep-research base
+                    # file_path = /mnt/.../io/deep-research/user@email/file.md
+                    # API expects: user@email/file.md
+                    deep_research_base = cu.get_project_root() + "/io/deep-research"
+                    if file_path.startswith( deep_research_base ):
+                        relative_path = file_path[ len( deep_research_base ) + 1: ]  # Skip trailing /
+                    else:
+                        relative_path = file_path  # Fallback to full path
+                    encoded_path = urllib.parse.quote( relative_path, safe="" )
                     view_url = f"http://localhost:7999/api/deep-research/report?path={encoded_path}"
                     links_section = f"""🔗 **View Report**: [Open in Browser]({view_url})"""
 

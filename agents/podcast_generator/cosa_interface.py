@@ -25,6 +25,7 @@ from cosa.cli.notification_models import (
 )
 from cosa.cli.notify_user_sync import notify_user_sync as _notify_user_sync
 from cosa.cli.notify_user_async import notify_user_async as _notify_user_async
+from cosa.utils.notification_utils import format_questions_for_tts
 
 logger = logging.getLogger( __name__ )
 
@@ -231,7 +232,7 @@ async def present_choices(
         dict: {"answers": {...}} with selections keyed by header
     """
     try:
-        message = _format_questions_for_tts( questions )
+        message = format_questions_for_tts( questions )
 
         request = NotificationRequest(
             message           = message,
@@ -241,6 +242,8 @@ async def present_choices(
             timeout_seconds   = timeout,
             response_options  = { "questions": questions },
             sender_id         = SENDER_ID,
+            abstract          = abstract,
+            title             = title,
         )
 
         response: NotificationResponse = await asyncio.to_thread( _notify_user_sync, request )
@@ -323,40 +326,6 @@ def is_rejection( feedback: str ) -> bool:
     return False
 
 
-# =============================================================================
-# Private Helpers
-# =============================================================================
-
-def _format_questions_for_tts( questions: list ) -> str:
-    """
-    Format questions for TTS playback.
-
-    Returns ONLY the question text. Options are displayed in the UI
-    and should NOT be included in the spoken TTS message.
-    """
-    total = len( questions )
-    parts = []
-
-    for i, q in enumerate( questions, 1 ):
-        question_text = q.get( "question", "Please select an option" )
-        multi_select = q.get( "multiSelect", False )
-
-        # Build question intro (question text ONLY)
-        if total > 1:
-            part = f"Question {i} of {total}: {question_text}"
-        else:
-            part = question_text
-
-        # Add multi-select hint if needed
-        if multi_select:
-            part += " You can select multiple options."
-
-        # NOTE: Options are displayed in UI, not spoken in TTS
-        parts.append( part )
-
-    return " ".join( parts )
-
-
 def quick_smoke_test():
     """Quick smoke test for cosa_interface module."""
     import cosa.utils.util as cu
@@ -395,8 +364,8 @@ def quick_smoke_test():
         assert is_rejection( "yes" ) is False
         print( "✓ is_rejection works correctly" )
 
-        # Test 5: _format_questions_for_tts
-        print( "Testing _format_questions_for_tts..." )
+        # Test 5: format_questions_for_tts (imported from notification_utils)
+        print( "Testing format_questions_for_tts..." )
         questions = [ {
             "question" : "Which option?",
             "options"  : [
@@ -404,10 +373,10 @@ def quick_smoke_test():
                 { "label": "Option B" }
             ]
         } ]
-        tts = _format_questions_for_tts( questions )
+        tts = format_questions_for_tts( questions )
         assert "Which option?" in tts
-        assert "Option 1: Option A" in tts
-        print( "✓ _format_questions_for_tts works" )
+        assert "Option" not in tts  # Options NOT in TTS - they appear in UI only
+        print( "✓ format_questions_for_tts works" )
 
         # Test 6: Async function signatures
         print( "Testing async function signatures..." )
