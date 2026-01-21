@@ -173,6 +173,7 @@ pydantic-evals==0.6.2
 pydantic-graph==0.6.2
 pydantic-settings==2.8.1
 pydantic_core==2.33.2
+pydub>=0.25.1
 Pygments==2.19.1
 pylance==0.36.0
 pyparsing==3.2.3

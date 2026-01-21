@@ -116,7 +116,7 @@ DEFAULT_VOICE_EXPERT = VoiceProfile(
 # =============================================================================
 
 DEFAULT_CURIOUS_HOST = HostPersonality(
-    name              = "Alex",
+    name              = "Nora",
     role              = "Curious Questioner",
     tone              = "enthusiastic and inquisitive",
     expertise_level   = "educated layperson",
@@ -133,7 +133,7 @@ DEFAULT_CURIOUS_HOST = HostPersonality(
 )
 
 DEFAULT_EXPERT_HOST = HostPersonality(
-    name              = "Jordan",
+    name              = "Quentin",
     role              = "Knowledgeable Explainer",
     tone              = "warm and authoritative",
     expertise_level   = "expert",
@@ -192,7 +192,7 @@ class PodcastConfig:
     # === Output Configuration ===
     output_dir_template        : str   = "io/podcasts/{user}"
     script_filename_template   : str   = "{timestamp}-{topic}-script.md"
-    audio_filename_template    : str   = "{timestamp}-{topic}-podcast.mp3"
+    audio_filename_template    : str   = "{timestamp}-{topic}.mp3"
 
     # === Audio Settings (Phase 2) ===
     audio_format               : Literal[ "mp3", "wav" ] = "mp3"
@@ -281,8 +281,8 @@ def quick_smoke_test():
 
         # Test 2: Host personalities
         print( "Testing host personalities..." )
-        assert config.host_a_personality.name == "Alex"
-        assert config.host_b_personality.name == "Jordan"
+        assert config.host_a_personality.name == "Nora"
+        assert config.host_b_personality.name == "Quentin"
         assert config.host_a_personality.role == "Curious Questioner"
         assert config.host_b_personality.role == "Knowledgeable Explainer"
         print( f"✓ Host A: {config.get_host_a_name()} ({config.host_a_personality.role})" )
@@ -300,7 +300,7 @@ def quick_smoke_test():
         # Test 4: HostPersonality.to_prompt_description
         print( "Testing personality prompt generation..." )
         prompt_desc = config.host_a_personality.to_prompt_description()
-        assert "Alex" in prompt_desc
+        assert "Nora" in prompt_desc
         assert "Curious Questioner" in prompt_desc
         assert "enthusiastic" in prompt_desc
         print( "✓ Personality prompt description generated" )

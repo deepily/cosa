@@ -232,6 +232,12 @@ class NotificationRequest(BaseModel):
         description="Human-readable session name (e.g., 'cats vs dogs comparison'). If provided, used instead of auto-generated name in UI."
     )
 
+    job_id: Optional[str] = Field(
+        default=None,
+        pattern=r'^[a-z]+-[a-f0-9]{8}$',
+        description="Agentic job ID for routing notifications to job cards (e.g., 'dr-a1b2c3d4'). If provided, notification routes to job card instead of standard notification card."
+    )
+
     @field_validator( 'message' )
     @classmethod
     def message_not_whitespace( cls, v: str ) -> str:
@@ -376,6 +382,10 @@ class NotificationRequest(BaseModel):
         # Add session_name for UI display
         if self.session_name is not None:
             params["session_name"] = self.session_name
+
+        # Add job_id for routing to job cards
+        if self.job_id is not None:
+            params["job_id"] = self.job_id
 
         return params
 
@@ -598,6 +608,12 @@ class AsyncNotificationRequest(BaseModel):
         description="Human-readable session name (e.g., 'cats vs dogs comparison'). If provided, used instead of auto-generated name in UI."
     )
 
+    job_id: Optional[str] = Field(
+        default=None,
+        pattern=r'^[a-z]+-[a-f0-9]{8}$',
+        description="Agentic job ID for routing notifications to job cards (e.g., 'dr-a1b2c3d4'). If provided, notification routes to job card instead of standard notification card."
+    )
+
     @field_validator( 'message' )
     @classmethod
     def message_not_whitespace( cls, v: str ) -> str:
@@ -658,6 +674,10 @@ class AsyncNotificationRequest(BaseModel):
         # Add session_name for UI display
         if self.session_name is not None:
             params["session_name"] = self.session_name
+
+        # Add job_id for routing to job cards
+        if self.job_id is not None:
+            params["job_id"] = self.job_id
 
         return params
 
@@ -742,3 +762,241 @@ class AsyncNotificationResponse(BaseModel):
             bool: True if error occurred
         """
         return self.status in ("error", "connection_error", "timeout")
+
+
+# ============================================================================
+# Smoke Test
+# ============================================================================
+
+def quick_smoke_test():
+    """
+    Quick smoke test for notification_models - validates Pydantic models and job_id field.
+
+    Tests:
+        1. NotificationRequest basic creation
+        2. AsyncNotificationRequest basic creation
+        3. job_id validation (valid patterns)
+        4. job_id validation (invalid patterns - should reject)
+        5. job_id inclusion in to_api_params()
+        6. sender_id validation patterns
+        7. Response models creation
+    """
+    import cosa.utils.util as cu
+    from pydantic import ValidationError
+
+    cu.print_banner( "Notification Models Smoke Test", prepend_nl=True )
+
+    tests_passed = 0
+    tests_failed = 0
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Test 1: NotificationRequest basic creation
+    # ─────────────────────────────────────────────────────────────────────────
+    print( "\n1. Testing NotificationRequest basic creation..." )
+    try:
+        req = NotificationRequest(
+            message="Test message",
+            response_type=ResponseType.YES_NO
+        )
+        assert req.message == "Test message"
+        assert req.response_type == ResponseType.YES_NO
+        assert req.job_id is None  # Default
+        print( "   ✓ NotificationRequest created successfully" )
+        tests_passed += 1
+    except Exception as e:
+        print( f"   ✗ Failed: {e}" )
+        tests_failed += 1
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Test 2: AsyncNotificationRequest basic creation
+    # ─────────────────────────────────────────────────────────────────────────
+    print( "\n2. Testing AsyncNotificationRequest basic creation..." )
+    try:
+        async_req = AsyncNotificationRequest(
+            message="Async test message"
+        )
+        assert async_req.message == "Async test message"
+        assert async_req.job_id is None  # Default
+        print( "   ✓ AsyncNotificationRequest created successfully" )
+        tests_passed += 1
+    except Exception as e:
+        print( f"   ✗ Failed: {e}" )
+        tests_failed += 1
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Test 3: job_id validation - valid patterns
+    # ─────────────────────────────────────────────────────────────────────────
+    print( "\n3. Testing job_id validation (valid patterns)..." )
+    valid_job_ids = [
+        "dr-a1b2c3d4",      # Deep Research prefix
+        "pod-12345678",     # Podcast prefix
+        "aj-abcdef01",      # Agentic job prefix
+        "x-00000000",       # Single letter prefix
+    ]
+    all_valid_passed = True
+    for job_id in valid_job_ids:
+        try:
+            req = NotificationRequest(
+                message="Test",
+                response_type=ResponseType.YES_NO,
+                job_id=job_id
+            )
+            assert req.job_id == job_id
+            print( f"   ✓ Valid job_id accepted: {job_id}" )
+        except ValidationError as e:
+            print( f"   ✗ Valid job_id rejected: {job_id} - {e}" )
+            all_valid_passed = False
+
+    if all_valid_passed:
+        tests_passed += 1
+    else:
+        tests_failed += 1
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Test 4: job_id validation - invalid patterns (should reject)
+    # ─────────────────────────────────────────────────────────────────────────
+    print( "\n4. Testing job_id validation (invalid patterns - should reject)..." )
+    invalid_job_ids = [
+        "DR-a1b2c3d4",      # Uppercase prefix (invalid)
+        "dr_a1b2c3d4",      # Underscore instead of hyphen
+        "dr-a1b2c3d",       # Too short (7 hex chars)
+        "dr-a1b2c3d4e",     # Too long (9 hex chars)
+        "dr-ABCDEF01",      # Uppercase hex (invalid)
+        "123-a1b2c3d4",     # Numeric prefix (invalid)
+        "dr-ghijklmn",      # Non-hex characters
+        "",                 # Empty string
+    ]
+    all_invalid_rejected = True
+    for job_id in invalid_job_ids:
+        try:
+            req = NotificationRequest(
+                message="Test",
+                response_type=ResponseType.YES_NO,
+                job_id=job_id
+            )
+            print( f"   ✗ Invalid job_id accepted (should reject): {job_id}" )
+            all_invalid_rejected = False
+        except ValidationError:
+            print( f"   ✓ Invalid job_id correctly rejected: {job_id!r}" )
+
+    if all_invalid_rejected:
+        tests_passed += 1
+    else:
+        tests_failed += 1
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Test 5: job_id inclusion in to_api_params()
+    # ─────────────────────────────────────────────────────────────────────────
+    print( "\n5. Testing job_id inclusion in to_api_params()..." )
+    try:
+        # Test NotificationRequest
+        req_with_job = NotificationRequest(
+            message="Test with job_id",
+            response_type=ResponseType.YES_NO,
+            job_id="dr-a1b2c3d4"
+        )
+        params = req_with_job.to_api_params()
+        assert "job_id" in params, "job_id missing from params"
+        assert params["job_id"] == "dr-a1b2c3d4"
+        print( "   ✓ NotificationRequest.to_api_params() includes job_id" )
+
+        # Test AsyncNotificationRequest
+        async_req_with_job = AsyncNotificationRequest(
+            message="Async test with job_id",
+            job_id="pod-12345678"
+        )
+        async_params = async_req_with_job.to_api_params()
+        assert "job_id" in async_params, "job_id missing from async params"
+        assert async_params["job_id"] == "pod-12345678"
+        print( "   ✓ AsyncNotificationRequest.to_api_params() includes job_id" )
+
+        # Test None job_id is excluded
+        req_no_job = NotificationRequest(
+            message="Test without job_id",
+            response_type=ResponseType.YES_NO
+        )
+        params_no_job = req_no_job.to_api_params()
+        assert "job_id" not in params_no_job, "job_id should not be in params when None"
+        print( "   ✓ None job_id correctly excluded from params" )
+
+        tests_passed += 1
+    except Exception as e:
+        print( f"   ✗ Failed: {e}" )
+        tests_failed += 1
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Test 6: sender_id validation patterns
+    # ─────────────────────────────────────────────────────────────────────────
+    print( "\n6. Testing sender_id validation patterns..." )
+    valid_sender_ids = [
+        "claude.code@lupin.deepily.ai",
+        "claude.code@lupin.deepily.ai#a1b2c3d4",
+        "deep.research@lupin.deepily.ai#cli",
+        "podcast.gen@cosa.deepily.ai#cats-vs-dogs",
+    ]
+    all_sender_valid = True
+    for sender_id in valid_sender_ids:
+        try:
+            req = NotificationRequest(
+                message="Test",
+                response_type=ResponseType.YES_NO,
+                sender_id=sender_id
+            )
+            print( f"   ✓ Valid sender_id accepted: {sender_id}" )
+        except ValidationError as e:
+            print( f"   ✗ Valid sender_id rejected: {sender_id}" )
+            all_sender_valid = False
+
+    if all_sender_valid:
+        tests_passed += 1
+    else:
+        tests_failed += 1
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Test 7: Response models creation
+    # ─────────────────────────────────────────────────────────────────────────
+    print( "\n7. Testing response models creation..." )
+    try:
+        # NotificationResponse
+        response = NotificationResponse(
+            response_value="yes",
+            exit_code=0,
+            status="responded"
+        )
+        assert response.success is True
+        assert response.is_error is False
+        print( "   ✓ NotificationResponse created successfully" )
+
+        # AsyncNotificationResponse
+        async_response = AsyncNotificationResponse(
+            success=True,
+            status="queued",
+            target_user="test@example.com",
+            connection_count=2
+        )
+        assert async_response.is_queued is True
+        assert async_response.is_error is False
+        print( "   ✓ AsyncNotificationResponse created successfully" )
+
+        tests_passed += 1
+    except Exception as e:
+        print( f"   ✗ Failed: {e}" )
+        tests_failed += 1
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Summary
+    # ─────────────────────────────────────────────────────────────────────────
+    print( "\n" + "=" * 60 )
+    print( f"Smoke Test Results: {tests_passed} passed, {tests_failed} failed" )
+    print( "=" * 60 )
+
+    if tests_failed == 0:
+        print( "\n✓ All smoke tests passed!" )
+        return True
+    else:
+        print( f"\n✗ {tests_failed} test(s) failed" )
+        return False
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

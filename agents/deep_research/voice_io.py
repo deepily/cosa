@@ -135,7 +135,8 @@ async def notify(
     message: str,
     priority: str = "medium",
     abstract: Optional[str] = None,
-    session_name: Optional[str] = None
+    session_name: Optional[str] = None,
+    job_id: Optional[str] = None
 ) -> None:
     """
     Send a progress notification (voice-first).
@@ -156,6 +157,7 @@ async def notify(
         priority: Notification priority level
         abstract: Optional supplementary context (markdown, URLs, details)
         session_name: Optional human-readable session name for UI display
+        job_id: Optional agentic job ID for routing to job cards (e.g., "dr-a1b2c3d4")
     """
     # Check for forced CLI mode or unavailable voice
     if _force_cli_mode or not await is_voice_available():
@@ -165,7 +167,7 @@ async def notify(
         return
 
     try:
-        await cosa_interface.notify_progress( message, priority, abstract, session_name )
+        await cosa_interface.notify_progress( message, priority, abstract, session_name, job_id )
     except Exception as e:
         logger.warning( f"Voice notification failed: {e}" )
         print( f"  {message}" )  # Fallback to print

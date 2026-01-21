@@ -80,7 +80,8 @@ async def notify_progress(
     message: str,
     priority: str = "medium",
     abstract: Optional[str] = None,
-    session_name: Optional[str] = None
+    session_name: Optional[str] = None,
+    job_id: Optional[str] = None
 ) -> None:
     """
     Send fire-and-forget progress notification.
@@ -101,6 +102,7 @@ async def notify_progress(
         priority: "low", "medium", "high", or "urgent"
         abstract: Optional supplementary context (markdown, URLs, details)
         session_name: Optional human-readable session name for UI display
+        job_id: Optional agentic job ID for routing to job cards (e.g., "dr-a1b2c3d4")
     """
     try:
         # Use module-level SESSION_NAME if not explicitly provided
@@ -113,6 +115,7 @@ async def notify_progress(
             sender_id         = SENDER_ID,
             abstract          = abstract,
             session_name      = resolved_session_name,
+            job_id            = job_id,
         )
 
         # Run blocking call in thread pool

@@ -19,8 +19,9 @@ import asyncio
 import time
 import logging
 import os
+import urllib.parse
 import uuid
-from typing import Optional
+from typing import Optional, List, Tuple
 from datetime import datetime
 
 from .config import PodcastConfig
@@ -36,6 +37,8 @@ from .state import (
 from . import cosa_interface
 from . import voice_io
 from .api_client import PodcastAPIClient
+from .tts_client import PodcastTTSClient, TTSSegmentResult
+from .audio_stitcher import PodcastAudioStitcher, StitchingResult
 from .prompts import (
     SCRIPT_GENERATION_SYSTEM_PROMPT,
     CONTENT_ANALYSIS_SYSTEM_PROMPT,
@@ -75,6 +78,7 @@ class PodcastOrchestratorAgent:
         research_doc_path: str,
         user_id: str,
         config: Optional[ PodcastConfig ] = None,
+        max_segments: Optional[ int ] = None,
         debug: bool = False,
         verbose: bool = False
     ):
@@ -85,12 +89,14 @@ class PodcastOrchestratorAgent:
             research_doc_path: Path to the Deep Research markdown document
             user_id: System user ID for event routing
             config: Podcast configuration (uses defaults if None)
+            max_segments: Limit TTS to first N segments (for cost control)
             debug: Enable debug output
             verbose: Enable verbose output
         """
         self.research_doc_path = research_doc_path
         self.user_id           = user_id
         self.config            = config or PodcastConfig()
+        self.max_segments      = max_segments
         self.debug             = debug
         self.verbose           = verbose
 
@@ -107,6 +113,10 @@ class PodcastOrchestratorAgent:
 
         # Initialize API client (lazy - created on first use)
         self._api_client: Optional[ PodcastAPIClient ] = None
+
+        # Initialize TTS client and audio stitcher (lazy - created on first use)
+        self._tts_client: Optional[ PodcastTTSClient ] = None
+        self._audio_stitcher: Optional[ PodcastAudioStitcher ] = None
 
         # Track original script path for revisions (to preserve filename)
         self._original_script_path: Optional[ str ] = None
@@ -134,12 +144,38 @@ class PodcastOrchestratorAgent:
             )
         return self._api_client
 
+    @property
+    def tts_client( self ) -> PodcastTTSClient:
+        """Lazy initialization of TTS client."""
+        if self._tts_client is None:
+            self._tts_client = PodcastTTSClient(
+                config_mgr        = None,  # Will use defaults from config
+                progress_callback = self._audio_progress_callback,
+                retry_callback    = self._audio_retry_callback,
+                debug             = self.debug,
+                verbose           = self.verbose,
+            )
+        return self._tts_client
+
+    @property
+    def audio_stitcher( self ) -> PodcastAudioStitcher:
+        """Lazy initialization of audio stitcher."""
+        if self._audio_stitcher is None:
+            self._audio_stitcher = PodcastAudioStitcher(
+                silence_between_speakers_ms = self.config.silence_between_speakers_ms,
+                audio_bitrate               = self.config.audio_bitrate,
+                debug                       = self.debug,
+                verbose                     = self.verbose,
+            )
+        return self._audio_stitcher
+
     @classmethod
     async def from_saved_script(
         cls,
         script_path: str,
         user_id: str,
         config: Optional[ PodcastConfig ] = None,
+        max_segments: Optional[ int ] = None,
         debug: bool = False,
         verbose: bool = False
     ) -> "PodcastOrchestratorAgent":
@@ -162,6 +198,7 @@ class PodcastOrchestratorAgent:
             script_path: Path to saved script markdown file
             user_id: User identifier for output directory
             config: Podcast configuration (uses defaults if None)
+            max_segments: Limit TTS to first N segments (for cost control)
             debug: Enable debug output
             verbose: Enable verbose output
 
@@ -185,6 +222,7 @@ class PodcastOrchestratorAgent:
             research_doc_path = script.research_source or "edit-mode",
             user_id           = user_id,
             config            = config,
+            max_segments      = max_segments,
             debug             = debug,
             verbose           = verbose,
         )
@@ -372,7 +410,48 @@ class PodcastOrchestratorAgent:
             self._podcast_state[ "final_script_path" ] = script_path
 
             # =================================================================
-            # Completion (Phase 1)
+            # Phase 5: Generate Audio
+            # =================================================================
+            self.state = OrchestratorState.GENERATING_AUDIO
+
+            # Initialize progress milestone tracking (for 10% increment notifications)
+            self._reported_milestones = set()
+
+            segment_count = script.get_segment_count()
+            await voice_io.notify(
+                f"Starting audio generation for {segment_count} segments. This may take 1-3 minutes.",
+                priority = "medium"
+            )
+
+            tts_results, failed_indices = await self._generate_audio_async( script )
+
+            # Handle partial failures
+            if failed_indices:
+                continue_anyway = await voice_io.ask_yes_no(
+                    f"{len( failed_indices )} segments failed. Continue with partial audio?",
+                    default  = "yes",
+                    abstract = f"**Failed**: {len( failed_indices )}\n**Successful**: {len( tts_results ) - len( failed_indices )}"
+                )
+                if not continue_anyway:
+                    self.state = OrchestratorState.STOPPED
+                    await voice_io.notify( "Audio generation cancelled by user." )
+                    return script
+
+            if self._check_stop(): return await self._handle_stop()
+
+            # =================================================================
+            # Phase 6: Stitch Audio
+            # =================================================================
+            self.state = OrchestratorState.STITCHING_AUDIO
+            await voice_io.notify( "Stitching audio segments into final podcast..." )
+
+            audio_path = await self._stitch_audio_async( tts_results, script )
+            self._podcast_state[ "final_audio_path" ] = audio_path
+
+            if self._check_stop(): return await self._handle_stop()
+
+            # =================================================================
+            # Completion
             # =================================================================
             self.state = OrchestratorState.COMPLETED
             self.metrics[ "end_time" ] = time.time()
@@ -385,6 +464,7 @@ class PodcastOrchestratorAgent:
                 user_id               = self.user_id,
                 research_doc_path     = self.research_doc_path,
                 script_path           = script_path,
+                audio_path            = audio_path,
                 generated_at          = datetime.now().isoformat(),
                 generation_duration_seconds = duration,
                 api_calls_count       = self.api_client.cost_estimate.total_api_calls,
@@ -397,11 +477,23 @@ class PodcastOrchestratorAgent:
             )
             self._podcast_state[ "metadata" ] = metadata
 
+            # Calculate audio duration
+            audio_duration_mins = script.estimated_duration_minutes
+            if audio_path and os.path.exists( audio_path ):
+                try:
+                    from pydub import AudioSegment
+                    audio = AudioSegment.from_mp3( audio_path )
+                    audio_duration_mins = len( audio ) / 1000.0 / 60.0
+                except Exception:
+                    pass  # Use script estimate if audio read fails
+
             await voice_io.notify(
-                f"Podcast script complete! Saved to {script_path}",
+                f"Podcast complete! Audio saved to {audio_path}",
+                priority = "high",
                 abstract = f"**Segments**: {script.get_segment_count()}\n"
-                           f"**Duration**: ~{script.estimated_duration_minutes:.1f} minutes\n"
-                           f"**Cost**: ${metadata.estimated_cost_usd:.4f}"
+                           f"**Duration**: {audio_duration_mins:.1f} minutes\n"
+                           f"**Script Cost**: ${metadata.estimated_cost_usd:.4f}\n"
+                           f"**Script**: {script_path}"
             )
 
             return script
@@ -551,6 +643,134 @@ class PodcastOrchestratorAgent:
             logger.error( f"Script editing failed: {e}" )
             await voice_io.notify(
                 f"Script editing failed: {str( e )[ :100 ]}",
+                priority = "urgent"
+            )
+            raise
+
+    async def do_audio_only_async( self ) -> Optional[ PodcastScript ]:
+        """
+        Run only the audio generation workflow (skip script review).
+
+        Used when resuming from a saved script via --generate-audio flag.
+        Enters directly at Phase 5 (GENERATING_AUDIO).
+
+        Requires:
+            - Script already loaded via from_saved_script()
+
+        Ensures:
+            - Executes audio generation and stitching only
+            - Returns PodcastScript on success
+            - Returns None on cancellation
+
+        Returns:
+            PodcastScript or None: Script with audio path, or None if cancelled
+        """
+        self.metrics[ "start_time" ] = time.time()
+
+        try:
+            script = self._podcast_state.get( "draft_script" )
+            if not script:
+                raise ValueError( "No script loaded - use from_saved_script() first" )
+
+            script_path = self._podcast_state.get( "draft_script_path", "" )
+
+            await voice_io.notify(
+                f"Loaded script: {script.title}",
+                abstract = f"**Segments**: {script.get_segment_count()}\n"
+                           f"**Duration**: ~{script.calculated_duration_minutes:.1f} minutes"
+            )
+
+            # =================================================================
+            # Phase 5: Generate Audio
+            # =================================================================
+            self.state = OrchestratorState.GENERATING_AUDIO
+
+            # Initialize progress milestone tracking (for 10% increment notifications)
+            self._reported_milestones = set()
+
+            segment_count = script.get_segment_count()
+            await voice_io.notify(
+                f"Starting audio generation for {segment_count} segments. This may take 1-3 minutes.",
+                priority = "medium"
+            )
+
+            tts_results, failed_indices = await self._generate_audio_async( script )
+
+            # Handle partial failures - HIGH priority for TTS announcement
+            if failed_indices:
+                continue_anyway = await voice_io.ask_yes_no(
+                    f"{len( failed_indices )} segments failed. Continue with partial audio?",
+                    default  = "yes",
+                    timeout  = 120,
+                    abstract = f"**Failed**: {len( failed_indices )}\n**Successful**: {len( tts_results ) - len( failed_indices )}"
+                )
+                if not continue_anyway:
+                    self.state = OrchestratorState.STOPPED
+                    await voice_io.notify( "Audio generation cancelled by user." )
+                    return None
+
+            if self._check_stop(): return await self._handle_stop()
+
+            # =================================================================
+            # Phase 6: Stitch Audio
+            # =================================================================
+            self.state = OrchestratorState.STITCHING_AUDIO
+            await voice_io.notify( "Stitching audio segments into final podcast..." )
+
+            audio_path = await self._stitch_audio_async( tts_results, script )
+            self._podcast_state[ "final_audio_path" ] = audio_path
+
+            if self._check_stop(): return await self._handle_stop()
+
+            # =================================================================
+            # Completion
+            # =================================================================
+            self.state = OrchestratorState.COMPLETED
+            self.metrics[ "end_time" ] = time.time()
+
+            duration = self.metrics[ "end_time" ] - self.metrics[ "start_time" ]
+
+            # Calculate audio duration
+            audio_duration_mins = script.calculated_duration_minutes
+            if audio_path and os.path.exists( audio_path ):
+                try:
+                    from pydub import AudioSegment
+                    audio = AudioSegment.from_mp3( audio_path )
+                    audio_duration_mins = len( audio ) / 1000.0 / 60.0
+                except Exception:
+                    pass  # Use script estimate if audio read fails
+
+            # Build clickable links for notification abstract
+            import cosa.utils.util as cu
+            io_base = cu.get_project_root() + "/io/"
+
+            # Convert absolute paths to relative for API endpoint
+            script_link = script_path
+            audio_link = audio_path
+            if script_path and script_path.startswith( io_base ):
+                rel_path = script_path.replace( io_base, "" )
+                script_link = f"[View Script](/api/io/file?path={urllib.parse.quote( rel_path )})"
+            if audio_path and audio_path.startswith( io_base ):
+                rel_path = audio_path.replace( io_base, "" )
+                audio_link = f"[Download MP3](/api/io/file?path={urllib.parse.quote( rel_path )})"
+
+            await voice_io.notify(
+                f"Podcast audio complete! Duration: {audio_duration_mins:.1f} minutes",
+                priority = "high",
+                abstract = f"**Segments**: {script.get_segment_count()}\n"
+                           f"**Duration**: {audio_duration_mins:.1f} minutes\n"
+                           f"**Audio**: {audio_link}\n"
+                           f"**Script**: {script_link}"
+            )
+
+            return script
+
+        except Exception as e:
+            self.state = OrchestratorState.FAILED
+            self.metrics[ "end_time" ] = time.time()
+            logger.error( f"Audio generation failed: {e}" )
+            await voice_io.notify(
+                f"Audio generation failed: {str( e )[ :100 ]}",
                 priority = "urgent"
             )
             raise
@@ -969,6 +1189,171 @@ class PodcastOrchestratorAgent:
 ---
 *Full script contains {script.get_segment_count()} dialogue segments.*"""
 
+    # =========================================================================
+    # Private Methods - Phase 2 Implementation (Audio Generation)
+    # =========================================================================
+
+    async def _generate_audio_async(
+        self,
+        script: PodcastScript
+    ) -> Tuple[ List[ TTSSegmentResult ], List[ int ] ]:
+        """
+        Phase 5: Generate TTS audio for all segments.
+
+        Uses the TTS client to generate PCM audio for each dialogue
+        segment in the script.
+
+        Requires:
+            - script has at least one segment
+            - ELEVENLABS_API_KEY is set in environment
+
+        Ensures:
+            - Returns list of TTSSegmentResult for all segments
+            - Returns list of indices for failed segments
+
+        Args:
+            script: Podcast script with dialogue segments
+
+        Returns:
+            Tuple[List[TTSSegmentResult], List[int]]:
+                - All TTS results (including failures)
+                - Indices of failed segments
+        """
+        # Apply max_segments limit if set (for cost control during testing)
+        original_count = script.get_segment_count()
+        if self.max_segments is not None and self.max_segments < original_count:
+            if self.debug:
+                print( f"[PodcastOrchestratorAgent] Limiting segments: {self.max_segments} of {original_count}" )
+            # Create a shallow copy of script with limited segments
+            from copy import copy
+            limited_script = copy( script )
+            limited_script.segments = script.segments[ :self.max_segments ]
+            script = limited_script
+
+        if self.debug:
+            print( f"[PodcastOrchestratorAgent] Starting audio generation for {script.get_segment_count()} segments" )
+
+        # Use the lazy-initialized TTS client
+        tts_results, failed_indices = await self.tts_client.generate_all_segments( script )
+
+        if self.debug:
+            success_count = len( tts_results ) - len( failed_indices )
+            print( f"[PodcastOrchestratorAgent] Audio generation complete: {success_count}/{len( tts_results )} successful" )
+
+        return tts_results, failed_indices
+
+    async def _stitch_audio_async(
+        self,
+        tts_results: List[ TTSSegmentResult ],
+        script: PodcastScript
+    ) -> str:
+        """
+        Phase 6: Stitch audio segments into final MP3.
+
+        Uses the audio stitcher to concatenate all successful TTS
+        results into a single podcast MP3 file.
+
+        Requires:
+            - tts_results contains at least one successful result
+            - Output directory is writable
+
+        Ensures:
+            - Creates MP3 file at the output path
+            - Returns path to the created file
+
+        Args:
+            tts_results: List of TTS results from generation phase
+            script: Original script (for output path generation)
+
+        Returns:
+            str: Path to the created MP3 file
+        """
+        # Generate output path
+        topic_slug  = script.title.replace( "Podcast: ", "" )[ :40 ]
+        output_path = self.config.get_output_path(
+            user_id   = self.user_id,
+            topic     = topic_slug,
+            file_type = "audio",
+        )
+
+        if self.debug:
+            print( f"[PodcastOrchestratorAgent] Stitching audio to: {output_path}" )
+
+        # Run stitching in thread pool (pydub is synchronous)
+        def do_stitch():
+            return self.audio_stitcher.stitch_segments( tts_results, output_path )
+
+        result = await asyncio.to_thread( do_stitch )
+
+        if not result.success:
+            raise RuntimeError( f"Audio stitching failed: {result.error_message}" )
+
+        if self.debug:
+            print( f"[PodcastOrchestratorAgent] Audio stitched: {result.total_duration_seconds:.1f}s, {result.file_size_bytes / 1024:.1f}KB" )
+
+        return result.output_path
+
+    async def _audio_progress_callback(
+        self,
+        current     : int,
+        total       : int,
+        speaker     : str,
+        eta_seconds : float = 0.0
+    ) -> None:
+        """
+        Progress callback for audio generation milestones.
+
+        Called by TTS client after each segment. Sends notifications
+        at every 10% progress milestone (10%, 20%, ... 100%).
+
+        Args:
+            current: Current segment number (1-based)
+            total: Total number of segments
+            speaker: Speaker name for current segment
+            eta_seconds: Estimated time remaining in seconds
+        """
+        # Calculate percentage and round down to nearest 10%
+        pct = int( current / total * 100 )
+        milestone = ( pct // 10 ) * 10  # 15% → 10%, 27% → 20%, etc.
+
+        # Notify only when reaching a new 10% milestone
+        if milestone not in self._reported_milestones and milestone > 0:
+            self._reported_milestones.add( milestone )
+
+            if eta_seconds > 0:
+                eta_str = f", ~{int( eta_seconds )}s remaining"
+            else:
+                eta_str = ""
+
+            await voice_io.notify(
+                f"Audio progress: {pct}% ({current}/{total} segments){eta_str}",
+                priority = "low"
+            )
+
+    async def _audio_retry_callback(
+        self,
+        segment_index : int,
+        attempt       : int,
+        max_attempts  : int,
+        speaker       : str
+    ) -> None:
+        """
+        Retry callback for TTS segment failures.
+
+        Called by TTS client when a segment fails and will be retried.
+        Sends low priority notification to inform user of retry attempt.
+
+        Args:
+            segment_index: Zero-based index of the segment
+            attempt: Current attempt number (1-based, e.g., 2 = second attempt)
+            max_attempts: Maximum number of attempts
+            speaker: Speaker name for the segment
+        """
+        await voice_io.notify(
+            f"Segment {segment_index + 1} ({speaker}) failed, retrying ({attempt}/{max_attempts})...",
+            priority = "low"
+        )
+
 
 def quick_smoke_test():
     """Quick smoke test for PodcastOrchestratorAgent."""
@@ -1039,11 +1424,11 @@ def quick_smoke_test():
         test_script = PodcastScript(
             title           = "Test Podcast",
             research_source = "/test.md",
-            host_a_name     = "Alex",
-            host_b_name     = "Jordan",
+            host_a_name     = "Nora",
+            host_b_name     = "Quentin",
             segments        = [
-                ScriptSegment( speaker="Alex", role="curious", text="Hello!" ),
-                ScriptSegment( speaker="Jordan", role="expert", text="Hi there!" ),
+                ScriptSegment( speaker="Nora", role="curious", text="Hello!" ),
+                ScriptSegment( speaker="Quentin", role="expert", text="Hi there!" ),
             ],
             estimated_duration_minutes = 5.0,
             key_topics      = [ "topic1", "topic2" ],
@@ -1052,7 +1437,7 @@ def quick_smoke_test():
         preview = agent._get_script_preview( test_script )
         assert "Test Podcast" in preview
         assert "2" in preview  # 2 segments
-        assert "Alex" in preview
+        assert "Nora" in preview
         print( "✓ _get_script_preview generates proper markdown" )
 
         print( "\n✓ Podcast Orchestrator smoke test completed successfully" )

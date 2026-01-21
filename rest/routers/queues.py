@@ -303,47 +303,88 @@ async def get_queue(
 
     # Step 5: Handle done queue special case (metadata + HTML)
     if queue_name == "done":
-        # Extract structured job data from SolutionSnapshot objects
+        # Extract structured job data from SolutionSnapshot or AgenticJobBase objects
         structured_jobs = []
-        for snapshot in jobs:
+        for job in jobs:
             # Get session_id safely (may not exist on older snapshots)
-            session_id = getattr( snapshot, 'session_id', '' )
-            # Generate job metadata from SolutionSnapshot fields
+            session_id = getattr( job, 'session_id', '' )
+
+            # Check if this is an AgenticJobBase (MockAgenticJob, DeepResearchJob, etc.)
+            is_agentic_job = hasattr( job, 'JOB_TYPE' ) and hasattr( job, 'artifacts' )
+
+            # Generate job metadata
             job_data = {
-                "html"            : snapshot.get_html(),
-                "job_id"          : snapshot.id_hash,
-                "question_text"   : snapshot.last_question_asked or snapshot.question,
-                "response_text"   : snapshot.answer_conversational or snapshot.answer,
-                "timestamp"       : snapshot.run_date or snapshot.created_date,
+                "html"            : job.get_html(),
+                "job_id"          : job.id_hash,
+                "question_text"   : job.last_question_asked if hasattr( job, 'last_question_asked' ) else getattr( job, 'question', '' ),
+                "response_text"   : getattr( job, 'answer_conversational', '' ) or getattr( job, 'answer', '' ),
+                "timestamp"       : getattr( job, 'run_date', '' ) or getattr( job, 'created_date', '' ),
                 "user_id"         : authorized_filter,
                 "session_id"      : session_id,  # For job-notification correlation
-                "agent_type"      : snapshot.agent_class_name,  # e.g., "MathAgent", "CalendarAgent"
+                "agent_type"      : getattr( job, 'JOB_TYPE', None ) or getattr( job, 'agent_class_name', 'Unknown' ),
                 "has_interactions": bool( session_id ),  # True if can query notifications
                 "has_audio_cache" : False,  # Will be determined by frontend cache check
-                "is_cache_hit"    : getattr( snapshot, 'is_cache_hit', False )  # For Time Saved Dashboard
+                "is_cache_hit"    : getattr( job, 'is_cache_hit', False ),  # For Time Saved Dashboard
+                # Phase 7: Agentic job artifacts for enhanced done cards
+                "report_path"     : job.artifacts.get( 'report_path' ) if is_agentic_job else None,
+                "abstract"        : job.artifacts.get( 'abstract' ) if is_agentic_job else None,
+                "cost_summary"    : getattr( job, 'cost_summary', None ),
+                "started_at"      : getattr( job, 'started_at', None ),
+                "completed_at"    : getattr( job, 'completed_at', None ),
+                "status"          : getattr( job, 'status', 'completed' ),
+                "error"           : getattr( job, 'error', None ),
             }
+
+            # Calculate duration for agentic jobs
+            if is_agentic_job and job_data[ "started_at" ] and job_data[ "completed_at" ]:
+                try:
+                    start = datetime.fromisoformat( job_data[ "started_at" ] )
+                    end   = datetime.fromisoformat( job_data[ "completed_at" ] )
+                    job_data[ "duration_seconds" ] = ( end - start ).total_seconds()
+                except Exception:
+                    job_data[ "duration_seconds" ] = None
+            else:
+                job_data[ "duration_seconds" ] = None
+
             structured_jobs.append( job_data )
 
         # Maintain backward compatibility: return both structured data and HTML list
         return {
-            f"{queue_name}_jobs": [job["html"] for job in structured_jobs],
+            f"{queue_name}_jobs": [ job[ "html" ] for job in structured_jobs ],
             f"{queue_name}_jobs_metadata": structured_jobs,
             "filtered_by": authorized_filter,
-            "is_admin_view": is_admin(current_user) and (user_filter is not None),
-            "total_jobs": len(structured_jobs)
+            "is_admin_view": is_admin( current_user ) and ( user_filter is not None ),
+            "total_jobs": len( structured_jobs )
         }
 
-    # Step 6: Format as HTML for non-done queues
-    html_list = [job.get_html() for job in jobs]
+    # Step 6: Handle todo/run queues with metadata (Phase 7)
+    structured_jobs = []
+    for job in jobs:
+        # Check if this is an AgenticJobBase (MockAgenticJob, DeepResearchJob, etc.)
+        is_agentic_job = hasattr( job, 'JOB_TYPE' ) and hasattr( job, 'artifacts' )
 
-    # Step 7: Return with metadata
-    is_admin_override = is_admin(current_user) and (user_filter is not None)
+        job_data = {
+            "html"         : job.get_html(),
+            "job_id"       : job.id_hash,
+            "question_text": job.last_question_asked if hasattr( job, 'last_question_asked' ) else getattr( job, 'question', '' ),
+            "timestamp"    : getattr( job, 'run_date', '' ) or getattr( job, 'created_date', '' ),
+            "user_id"      : authorized_filter,
+            "session_id"   : getattr( job, 'session_id', '' ),
+            "agent_type"   : getattr( job, 'JOB_TYPE', None ) or getattr( job, 'agent_class_name', 'Unknown' ),
+            "status"       : getattr( job, 'status', 'pending' ),
+            "started_at"   : getattr( job, 'started_at', None ),
+        }
+        structured_jobs.append( job_data )
+
+    # Return both HTML list and metadata
+    is_admin_override = is_admin( current_user ) and ( user_filter is not None )
 
     return {
-        f"{queue_name}_jobs": html_list,
+        f"{queue_name}_jobs": [ job[ "html" ] for job in structured_jobs ],
+        f"{queue_name}_jobs_metadata": structured_jobs,
         "filtered_by": authorized_filter,
         "is_admin_view": is_admin_override,
-        "total_jobs": len(html_list)
+        "total_jobs": len( structured_jobs )
     }
 
 @router.post("/reset-queues")

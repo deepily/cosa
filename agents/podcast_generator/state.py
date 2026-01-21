@@ -167,6 +167,27 @@ class PodcastScript( BaseModel ):
             counts[ segment.speaker ] = counts.get( segment.speaker, 0 ) + words
         return counts
 
+    def get_total_word_count( self ) -> int:
+        """Get total word count across all segments."""
+        return sum( len( seg.text.split() ) for seg in self.segments )
+
+    @property
+    def calculated_duration_minutes( self ) -> float:
+        """
+        Calculate duration from word count (~150 words/minute speaking rate).
+
+        Uses estimated_duration_minutes if > 0, otherwise calculates from
+        total word count. This provides a fallback when the LLM-provided
+        estimate is missing or invalid.
+
+        Returns:
+            float: Duration in minutes (estimated or calculated)
+        """
+        if self.estimated_duration_minutes > 0:
+            return self.estimated_duration_minutes
+        total_words = self.get_total_word_count()
+        return total_words / 150.0
+
     @classmethod
     def from_markdown( cls, markdown_content: str ) -> "PodcastScript":
         """
@@ -473,16 +494,16 @@ def quick_smoke_test():
         # Test 3: ScriptSegment model
         print( "Testing ScriptSegment model..." )
         segment = ScriptSegment(
-            speaker         = "Alex",
+            speaker         = "Nora",
             role            = "curious",
             text            = "So what you're saying is... *[pause]* this changes everything?",
             prosody         = [ "pause" ],
             topic_reference = "quantum computing",
         )
-        assert segment.speaker == "Alex"
+        assert segment.speaker == "Nora"
         assert "pause" in segment.prosody
         markdown = segment.to_markdown()
-        assert "**[Alex - Curious]**" in markdown
+        assert "**[Nora - Curious]**" in markdown
         print( "✓ ScriptSegment model validates and converts to markdown" )
 
         # Test 4: PodcastScript model
@@ -490,15 +511,15 @@ def quick_smoke_test():
         script = PodcastScript(
             title           = "Understanding Quantum Computing",
             research_source = "/path/to/research.md",
-            host_a_name     = "Alex",
-            host_b_name     = "Jordan",
+            host_a_name     = "Nora",
+            host_b_name     = "Quentin",
             segments        = [ segment ],
             estimated_duration_minutes = 12.5,
             key_topics      = [ "quantum", "computing", "future" ],
         )
         assert script.get_segment_count() == 1
         word_counts = script.get_speaker_word_counts()
-        assert "Alex" in word_counts
+        assert "Nora" in word_counts
         markdown_full = script.to_markdown()
         assert "# Podcast: Understanding Quantum Computing" in markdown_full
         print( "✓ PodcastScript model validates" )
@@ -507,27 +528,27 @@ def quick_smoke_test():
         print( "Testing PodcastScript.from_markdown()..." )
         test_markdown = """# Podcast: Voice Computing Revolution
 ## Generated: 2026-01-19T10:30:00
-## Hosts: Alex, Jordan
+## Hosts: Nora, Quentin
 ## Estimated Duration: 15.5 minutes
 
 ---
 
-**[Alex - Curious]**: So what you're saying is... *[pause]* this changes everything?
+**[Nora - Curious]**: So what you're saying is... *[pause]* this changes everything?
 
-**[Jordan - Expert]**: Exactly! *[excited]* The market is growing from $14 billion to $61 billion by 2033.
+**[Quentin - Expert]**: Exactly! *[excited]* The market is growing from $14 billion to $61 billion by 2033.
 
-**[Alex - Curious]**: Wait, that's a huge jump! *[surprised]* How is that even possible?
+**[Nora - Curious]**: Wait, that's a huge jump! *[surprised]* How is that even possible?
 """
         parsed = PodcastScript.from_markdown( test_markdown )
         assert parsed.title == "Voice Computing Revolution"
-        assert parsed.host_a_name == "Alex"
-        assert parsed.host_b_name == "Jordan"
+        assert parsed.host_a_name == "Nora"
+        assert parsed.host_b_name == "Quentin"
         assert parsed.estimated_duration_minutes == 15.5
         assert len( parsed.segments ) == 3
-        assert parsed.segments[ 0 ].speaker == "Alex"
+        assert parsed.segments[ 0 ].speaker == "Nora"
         assert parsed.segments[ 0 ].role == "curious"
         assert "pause" in parsed.segments[ 0 ].prosody
-        assert parsed.segments[ 1 ].speaker == "Jordan"
+        assert parsed.segments[ 1 ].speaker == "Quentin"
         assert "excited" in parsed.segments[ 1 ].prosody
         print( f"✓ from_markdown() works (parsed {len( parsed.segments )} segments)" )
 

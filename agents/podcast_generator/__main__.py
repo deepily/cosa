@@ -20,7 +20,37 @@ Usage:
 
 import argparse
 import asyncio
+import re
 import sys
+
+
+def extract_user_id_from_path( path: str ) -> str:
+    """
+    Extract user ID (email) from podcast script or audio path.
+
+    Parses paths like:
+        io/podcasts/{email}/script.md
+        /full/path/io/podcasts/{email}/2026.01.19-script.md
+
+    Requires:
+        - path contains /podcasts/{email}/ pattern
+
+    Ensures:
+        - Returns extracted email if found
+        - Returns None if pattern not found
+
+    Args:
+        path: File path to parse
+
+    Returns:
+        str or None: Extracted email or None
+    """
+    # Pattern: /podcasts/{email}/ where email contains @ and no slashes
+    pattern = r'/podcasts/([^/]+@[^/]+)/'
+    match = re.search( pattern, path )
+    if match:
+        return match.group( 1 )
+    return None
 
 
 def run_all_smoke_tests():
@@ -37,6 +67,8 @@ def run_all_smoke_tests():
         ( "cosa_interface", "cosa.agents.podcast_generator.cosa_interface" ),
         ( "voice_io", "cosa.agents.podcast_generator.voice_io" ),
         ( "api_client", "cosa.agents.podcast_generator.api_client" ),
+        ( "tts_client", "cosa.agents.podcast_generator.tts_client" ),
+        ( "audio_stitcher", "cosa.agents.podcast_generator.audio_stitcher" ),
         ( "orchestrator", "cosa.agents.podcast_generator.orchestrator" ),
     ]
 
@@ -229,6 +261,90 @@ async def run_script_editing( args ):
         return 1
 
 
+async def run_audio_generation( args ):
+    """Run the audio generation workflow only (skip script generation/review)."""
+    from .orchestrator import PodcastOrchestratorAgent
+    from .config import PodcastConfig
+    from . import voice_io
+    import cosa.utils.util as cu
+
+    cu.print_banner( "COSA Podcast Generator - Audio Only Mode", prepend_nl=True )
+
+    # Configure CLI mode if requested
+    if args.cli_mode:
+        voice_io.set_cli_mode( True )
+        print( "  [CLI mode enabled - text-only interaction]" )
+
+    # Validate script file exists
+    import os
+    script_path = args.generate_audio
+
+    if not script_path.startswith( "/" ):
+        script_path = cu.get_project_root() + "/" + script_path
+
+    if not os.path.exists( script_path ):
+        print( f"Error: Script file not found: {script_path}" )
+        return 1
+
+    # Determine user_id: extract from path if not explicitly provided
+    user_id = args.user_id
+    if user_id == "user@example.com":  # Default value - try to extract from path
+        extracted = extract_user_id_from_path( script_path )
+        if extracted:
+            user_id = extracted
+            print( f"  [User ID extracted from path: {user_id}]" )
+
+    print( f"Loading script: {script_path}" )
+    print( f"User ID: {user_id}" )
+    if args.max_segments:
+        print( f"Max segments: {args.max_segments}" )
+    print( "" )
+
+    # Create config
+    config = PodcastConfig()
+
+    try:
+        # Create orchestrator from saved script
+        agent = await PodcastOrchestratorAgent.from_saved_script(
+            script_path  = script_path,
+            user_id      = user_id,
+            config       = config,
+            max_segments = args.max_segments,
+            debug        = args.debug,
+            verbose      = args.verbose,
+        )
+
+        print( f"Podcast ID: {agent.podcast_id}" )
+        print( f"Loaded: {agent._podcast_state[ 'draft_script' ].title}" )
+        print( f"Segments: {agent._podcast_state[ 'draft_script' ].get_segment_count()}" )
+        print( "" )
+
+        # Run audio-only workflow (skip review, go directly to TTS)
+        script = await agent.do_audio_only_async()
+
+        if script:
+            audio_path = agent._podcast_state.get( "final_audio_path", "unknown" )
+            print( f"\n✓ Audio generation complete!" )
+            print( f"  Title: {script.title}" )
+            print( f"  Segments: {script.get_segment_count()}" )
+            print( f"  Audio: {audio_path}" )
+            return 0
+        else:
+            print( "\n⚠ Audio generation was cancelled." )
+            return 1
+
+    except KeyboardInterrupt:
+        print( "\n\n⚠ Interrupted by user." )
+        return 1
+
+    except Exception as e:
+        print( f"\n✗ Audio generation failed: {e}" )
+        if args.debug:
+            import traceback
+            traceback.print_exc()
+        return 1
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -293,6 +409,18 @@ Examples:
         help = "Path to saved script markdown to resume editing (skips generation)"
     )
 
+    parser.add_argument(
+        "--generate-audio", "-a",
+        help = "Path to saved script markdown to generate audio only (skips script generation/review)"
+    )
+
+    parser.add_argument(
+        "--max-segments", "-m",
+        type    = int,
+        default = None,
+        help    = "Limit TTS generation to first N segments (for cost control during testing)"
+    )
+
     args = parser.parse_args()
 
     # Run smoke tests if requested
@@ -300,7 +428,12 @@ Examples:
         success = run_all_smoke_tests()
         sys.exit( 0 if success else 1 )
 
-    # Route to edit mode or generation mode
+    # Route to appropriate mode
+    if args.generate_audio:
+        # Audio-only mode (skip script generation/review)
+        exit_code = asyncio.run( run_audio_generation( args ) )
+        sys.exit( exit_code )
+
     if args.edit_script:
         # Edit existing script (skip generation)
         exit_code = asyncio.run( run_script_editing( args ) )

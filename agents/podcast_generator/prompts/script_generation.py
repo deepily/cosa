@@ -405,15 +405,15 @@ def quick_smoke_test():
             host_b_personality = DEFAULT_EXPERT_HOST,
             target_duration_minutes = 10,
         )
-        assert "Alex" in script_prompt  # Default curious host
-        assert "Jordan" in script_prompt  # Default expert host
+        assert "Nora" in script_prompt  # Default curious host
+        assert "Quentin" in script_prompt  # Default expert host
         assert "10 minutes" in script_prompt
         print( "✓ Script generation prompt generated" )
 
         # Test 3: Revision prompt
         print( "Testing revision prompt..." )
         revision_prompt = get_script_revision_prompt(
-            current_script  = "**[Alex]**: Hello!",
+            current_script  = "**[Nora]**: Hello!",
             feedback        = "Make it more energetic",
             revision_number = 1,
         )
