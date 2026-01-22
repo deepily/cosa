@@ -1017,6 +1017,85 @@ async def delete_notification(
         raise HTTPException(status_code=500, detail=f"Failed to delete notification: {str(e)}")
 
 
+@router.delete( "/notifications/bulk/{user_email}" )
+async def bulk_delete_notifications(
+    user_email: str,
+    hours: Optional[int] = Query( None, description="Filter to notifications within N hours (None = all)" )
+):
+    """
+    Bulk delete notifications for a user within the specified time window.
+
+    This endpoint is used by the "Clear All" button in the Notifications UI.
+    It deletes all notifications matching the current history filter.
+
+    Requires:
+        - user_email is a valid registered email address
+        - hours is None (delete all) or a positive integer (delete within N hours)
+
+    Ensures:
+        - All notifications matching user and time filter are permanently deleted
+        - Returns count of deleted notifications
+
+    Raises:
+        - HTTPException with 404 if user not found
+        - HTTPException with 400 if hours is invalid
+        - HTTPException with 500 for deletion failures
+
+    Args:
+        user_email: User's email address
+        hours: Optional filter - only delete notifications within N hours (None = all)
+
+    Returns:
+        JSON with deleted count and status
+    """
+    try:
+        # Validate hours if provided
+        if hours is not None and hours <= 0:
+            raise HTTPException(
+                status_code = 400,
+                detail      = "hours must be a positive integer or null for all notifications"
+            )
+
+        # Look up user to get UUID
+        from cosa.rest.user_service import get_user_by_email
+
+        user_data = get_user_by_email( user_email )
+        if not user_data:
+            raise HTTPException(
+                status_code = 404,
+                detail      = f"User not found: {user_email}"
+            )
+
+        user_id = uuid.UUID( user_data["id"] ) if isinstance( user_data["id"], str ) else user_data["id"]
+
+        with get_db() as session:
+            repo = NotificationRepository( session )
+            deleted_count = repo.bulk_delete_by_user(
+                user_email   = user_email,
+                recipient_id = user_id,
+                hours        = hours
+            )
+
+            filter_desc = f"within {hours} hours" if hours else "all time"
+            print( f"[NOTIFY] Bulk deleted {deleted_count} notifications for {user_email} ({filter_desc})" )
+
+            return {
+                "status"        : "success",
+                "user_email"    : user_email,
+                "hours_filter"  : hours,
+                "deleted_count" : deleted_count
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print( f"[NOTIFY] Error bulk deleting notifications for {user_email}: {str( e )}" )
+        raise HTTPException(
+            status_code = 500,
+            detail      = f"Failed to bulk delete notifications: {str( e )}"
+        )
+
+
 # =============================================================================
 # HISTORY ENDPOINTS (Phase 6 - Sender-Aware Notification System)
 # =============================================================================
@@ -1773,28 +1852,30 @@ async def get_project_sessions(
 
 @router.post( "/notifications/generate-gist" )
 async def generate_session_gist(
-    request_body: Dict[ str, Any ] = Body( ..., description="Request body with messages list" )
+    request_body: Dict[ str, Any ] = Body( ..., description="Request body with messages and abstracts lists" )
 ):
     """
-    Generate a 3-4 word gist from a list of conversation messages.
+    Generate a 3-4 word gist from conversation messages and abstracts.
 
     Uses the Gister class (LLM-powered) to extract a concise summary
-    from session notifications for semantic session naming.
+    from session notifications for semantic session naming. Abstracts
+    are prioritized as they contain richer semantic signal (plan details,
+    technical context, URLs).
 
     Requires:
-        - messages is a list of strings (notification message contents)
-        - At least one message with content
+        - messages and/or abstracts are lists of strings
+        - At least one message or abstract with content
 
     Ensures:
         - Returns {"gist": "short summary"} with 3-4 words
-        - Truncates longer gists to 4 words
-        - Returns "Empty session" for empty message lists
+        - Prioritizes abstracts (first 5) then messages (next 5) for 10 total
+        - Returns "Empty session" for empty inputs
 
     Raises:
         - HTTPException with 500 for gist generation failures
 
     Args:
-        request_body: Dict containing "messages" list
+        request_body: Dict containing "messages" and optional "abstracts" lists
 
     Returns:
         dict: {"gist": "short summary"}
@@ -1802,18 +1883,24 @@ async def generate_session_gist(
     from cosa.memory.gister import Gister
 
     try:
-        messages = request_body.get( "messages", [] )
+        messages  = request_body.get( "messages", [] )
+        abstracts = request_body.get( "abstracts", [] )
 
-        if not messages:
+        if not messages and not abstracts:
             return { "gist": "Empty session" }
 
-        # Combine first 10 messages into single text for session title generation
-        combined = " ".join( messages[ :10 ] )
+        # Combine: prioritize abstracts (stronger signal) then messages
+        # Take first 5 abstracts (rich context) + first 5 messages (breadth)
+        combined_parts = []
+        combined_parts.extend( abstracts[ :5 ] )
+        combined_parts.extend( messages[ :5 ] )
+
+        combined = " ".join( combined_parts )
 
         if not combined.strip():
             return { "gist": "Empty session" }
 
-        print( f"[NOTIFY] Generating session title from {len( messages )} messages ({len( combined )} chars)" )
+        print( f"[NOTIFY] Generating session title from {len( messages )} messages + {len( abstracts )} abstracts ({len( combined )} chars)" )
         print( f"[NOTIFY] Combined text preview: {combined[ :200 ]}..." )
 
         # Use Gister with session title prompt (cache bypassed for this prompt type)

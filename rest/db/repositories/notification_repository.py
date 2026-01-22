@@ -718,6 +718,61 @@ class NotificationRepository( BaseRepository[Notification] ):
 
         return result.sender_id if result else None
 
+    def bulk_delete_by_user(
+        self,
+        user_email: str,
+        recipient_id: uuid.UUID,
+        hours: Optional[int] = None
+    ) -> int:
+        """
+        Delete all notifications for a user within the time window.
+
+        Requires:
+            - user_email: User's email address (for logging)
+            - recipient_id: Valid user UUID
+            - hours: Optional filter - only delete notifications within N hours (None = all)
+
+        Ensures:
+            - All notifications matching recipient_id and time filter are permanently deleted
+            - Returns count of deleted notifications
+
+        Returns:
+            Number of notifications deleted
+
+        Example:
+            with get_db() as session:
+                repo = NotificationRepository( session )
+                count = repo.bulk_delete_by_user(
+                    user_email   = "user@example.com",
+                    recipient_id = user.id,
+                    hours        = 168  # Last week
+                )
+                print( f"Deleted {count} notifications" )
+        """
+        from datetime import timezone
+
+        # Build base query
+        query = self.session.query( Notification ).filter(
+            Notification.recipient_id == recipient_id
+        )
+
+        # Apply time filter if specified
+        if hours is not None:
+            cutoff = datetime.now( timezone.utc ) - timedelta( hours=hours )
+            query = query.filter( Notification.created_at >= cutoff )
+
+        # Count before deletion (for logging)
+        count_before = query.count()
+
+        # Delete matching notifications
+        deleted = query.delete( synchronize_session="fetch" )
+
+        self.session.flush()
+
+        print( f"[NOTIFY] Bulk deleted {deleted} notifications for {user_email} (hours filter: {hours})" )
+
+        return deleted
+
     def get_sessions_for_project( self, recipient_id: uuid.UUID, project: str ) -> List[ Dict ]:
         """
         Get all unique session_ids for a project with activity info.

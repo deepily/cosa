@@ -481,7 +481,7 @@ async def get_job_interactions(
     from cosa.rest.db.database import get_db
     from cosa.rest.db.repositories.notification_repository import NotificationRepository
     from cosa.rest.db.repositories.user_repository import UserRepository
-    from cosa.rest.db.models.notification import Notification
+    from cosa.rest.postgres_models import Notification
 
     print( f"[API] /api/get-job-interactions/{job_id} called by user: {current_user['uid']}" )
 
@@ -505,16 +505,16 @@ async def get_job_interactions(
     # Get session_id from job (new field) or fallback to empty
     session_id = getattr( job, 'session_id', '' )
 
-    # Build response
+    # Build response - handle both SolutionSnapshot and AgenticJobBase objects
     response = {
         "job_id"       : job_id,
         "session_id"   : session_id,
         "job_metadata" : {
-            "question"   : job.last_question_asked or job.question,
-            "answer"     : job.answer_conversational or job.answer,
-            "agent_type" : job.agent_class_name,
-            "run_date"   : job.run_date,
-            "created_date": job.created_date
+            "question"    : getattr( job, 'last_question_asked', None ) or getattr( job, 'question', 'N/A' ),
+            "answer"      : getattr( job, 'answer_conversational', None ) or getattr( job, 'answer', 'N/A' ),
+            "agent_type"  : getattr( job, 'agent_class_name', None ) or getattr( job, 'JOB_TYPE', 'unknown' ),
+            "run_date"    : getattr( job, 'run_date', None ),
+            "created_date": getattr( job, 'created_date', None )
         },
         "interactions"      : [],
         "interaction_count" : 0

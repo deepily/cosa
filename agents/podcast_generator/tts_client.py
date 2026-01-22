@@ -54,6 +54,7 @@ class TTSSegmentResult:
     role             : str
     pcm_audio        : bytes            = b""
     duration_seconds : float            = 0.0
+    character_count  : int              = 0      # For audio cost tracking
     success          : bool             = False
     error_message    : Optional[ str ]  = None
     retry_count      : int              = 0
@@ -317,12 +318,13 @@ class PodcastTTSClient:
                 )
 
                 return TTSSegmentResult(
-                    segment_index = index,
-                    speaker       = segment.speaker,
-                    role          = segment.role,
-                    pcm_audio     = pcm_audio,
-                    success       = True,
-                    retry_count   = attempt,
+                    segment_index   = index,
+                    speaker         = segment.speaker,
+                    role            = segment.role,
+                    pcm_audio       = pcm_audio,
+                    character_count = len( text ),  # Track chars sent to ElevenLabs
+                    success         = True,
+                    retry_count     = attempt,
                 )
 
             except Exception as e:

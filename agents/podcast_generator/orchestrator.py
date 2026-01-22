@@ -52,6 +52,9 @@ from .prompts import (
 
 logger = logging.getLogger( __name__ )
 
+# ElevenLabs pricing (standard tier)
+ELEVENLABS_COST_PER_1K_CHARS = 0.30  # $0.30 per 1000 characters
+
 
 class PodcastOrchestratorAgent:
     """
@@ -487,13 +490,42 @@ class PodcastOrchestratorAgent:
                 except Exception:
                     pass  # Use script estimate if audio read fails
 
+            # Build clickable links for notification abstract
+            import cosa.utils.util as cu
+            io_base = cu.get_project_root() + "/io/"
+
+            # Convert absolute paths to relative for API endpoint
+            script_link   = script_path
+            audio_link    = audio_path
+            research_link = self.research_doc_path
+
+            if script_path and script_path.startswith( io_base ):
+                rel_path    = script_path.replace( io_base, "" )
+                script_link = f"[View Script](/api/io/file?path={urllib.parse.quote( rel_path )})"
+            if audio_path and audio_path.startswith( io_base ):
+                rel_path   = audio_path.replace( io_base, "" )
+                audio_link = f"[Download MP3](/api/io/file?path={urllib.parse.quote( rel_path )})"
+            if self.research_doc_path and self.research_doc_path.startswith( io_base ):
+                rel_path      = self.research_doc_path.replace( io_base, "" )
+                research_link = f"[View Research](/api/io/file?path={urllib.parse.quote( rel_path )})"
+
+            # Calculate audio cost from TTS character usage
+            tts_results = self._podcast_state.get( "tts_results", [] )
+            total_chars = sum( r.character_count for r in tts_results if r.success )
+            audio_cost  = ( total_chars / 1000.0 ) * ELEVENLABS_COST_PER_1K_CHARS
+            total_cost  = metadata.estimated_cost_usd + audio_cost
+
             await voice_io.notify(
-                f"Podcast complete! Audio saved to {audio_path}",
+                f"Podcast complete! Duration: {audio_duration_mins:.1f} minutes",
                 priority = "high",
                 abstract = f"**Segments**: {script.get_segment_count()}\n"
                            f"**Duration**: {audio_duration_mins:.1f} minutes\n"
                            f"**Script Cost**: ${metadata.estimated_cost_usd:.4f}\n"
-                           f"**Script**: {script_path}"
+                           f"**Audio Cost**: ${audio_cost:.4f} ({total_chars:,} chars)\n"
+                           f"**Total Cost**: ${total_cost:.4f}\n"
+                           f"**Audio**: {audio_link}\n"
+                           f"**Script**: {script_link}\n"
+                           f"**Research**: {research_link}"
             )
 
             return script
@@ -628,11 +660,21 @@ class PodcastOrchestratorAgent:
             self.state = OrchestratorState.COMPLETED
             self.metrics[ "end_time" ] = time.time()
 
+            # Build clickable link for script
+            import cosa.utils.util as cu
+            io_base = cu.get_project_root() + "/io/"
+
+            script_link = script_path
+            if script_path and script_path.startswith( io_base ):
+                rel_path    = script_path.replace( io_base, "" )
+                script_link = f"[View Script](/api/io/file?path={urllib.parse.quote( rel_path )})"
+
             await voice_io.notify(
-                f"Script editing complete! Saved to {script_path}",
+                f"Script editing complete!",
                 abstract = f"**Segments**: {script.get_segment_count()}\n"
                            f"**Duration**: ~{script.estimated_duration_minutes:.1f} minutes\n"
-                           f"**Revisions**: {script.revision_count}"
+                           f"**Revisions**: {script.revision_count}\n"
+                           f"**Script**: {script_link}"
             )
 
             return script
@@ -745,22 +787,34 @@ class PodcastOrchestratorAgent:
             io_base = cu.get_project_root() + "/io/"
 
             # Convert absolute paths to relative for API endpoint
-            script_link = script_path
-            audio_link = audio_path
+            script_link   = script_path
+            audio_link    = audio_path
+            research_link = self.research_doc_path
+
             if script_path and script_path.startswith( io_base ):
-                rel_path = script_path.replace( io_base, "" )
+                rel_path    = script_path.replace( io_base, "" )
                 script_link = f"[View Script](/api/io/file?path={urllib.parse.quote( rel_path )})"
             if audio_path and audio_path.startswith( io_base ):
-                rel_path = audio_path.replace( io_base, "" )
+                rel_path   = audio_path.replace( io_base, "" )
                 audio_link = f"[Download MP3](/api/io/file?path={urllib.parse.quote( rel_path )})"
+            if self.research_doc_path and self.research_doc_path.startswith( io_base ):
+                rel_path      = self.research_doc_path.replace( io_base, "" )
+                research_link = f"[View Research](/api/io/file?path={urllib.parse.quote( rel_path )})"
+
+            # Calculate audio cost from TTS character usage
+            tts_results = self._podcast_state.get( "tts_results", [] )
+            total_chars = sum( r.character_count for r in tts_results if r.success )
+            audio_cost  = ( total_chars / 1000.0 ) * ELEVENLABS_COST_PER_1K_CHARS
 
             await voice_io.notify(
                 f"Podcast audio complete! Duration: {audio_duration_mins:.1f} minutes",
                 priority = "high",
                 abstract = f"**Segments**: {script.get_segment_count()}\n"
                            f"**Duration**: {audio_duration_mins:.1f} minutes\n"
+                           f"**Audio Cost**: ${audio_cost:.4f} ({total_chars:,} chars)\n"
                            f"**Audio**: {audio_link}\n"
-                           f"**Script**: {script_link}"
+                           f"**Script**: {script_link}\n"
+                           f"**Research**: {research_link}"
             )
 
             return script
@@ -1235,6 +1289,9 @@ class PodcastOrchestratorAgent:
 
         # Use the lazy-initialized TTS client
         tts_results, failed_indices = await self.tts_client.generate_all_segments( script )
+
+        # Store TTS results in state for cost calculation in notifications
+        self._podcast_state[ "tts_results" ] = tts_results
 
         if self.debug:
             success_count = len( tts_results ) - len( failed_indices )
