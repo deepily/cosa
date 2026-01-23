@@ -106,10 +106,25 @@ def run_all_smoke_tests():
     return failed == 0
 
 
+def parse_languages_arg( languages_str: str ) -> list:
+    """
+    Parse comma-separated language codes into a list.
+
+    Args:
+        languages_str: Comma-separated ISO codes (e.g., "en,es-MX")
+
+    Returns:
+        list: List of language codes
+    """
+    if not languages_str:
+        return None
+    return [ lang.strip() for lang in languages_str.split( "," ) if lang.strip() ]
+
+
 async def run_podcast_generation( args ):
     """Run the podcast generation workflow."""
     from .orchestrator import PodcastOrchestratorAgent
-    from .config import PodcastConfig
+    from .config import PodcastConfig, LANGUAGE_NAMES
     from . import voice_io
     import cosa.utils.util as cu
 
@@ -119,6 +134,14 @@ async def run_podcast_generation( args ):
     if args.cli_mode:
         voice_io.set_cli_mode( True )
         print( "  [CLI mode enabled - text-only interaction]" )
+
+    # Parse target languages
+    target_languages = parse_languages_arg( args.languages )
+    if target_languages:
+        # Validate language codes
+        for lang in target_languages:
+            if lang not in LANGUAGE_NAMES and lang.split( "-" )[ 0 ] not in LANGUAGE_NAMES:
+                print( f"Warning: Unknown language code '{lang}'. Known codes: {', '.join( LANGUAGE_NAMES.keys() )}" )
 
     # Validate research document exists
     import os
@@ -133,25 +156,35 @@ async def run_podcast_generation( args ):
 
     print( f"Research document: {research_path}" )
     print( f"User ID: {args.user_id}" )
+    if target_languages:
+        lang_names = [ LANGUAGE_NAMES.get( l, l ) for l in target_languages ]
+        print( f"Target languages: {', '.join( lang_names )}" )
 
     if args.dry_run:
         print( "\n[DRY RUN MODE - No API calls will be made]" )
         print( "\nWould execute:" )
         print( "  1. Load research document" )
         print( "  2. Analyze content for key topics" )
-        print( "  3. Generate podcast script" )
+        print( "  3. Generate podcast script (English)" )
         print( "  4. Wait for script review" )
-        print( "  5. Save script to file" )
+        if target_languages and len( target_languages ) > 1:
+            non_en_langs = [ l for l in target_languages if l != "en" ]
+            for lang in non_en_langs:
+                print( f"  4b. Generate {LANGUAGE_NAMES.get( lang, lang )} script" )
+                print( f"      Wait for {LANGUAGE_NAMES.get( lang, lang )} script review" )
+        print( "  5. Generate TTS audio (per language)" )
+        print( "  6. Stitch audio into final MP3(s)" )
         return 0
 
     # Create config
     config = PodcastConfig()
 
-    # Create orchestrator
+    # Create orchestrator with target languages
     agent = PodcastOrchestratorAgent(
         research_doc_path = research_path,
         user_id           = args.user_id,
         config            = config,
+        target_languages  = target_languages,
         debug             = args.debug,
         verbose           = args.verbose,
     )
@@ -264,7 +297,7 @@ async def run_script_editing( args ):
 async def run_audio_generation( args ):
     """Run the audio generation workflow only (skip script generation/review)."""
     from .orchestrator import PodcastOrchestratorAgent
-    from .config import PodcastConfig
+    from .config import PodcastConfig, LANGUAGE_NAMES
     from . import voice_io
     import cosa.utils.util as cu
 
@@ -274,6 +307,9 @@ async def run_audio_generation( args ):
     if args.cli_mode:
         voice_io.set_cli_mode( True )
         print( "  [CLI mode enabled - text-only interaction]" )
+
+    # Parse target languages
+    target_languages = parse_languages_arg( args.languages )
 
     # Validate script file exists
     import os
@@ -298,6 +334,9 @@ async def run_audio_generation( args ):
     print( f"User ID: {user_id}" )
     if args.max_segments:
         print( f"Max segments: {args.max_segments}" )
+    if target_languages:
+        lang_names = [ LANGUAGE_NAMES.get( l, l ) for l in target_languages ]
+        print( f"Target languages: {', '.join( lang_names )}" )
     print( "" )
 
     # Create config
@@ -306,12 +345,13 @@ async def run_audio_generation( args ):
     try:
         # Create orchestrator from saved script
         agent = await PodcastOrchestratorAgent.from_saved_script(
-            script_path  = script_path,
-            user_id      = user_id,
-            config       = config,
-            max_segments = args.max_segments,
-            debug        = args.debug,
-            verbose      = args.verbose,
+            script_path      = script_path,
+            user_id          = user_id,
+            config           = config,
+            max_segments     = args.max_segments,
+            target_languages = target_languages,
+            debug            = args.debug,
+            verbose          = args.verbose,
         )
 
         print( f"Podcast ID: {agent.podcast_id}" )
@@ -352,14 +392,27 @@ def main():
         formatter_class = argparse.RawDescriptionHelpFormatter,
         epilog = """
 Examples:
-  # Generate podcast from research document
+  # Generate podcast from research document (English only)
   python -m cosa.agents.podcast_generator --research io/deep-research/output.md
+
+  # Generate podcast in English and Mexican Spanish
+  python -m cosa.agents.podcast_generator --research research.md --languages en,es-MX
+
+  # Generate Spanish-only podcast
+  python -m cosa.agents.podcast_generator --research research.md --languages es-MX
 
   # Run all smoke tests
   python -m cosa.agents.podcast_generator --smoke-test
 
   # Dry run to see what would happen
   python -m cosa.agents.podcast_generator --research research.md --dry-run
+
+Language codes:
+  en      English (default)
+  es      Spanish (generic)
+  es-MX   Mexican Spanish
+  es-ES   Castilian Spanish (Spain)
+  es-AR   Argentinian Spanish
 """
     )
 
@@ -419,6 +472,12 @@ Examples:
         type    = int,
         default = None,
         help    = "Limit TTS generation to first N segments (for cost control during testing)"
+    )
+
+    parser.add_argument(
+        "--languages", "-l",
+        default = None,
+        help    = "Comma-separated ISO language codes (e.g., 'en' or 'en,es-MX'). Default: en only"
     )
 
     args = parser.parse_args()

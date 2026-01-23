@@ -97,8 +97,8 @@ async def is_voice_available() -> bool:
 
     # Try to ping the voice service
     try:
-        # Send a silent/minimal notification to test connectivity
-        await cosa_interface.notify_progress( "Initializing...", priority="low" )
+        # Send a notification to test connectivity (describes what's happening)
+        await cosa_interface.notify_progress( "Podcast generator ready - detecting voice service...", priority="low" )
         _voice_available = True
         logger.info( "Voice service available - using voice-first mode" )
 

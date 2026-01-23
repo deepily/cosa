@@ -306,23 +306,22 @@ async def get_queue(
         # Extract structured job data from SolutionSnapshot or AgenticJobBase objects
         structured_jobs = []
         for job in jobs:
-            # Get session_id safely (may not exist on older snapshots)
-            session_id = getattr( job, 'session_id', '' )
-
             # Check if this is an AgenticJobBase (MockAgenticJob, DeepResearchJob, etc.)
             is_agentic_job = hasattr( job, 'JOB_TYPE' ) and hasattr( job, 'artifacts' )
 
-            # Generate job metadata
+            # Generate job metadata using unified interface properties
+            # All job types now have: job_type, question, last_question_asked, answer,
+            # answer_conversational, run_date, created_date, session_id
             job_data = {
                 "html"            : job.get_html(),
                 "job_id"          : job.id_hash,
-                "question_text"   : job.last_question_asked if hasattr( job, 'last_question_asked' ) else getattr( job, 'question', '' ),
-                "response_text"   : getattr( job, 'answer_conversational', '' ) or getattr( job, 'answer', '' ),
-                "timestamp"       : getattr( job, 'run_date', '' ) or getattr( job, 'created_date', '' ),
+                "question_text"   : job.last_question_asked,
+                "response_text"   : job.answer_conversational or job.answer,
+                "timestamp"       : job.run_date or job.created_date,
                 "user_id"         : authorized_filter,
-                "session_id"      : session_id,  # For job-notification correlation
-                "agent_type"      : getattr( job, 'JOB_TYPE', None ) or getattr( job, 'agent_class_name', 'Unknown' ),
-                "has_interactions": bool( session_id ),  # True if can query notifications
+                "session_id"      : job.session_id,  # For job-notification correlation
+                "agent_type"      : job.job_type,  # Unified property replaces getattr() chain
+                "has_interactions": bool( job.session_id ),  # True if can query notifications
                 "has_audio_cache" : False,  # Will be determined by frontend cache check
                 "is_cache_hit"    : getattr( job, 'is_cache_hit', False ),  # For Time Saved Dashboard
                 # Phase 7: Agentic job artifacts for enhanced done cards
@@ -358,19 +357,17 @@ async def get_queue(
         }
 
     # Step 6: Handle todo/run queues with metadata (Phase 7)
+    # Using unified interface properties - all job types now have consistent attributes
     structured_jobs = []
     for job in jobs:
-        # Check if this is an AgenticJobBase (MockAgenticJob, DeepResearchJob, etc.)
-        is_agentic_job = hasattr( job, 'JOB_TYPE' ) and hasattr( job, 'artifacts' )
-
         job_data = {
             "html"         : job.get_html(),
             "job_id"       : job.id_hash,
-            "question_text": job.last_question_asked if hasattr( job, 'last_question_asked' ) else getattr( job, 'question', '' ),
-            "timestamp"    : getattr( job, 'run_date', '' ) or getattr( job, 'created_date', '' ),
+            "question_text": job.last_question_asked,
+            "timestamp"    : job.run_date or job.created_date,
             "user_id"      : authorized_filter,
-            "session_id"   : getattr( job, 'session_id', '' ),
-            "agent_type"   : getattr( job, 'JOB_TYPE', None ) or getattr( job, 'agent_class_name', 'Unknown' ),
+            "session_id"   : job.session_id,
+            "agent_type"   : job.job_type,  # Unified property replaces getattr() chain
             "status"       : getattr( job, 'status', 'pending' ),
             "started_at"   : getattr( job, 'started_at', None ),
         }
@@ -502,26 +499,24 @@ async def get_job_interactions(
         print( f"[API] Unauthorized access to job {job_id} by {current_user['uid']}" )
         raise HTTPException( status_code=403, detail="Not authorized to view this job" )
 
-    # Get session_id from job (new field) or fallback to empty
-    session_id = getattr( job, 'session_id', '' )
-
-    # Build response - handle both SolutionSnapshot and AgenticJobBase objects
+    # Build response using unified interface properties
+    # All job types (SolutionSnapshot, AgenticJobBase) now have consistent attributes
     response = {
         "job_id"       : job_id,
-        "session_id"   : session_id,
+        "session_id"   : job.session_id,
         "job_metadata" : {
-            "question"    : getattr( job, 'last_question_asked', None ) or getattr( job, 'question', 'N/A' ),
-            "answer"      : getattr( job, 'answer_conversational', None ) or getattr( job, 'answer', 'N/A' ),
-            "agent_type"  : getattr( job, 'agent_class_name', None ) or getattr( job, 'JOB_TYPE', 'unknown' ),
-            "run_date"    : getattr( job, 'run_date', None ),
-            "created_date": getattr( job, 'created_date', None )
+            "question"    : job.last_question_asked,
+            "answer"      : job.answer_conversational or job.answer,
+            "agent_type"  : job.job_type,  # Unified property replaces getattr() chain
+            "run_date"    : job.run_date,
+            "created_date": job.created_date
         },
         "interactions"      : [],
         "interaction_count" : 0
     }
 
     # Query notifications if session_id available
-    if session_id:
+    if job.session_id:
         try:
             with get_db() as db:
                 user_repo = UserRepository( db )

@@ -426,6 +426,63 @@ class PodcastState( TypedDict ):
     error_message        : Optional[ str ]
 
 
+def validate_prosody_preservation(
+    english_script   : "PodcastScript",
+    translated_script: "PodcastScript"
+) -> tuple[ bool, dict ]:
+    """
+    Verify that prosody markers are preserved during translation.
+
+    Compares prosody marker counts between English and translated scripts.
+    Warns if markers are missing or changed.
+
+    Requires:
+        - english_script is a valid PodcastScript
+        - translated_script is a valid PodcastScript
+
+    Ensures:
+        - Returns True if prosody is preserved, False otherwise
+        - Returns dict with comparison details
+
+    Args:
+        english_script: The original English script
+        translated_script: The translated script
+
+    Returns:
+        tuple[bool, dict]: (is_preserved, details_dict)
+            - is_preserved: True if prosody markers match
+            - details_dict: Contains 'english_count', 'translated_count', 'missing', 'extra'
+    """
+    # Extract all prosody markers from English script
+    english_markers = []
+    for seg in english_script.segments:
+        english_markers.extend( seg.prosody )
+
+    # Extract all prosody markers from translated script
+    translated_markers = []
+    for seg in translated_script.segments:
+        translated_markers.extend( seg.prosody )
+
+    # Compare marker sets
+    english_set    = set( english_markers )
+    translated_set = set( translated_markers )
+
+    missing = english_set - translated_set  # In English but not in translation
+    extra   = translated_set - english_set  # In translation but not in English
+
+    # Consider preserved if same marker types exist (counts may differ slightly)
+    is_preserved = len( missing ) == 0 and len( extra ) == 0
+
+    details = {
+        "english_count"    : len( english_markers ),
+        "translated_count" : len( translated_markers ),
+        "missing"          : list( missing ),
+        "extra"            : list( extra ),
+    }
+
+    return is_preserved, details
+
+
 def create_initial_state(
     research_doc_path: str,
     user_id: str
@@ -588,6 +645,51 @@ def quick_smoke_test():
         assert state[ "script_approved" ] is False
         assert state[ "current_state" ] == "loading_research"
         print( f"✓ create_initial_state works ({len( state )} keys)" )
+
+        # Test 8: validate_prosody_preservation
+        print( "Testing validate_prosody_preservation..." )
+        english = PodcastScript(
+            title           = "English Test",
+            research_source = "/test.md",
+            host_a_name     = "Nora",
+            host_b_name     = "Quentin",
+            segments        = [
+                ScriptSegment( speaker="Nora", role="curious", text="Test *[pause]* one", prosody=[ "pause" ] ),
+                ScriptSegment( speaker="Quentin", role="expert", text="Test *[excited]* two", prosody=[ "excited" ] ),
+            ],
+        )
+        # Translation with same markers
+        translated_good = PodcastScript(
+            title           = "Spanish Test",
+            research_source = "/test.md",
+            host_a_name     = "Nora",
+            host_b_name     = "Quentin",
+            segments        = [
+                ScriptSegment( speaker="Nora", role="curious", text="Prueba *[pause]* uno", prosody=[ "pause" ] ),
+                ScriptSegment( speaker="Quentin", role="expert", text="Prueba *[excited]* dos", prosody=[ "excited" ] ),
+            ],
+        )
+        is_preserved, details = validate_prosody_preservation( english, translated_good )
+        assert is_preserved is True
+        assert details[ "missing" ] == []
+        assert details[ "extra" ] == []
+        print( "✓ Prosody validation passes for matching markers" )
+
+        # Translation with missing marker
+        translated_bad = PodcastScript(
+            title           = "Spanish Test",
+            research_source = "/test.md",
+            host_a_name     = "Nora",
+            host_b_name     = "Quentin",
+            segments        = [
+                ScriptSegment( speaker="Nora", role="curious", text="Prueba uno", prosody=[] ),  # Missing pause
+                ScriptSegment( speaker="Quentin", role="expert", text="Prueba *[excited]* dos", prosody=[ "excited" ] ),
+            ],
+        )
+        is_preserved2, details2 = validate_prosody_preservation( english, translated_bad )
+        assert is_preserved2 is False
+        assert "pause" in details2[ "missing" ]
+        print( "✓ Prosody validation detects missing markers" )
 
         print( "\n✓ Podcast Generator State smoke test completed successfully" )
 

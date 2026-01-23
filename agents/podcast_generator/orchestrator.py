@@ -33,7 +33,9 @@ from .state import (
     ContentAnalysis,
     PodcastMetadata,
     create_initial_state,
+    validate_prosody_preservation,
 )
+from .config import LANGUAGE_NAMES
 from . import cosa_interface
 from . import voice_io
 from .api_client import PodcastAPIClient
@@ -78,12 +80,13 @@ class PodcastOrchestratorAgent:
 
     def __init__(
         self,
-        research_doc_path: str,
-        user_id: str,
-        config: Optional[ PodcastConfig ] = None,
-        max_segments: Optional[ int ] = None,
-        debug: bool = False,
-        verbose: bool = False
+        research_doc_path  : str,
+        user_id            : str,
+        config             : Optional[ PodcastConfig ] = None,
+        max_segments       : Optional[ int ] = None,
+        target_languages   : Optional[ List[ str ] ] = None,
+        debug              : bool = False,
+        verbose            : bool = False
     ):
         """
         Initialize the podcast orchestrator.
@@ -93,6 +96,7 @@ class PodcastOrchestratorAgent:
             user_id: System user ID for event routing
             config: Podcast configuration (uses defaults if None)
             max_segments: Limit TTS to first N segments (for cost control)
+            target_languages: List of ISO language codes (default: from config or ["en"])
             debug: Enable debug output
             verbose: Enable verbose output
         """
@@ -102,6 +106,14 @@ class PodcastOrchestratorAgent:
         self.max_segments      = max_segments
         self.debug             = debug
         self.verbose           = verbose
+
+        # Set target languages (CLI arg > config > default ["en"])
+        if target_languages is not None:
+            self.target_languages = target_languages
+        elif self.config.target_languages:
+            self.target_languages = self.config.target_languages
+        else:
+            self.target_languages = [ "en" ]
 
         # State management
         self.state = OrchestratorState.LOADING_RESEARCH
@@ -175,12 +187,13 @@ class PodcastOrchestratorAgent:
     @classmethod
     async def from_saved_script(
         cls,
-        script_path: str,
-        user_id: str,
-        config: Optional[ PodcastConfig ] = None,
-        max_segments: Optional[ int ] = None,
-        debug: bool = False,
-        verbose: bool = False
+        script_path      : str,
+        user_id          : str,
+        config           : Optional[ PodcastConfig ] = None,
+        max_segments     : Optional[ int ] = None,
+        target_languages : Optional[ List[ str ] ] = None,
+        debug            : bool = False,
+        verbose          : bool = False
     ) -> "PodcastOrchestratorAgent":
         """
         Create orchestrator from a saved script, skipping generation phases.
@@ -202,6 +215,7 @@ class PodcastOrchestratorAgent:
             user_id: User identifier for output directory
             config: Podcast configuration (uses defaults if None)
             max_segments: Limit TTS to first N segments (for cost control)
+            target_languages: List of ISO language codes (default: from config or ["en"])
             debug: Enable debug output
             verbose: Enable verbose output
 
@@ -226,6 +240,7 @@ class PodcastOrchestratorAgent:
             user_id           = user_id,
             config            = config,
             max_segments      = max_segments,
+            target_languages  = target_languages,
             debug             = debug,
             verbose           = verbose,
         )
@@ -329,23 +344,28 @@ class PodcastOrchestratorAgent:
             while not script_approved:
                 self.state = OrchestratorState.WAITING_SCRIPT_REVIEW
 
-                # Generate display path for preview (don't save yet - only save after user decision)
-                if script_path:
-                    display_path = script_path
-                elif self._original_script_path:
-                    display_path = self._original_script_path
-                else:
-                    # Preview of where it WOULD be saved (first generation)
-                    topic_slug   = script.title.replace( "Podcast: ", "" )[ :40 ]
-                    display_path = self.config.get_output_path(
-                        user_id   = self.user_id,
-                        topic     = topic_slug,
-                        file_type = "script",
-                    )
+                # Save script as draft for review (so user can access full script via link)
+                if script_path is None:
+                    if self._original_script_path:
+                        script_path = self._original_script_path
+                    else:
+                        # First generation - save as draft
+                        script.revision_count = self._podcast_state[ "revision_count" ]
+                        script_path = await self._save_script_async( script )
+                        self._podcast_state[ "draft_script_path" ] = script_path
 
-                # Present script preview for approval, including file path
+                # Build clickable link to full script using /api/io/file endpoint
+                import cosa.utils.util as cu
+                io_base = cu.get_project_root() + "/io/"
+                if script_path and script_path.startswith( io_base ):
+                    rel_path    = script_path.replace( io_base, "" )
+                    script_link = f"[View Full Script](/api/io/file?path={urllib.parse.quote( rel_path )})"
+                else:
+                    script_link = f"`{script_path}`"
+
+                # Present script preview for approval, including clickable link
                 script_preview = self._get_script_preview( script )
-                script_preview += f"\n\n**Will save to**: `{display_path}`"
+                script_preview += f"\n\n**Full Script**: {script_link}"
 
                 revision_label = f" (Revision {self._podcast_state[ 'revision_count' ]})" if self._podcast_state[ "revision_count" ] > 0 else ""
 
@@ -360,6 +380,7 @@ class PodcastOrchestratorAgent:
                             { "label": "Cancel", "description": "Discard script and stop" }
                         ]
                     } ],
+                    timeout  = self.config.script_review_timeout_seconds,
                     abstract = script_preview,
                     title    = f"Script Review{revision_label}",
                 )
@@ -413,45 +434,164 @@ class PodcastOrchestratorAgent:
             self._podcast_state[ "final_script_path" ] = script_path
 
             # =================================================================
-            # Phase 5: Generate Audio
+            # Phase 4b: Generate Additional Language Versions
+            # =================================================================
+            import cosa.utils.util as cu
+
+            scripts_by_language = { "en": script }
+            script_paths_by_language = { "en": script_path }
+
+            non_english_languages = [ lang for lang in self.target_languages if lang != "en" ]
+
+            if non_english_languages:
+                lang_count = len( non_english_languages )
+                await voice_io.notify(
+                    f"English script approved. Now generating {lang_count} additional language version(s)...",
+                    priority = "medium"
+                )
+
+            for lang in non_english_languages:
+                lang_name = LANGUAGE_NAMES.get( lang, lang )
+
+                # Notify: Starting translation
+                await voice_io.notify(
+                    f"Generating {lang_name} version of the script...",
+                    priority = "low"
+                )
+
+                # Generate translated script
+                translated_script = await self._generate_translated_script_async( script, lang )
+                scripts_by_language[ lang ] = translated_script
+
+                # Save translated script
+                translated_path = await self._save_script_async( translated_script, language=lang )
+                script_paths_by_language[ lang ] = translated_path
+
+                if self._check_stop(): return await self._handle_stop()
+
+                # Build clickable link for translated script
+                io_base = cu.get_project_root() + "/io/"
+                if translated_path.startswith( io_base ):
+                    rel_path = translated_path.replace( io_base, "" )
+                    translated_link = f"[View {lang_name} Script](/api/io/file?path={urllib.parse.quote( rel_path )})"
+                else:
+                    translated_link = f"`{translated_path}`"
+
+                # Review loop for translated script
+                translated_approved = False
+                while not translated_approved:
+                    # Notify: Ready for review
+                    await voice_io.notify(
+                        f"{lang_name} script ready for review",
+                        priority = "medium"
+                    )
+
+                    # Present for approval
+                    translated_preview = self._get_script_preview( translated_script )
+                    translated_preview += f"\n\n**Full Script**: {translated_link}"
+
+                    choice = await voice_io.present_choices(
+                        questions = [ {
+                            "question"    : f"How would you like to proceed with the {lang_name} script?",
+                            "header"      : f"{lang_name} Review",
+                            "multiSelect" : False,
+                            "options"     : [
+                                { "label": "Approve script", "description": f"Keep {lang_name} script and continue" },
+                                { "label": "Revise script", "description": "Provide feedback for changes" },
+                                { "label": "Skip language", "description": f"Skip {lang_name} version entirely" }
+                            ]
+                        } ],
+                        timeout  = self.config.script_review_timeout_seconds,
+                        abstract = translated_preview,
+                        title    = f"{lang_name} Script Review",
+                    )
+
+                    review_choice = choice.get( "answers", {} ).get( f"{lang_name} Review", "" )
+
+                    if review_choice == "Skip language":
+                        await voice_io.notify( f"Skipping {lang_name} version." )
+                        del scripts_by_language[ lang ]
+                        del script_paths_by_language[ lang ]
+                        translated_approved = True  # Exit loop
+
+                    elif review_choice == "Approve script":
+                        translated_approved = True
+
+                    else:
+                        # Revise
+                        if review_choice == "Revise script":
+                            feedback = await voice_io.get_input(
+                                f"What changes would you like to the {lang_name} script?",
+                                timeout = self.config.feedback_timeout_seconds
+                            )
+                        else:
+                            feedback = review_choice
+
+                        if feedback:
+                            await voice_io.notify( f"Revising {lang_name} script..." )
+                            translated_script = await self._revise_script_async( translated_script, feedback )
+                            scripts_by_language[ lang ] = translated_script
+                            translated_path = await self._save_script_async( translated_script, language=lang )
+                            script_paths_by_language[ lang ] = translated_path
+
+                if self._check_stop(): return await self._handle_stop()
+
+            # =================================================================
+            # Phase 5: Generate Audio (Per Language)
             # =================================================================
             self.state = OrchestratorState.GENERATING_AUDIO
 
-            # Initialize progress milestone tracking (for 10% increment notifications)
-            self._reported_milestones = set()
+            audio_paths_by_language = {}
+            tts_results_by_language = {}
 
-            segment_count = script.get_segment_count()
-            await voice_io.notify(
-                f"Starting audio generation for {segment_count} segments. This may take 1-3 minutes.",
-                priority = "medium"
-            )
+            for lang, lang_script in scripts_by_language.items():
+                lang_name = LANGUAGE_NAMES.get( lang, lang )
 
-            tts_results, failed_indices = await self._generate_audio_async( script )
+                # Initialize progress milestone tracking (for 10% increment notifications)
+                self._reported_milestones = set()
 
-            # Handle partial failures
-            if failed_indices:
-                continue_anyway = await voice_io.ask_yes_no(
-                    f"{len( failed_indices )} segments failed. Continue with partial audio?",
-                    default  = "yes",
-                    abstract = f"**Failed**: {len( failed_indices )}\n**Successful**: {len( tts_results ) - len( failed_indices )}"
+                segment_count = lang_script.get_segment_count()
+                await voice_io.notify(
+                    f"Starting {lang_name} audio generation ({segment_count} segments)...",
+                    priority = "medium" if lang == "en" else "low"
                 )
-                if not continue_anyway:
-                    self.state = OrchestratorState.STOPPED
-                    await voice_io.notify( "Audio generation cancelled by user." )
-                    return script
 
-            if self._check_stop(): return await self._handle_stop()
+                tts_results, failed_indices = await self._generate_audio_async( lang_script, language=lang )
+                tts_results_by_language[ lang ] = tts_results
 
-            # =================================================================
-            # Phase 6: Stitch Audio
-            # =================================================================
-            self.state = OrchestratorState.STITCHING_AUDIO
-            await voice_io.notify( "Stitching audio segments into final podcast..." )
+                # Handle partial failures
+                if failed_indices:
+                    continue_anyway = await voice_io.ask_yes_no(
+                        f"{lang_name}: {len( failed_indices )} segments failed. Continue with partial audio?",
+                        default  = "yes",
+                        abstract = f"**Language**: {lang_name}\n**Failed**: {len( failed_indices )}\n**Successful**: {len( tts_results ) - len( failed_indices )}"
+                    )
+                    if not continue_anyway:
+                        await voice_io.notify( f"Skipping {lang_name} audio due to failures." )
+                        continue  # Skip this language, continue with others
 
-            audio_path = await self._stitch_audio_async( tts_results, script )
-            self._podcast_state[ "final_audio_path" ] = audio_path
+                if self._check_stop(): return await self._handle_stop()
 
-            if self._check_stop(): return await self._handle_stop()
+                # =================================================================
+                # Phase 6: Stitch Audio (Per Language)
+                # =================================================================
+                self.state = OrchestratorState.STITCHING_AUDIO
+                await voice_io.notify( f"Stitching {lang_name} audio segments..." )
+
+                audio_path = await self._stitch_audio_async( tts_results, lang_script, language=lang )
+                audio_paths_by_language[ lang ] = audio_path
+
+                await voice_io.notify(
+                    f"{lang_name} podcast complete!",
+                    priority = "low"
+                )
+
+                if self._check_stop(): return await self._handle_stop()
+
+            # Store paths in state
+            self._podcast_state[ "final_audio_path" ] = audio_paths_by_language.get( "en", "" )
+            self._podcast_state[ "audio_paths_by_language" ] = audio_paths_by_language
+            self._podcast_state[ "script_paths_by_language" ] = script_paths_by_language
 
             # =================================================================
             # Completion
@@ -461,13 +601,17 @@ class PodcastOrchestratorAgent:
 
             duration = self.metrics[ "end_time" ] - self.metrics[ "start_time" ]
 
+            # Get primary (English) paths for metadata
+            primary_audio_path  = audio_paths_by_language.get( "en", list( audio_paths_by_language.values() )[ 0 ] if audio_paths_by_language else "" )
+            primary_script_path = script_paths_by_language.get( "en", script_path )
+
             # Create metadata
             metadata = PodcastMetadata(
                 podcast_id            = self.podcast_id,
                 user_id               = self.user_id,
                 research_doc_path     = self.research_doc_path,
-                script_path           = script_path,
-                audio_path            = audio_path,
+                script_path           = primary_script_path,
+                audio_path            = primary_audio_path,
                 generated_at          = datetime.now().isoformat(),
                 generation_duration_seconds = duration,
                 api_calls_count       = self.api_client.cost_estimate.total_api_calls,
@@ -480,51 +624,70 @@ class PodcastOrchestratorAgent:
             )
             self._podcast_state[ "metadata" ] = metadata
 
-            # Calculate audio duration
+            # Calculate audio duration from primary audio
             audio_duration_mins = script.estimated_duration_minutes
-            if audio_path and os.path.exists( audio_path ):
+            if primary_audio_path and os.path.exists( primary_audio_path ):
                 try:
                     from pydub import AudioSegment
-                    audio = AudioSegment.from_mp3( audio_path )
+                    audio = AudioSegment.from_mp3( primary_audio_path )
                     audio_duration_mins = len( audio ) / 1000.0 / 60.0
                 except Exception:
                     pass  # Use script estimate if audio read fails
 
             # Build clickable links for notification abstract
-            import cosa.utils.util as cu
             io_base = cu.get_project_root() + "/io/"
 
-            # Convert absolute paths to relative for API endpoint
-            script_link   = script_path
-            audio_link    = audio_path
+            # Build links for research
             research_link = self.research_doc_path
-
-            if script_path and script_path.startswith( io_base ):
-                rel_path    = script_path.replace( io_base, "" )
-                script_link = f"[View Script](/api/io/file?path={urllib.parse.quote( rel_path )})"
-            if audio_path and audio_path.startswith( io_base ):
-                rel_path   = audio_path.replace( io_base, "" )
-                audio_link = f"[Download MP3](/api/io/file?path={urllib.parse.quote( rel_path )})"
             if self.research_doc_path and self.research_doc_path.startswith( io_base ):
                 rel_path      = self.research_doc_path.replace( io_base, "" )
                 research_link = f"[View Research](/api/io/file?path={urllib.parse.quote( rel_path )})"
 
-            # Calculate audio cost from TTS character usage
-            tts_results = self._podcast_state.get( "tts_results", [] )
-            total_chars = sum( r.character_count for r in tts_results if r.success )
-            audio_cost  = ( total_chars / 1000.0 ) * ELEVENLABS_COST_PER_1K_CHARS
-            total_cost  = metadata.estimated_cost_usd + audio_cost
+            # Build links for each language's outputs
+            output_lines = []
+            for lang in scripts_by_language.keys():
+                lang_name    = LANGUAGE_NAMES.get( lang, lang )
+                lang_script  = script_paths_by_language.get( lang, "" )
+                lang_audio   = audio_paths_by_language.get( lang, "" )
+
+                # Script link
+                if lang_script and lang_script.startswith( io_base ):
+                    rel_path    = lang_script.replace( io_base, "" )
+                    script_link = f"[{lang_name} Script](/api/io/file?path={urllib.parse.quote( rel_path )})"
+                else:
+                    script_link = f"`{lang_script}`"
+
+                # Audio link
+                if lang_audio and lang_audio.startswith( io_base ):
+                    rel_path   = lang_audio.replace( io_base, "" )
+                    audio_link = f"[{lang_name} MP3](/api/io/file?path={urllib.parse.quote( rel_path )})"
+                else:
+                    audio_link = f"`{lang_audio}`"
+
+                output_lines.append( f"**{lang_name}**: {script_link} | {audio_link}" )
+
+            # Calculate total audio cost from all TTS results
+            total_chars = 0
+            for lang in scripts_by_language.keys():
+                lang_results = self._podcast_state.get( f"tts_results_{lang}", [] )
+                total_chars += sum( r.character_count for r in lang_results if r.success )
+            audio_cost = ( total_chars / 1000.0 ) * ELEVENLABS_COST_PER_1K_CHARS
+            total_cost = metadata.estimated_cost_usd + audio_cost
+
+            # Build summary
+            lang_count = len( scripts_by_language )
+            lang_summary = f"{lang_count} language(s)" if lang_count > 1 else "1 language"
 
             await voice_io.notify(
-                f"Podcast complete! Duration: {audio_duration_mins:.1f} minutes",
+                f"All podcasts complete! {lang_summary}, ~{audio_duration_mins:.1f} min each",
                 priority = "high",
-                abstract = f"**Segments**: {script.get_segment_count()}\n"
-                           f"**Duration**: {audio_duration_mins:.1f} minutes\n"
+                abstract = f"**Languages**: {lang_summary}\n"
+                           f"**Segments**: {script.get_segment_count()} per language\n"
+                           f"**Duration**: ~{audio_duration_mins:.1f} minutes\n"
                            f"**Script Cost**: ${metadata.estimated_cost_usd:.4f}\n"
                            f"**Audio Cost**: ${audio_cost:.4f} ({total_chars:,} chars)\n"
-                           f"**Total Cost**: ${total_cost:.4f}\n"
-                           f"**Audio**: {audio_link}\n"
-                           f"**Script**: {script_link}\n"
+                           f"**Total Cost**: ${total_cost:.4f}\n\n"
+                           + "\n".join( output_lines ) + "\n\n"
                            f"**Research**: {research_link}"
             )
 
@@ -584,12 +747,20 @@ class PodcastOrchestratorAgent:
             while not script_approved:
                 self.state = OrchestratorState.WAITING_SCRIPT_REVIEW
 
-                # Generate display path (don't save yet - only save after user decision)
-                display_path = script_path or self._original_script_path
+                # Build clickable link to full script using /api/io/file endpoint
+                import cosa.utils.util as cu
+                io_base       = cu.get_project_root() + "/io/"
+                display_path  = script_path or self._original_script_path
+
+                if display_path and display_path.startswith( io_base ):
+                    rel_path    = display_path.replace( io_base, "" )
+                    script_link = f"[View Full Script](/api/io/file?path={urllib.parse.quote( rel_path )})"
+                else:
+                    script_link = f"`{display_path}`"
 
                 # Present script preview for approval
                 script_preview = self._get_script_preview( script )
-                script_preview += f"\n\n**Full script**: `{display_path}`"
+                script_preview += f"\n\n**Full Script**: {script_link}"
 
                 revision_label = f" (Revision {self._podcast_state[ 'revision_count' ]})" if self._podcast_state[ "revision_count" ] > 0 else ""
 
@@ -604,6 +775,7 @@ class PodcastOrchestratorAgent:
                             { "label": "Cancel", "description": "Discard changes and stop" }
                         ]
                     } ],
+                    timeout  = self.config.script_review_timeout_seconds,
                     abstract = script_preview,
                     title    = f"Script Review{revision_label}",
                 )
@@ -789,7 +961,7 @@ class PodcastOrchestratorAgent:
             # Convert absolute paths to relative for API endpoint
             script_link   = script_path
             audio_link    = audio_path
-            research_link = self.research_doc_path
+            research_link = None  # Only set if valid research path exists
 
             if script_path and script_path.startswith( io_base ):
                 rel_path    = script_path.replace( io_base, "" )
@@ -797,7 +969,10 @@ class PodcastOrchestratorAgent:
             if audio_path and audio_path.startswith( io_base ):
                 rel_path   = audio_path.replace( io_base, "" )
                 audio_link = f"[Download MP3](/api/io/file?path={urllib.parse.quote( rel_path )})"
-            if self.research_doc_path and self.research_doc_path.startswith( io_base ):
+            # Only create research link if it's a valid path (not "edit-mode" or other placeholder)
+            if ( self.research_doc_path
+                 and self.research_doc_path != "edit-mode"
+                 and self.research_doc_path.startswith( io_base ) ):
                 rel_path      = self.research_doc_path.replace( io_base, "" )
                 research_link = f"[View Research](/api/io/file?path={urllib.parse.quote( rel_path )})"
 
@@ -806,15 +981,21 @@ class PodcastOrchestratorAgent:
             total_chars = sum( r.character_count for r in tts_results if r.success )
             audio_cost  = ( total_chars / 1000.0 ) * ELEVENLABS_COST_PER_1K_CHARS
 
+            # Build abstract - conditionally include research link only if valid
+            abstract_lines = [
+                f"**Segments**: {script.get_segment_count()}",
+                f"**Duration**: {audio_duration_mins:.1f} minutes",
+                f"**Audio Cost**: ${audio_cost:.4f} ({total_chars:,} chars)",
+                f"**Audio**: {audio_link}",
+                f"**Script**: {script_link}",
+            ]
+            if research_link:
+                abstract_lines.append( f"**Research**: {research_link}" )
+
             await voice_io.notify(
                 f"Podcast audio complete! Duration: {audio_duration_mins:.1f} minutes",
                 priority = "high",
-                abstract = f"**Segments**: {script.get_segment_count()}\n"
-                           f"**Duration**: {audio_duration_mins:.1f} minutes\n"
-                           f"**Audio Cost**: ${audio_cost:.4f} ({total_chars:,} chars)\n"
-                           f"**Audio**: {audio_link}\n"
-                           f"**Script**: {script_link}\n"
-                           f"**Research**: {research_link}"
+                abstract = "\n".join( abstract_lines )
             )
 
             return script
@@ -1121,17 +1302,24 @@ class PodcastOrchestratorAgent:
             # Return original script unchanged
             return current_script
 
-    async def _save_script_async( self, script: PodcastScript, is_revision: bool = False ) -> str:
+    async def _save_script_async(
+        self,
+        script      : PodcastScript,
+        is_revision : bool = False,
+        language    : str  = "en"
+    ) -> str:
         """
         Save the script to a markdown file.
 
         For new scripts, generates a new path and stores it.
         For revisions, appends version suffix (e.g., -v2.md) to preserve history.
         For approval (final save), uses original path.
+        For non-English languages, generates separate file with language suffix.
 
         Args:
             script: The script to save
             is_revision: If True, append version suffix (e.g., -v2.md) to filename
+            language: ISO language code (default: "en")
 
         Returns:
             str: Path to saved file
@@ -1139,8 +1327,21 @@ class PodcastOrchestratorAgent:
         try:
             import cosa.utils.util as cu
 
-            # Determine output path based on context
-            if self._original_script_path and is_revision:
+            # For non-English languages, always generate a new language-specific path
+            if language != "en":
+                topic_slug = script.title.replace( "Podcast: ", "" )[ :40 ]
+                # Remove language suffix from title if present (for cleaner slugs)
+                for lang_name in LANGUAGE_NAMES.values():
+                    topic_slug = topic_slug.replace( f" ({lang_name})", "" )
+                output_path = self.config.get_output_path(
+                    user_id   = self.user_id,
+                    topic     = topic_slug,
+                    file_type = "script",
+                    language  = language,
+                )
+
+            # English language handling (original behavior)
+            elif self._original_script_path and is_revision:
                 # Generate versioned path: original-script-v2.md (suffix before .md)
                 base_path    = self._original_script_path
                 revision_num = self._podcast_state.get( "revision_count", 1 )
@@ -1161,9 +1362,11 @@ class PodcastOrchestratorAgent:
                     user_id   = self.user_id,
                     topic     = topic_slug,
                     file_type = "script",
+                    language  = language,
                 )
-                # Store for future reference
-                self._original_script_path = output_path
+                # Store for future reference (English only)
+                if language == "en":
+                    self._original_script_path = output_path
 
             # Ensure directory exists
             output_dir = os.path.dirname( output_path )
@@ -1244,18 +1447,148 @@ class PodcastOrchestratorAgent:
 *Full script contains {script.get_segment_count()} dialogue segments.*"""
 
     # =========================================================================
+    # Private Methods - Phase 4b Implementation (Multi-Language Generation)
+    # =========================================================================
+
+    async def _generate_translated_script_async(
+        self,
+        english_script  : PodcastScript,
+        target_language : str
+    ) -> PodcastScript:
+        """
+        Generate script in target language based on English script.
+
+        Uses Claude to create natural dialogue in target language,
+        not literal translation. Preserves prosody markers and speaker structure.
+
+        Requires:
+            - english_script is a valid PodcastScript
+            - target_language is a valid ISO language code
+
+        Ensures:
+            - Returns PodcastScript in target language
+            - Prosody markers are preserved
+            - Speaker names remain unchanged
+
+        Args:
+            english_script: The approved English script
+            target_language: ISO language code (e.g., "es-MX")
+
+        Returns:
+            PodcastScript: Script in target language
+        """
+        language_name = LANGUAGE_NAMES.get( target_language, target_language )
+
+        if self.debug:
+            print( f"[PodcastOrchestratorAgent] Generating {language_name} version of script" )
+
+        try:
+            # Build prompt for native script generation in target language
+            # Include the English script as reference for structure and content
+            translation_prompt = f"""Generate a {language_name} version of this podcast script.
+
+IMPORTANT REQUIREMENTS:
+1. Generate NATURAL {language_name} dialogue - do NOT translate literally
+2. Preserve ALL prosody markers (*[pause]*, *[excited]*, etc.) UNCHANGED in English
+3. Keep host names (Nora, Quentin) UNCHANGED
+4. Maintain the same dialogue structure (same number of segments, same speaker order)
+5. Adapt idioms, cultural references, and examples for {language_name} speakers
+6. Match the tone and energy of each segment
+
+ENGLISH SCRIPT TO ADAPT:
+---
+{english_script.to_markdown()}
+---
+
+Generate the {language_name} script in JSON format with the same structure:
+{{
+    "title": "{language_name} title here",
+    "segments": [
+        {{"speaker": "Nora", "role": "curious", "text": "{language_name} dialogue with *[prosody]* markers"}},
+        ...
+    ],
+    "key_topics": [...],
+    "estimated_duration_minutes": {english_script.estimated_duration_minutes}
+}}"""
+
+            response = await self.api_client.call_for_script(
+                system_prompt = SCRIPT_GENERATION_SYSTEM_PROMPT,
+                user_message  = translation_prompt,
+            )
+            self.metrics[ "api_calls" ] += 1
+
+            result = parse_script_response( response.content )
+
+            # Convert to PodcastScript
+            segments = [
+                ScriptSegment(
+                    speaker         = seg.get( "speaker", "Host" ),
+                    role            = seg.get( "role", "curious" ),
+                    text            = seg.get( "text", "" ),
+                    prosody         = seg.get( "prosody", [] ),
+                    topic_reference = seg.get( "topic_reference" ),
+                )
+                for seg in result.get( "segments", [] )
+            ]
+
+            translated_script = PodcastScript(
+                title                      = result.get( "title", f"{english_script.title} ({language_name})" ),
+                research_source            = english_script.research_source,
+                host_a_name                = english_script.host_a_name,
+                host_b_name                = english_script.host_b_name,
+                segments                   = segments if segments else english_script.segments,
+                estimated_duration_minutes = result.get( "estimated_duration_minutes",
+                                                          english_script.estimated_duration_minutes ),
+                key_topics                 = result.get( "key_topics", english_script.key_topics ),
+                revision_count             = 0,  # Start fresh for translated version
+            )
+
+            # Validate prosody preservation
+            is_preserved, details = validate_prosody_preservation( english_script, translated_script )
+            if not is_preserved:
+                logger.warning(
+                    f"Prosody mismatch in {language_name} translation: "
+                    f"EN={details[ 'english_count' ]}, {target_language}={details[ 'translated_count' ]}, "
+                    f"missing={details[ 'missing' ]}"
+                )
+                await voice_io.notify(
+                    f"Warning: Some prosody markers may have changed in {language_name} translation. Please review carefully.",
+                    priority = "high"
+                )
+
+            return translated_script
+
+        except Exception as e:
+            logger.error( f"Script translation to {target_language} failed: {e}" )
+            if self.debug:
+                print( f"[PodcastOrchestratorAgent] Translation error: {e}" )
+
+            # Return a copy of English script with updated title as fallback
+            return PodcastScript(
+                title                      = f"{english_script.title} ({language_name} - Translation Failed)",
+                research_source            = english_script.research_source,
+                host_a_name                = english_script.host_a_name,
+                host_b_name                = english_script.host_b_name,
+                segments                   = english_script.segments,
+                estimated_duration_minutes = english_script.estimated_duration_minutes,
+                key_topics                 = english_script.key_topics,
+            )
+
+    # =========================================================================
     # Private Methods - Phase 2 Implementation (Audio Generation)
     # =========================================================================
 
     async def _generate_audio_async(
         self,
-        script: PodcastScript
+        script   : PodcastScript,
+        language : str = "en"
     ) -> Tuple[ List[ TTSSegmentResult ], List[ int ] ]:
         """
         Phase 5: Generate TTS audio for all segments.
 
         Uses the TTS client to generate PCM audio for each dialogue
-        segment in the script.
+        segment in the script. For non-English languages, uses
+        multilingual model with language_code.
 
         Requires:
             - script has at least one segment
@@ -1267,6 +1600,7 @@ class PodcastOrchestratorAgent:
 
         Args:
             script: Podcast script with dialogue segments
+            language: ISO language code for voice selection (default: "en")
 
         Returns:
             Tuple[List[TTSSegmentResult], List[int]]:
@@ -1285,13 +1619,18 @@ class PodcastOrchestratorAgent:
             script = limited_script
 
         if self.debug:
-            print( f"[PodcastOrchestratorAgent] Starting audio generation for {script.get_segment_count()} segments" )
+            lang_name = LANGUAGE_NAMES.get( language, language )
+            print( f"[PodcastOrchestratorAgent] Starting audio generation for {script.get_segment_count()} segments ({lang_name})" )
 
-        # Use the lazy-initialized TTS client
-        tts_results, failed_indices = await self.tts_client.generate_all_segments( script )
+        # Use the lazy-initialized TTS client with language-aware generation
+        tts_results, failed_indices = await self.tts_client.generate_all_segments(
+            script   = script,
+            language = language
+        )
 
         # Store TTS results in state for cost calculation in notifications
-        self._podcast_state[ "tts_results" ] = tts_results
+        # Use language-specific key to avoid overwriting
+        self._podcast_state[ f"tts_results_{language}" ] = tts_results
 
         if self.debug:
             success_count = len( tts_results ) - len( failed_indices )
@@ -1301,8 +1640,9 @@ class PodcastOrchestratorAgent:
 
     async def _stitch_audio_async(
         self,
-        tts_results: List[ TTSSegmentResult ],
-        script: PodcastScript
+        tts_results : List[ TTSSegmentResult ],
+        script      : PodcastScript,
+        language    : str = "en"
     ) -> str:
         """
         Phase 6: Stitch audio segments into final MP3.
@@ -1317,24 +1657,32 @@ class PodcastOrchestratorAgent:
         Ensures:
             - Creates MP3 file at the output path
             - Returns path to the created file
+            - Non-English files have language suffix in filename
 
         Args:
             tts_results: List of TTS results from generation phase
             script: Original script (for output path generation)
+            language: ISO language code for output filename (default: "en")
 
         Returns:
             str: Path to the created MP3 file
         """
-        # Generate output path
+        # Generate output path with language suffix
         topic_slug  = script.title.replace( "Podcast: ", "" )[ :40 ]
+        # Remove language suffix from title if present (for cleaner slugs)
+        for lang_name in LANGUAGE_NAMES.values():
+            topic_slug = topic_slug.replace( f" ({lang_name})", "" )
+
         output_path = self.config.get_output_path(
             user_id   = self.user_id,
             topic     = topic_slug,
             file_type = "audio",
+            language  = language,
         )
 
         if self.debug:
-            print( f"[PodcastOrchestratorAgent] Stitching audio to: {output_path}" )
+            lang_name = LANGUAGE_NAMES.get( language, language )
+            print( f"[PodcastOrchestratorAgent] Stitching {lang_name} audio to: {output_path}" )
 
         # Run stitching in thread pool (pydub is synchronous)
         def do_stitch():

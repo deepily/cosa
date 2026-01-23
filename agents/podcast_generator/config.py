@@ -10,7 +10,7 @@ Design decisions:
 """
 
 from dataclasses import dataclass, field
-from typing import Literal, Optional
+from typing import Literal, Optional, List
 
 
 @dataclass
@@ -95,7 +95,7 @@ class VoiceProfile:
 # ElevenLabs voice IDs for default duo
 # These are example IDs - replace with actual licensed voices
 DEFAULT_VOICE_CURIOUS = VoiceProfile(
-    voice_id         = "EXAVITQu4vr4xnSDxMaL",  # Sarah - curious, expressive
+    voice_id         = "EXAVITQu4vr4xnSDxMaL",  # curious, expressive
     name             = "Sarah",
     stability        = 0.60,
     similarity_boost = 0.75,
@@ -103,12 +103,25 @@ DEFAULT_VOICE_CURIOUS = VoiceProfile(
 )
 
 DEFAULT_VOICE_EXPERT = VoiceProfile(
-    voice_id         = "VR6AewLTigWG4xSOukaG",  # Arnold - grounded, authoritative
+    voice_id         = "VR6AewLTigWG4xSOukaG",  # grounded, authoritative
     name             = "Arnold",
     stability        = 0.70,
     similarity_boost = 0.80,
     style            = 0.30,  # More grounded for expertise
 )
+
+
+# =============================================================================
+# Language Configuration
+# =============================================================================
+
+LANGUAGE_NAMES = {
+    "en"    : "English",
+    "es"    : "Spanish",
+    "es-ES" : "Castilian Spanish (Spain)",
+    "es-MX" : "Mexican Spanish",
+    "es-AR" : "Argentinian Spanish",
+}
 
 
 # =============================================================================
@@ -186,8 +199,9 @@ class PodcastConfig:
     examples_per_topic         : int   = 2
 
     # === Execution Limits ===
-    max_script_revisions       : int   = 3
-    feedback_timeout_seconds   : int   = 300
+    max_script_revisions          : int = 3
+    feedback_timeout_seconds      : int = 300
+    script_review_timeout_seconds : int = 240  # Longer timeout for reviewing full scripts
 
     # === Output Configuration ===
     output_dir_template        : str   = "io/podcasts/{user}"
@@ -205,6 +219,10 @@ class PodcastConfig:
     stream_thoughts_to_voice   : bool  = True
     narrate_progress           : bool  = True
 
+    # === Language Configuration ===
+    target_languages           : List[ str ] = field( default_factory=lambda: [ "en" ] )
+    # Examples: ["en"], ["en", "es"], ["en", "es-MX", "es-AR"]
+
     def get_host_a_name( self ) -> str:
         """Get Host A's name."""
         return self.host_a_personality.name
@@ -213,7 +231,13 @@ class PodcastConfig:
         """Get Host B's name."""
         return self.host_b_personality.name
 
-    def get_output_path( self, user_id: str, topic: str, file_type: str = "script" ) -> str:
+    def get_output_path(
+        self,
+        user_id   : str,
+        topic     : str,
+        file_type : str = "script",
+        language  : str = "en"
+    ) -> str:
         """
         Generate output file path for script or audio.
 
@@ -221,15 +245,18 @@ class PodcastConfig:
             - user_id is a valid email or identifier
             - topic is a non-empty string
             - file_type is "script" or "audio"
+            - language is a valid ISO language code (e.g., "en", "es-MX")
 
         Ensures:
             - Returns full path with proper formatting
             - Timestamps are included for uniqueness
+            - Language suffix added for non-English files
 
         Args:
             user_id: User identifier for directory
             topic: Topic slug for filename
             file_type: "script" or "audio"
+            language: ISO language code (default: "en")
 
         Returns:
             str: Complete file path
@@ -250,17 +277,26 @@ class PodcastConfig:
         dir_path = self.output_dir_template.format( user=user_id )
         full_dir = cu.get_project_root() + "/" + dir_path
 
+        # Add language suffix for non-English
+        lang_suffix = f"-{language}" if language != "en" else ""
+
         # Build filename
         if file_type == "script":
             filename = self.script_filename_template.format(
                 timestamp = timestamp,
                 topic     = topic_slug,
             )
+            # Insert language suffix before .md extension
+            if lang_suffix and filename.endswith( ".md" ):
+                filename = filename[ :-3 ] + lang_suffix + ".md"
         else:
             filename = self.audio_filename_template.format(
                 timestamp = timestamp,
                 topic     = topic_slug,
             )
+            # Insert language suffix before .mp3 extension
+            if lang_suffix and filename.endswith( ".mp3" ):
+                filename = filename[ :-4 ] + lang_suffix + ".mp3"
 
         return full_dir + "/" + filename
 
@@ -353,6 +389,56 @@ def quick_smoke_test():
         assert "!" not in path2
         assert "voice-computing-revolution-from-sci-fi-to-reality" in path2
         print( "✓ Special characters properly sanitized from topic slug" )
+
+        # Test 9: Target languages default
+        print( "Testing target_languages default..." )
+        assert config.target_languages == [ "en" ]
+        print( "✓ Default target_languages is ['en']" )
+
+        # Test 10: Language-aware output paths
+        print( "Testing language-aware output paths..." )
+        en_path = config.get_output_path(
+            user_id   = "test@test.com",
+            topic     = "Quantum Computing",
+            file_type = "script",
+            language  = "en",
+        )
+        es_path = config.get_output_path(
+            user_id   = "test@test.com",
+            topic     = "Quantum Computing",
+            file_type = "script",
+            language  = "es-MX",
+        )
+        assert en_path.endswith( "-script.md" )
+        assert es_path.endswith( "-script-es-MX.md" )
+        print( f"✓ English script: ...{en_path[ -30: ]}" )
+        print( f"✓ Spanish script: ...{es_path[ -35: ]}" )
+
+        # Test audio paths with language
+        en_audio = config.get_output_path(
+            user_id   = "test@test.com",
+            topic     = "Quantum",
+            file_type = "audio",
+            language  = "en",
+        )
+        es_audio = config.get_output_path(
+            user_id   = "test@test.com",
+            topic     = "Quantum",
+            file_type = "audio",
+            language  = "es",
+        )
+        assert en_audio.endswith( ".mp3" )
+        assert "-es.mp3" not in en_audio  # No suffix for English
+        assert es_audio.endswith( "-es.mp3" )
+        print( "✓ Language-aware audio paths work correctly" )
+
+        # Test 11: LANGUAGE_NAMES constant
+        print( "Testing LANGUAGE_NAMES constant..." )
+        assert "en" in LANGUAGE_NAMES
+        assert "es-MX" in LANGUAGE_NAMES
+        assert LANGUAGE_NAMES[ "en" ] == "English"
+        assert LANGUAGE_NAMES[ "es-MX" ] == "Mexican Spanish"
+        print( f"✓ LANGUAGE_NAMES contains {len( LANGUAGE_NAMES )} languages" )
 
         print( "\n✓ PodcastConfig smoke test completed successfully" )
 

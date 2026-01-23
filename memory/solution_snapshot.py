@@ -987,19 +987,37 @@ class SolutionSnapshot( RunnableCode ):
     def formatter_ran_to_completion( self ) -> bool:
         """
         Check if formatter completed successfully.
-        
+
         Requires:
             - None
-            
+
         Ensures:
             - Returns True if answer_conversational is set
             - Returns False otherwise
-            
+
         Raises:
             - None
         """
         return self.answer_conversational is not None
-    
+
+    # =========================================================================
+    # Unified Interface Properties (for QueueableJob protocol compatibility)
+    # =========================================================================
+
+    @property
+    def job_type( self ) -> str:
+        """
+        Unified job type identifier.
+
+        Maps to agent_class_name for SolutionSnapshots, providing consistent
+        type identification across all job types (AgentBase, SolutionSnapshot,
+        AgenticJobBase).
+
+        Returns:
+            str: Agent class name (e.g., "MathAgent", "CalendarAgent") or "unknown"
+        """
+        return self.agent_class_name or "unknown"
+
 def quick_smoke_test():
     """Quick smoke test to validate SolutionSnapshot functionality."""
     du.print_banner( "SolutionSnapshot Smoke Test", prepend_nl=True )
@@ -1029,7 +1047,17 @@ def quick_smoke_test():
         if today.question_embedding and snapshot.question_embedding:
             score = today.get_question_similarity( snapshot )
             print( f"Score: [{score:.1f}] for '{snapshot.question}' vs '{today.question}'" )
-    
+
+    # Test unified interface property: job_type
+    print( "\nTesting unified interface property: job_type..." )
+    snapshot_with_agent = SolutionSnapshot( question="test", agent_class_name="MathAgent" )
+    assert snapshot_with_agent.job_type == "MathAgent", "job_type should equal agent_class_name"
+    print( f"✓ job_type with agent_class_name: {snapshot_with_agent.job_type}" )
+
+    snapshot_without_agent = SolutionSnapshot( question="test" )
+    assert snapshot_without_agent.job_type == "unknown", "job_type should be 'unknown' when agent_class_name is None"
+    print( f"✓ job_type without agent_class_name: {snapshot_without_agent.job_type}" )
+
     print( "\n✓ SolutionSnapshot smoke test completed" )
 
 

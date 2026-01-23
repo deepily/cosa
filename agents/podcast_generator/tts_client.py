@@ -77,10 +77,12 @@ class VoiceConfig:
     Requires:
         - voice_id is a valid ElevenLabs voice ID
         - All numeric values are in valid ranges (0.0-1.0)
+        - language_code is a valid ISO language code
     """
 
     voice_id         : str
     name             : str
+    language_code    : str   = "en"  # ISO language code (en, es, es-MX, etc.)
     stability        : float = 0.65
     similarity_boost : float = 0.75
     style            : float = 0.35
@@ -152,50 +154,63 @@ class PodcastTTSClient:
         if self.debug:
             print( f"[PodcastTTSClient] Initialized (API key: {'present' if self._api_key else 'MISSING'})" )
 
-    def get_voice_config_for_speaker( self, speaker: str ) -> VoiceConfig:
+    def get_voice_config_for_speaker( self, speaker: str, language: str = "en" ) -> VoiceConfig:
         """
-        Get voice configuration for a speaker name.
+        Get voice configuration for a speaker name in specified language.
 
         Maps speaker names to voice configurations from config:
         - "Nora" → podcast voice female config
         - "Quentin" → podcast voice male config
 
+        For non-English languages, uses language-specific voices if configured,
+        otherwise falls back to English voices with multilingual model.
+
         Requires:
             - speaker is a non-empty string
+            - language is a valid ISO language code
             - config_mgr is set if using dynamic config
 
         Ensures:
-            - Returns VoiceConfig for the speaker
-            - Falls back to defaults if config unavailable
+            - Returns VoiceConfig for the speaker and language
+            - Falls back to English voices if language-specific not available
+            - Sets language_code in returned config
 
         Args:
             speaker: Speaker name from script segment
+            language: ISO language code (e.g., "en", "es-MX")
 
         Returns:
             VoiceConfig: Voice configuration for TTS
         """
+        # Cache key includes language
+        cache_key = f"{speaker}:{language}"
+
         # Check cache
-        if speaker in self._voice_cache:
-            return self._voice_cache[ speaker ]
+        if cache_key in self._voice_cache:
+            return self._voice_cache[ cache_key ]
 
         # Load from config
-        config = self._load_voice_config_for_speaker( speaker )
-        self._voice_cache[ speaker ] = config
+        config = self._load_voice_config_for_speaker( speaker, language )
+        self._voice_cache[ cache_key ] = config
 
         if self.debug:
-            print( f"[PodcastTTSClient] Voice config for {speaker}: {config.name} ({config.voice_id[ :8 ]}...)" )
+            print( f"[PodcastTTSClient] Voice config for {speaker} ({language}): {config.name} ({config.voice_id[ :8 ]}...)" )
 
         return config
 
-    def _load_voice_config_for_speaker( self, speaker: str ) -> VoiceConfig:
+    def _load_voice_config_for_speaker( self, speaker: str, language: str = "en" ) -> VoiceConfig:
         """
         Load voice configuration from ConfigurationManager.
 
+        For non-English languages, attempts to load language-specific voices.
+        Falls back to English voices with language_code set for multilingual model.
+
         Args:
             speaker: Speaker name
+            language: ISO language code (e.g., "en", "es-MX")
 
         Returns:
-            VoiceConfig: Loaded or default configuration
+            VoiceConfig: Loaded or default configuration with language_code set
         """
         # Determine voice type based on speaker name
         speaker_lower = speaker.lower()
@@ -211,8 +226,41 @@ class PodcastTTSClient:
             voice_type = "female"
             logger.warning( f"Unknown speaker '{speaker}', defaulting to female voice" )
 
+        # Determine language prefix for config keys (es-MX → spanish, en → empty)
+        lang_prefix = self._get_language_prefix( language )
+
         # Try to load from config_mgr
         if self.config_mgr:
+            # First try language-specific voice (e.g., "podcast voice spanish female id")
+            if lang_prefix:
+                try:
+                    voice_id = self.config_mgr.get( f"podcast voice {lang_prefix} {voice_type} id" )
+                    name     = self.config_mgr.get( f"podcast voice {lang_prefix} {voice_type} name" )
+                    stability = self.config_mgr.get(
+                        f"podcast voice {lang_prefix} {voice_type} stability",
+                        return_type = "float"
+                    )
+                    similarity = self.config_mgr.get(
+                        f"podcast voice {lang_prefix} {voice_type} similarity boost",
+                        return_type = "float"
+                    )
+                    style = self.config_mgr.get(
+                        f"podcast voice {lang_prefix} {voice_type} style",
+                        return_type = "float"
+                    )
+
+                    return VoiceConfig(
+                        voice_id         = voice_id,
+                        name             = name,
+                        language_code    = language,
+                        stability        = stability,
+                        similarity_boost = similarity,
+                        style            = style,
+                    )
+                except Exception as e:
+                    logger.debug( f"No {lang_prefix} voice config found, falling back to English: {e}" )
+
+            # Try English voice (original config keys)
             try:
                 voice_id = self.config_mgr.get( f"podcast voice {voice_type} id" )
                 name     = self.config_mgr.get( f"podcast voice {voice_type} name" )
@@ -232,6 +280,7 @@ class PodcastTTSClient:
                 return VoiceConfig(
                     voice_id         = voice_id,
                     name             = name,
+                    language_code    = language,  # Use requested language for multilingual model
                     stability        = stability,
                     similarity_boost = similarity,
                     style            = style,
@@ -239,11 +288,12 @@ class PodcastTTSClient:
             except Exception as e:
                 logger.warning( f"Failed to load voice config from config_mgr: {e}" )
 
-        # Return defaults
+        # Return defaults with language_code set
         if voice_type == "female":
             return VoiceConfig(
                 voice_id         = "kcQkGnn0HAT2JRDQ4Ljp",
                 name             = "Nora",
+                language_code    = language,
                 stability        = 0.60,
                 similarity_boost = 0.75,
                 style            = 0.40,
@@ -252,15 +302,40 @@ class PodcastTTSClient:
             return VoiceConfig(
                 voice_id         = "Aa6nEBJJMKJwJkCx8VU2",
                 name             = "Quentin",
-                stability        = 0.70,
+                language_code    = language,
+                stability        = 0.55,  # Lower = more varied delivery
                 similarity_boost = 0.80,
-                style            = 0.30,
+                style            = 0.50,  # Higher = more expressive
             )
+
+    def _get_language_prefix( self, language: str ) -> str:
+        """
+        Get config key prefix for a language code.
+
+        Args:
+            language: ISO language code (e.g., "en", "es", "es-MX")
+
+        Returns:
+            str: Config key prefix (e.g., "spanish") or empty string for English
+        """
+        # Map language codes to config prefixes
+        lang_map = {
+            "es"    : "spanish",
+            "es-ES" : "spanish",
+            "es-MX" : "spanish",
+            "es-AR" : "spanish",
+        }
+
+        # Get base language for codes like es-MX
+        base_lang = language.split( "-" )[ 0 ]
+
+        return lang_map.get( language, lang_map.get( base_lang, "" ) )
 
     async def generate_segment_audio(
         self,
-        segment: ScriptSegment,
-        index: int
+        segment  : ScriptSegment,
+        index    : int,
+        language : str = "en"
     ) -> TTSSegmentResult:
         """
         Generate TTS audio for a single segment with retry logic.
@@ -280,6 +355,7 @@ class PodcastTTSClient:
         Args:
             segment: Script segment to synthesize
             index: Segment index for tracking
+            language: ISO language code for voice selection (default: "en")
 
         Returns:
             TTSSegmentResult: Result with PCM audio or error
@@ -293,8 +369,8 @@ class PodcastTTSClient:
                 error_message = "ELEVENLABS_API_KEY not set",
             )
 
-        # Get voice config
-        voice_config = self.get_voice_config_for_speaker( segment.speaker )
+        # Get voice config for speaker and language
+        voice_config = self.get_voice_config_for_speaker( segment.speaker, language )
 
         # Extract clean text (remove prosody annotations for TTS)
         text = self._clean_text_for_tts( segment.text )
@@ -353,6 +429,23 @@ class PodcastTTSClient:
             retry_count   = self.max_retries,
         )
 
+    def _get_model_for_language( self, language_code: str ) -> str:
+        """
+        Get the appropriate ElevenLabs model for a language.
+
+        Uses multilingual model for non-English languages.
+
+        Args:
+            language_code: ISO language code
+
+        Returns:
+            str: ElevenLabs model ID
+        """
+        if language_code == "en":
+            return "eleven_turbo_v2_5"  # Fast English-optimized model
+        else:
+            return "eleven_multilingual_v2"  # Multilingual model for other languages
+
     async def _generate_via_websocket(
         self,
         text: str,
@@ -364,9 +457,12 @@ class PodcastTTSClient:
         Connects to the streaming API, sends text with voice settings,
         and collects all PCM audio chunks.
 
+        For non-English languages, uses multilingual model and passes
+        language_code in the config message.
+
         Args:
             text: Text to synthesize
-            voice_config: Voice configuration
+            voice_config: Voice configuration (includes language_code)
 
         Returns:
             bytes: Raw PCM 24000Hz audio
@@ -374,10 +470,13 @@ class PodcastTTSClient:
         Raises:
             Exception: On WebSocket or API errors
         """
+        # Select model based on language
+        model_id = self._get_model_for_language( voice_config.language_code )
+
         # Build WebSocket URL
         ws_url = self.WS_URL_TEMPLATE.format(
             voice_id = voice_config.voice_id,
-            model_id = "eleven_turbo_v2_5",
+            model_id = model_id,
         )
 
         # Connect to ElevenLabs
@@ -386,7 +485,7 @@ class PodcastTTSClient:
             additional_headers = { "xi-api-key": self._api_key }
         ) as ws:
 
-            # Send configuration message
+            # Build configuration message
             config_msg = {
                 "text"           : " ",  # Initial space to start stream
                 "voice_settings" : {
@@ -399,6 +498,11 @@ class PodcastTTSClient:
                     "chunk_length_schedule": [ 120, 160, 250, 290 ],  # Low latency
                 },
             }
+
+            # Add language_code for multilingual model
+            if voice_config.language_code != "en":
+                config_msg[ "language_code" ] = voice_config.language_code
+
             await ws.send( json.dumps( config_msg ) )
 
             # Send text
@@ -456,7 +560,8 @@ class PodcastTTSClient:
 
     async def generate_all_segments(
         self,
-        script: PodcastScript
+        script   : PodcastScript,
+        language : str = "en"
     ) -> Tuple[ List[ TTSSegmentResult ], List[ int ] ]:
         """
         Generate TTS audio for all segments in a podcast script.
@@ -473,6 +578,7 @@ class PodcastTTSClient:
 
         Args:
             script: Podcast script with dialogue segments
+            language: ISO language code for voice selection (default: "en")
 
         Returns:
             Tuple[List[TTSSegmentResult], List[int]]:
@@ -486,10 +592,10 @@ class PodcastTTSClient:
 
         for i, segment in enumerate( script.segments ):
             if self.debug:
-                print( f"[PodcastTTSClient] Generating segment {i + 1}/{total}: {segment.speaker}" )
+                print( f"[PodcastTTSClient] Generating segment {i + 1}/{total}: {segment.speaker} ({language})" )
 
             segment_start = time.time()
-            result = await self.generate_segment_audio( segment, i )
+            result = await self.generate_segment_audio( segment, i, language )
             segment_elapsed = time.time() - segment_start
             segment_times.append( segment_elapsed )
 
@@ -563,13 +669,20 @@ def quick_smoke_test():
         voice = VoiceConfig(
             voice_id         = "test_voice_id",
             name             = "TestVoice",
+            language_code    = "es-MX",
             stability        = 0.65,
             similarity_boost = 0.75,
             style            = 0.35,
         )
         assert voice.voice_id == "test_voice_id"
         assert voice.name == "TestVoice"
-        print( f"  VoiceConfig: {voice.name} (stability={voice.stability})" )
+        assert voice.language_code == "es-MX"
+        print( f"  VoiceConfig: {voice.name} (lang={voice.language_code}, stability={voice.stability})" )
+
+        # Test default language_code
+        voice_default = VoiceConfig( voice_id="test", name="Test" )
+        assert voice_default.language_code == "en"
+        print( "  VoiceConfig default language_code is 'en'" )
 
         # Test 3: PodcastTTSClient instantiation
         print( "Testing PodcastTTSClient instantiation..." )
@@ -594,6 +707,24 @@ def quick_smoke_test():
         jordan_config = client.get_voice_config_for_speaker( "Jordan" )
         assert jordan_config.name == "Quentin"  # Fallback to male
         print( "  Voice config lookup works (Nora/Quentin + Alex/Jordan fallback)" )
+
+        # Test language-aware voice lookup
+        spanish_config = client.get_voice_config_for_speaker( "Nora", language="es-MX" )
+        assert spanish_config.language_code == "es-MX"
+        # Should use same voice ID (fallback) but with Spanish language code
+        print( f"  Spanish voice lookup: {spanish_config.name} (lang={spanish_config.language_code})" )
+
+        # Test model selection
+        assert client._get_model_for_language( "en" ) == "eleven_turbo_v2_5"
+        assert client._get_model_for_language( "es-MX" ) == "eleven_multilingual_v2"
+        assert client._get_model_for_language( "es" ) == "eleven_multilingual_v2"
+        print( "  Model selection: en→turbo, es→multilingual" )
+
+        # Test language prefix mapping
+        assert client._get_language_prefix( "en" ) == ""
+        assert client._get_language_prefix( "es" ) == "spanish"
+        assert client._get_language_prefix( "es-MX" ) == "spanish"
+        print( "  Language prefix mapping works" )
 
         # Test 5: Text cleaning
         print( "Testing text cleaning..." )

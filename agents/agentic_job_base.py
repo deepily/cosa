@@ -128,6 +128,62 @@ class AgenticJobBase( ABC ):
         """
         pass
 
+    # =========================================================================
+    # Unified Interface Properties (for QueueableJob protocol compatibility)
+    # =========================================================================
+
+    @property
+    def question( self ) -> str:
+        """
+        Raw question text (unified interface).
+
+        For agentic jobs, this is the same as last_question_asked.
+        Provides compatibility with SolutionSnapshot and AgentBase interfaces.
+
+        Returns:
+            str: The question/task description
+        """
+        return self.last_question_asked
+
+    @property
+    def answer( self ) -> str:
+        """
+        Raw answer text (unified interface).
+
+        For agentic jobs, this returns the conversational answer or empty string.
+        Provides compatibility with SolutionSnapshot interface.
+
+        Returns:
+            str: The answer/result text
+        """
+        return self.answer_conversational or ""
+
+    @property
+    def job_type( self ) -> str:
+        """
+        Unified job type identifier.
+
+        Returns the JOB_TYPE class attribute for consistent type identification
+        across all job types (AgentBase, SolutionSnapshot, AgenticJobBase).
+
+        Returns:
+            str: Job type identifier (e.g., "deep_research", "podcast")
+        """
+        return self.JOB_TYPE
+
+    @property
+    def created_date( self ) -> str:
+        """
+        Creation timestamp (unified interface).
+
+        For agentic jobs, this is the same as run_date since jobs are
+        created and queued simultaneously.
+
+        Returns:
+            str: ISO format timestamp of job creation
+        """
+        return self.run_date
+
     @abstractmethod
     def do_all( self ) -> str:
         """
@@ -367,6 +423,14 @@ def quick_smoke_test():
         assert job.id_hash in html
         assert "[test]" in html
         print( f"✓ get_html() works: {html[ :60 ]}..." )
+
+        # Test 9: Test unified interface properties
+        print( "Testing unified interface properties..." )
+        assert job.question == job.last_question_asked, "question should equal last_question_asked"
+        assert job.answer == "Test complete", "answer should equal answer_conversational"
+        assert job.job_type == "test", "job_type should equal JOB_TYPE"
+        assert job.created_date == job.run_date, "created_date should equal run_date"
+        print( "✓ Unified interface properties work correctly" )
 
         print( "\n✓ Smoke test completed successfully" )
 

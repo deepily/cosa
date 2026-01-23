@@ -11,7 +11,7 @@ import json
 import re
 from typing import Optional
 
-from ..config import HostPersonality
+from ..config import HostPersonality, LANGUAGE_NAMES
 
 
 # =============================================================================
@@ -131,13 +131,14 @@ Provide your analysis as JSON."""
 
 
 def get_script_generation_prompt(
-    content_analysis: dict,
-    research_content: str,
-    host_a_personality: HostPersonality,
-    host_b_personality: HostPersonality,
-    target_duration_minutes: int = 10,
-    min_exchanges: int = 8,
-    max_exchanges: int = 20,
+    content_analysis        : dict,
+    research_content        : str,
+    host_a_personality      : HostPersonality,
+    host_b_personality      : HostPersonality,
+    target_duration_minutes : int = 10,
+    min_exchanges           : int = 8,
+    max_exchanges           : int = 20,
+    target_language         : str = "en",
 ) -> str:
     """
     Generate prompt for script generation phase.
@@ -146,9 +147,11 @@ def get_script_generation_prompt(
         - content_analysis contains analyzed topics and facts
         - host personalities are configured
         - target_duration is positive
+        - target_language is a valid ISO language code
 
     Ensures:
         - Returns prompt with full context for dialogue generation
+        - For non-English languages, includes instruction for native generation
 
     Args:
         content_analysis: Dictionary from analysis phase
@@ -158,6 +161,7 @@ def get_script_generation_prompt(
         target_duration_minutes: Target podcast length
         min_exchanges: Minimum number of dialogue exchanges
         max_exchanges: Maximum number of dialogue exchanges
+        target_language: ISO language code (e.g., "en", "es-MX")
 
     Returns:
         str: Complete prompt for script generation
@@ -172,8 +176,23 @@ def get_script_generation_prompt(
     # Format analysis
     analysis_str = json.dumps( content_analysis, indent=2 )
 
-    return f"""Create a podcast script based on the following analysis and source material.
+    # Build language instruction for non-English
+    language_instruction = ""
+    if target_language != "en":
+        language_name = LANGUAGE_NAMES.get( target_language, target_language )
+        language_instruction = f"""
+IMPORTANT - LANGUAGE REQUIREMENT:
+Generate this podcast script in {language_name}.
+- Write natural, conversational dialogue as native speakers would speak
+- Preserve all prosody markers (*[pause]*, *[excited]*, etc.) UNCHANGED in English
+- Keep host names (Nora, Quentin) UNCHANGED
+- Adapt idioms, examples, and cultural references to be appropriate for {language_name} speakers
+- Do NOT translate literally - create authentic, natural-sounding dialogue
 
+"""
+
+    return f"""Create a podcast script based on the following analysis and source material.
+{language_instruction}
 TARGET SPECIFICATIONS:
 - Duration: approximately {target_duration_minutes} minutes
 - Exchanges: {min_exchanges}-{max_exchanges} dialogue turns
@@ -409,6 +428,33 @@ def quick_smoke_test():
         assert "Quentin" in script_prompt  # Default expert host
         assert "10 minutes" in script_prompt
         print( "✓ Script generation prompt generated" )
+
+        # Test 2b: Script generation prompt with Spanish
+        print( "Testing script generation prompt with Spanish..." )
+        spanish_prompt = get_script_generation_prompt(
+            content_analysis  = { "main_topic": "Quantum", "key_subtopics": [ "qubits" ] },
+            research_content  = "Research content here.",
+            host_a_personality = DEFAULT_CURIOUS_HOST,
+            host_b_personality = DEFAULT_EXPERT_HOST,
+            target_duration_minutes = 10,
+            target_language   = "es-MX",
+        )
+        assert "Mexican Spanish" in spanish_prompt
+        assert "LANGUAGE REQUIREMENT" in spanish_prompt
+        assert "Preserve all prosody markers" in spanish_prompt
+        assert "Keep host names" in spanish_prompt
+        print( "✓ Spanish script prompt includes language instruction" )
+
+        # Test English prompt doesn't have language instruction
+        english_prompt = get_script_generation_prompt(
+            content_analysis  = { "main_topic": "Test", "key_subtopics": [] },
+            research_content  = "Test.",
+            host_a_personality = DEFAULT_CURIOUS_HOST,
+            host_b_personality = DEFAULT_EXPERT_HOST,
+            target_language   = "en",
+        )
+        assert "LANGUAGE REQUIREMENT" not in english_prompt
+        print( "✓ English prompt has no language instruction" )
 
         # Test 3: Revision prompt
         print( "Testing revision prompt..." )
