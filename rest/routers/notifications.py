@@ -225,6 +225,7 @@ async def notify_user(
     sender_id: Optional[str] = Query(None, description="Sender ID (e.g., claude.code@lupin.deepily.ai). Auto-extracted from [PREFIX] in message if not provided."),
     response_options: Optional[str] = Query(None, description="JSON string of options for multiple_choice type. Structure: {questions: [{question, header, multi_select, options: [{label, description}]}]}"),
     abstract: Optional[str] = Query(None, description="Supplementary context for the notification (plan details, URLs, markdown). Displayed alongside message in action-required cards."),
+    job_id: Optional[str] = Query(None, description="Agentic job ID for routing to job cards (e.g., dr-a1b2c3d4, mock-12345678)"),
     notification_queue: NotificationFifoQueue = Depends(get_notification_queue),
     ws_manager: WebSocketManager = Depends(get_websocket_manager)
 ):
@@ -400,7 +401,8 @@ async def notify_user(
                         priority         = priority,
                         title            = title,
                         abstract         = abstract,
-                        response_options = parsed_response_options
+                        response_options = parsed_response_options,
+                        job_id           = job_id
                     )
                     # Update state to delivered if user is connected
                     if is_connected:
@@ -470,7 +472,8 @@ async def notify_user(
                         response_default   = response_default,
                         response_options   = parsed_response_options,
                         timeout_seconds    = timeout_seconds,
-                        expires_at         = expires_at
+                        expires_at         = expires_at,
+                        job_id             = job_id
                     )
                     repo.update_state( db_notification.id, "expired" )
                     notification_id = str( db_notification.id )
@@ -505,7 +508,8 @@ async def notify_user(
                 response_default   = response_default,
                 response_options   = parsed_response_options,
                 timeout_seconds    = timeout_seconds,
-                expires_at         = expires_at
+                expires_at         = expires_at,
+                job_id             = job_id
             )
             # Mark as delivered since user is connected
             repo.update_state( db_notification.id, "delivered" )

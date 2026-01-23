@@ -438,17 +438,28 @@ class PodcastOrchestratorAgent:
             # =================================================================
             import cosa.utils.util as cu
 
-            scripts_by_language = { "en": script }
-            script_paths_by_language = { "en": script_path }
+            scripts_by_language = {}
+            script_paths_by_language = {}
+
+            # Only include English audio if explicitly requested
+            if "en" in self.target_languages:
+                scripts_by_language[ "en" ] = script
+                script_paths_by_language[ "en" ] = script_path
 
             non_english_languages = [ lang for lang in self.target_languages if lang != "en" ]
 
             if non_english_languages:
                 lang_count = len( non_english_languages )
-                await voice_io.notify(
-                    f"English script approved. Now generating {lang_count} additional language version(s)...",
-                    priority = "medium"
-                )
+                if "en" in self.target_languages:
+                    await voice_io.notify(
+                        f"English script approved. Now generating {lang_count} additional language version(s)...",
+                        priority = "medium"
+                    )
+                else:
+                    await voice_io.notify(
+                        f"Script approved. Now generating {lang_count} language version(s): {', '.join( non_english_languages )}...",
+                        priority = "medium"
+                    )
 
             for lang in non_english_languages:
                 lang_name = LANGUAGE_NAMES.get( lang, lang )
@@ -904,7 +915,7 @@ class PodcastOrchestratorAgent:
 
             segment_count = script.get_segment_count()
             await voice_io.notify(
-                f"Starting audio generation for {segment_count} segments. This may take 1-3 minutes.",
+                f"Starting English audio generation ({segment_count} segments)...",
                 priority = "medium"
             )
 
@@ -929,7 +940,7 @@ class PodcastOrchestratorAgent:
             # Phase 6: Stitch Audio
             # =================================================================
             self.state = OrchestratorState.STITCHING_AUDIO
-            await voice_io.notify( "Stitching audio segments into final podcast..." )
+            await voice_io.notify( "Stitching English audio segments..." )
 
             audio_path = await self._stitch_audio_async( tts_results, script )
             self._podcast_state[ "final_audio_path" ] = audio_path

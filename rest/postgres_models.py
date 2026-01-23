@@ -516,6 +516,11 @@ class Notification( Base ):
         nullable=False,
         index=True
     )
+    job_id: Mapped[Optional[str]] = mapped_column(
+        String( 32 ),
+        nullable=True,
+        index=True
+    )  # Agentic job ID for routing (e.g., "dr-a1b2c3d4", "mock-12345678")
 
     # Content
     title: Mapped[Optional[str]] = mapped_column(

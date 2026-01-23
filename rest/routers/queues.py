@@ -515,63 +515,34 @@ async def get_job_interactions(
         "interaction_count" : 0
     }
 
-    # Query notifications if session_id available
-    if job.session_id:
-        try:
-            with get_db() as db:
-                user_repo = UserRepository( db )
-                user = user_repo.get_by_uid( current_user["uid"] )
+    # Query notifications by job_id (direct lookup - much simpler than time-window)
+    try:
+        with get_db() as db:
+            print( f"[API] Querying notifications for job_id={job_id}" )
 
-                if user:
-                    # Parse job run_date to datetime for time window query
-                    # Format: "2026-01-14 @ 10:30:45.123456 EST"
-                    try:
-                        run_date_str = job.run_date.replace( ' @ ', 'T' ).replace( ' EST', '' ).replace( ' EDT', '' )
-                        # Handle microseconds
-                        if '.' in run_date_str:
-                            job_run_time = datetime.fromisoformat( run_date_str )
-                        else:
-                            job_run_time = datetime.fromisoformat( run_date_str )
-                        # Make timezone-aware if naive
-                        if job_run_time.tzinfo is None:
-                            from pytz import timezone as pytz_tz
-                            eastern = pytz_tz( 'America/New_York' )
-                            job_run_time = eastern.localize( job_run_time )
-                    except Exception as parse_err:
-                        print( f"[API] Error parsing run_date '{job.run_date}': {parse_err}" )
-                        job_run_time = datetime.now( timezone.utc )
+            notifications = db.query( Notification ).filter(
+                Notification.job_id == job_id
+            ).order_by( Notification.created_at.asc() ).all()
 
-                    # Query notifications within ±5 minute window of job execution
-                    window_start = job_run_time - timedelta( minutes=5 )
-                    window_end = job_run_time + timedelta( minutes=5 )
+            response["interactions"] = [
+                {
+                    "id"                 : str( n.id ),
+                    "type"               : n.type,
+                    "message"            : n.message,
+                    "timestamp"          : n.created_at.isoformat(),
+                    "response_requested" : n.response_requested,
+                    "response_value"     : n.response_value,
+                    "priority"           : n.priority
+                }
+                for n in notifications
+            ]
+            response["interaction_count"] = len( notifications )
 
-                    print( f"[API] Querying notifications for user {user.id} in window {window_start} to {window_end}" )
+            print( f"[API] Found {len( notifications )} interactions for job {job_id}" )
 
-                    notifications = db.query( Notification ).filter(
-                        Notification.recipient_id == user.id,
-                        Notification.created_at >= window_start,
-                        Notification.created_at <= window_end
-                    ).order_by( Notification.created_at.asc() ).all()
-
-                    response["interactions"] = [
-                        {
-                            "id"                 : str( n.id ),
-                            "type"               : n.type,
-                            "message"            : n.message,
-                            "timestamp"          : n.created_at.isoformat(),
-                            "response_requested" : n.response_requested,
-                            "response_value"     : n.response_value,
-                            "priority"           : n.priority
-                        }
-                        for n in notifications
-                    ]
-                    response["interaction_count"] = len( notifications )
-
-                    print( f"[API] Found {len(notifications)} interactions for job {job_id}" )
-
-        except Exception as e:
-            print( f"[API] Error querying notifications: {e}" )
-            # Return empty interactions rather than failing
-            pass
+    except Exception as e:
+        print( f"[API] Error querying notifications: {e}" )
+        # Return empty interactions rather than failing
+        pass
 
     return response

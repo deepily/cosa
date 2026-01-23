@@ -55,7 +55,8 @@ class NotificationRepository( BaseRepository[Notification] ):
         response_default: Optional[str] = None,
         response_options: Optional[dict] = None,
         timeout_seconds: Optional[int] = None,
-        expires_at: Optional[datetime] = None
+        expires_at: Optional[datetime] = None,
+        job_id: Optional[str] = None
     ) -> Notification:
         """
         Create new notification.
@@ -101,6 +102,7 @@ class NotificationRepository( BaseRepository[Notification] ):
             response_options   = response_options,
             timeout_seconds    = timeout_seconds,
             expires_at         = expires_at,
+            job_id             = job_id,
             state              = "created"
         )
 
