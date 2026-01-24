@@ -467,7 +467,7 @@ async def get_job_interactions(
 
     Ensures:
         - Returns job metadata + interaction history
-        - Interactions ordered chronologically
+        - Interactions ordered newest-first
         - Returns empty interactions list if job has no session_id
 
     Returns:
@@ -522,7 +522,7 @@ async def get_job_interactions(
 
             notifications = db.query( Notification ).filter(
                 Notification.job_id == job_id
-            ).order_by( Notification.created_at.asc() ).all()
+            ).order_by( Notification.created_at.desc() ).all()
 
             response["interactions"] = [
                 {
