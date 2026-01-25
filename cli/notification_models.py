@@ -238,6 +238,11 @@ class NotificationRequest(BaseModel):
         description="Agentic job ID for routing notifications to job cards (e.g., 'dr-a1b2c3d4'). If provided, notification routes to job card instead of standard notification card."
     )
 
+    suppress_ding: bool = Field(
+        default=False,
+        description="Suppress notification sound (ding) while still speaking message via TTS. Used for conversational TTS from queue operations where interruption ding is undesirable."
+    )
+
     @field_validator( 'message' )
     @classmethod
     def message_not_whitespace( cls, v: str ) -> str:
@@ -386,6 +391,10 @@ class NotificationRequest(BaseModel):
         # Add job_id for routing to job cards
         if self.job_id is not None:
             params["job_id"] = self.job_id
+
+        # Add suppress_ding for conversational TTS (skip notification sound)
+        if self.suppress_ding:
+            params["suppress_ding"] = "true"
 
         return params
 
@@ -614,6 +623,11 @@ class AsyncNotificationRequest(BaseModel):
         description="Agentic job ID for routing notifications to job cards (e.g., 'dr-a1b2c3d4'). If provided, notification routes to job card instead of standard notification card."
     )
 
+    suppress_ding: bool = Field(
+        default=False,
+        description="Suppress notification sound (ding) while still speaking message via TTS. Used for conversational TTS from queue operations where interruption ding is undesirable."
+    )
+
     @field_validator( 'message' )
     @classmethod
     def message_not_whitespace( cls, v: str ) -> str:
@@ -678,6 +692,10 @@ class AsyncNotificationRequest(BaseModel):
         # Add job_id for routing to job cards
         if self.job_id is not None:
             params["job_id"] = self.job_id
+
+        # Add suppress_ding for conversational TTS (skip notification sound)
+        if self.suppress_ding:
+            params["suppress_ding"] = "true"
 
         return params
 

@@ -226,6 +226,7 @@ async def notify_user(
     response_options: Optional[str] = Query(None, description="JSON string of options for multiple_choice type. Structure: {questions: [{question, header, multi_select, options: [{label, description}]}]}"),
     abstract: Optional[str] = Query(None, description="Supplementary context for the notification (plan details, URLs, markdown). Displayed alongside message in action-required cards."),
     job_id: Optional[str] = Query(None, description="Agentic job ID for routing to job cards (e.g., dr-a1b2c3d4, mock-12345678)"),
+    suppress_ding: bool = Query(False, description="Suppress notification sound (ding) while still speaking message via TTS. Used for conversational TTS from queue operations."),
     notification_queue: NotificationFifoQueue = Depends(get_notification_queue),
     ws_manager: WebSocketManager = Depends(get_websocket_manager)
 ):
@@ -379,14 +380,16 @@ async def notify_user(
         if not response_requested:
             # Add to notification queue with state tracking and io_tbl logging
             notification_item = notification_queue.push_notification(
-                message     = message.strip(),
-                type        = type,
-                priority    = priority,
-                source      = "claude_code",
-                user_id     = target_system_id,
-                title       = title,  # Phase 2.2 - include title for consistency
-                sender_id   = resolved_sender_id,  # Sender-aware notification system
-                abstract    = abstract  # Supplementary context for action-required cards
+                message       = message.strip(),
+                type          = type,
+                priority      = priority,
+                source        = "claude_code",
+                user_id       = target_system_id,
+                title         = title,  # Phase 2.2 - include title for consistency
+                sender_id     = resolved_sender_id,  # Sender-aware notification system
+                abstract      = abstract,  # Supplementary context for action-required cards
+                suppress_ding = suppress_ding,  # Skip notification sound (conversational TTS)
+                job_id        = job_id  # Agentic job ID for routing to job cards
             )
 
             # Persist to PostgreSQL for history loading
@@ -556,7 +559,9 @@ async def notify_user(
             response_options   = parsed_response_options,  # Multiple-choice options
             timeout_seconds    = timeout_seconds,
             sender_id          = resolved_sender_id,  # Sender-aware notification system
-            abstract           = abstract  # Supplementary context for action-required cards
+            abstract           = abstract,  # Supplementary context for action-required cards
+            suppress_ding      = suppress_ding,  # Skip notification sound (conversational TTS)
+            job_id             = job_id  # Agentic job ID for routing to job cards
         )
 
         # DEBUG: Log the notification_item after creation

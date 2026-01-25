@@ -18,7 +18,8 @@ class NotificationItem:
                  response_requested: bool = False, response_type: Optional[str] = None,
                  response_default: Optional[str] = None, response_options: Optional[dict] = None,
                  timeout_seconds: Optional[int] = None, sender_id: Optional[str] = None,
-                 abstract: Optional[str] = None ) -> None:
+                 abstract: Optional[str] = None, suppress_ding: bool = False,
+                 job_id: Optional[str] = None ) -> None:
         """
         Initialize a notification item.
 
@@ -65,6 +66,12 @@ class NotificationItem:
 
         # Supplementary context for notification (plan details, URLs, markdown)
         self.abstract           = abstract
+
+        # Suppress notification ding (used for conversational TTS from queue operations)
+        self.suppress_ding      = suppress_ding
+
+        # Agentic job ID for routing to job cards (e.g., dr-a1b2c3d4, mock-12345678)
+        self.job_id             = job_id
 
     def _get_local_timestamp( self ) -> str:
         """Get timezone-aware timestamp using configured timezone from ConfigurationManager"""
@@ -137,7 +144,11 @@ class NotificationItem:
             # Sender identification
             "sender_id"          : self.sender_id,
             # Supplementary context
-            "abstract"           : self.abstract
+            "abstract"           : self.abstract,
+            # Suppress notification ding (conversational TTS)
+            "suppress_ding"      : self.suppress_ding,
+            # Agentic job ID for routing to job cards
+            "job_id"             : self.job_id
         }
 
 
@@ -228,7 +239,8 @@ class NotificationFifoQueue( FifoQueue ):
                          response_requested: bool = False, response_type: Optional[str] = None,
                          response_default: Optional[str] = None, response_options: Optional[dict] = None,
                          timeout_seconds: Optional[int] = None, sender_id: Optional[str] = None,
-                         abstract: Optional[str] = None ) -> NotificationItem:
+                         abstract: Optional[str] = None, suppress_ding: bool = False,
+                         job_id: Optional[str] = None ) -> NotificationItem:
         """
         Push a notification with priority handling and io_tbl logging.
 
@@ -249,7 +261,7 @@ class NotificationFifoQueue( FifoQueue ):
         Raises:
             - None (handles errors gracefully)
         """
-        # Create notification item with Phase 2.2 fields, sender_id, and abstract
+        # Create notification item with Phase 2.2 fields, sender_id, abstract, and suppress_ding
         notification = NotificationItem(
             message            = message,
             type               = type,
@@ -264,7 +276,9 @@ class NotificationFifoQueue( FifoQueue ):
             response_options   = response_options,  # Multiple-choice options
             timeout_seconds    = timeout_seconds,
             sender_id          = sender_id,
-            abstract           = abstract
+            abstract           = abstract,
+            suppress_ding      = suppress_ding,
+            job_id             = job_id
         )
         
         # Priority handling - urgent/high go to front, but after other urgent/high

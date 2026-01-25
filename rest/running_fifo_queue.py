@@ -213,11 +213,12 @@ class RunningFifoQueue( FifoQueue ):
         for line in response[ "output" ].split( "\n" ): print( line )
         
         self.pop()  # Auto-emits 'run_update'
-        
-        self._emit_speech( "I'm sorry Dave, I'm afraid I can't do that. Please check your logs", job=running_job )
-        
+
+        # TTS Migration (Session 97): Use notification service instead of _emit_speech
+        self._notify( "I'm sorry Dave, I'm afraid I can't do that. Please check your logs", job=running_job, priority="urgent" )
+
         self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
-        
+
         return running_job
 
     def _handle_agentic_job( self, running_job: AgenticJobBase, truncated_question: str, job_timer: sw.Stopwatch ) -> Any:
@@ -257,7 +258,8 @@ class RunningFifoQueue( FifoQueue ):
 
             if running_job.code_ran_to_completion() and running_job.formatter_ran_to_completion():
                 # Success path
-                self._emit_speech( running_job.answer_conversational, job=running_job )
+                # TTS Migration (Session 97): Use notification service instead of _emit_speech
+                self._notify( running_job.answer_conversational, job=running_job )
 
                 # Move through queue system
                 self.pop()  # Auto-emits 'run_update'
@@ -279,9 +281,11 @@ class RunningFifoQueue( FifoQueue ):
                 error_msg = running_job.error or "Unknown error"
                 du.print_banner( f"AgenticJob failed: {error_msg}", prepend_nl=True )
 
-                self._emit_speech(
+                # TTS Migration (Session 97): Use notification service instead of _emit_speech
+                self._notify(
                     f"The {running_job.JOB_TYPE} job encountered an error: {error_msg[ :100 ]}",
-                    job=running_job
+                    job=running_job,
+                    priority="urgent"
                 )
 
                 self.pop()  # Auto-emits 'run_update'
@@ -299,9 +303,11 @@ class RunningFifoQueue( FifoQueue ):
             running_job.status = "failed"
             running_job.error  = str( e )
 
-            self._emit_speech(
+            # TTS Migration (Session 97): Use notification service instead of _emit_speech
+            self._notify(
                 f"The {running_job.JOB_TYPE} job crashed unexpectedly. Please check the logs.",
-                job=running_job
+                job=running_job,
+                priority="urgent"
             )
 
             self.pop()  # Auto-emits 'run_update'
@@ -347,9 +353,10 @@ class RunningFifoQueue( FifoQueue ):
         du.print_banner( f"Job [{running_job.last_question_asked}] complete...", prepend_nl=True, end="\n" )
         
         if running_job.code_ran_to_completion() and running_job.formatter_ran_to_completion():
-            
+
             # If we've arrived at this point, then we've successfully run the agentic part of this job
-            self._emit_speech( running_job.answer_conversational, job=running_job )
+            # TTS Migration (Session 97): Use notification service instead of _emit_speech
+            self._notify( running_job.answer_conversational, job=running_job )
             agent_timer.print( "Done!", use_millis=True )
 
             # Only the ReceptionistAgent and WeatherAgent are not being serialized as a solution snapshot
@@ -430,8 +437,9 @@ class RunningFifoQueue( FifoQueue ):
 
         formatted_output = running_job.run_formatter()
         print( formatted_output )
-        self._emit_speech( running_job.answer_conversational, job=running_job )
-        
+        # TTS Migration (Session 97): Use notification service instead of _emit_speech
+        self._notify( running_job.answer_conversational, job=running_job )
+
         self.pop()  # Auto-emits 'run_update'
         self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
 
@@ -521,7 +529,8 @@ class RunningFifoQueue( FifoQueue ):
         )
 
         # Emit the cached answer as speech (use done_queue_entry for routing)
-        self._emit_speech( cached_snapshot.answer_conversational, job=done_queue_entry )
+        # TTS Migration (Session 97): Use notification service instead of _emit_speech
+        self._notify( cached_snapshot.answer_conversational, job=done_queue_entry )
 
         # Move job through the queue system properly
         self.pop()  # Remove from running queue, auto-emits 'run_update'

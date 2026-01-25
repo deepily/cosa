@@ -27,6 +27,13 @@ from cosa.utils import util_xml as dux
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.rest.queue_extensions import user_job_tracker
 
+# Notification service imports for TTS migration (Session 97)
+from cosa.cli.notify_user_sync import notify_user_sync
+from cosa.cli.notification_models import (
+    NotificationRequest,
+    ResponseType
+)
+
 # Mode-to-Agent mapping for direct routing (bypasses LLM router)
 MODE_TO_AGENT = {
     "math"        : MathAgent,
@@ -459,30 +466,74 @@ class TodoFifoQueue( FifoQueue ):
                 print( "push_job(): Skipping snapshot search..." )
                 similar_snapshots = [ ]
         
+        # Flag to track if we need LLM routing (set when no cache match or user declines confirmation)
+        needs_llm_routing = False
+
         # if we've got a set of similar snapshot candidates, then check its score before pushing it onto the queue
         if len( similar_snapshots ) > 0:
-        
+
             best_score    = similar_snapshots[ 0 ][ 0 ]
             best_snapshot = similar_snapshots[ 0 ][ 1 ]
-            
+
             # verify that this is what they were looking for, according to the similarity threshold for confirmation
             if best_score < self.config_mgr.get( "similarity_threshold_confirmation", default=98.0, return_type="float" ):
-                
-                blocking_object = {
-                    "best_score": best_score,
-                    "best_snapshot": best_snapshot,
-                    "question": question
-                }
-                self.push_blocking_object( blocking_object )
+
+                # TTS Migration (Session 97): Use notification service blocking query instead of _emit_speech
+                # This replaces the legacy push_blocking_object() pattern with a proper blocking query
                 msg = f"Is that the same as: {best_snapshot.question}?"
                 du.print_banner( msg )
-                print( "Blocking object pushed onto queue, waiting for response..." )
-                self._emit_speech( msg, user_id=user_id, websocket_id=websocket_id )
-                return msg
-            
-            # This is an exact match, so queue it up
+                print( "Asking user for confirmation via notification service..." )
+
+                request = NotificationRequest(
+                    message          = msg,
+                    response_type    = ResponseType.YES_NO,
+                    response_default = "no",
+                    timeout_seconds  = 30,
+                    priority         = "high",
+                    suppress_ding    = True,  # Queue TTS - no ding
+                    target_user      = self._get_target_user_email( best_snapshot ),
+                    sender_id        = f"queue.{self.queue_name or 'todo'}@lupin.deepily.ai"
+                )
+
+                response = notify_user_sync(
+                    request,
+                    retry_on_timeout = True,    # Enable exponential backoff
+                    max_attempts     = 3,       # 30s → 60s → 120s
+                    backoff_multiplier = 2.0
+                )
+
+                if response.status == "responded" and response.response_value == "yes":
+                    # User confirmed - use cached result
+                    print( f"User confirmed cached result match (score: {best_score}%)" )
+                    # Update last question asked before we throw it on the queue
+                    best_snapshot.last_question_asked = ( salutations + ' ' + question ).strip()
+                    self._dump_code( best_snapshot )
+
+                    # Log query with match results (snapshot found)
+                    match_result = {
+                        'snapshot_id': best_snapshot.id_hash,
+                        'type': 'user_confirmed_similarity_match',
+                        'confidence': best_score
+                    }
+                    embeddings = {
+                        'verbatim': embedding_verbatim,
+                        'normalized': embedding_normalized,
+                        'gist': embedding_gist
+                    }
+                    self._log_query_with_results(
+                        query_verbatim, query_normalized, query_gist,
+                        user_id, websocket_id, embeddings, cache_hits, match_result
+                    )
+
+                    return self._queue_best_snapshot( best_snapshot, best_score, user_id )
+                else:
+                    # User declined, timeout, or offline - fall through to LLM routing
+                    print( f"User response: '{response.status}:{response.response_value}' - routing as new question..." )
+                    needs_llm_routing = True
+
+            # This is an exact match (high confidence), so queue it up
             else:
-                
+
                 # update last question asked before we throw it on the queue
                 best_snapshot.last_question_asked = ( salutations + ' ' + question ).strip()
                 self._dump_code( best_snapshot )
@@ -504,10 +555,14 @@ class TodoFifoQueue( FifoQueue ):
                 )
 
                 return self._queue_best_snapshot( best_snapshot, best_score, user_id )
-            
         else:
-            
-            print( "No similar snapshots found, calling routing LLM..." )
+            # No similar snapshots found
+            needs_llm_routing = True
+
+        # Route through LLM if no cache match or user declined confirmation
+        if needs_llm_routing:
+
+            print( "Routing through LLM (no cache match or user declined)..." )
             
             # Note the distinction between salutation and the question: all agents except the receptionist get the question only.
             # The receptionist gets the salutation plus the question to help it decide how it will respond.
@@ -538,10 +593,11 @@ class TodoFifoQueue( FifoQueue ):
             
             # TODO: implement search and summarize training and routing
             if question.lower().strip().startswith( "search and summarize" ):
-                
+
                 msg = du.print_banner( f"TO DO: train and implement 'agent router go to search and summary' command {command}" )
                 print( msg )
-                self._emit_speech( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} I'm gonna ask our research librarian about that", user_id=user_id )
+                # TTS Migration (Session 97): Use notification service instead of _emit_speech
+                self._notify( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} I'm gonna ask our research librarian about that" )
                 search = LupinSearch( query=question_gist )
                 search.search_and_summarize_the_web()
                 msg = search.get_results( scope="summary" )
