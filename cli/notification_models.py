@@ -234,8 +234,8 @@ class NotificationRequest(BaseModel):
 
     job_id: Optional[str] = Field(
         default=None,
-        pattern=r'^[a-z]+-[a-f0-9]{8}$',
-        description="Agentic job ID for routing notifications to job cards (e.g., 'dr-a1b2c3d4'). If provided, notification routes to job card instead of standard notification card."
+        pattern=r'^([a-z]+-[a-f0-9]{8}|[a-f0-9]{64})$',
+        description="Agentic job ID for routing notifications to job cards. Accepts short format (e.g., 'dr-a1b2c3d4') or SHA256 hash (64 hex chars)."
     )
 
     suppress_ding: bool = Field(
@@ -619,8 +619,8 @@ class AsyncNotificationRequest(BaseModel):
 
     job_id: Optional[str] = Field(
         default=None,
-        pattern=r'^[a-z]+-[a-f0-9]{8}$',
-        description="Agentic job ID for routing notifications to job cards (e.g., 'dr-a1b2c3d4'). If provided, notification routes to job card instead of standard notification card."
+        pattern=r'^([a-z]+-[a-f0-9]{8}|[a-f0-9]{64})$',
+        description="Agentic job ID for routing notifications to job cards. Accepts short format (e.g., 'dr-a1b2c3d4') or SHA256 hash (64 hex chars)."
     )
 
     suppress_ding: bool = Field(
@@ -846,10 +846,13 @@ def quick_smoke_test():
     # ─────────────────────────────────────────────────────────────────────────
     print( "\n3. Testing job_id validation (valid patterns)..." )
     valid_job_ids = [
-        "dr-a1b2c3d4",      # Deep Research prefix
-        "pod-12345678",     # Podcast prefix
-        "aj-abcdef01",      # Agentic job prefix
-        "x-00000000",       # Single letter prefix
+        "dr-a1b2c3d4",      # Deep Research prefix (short format)
+        "pod-12345678",     # Podcast prefix (short format)
+        "aj-abcdef01",      # Agentic job prefix (short format)
+        "x-00000000",       # Single letter prefix (short format)
+        "61d021320bed364e82d50af9128ddf8e1a63d8680d76ec06b1b03e27d8dee435",  # SHA256 hash (queue job format)
+        "0" * 64,           # All zeros SHA256 (edge case)
+        "f" * 64,           # All f's SHA256 (edge case)
     ]
     all_valid_passed = True
     for job_id in valid_job_ids:
@@ -877,12 +880,16 @@ def quick_smoke_test():
     invalid_job_ids = [
         "DR-a1b2c3d4",      # Uppercase prefix (invalid)
         "dr_a1b2c3d4",      # Underscore instead of hyphen
-        "dr-a1b2c3d",       # Too short (7 hex chars)
-        "dr-a1b2c3d4e",     # Too long (9 hex chars)
+        "dr-a1b2c3d",       # Too short (7 hex chars for short format)
+        "dr-a1b2c3d4e",     # Too long (9 hex chars for short format)
         "dr-ABCDEF01",      # Uppercase hex (invalid)
         "123-a1b2c3d4",     # Numeric prefix (invalid)
         "dr-ghijklmn",      # Non-hex characters
         "",                 # Empty string
+        "a" * 63,           # SHA256 too short (63 chars)
+        "a" * 65,           # SHA256 too long (65 chars)
+        "A" * 64,           # SHA256 uppercase (invalid)
+        "g" * 64,           # SHA256 non-hex characters
     ]
     all_invalid_rejected = True
     for job_id in invalid_job_ids:

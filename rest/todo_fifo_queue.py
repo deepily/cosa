@@ -637,8 +637,8 @@ class TodoFifoQueue( FifoQueue ):
             else:
                 msg = du.print_banner( f"TO DO: Implement else case command {command}" )
                 print( msg )
-                if self.emit_speech_callback:
-                    self.emit_speech_callback( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}", user_id=user_id )
+                # TTS Migration (Session 98): Use notification service instead of emit_speech_callback
+                self._notify( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}" )
                 search = LupinSearch( query=question_gist )
                 search.search_and_summarize_the_web()
                 msg = search.get_results( scope="summary" )
@@ -652,8 +652,8 @@ class TodoFifoQueue( FifoQueue ):
                     self.user_job_tracker.associate_job_with_user( agent.id_hash, user_id )
                     print( f"[TODO-QUEUE] Associated agent {agent.id_hash} with user {user_id}" )
             
-            if self.emit_speech_callback:
-                self.emit_speech_callback( msg, user_id=user_id )
+            # TTS Migration (Session 98): Use notification service instead of emit_speech_callback
+            self._notify( msg, job=agent )
 
             # Log query with no match results (new agent created)
             match_result = {
@@ -769,8 +769,8 @@ class TodoFifoQueue( FifoQueue ):
         
         if self.size() != 0:
             suffix = "s" if self.size() > 1 else ""
-            if self.emit_speech_callback:
-                self.emit_speech_callback( f"{self.size()} job{suffix} ahead of this one", user_id=user_id )
+            # TTS Migration (Session 98): Use notification service instead of emit_speech_callback
+            self._notify( f"{self.size()} job{suffix} ahead of this one", job=job )
         else:
             print( "No jobs ahead of this one in the todo Q" )
         

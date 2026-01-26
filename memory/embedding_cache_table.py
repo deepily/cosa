@@ -47,14 +47,56 @@ class EmbeddingCacheTable:
         
         # Check if table exists, create if it doesn't
         if "embedding_cache_tbl" not in db.table_names():
-            if self.debug: 
+            if self.debug:
                 print( "Table 'embedding_cache_tbl' doesn't exist, creating it..." )
             self._create_table_if_needed( db )
         else:
             self._embedding_cache_tbl = db.open_table( "embedding_cache_tbl" )
-        
-        print( f"Opened embedding_cache_tbl w/ [{self._embedding_cache_tbl.count_rows()}] rows" )
-        
+
+            # Check for corruption and recover if needed
+            if self._is_table_corrupted():
+                print( "⚠️ WARNING: embedding_cache_tbl is corrupted, recreating..." )
+                db.drop_table( "embedding_cache_tbl" )
+                self._create_table_if_needed( db )
+                print( "✓ Table recreated successfully (cache was cleared)" )
+
+        try:
+            row_count = self._embedding_cache_tbl.count_rows()
+            print( f"Opened embedding_cache_tbl w/ [{row_count}] rows" )
+        except Exception as e:
+            print( f"⚠️ WARNING: Could not count rows in embedding_cache_tbl: {e}" )
+
+    def _is_table_corrupted( self ) -> bool:
+        """
+        Check if the table is corrupted by attempting to read actual data.
+
+        Requires:
+            - self._embedding_cache_tbl is initialized
+
+        Ensures:
+            - Returns True if table is corrupted and needs recreation
+            - Returns False if table is healthy
+
+        Raises:
+            - Re-raises unexpected exceptions (non-corruption errors)
+
+        Note:
+            count_rows() only reads metadata, not data fragments.
+            We must attempt an actual scan to detect missing fragment files.
+        """
+        try:
+            # Attempt to read actual data - this will fail if data files are missing
+            # limit(1) minimizes overhead while still triggering data access
+            self._embedding_cache_tbl.search().limit( 1 ).to_list()
+            return False
+        except Exception as e:
+            error_str = str( e ).lower()
+            # Check for LanceDB IO/NotFound errors indicating missing data files
+            if "not found" in error_str or "lance" in error_str:
+                return True
+            # Re-raise unexpected errors
+            raise
+
     def _create_table_if_needed( self, db ) -> None:
         """
         Create the embedding cache table with proper schema.
@@ -255,13 +297,79 @@ def quick_smoke_test():
         for text in test_texts:
             has_cache = cache_table.has_cached_embedding( text )
             print( f"  '{text}': {'HIT' if has_cache else 'MISS'}" )
-        
+
+        # Test 7: Verify corruption detection returns False for healthy table
+        print( f"\nTest 7: Testing corruption detection on healthy table..." )
+        is_corrupted = cache_table._is_table_corrupted()
+        if not is_corrupted:
+            print( "✓ Corruption detection correctly reports healthy table" )
+        else:
+            print( "✗ Corruption detection incorrectly reports corruption on healthy table" )
+
+        # Test 8: Simulate corruption recovery (using temp directory)
+        print( f"\nTest 8: Testing corruption recovery with simulated corruption..." )
+        import tempfile
+        import os
+        import shutil
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Create a fresh LanceDB in temp directory
+            temp_db = lancedb.connect( temp_dir )
+            import pyarrow as pa
+            schema = pa.schema( [
+                pa.field( "normalized_text", pa.string() ),
+                pa.field( "embedding", pa.list_( pa.float32(), 1536 ) )
+            ] )
+            temp_table = temp_db.create_table( "test_tbl", schema=schema )
+
+            # Add some data
+            temp_table.add( [ { "normalized_text": "test", "embedding": [ 0.1 ] * 1536 } ] )
+            initial_count = temp_table.count_rows()
+            print( f"  Created temp table with {initial_count} row(s)" )
+
+            # Find and delete a data fragment file to simulate corruption
+            data_dir = os.path.join( temp_dir, "test_tbl.lance", "data" )
+            if os.path.exists( data_dir ):
+                lance_files = [ f for f in os.listdir( data_dir ) if f.endswith( ".lance" ) ]
+                if lance_files:
+                    # Delete the first fragment file
+                    corrupt_file = os.path.join( data_dir, lance_files[ 0 ] )
+                    os.remove( corrupt_file )
+                    print( f"  Deleted fragment file to simulate corruption" )
+
+                    # Reopen the table and test corruption detection
+                    temp_db2 = lancedb.connect( temp_dir )
+                    corrupted_table = temp_db2.open_table( "test_tbl" )
+
+                    # Create a minimal object to test _is_table_corrupted
+                    class CorruptionTester:
+                        def __init__( self, tbl ):
+                            self._embedding_cache_tbl = tbl
+
+                    tester = CorruptionTester( corrupted_table )
+                    # Manually call the corruption check logic
+                    try:
+                        corrupted_table.search().limit( 1 ).to_list()
+                        detected_corruption = False
+                    except Exception as e:
+                        error_str = str( e ).lower()
+                        detected_corruption = "not found" in error_str or "lance" in error_str
+
+                    if detected_corruption:
+                        print( "✓ Corruption correctly detected in simulated corrupt table" )
+                    else:
+                        print( "✗ Failed to detect simulated corruption" )
+                else:
+                    print( "  ⚠ No fragment files found to corrupt (empty table)" )
+            else:
+                print( "  ⚠ Data directory not found (LanceDB structure may differ)" )
+
         print( "\n✓ All basic cache operations completed successfully" )
-        
+
     except Exception as e:
         print( f"✗ Error during smoke test: {e}" )
         du.print_stack_trace( e, explanation="Smoke test failed", caller="EmbeddingCacheTable.quick_smoke_test()" )
-    
+
     print( "\n✓ EmbeddingCacheTable smoke test completed" )
 
 

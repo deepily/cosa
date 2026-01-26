@@ -528,6 +528,11 @@ class RunningFifoQueue( FifoQueue ):
             session_id=current_session_id
         )
 
+        # FIX (Session 98): Preserve original job's id_hash for user association matching
+        # The user_job_tracker has association: original_job.id_hash -> user_id
+        # Without this fix, done queue filter returns 0 jobs because cached snapshot has different id_hash
+        done_queue_entry.id_hash = original_job.id_hash
+
         # Emit the cached answer as speech (use done_queue_entry for routing)
         # TTS Migration (Session 97): Use notification service instead of _emit_speech
         self._notify( cached_snapshot.answer_conversational, job=done_queue_entry )

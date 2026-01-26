@@ -438,30 +438,27 @@ class FifoQueue:
         """
         Extract notification-compatible job_id from job object.
 
-        Notification service expects job_id pattern ^[a-z]+-[a-f0-9]{8}$
-        (e.g., 'dr-a1b2c3d4', 'mock-12345678').
+        Frontend registers jobs by their id_hash (64-char SHA256 or short format).
+        We pass through whatever format the job uses so notifications route correctly.
 
         Requires:
             - job may have id_hash attribute
 
         Ensures:
-            - Returns job_id if it matches notification service format
-            - Returns None if no compatible format (falls back to sender routing)
+            - Returns job's id_hash if available (any format)
+            - Returns None if job has no id_hash
 
         Args:
             job: Job object that may have id_hash attribute
 
         Returns:
-            Optional[str]: Notification-compatible job_id or None
+            Optional[str]: Job's id_hash for notification routing, or None
         """
         if not job:
             return None
 
-        if hasattr( job, 'id_hash' ):
-            id_hash = job.id_hash
-            # Check if format matches notification service pattern
-            if id_hash and re.match( r'^[a-z]+-[a-f0-9]{8}$', id_hash ):
-                return id_hash
+        if hasattr( job, 'id_hash' ) and job.id_hash:
+            return job.id_hash
 
         return None
 
@@ -492,14 +489,25 @@ class FifoQueue:
                 if 'user_email' in job.metadata:
                     return job.metadata[ 'user_email' ]
 
-            # Try to resolve from user_job_tracker (legacy path)
+            # Try to resolve email from user_job_tracker (legacy path)
             if hasattr( job, 'id_hash' ):
                 user_id = self.user_job_tracker.get_user_for_job( job.id_hash )
                 if user_id:
-                    # For now, return user_id as fallback (may not be email)
-                    return user_id
+                    # Look up user email from auth database using user service
+                    try:
+                        from cosa.rest.user_service import get_user_by_id
+                        user_data = get_user_by_id( user_id )
+                        if user_data and user_data.get( "email" ):
+                            email = user_data[ "email" ]
+                            print( f"[NOTIFY] Resolved email from user_id: {email}" )
+                            return email
+                        else:
+                            print( f"[NOTIFY] user_service returned no email for user_id={user_id}" )
+                    except Exception as e:
+                        print( f"[NOTIFY] Failed to look up email for user_id={user_id}: {e}" )
 
         # Fallback to default email
+        # Note: Using hardcoded default since not all queue subclasses have config_mgr
         return "ricardo.felipe.ruiz@gmail.com"
 
     def _notify(
