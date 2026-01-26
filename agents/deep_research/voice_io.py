@@ -7,8 +7,9 @@ This module provides a unified interface for user interaction that:
 2. Automatically falls back to CLI text when voice is unavailable
 3. Allows explicit --cli-mode override to force text interaction
 
-The voice service availability is cached for the session duration
-to avoid repeated connection attempts.
+This is a thin wrapper around the consolidated voice_io module in
+cosa.agents.utils.voice_io, configured with the Deep Research
+cosa_interface for proper sender identity.
 
 Priority Order:
     1. Voice I/O (cosa_interface functions) - PRIMARY
@@ -20,21 +21,25 @@ import asyncio
 import logging
 from typing import Optional, List, Union
 
-from . import cosa_interface
+# Import the consolidated voice_io module
+from cosa.agents.utils import voice_io as _core_voice_io
+
+# Import this agent's cosa_interface for configuration
+from . import cosa_interface as _cosa_interface
 
 logger = logging.getLogger( __name__ )
 
 
 # =============================================================================
-# Module State
+# Module Initialization
 # =============================================================================
 
-_force_cli_mode: bool = False
-_voice_available: Optional[ bool ] = None  # None = not checked, True/False = cached
+# Configure the core voice_io with our cosa_interface
+_core_voice_io.configure( _cosa_interface )
 
 
 # =============================================================================
-# Configuration Functions
+# Re-export Configuration Functions
 # =============================================================================
 
 def set_cli_mode( enabled: bool ) -> None:
@@ -54,10 +59,7 @@ def set_cli_mode( enabled: bool ) -> None:
     Args:
         enabled: True to force CLI mode, False for voice-first
     """
-    global _force_cli_mode
-    _force_cli_mode = enabled
-    if enabled:
-        logger.info( "CLI mode enabled - voice I/O disabled" )
+    _core_voice_io.set_cli_mode( enabled )
 
 
 def reset_voice_check() -> None:
@@ -70,16 +72,12 @@ def reset_voice_check() -> None:
     Ensures:
         - Next call to is_voice_available() will re-check
     """
-    global _voice_available
-    _voice_available = None
+    _core_voice_io.reset_voice_check()
 
 
 async def is_voice_available() -> bool:
     """
     Check if voice service is available (result cached).
-
-    Attempts a minimal notification to test the voice service.
-    The result is cached for the session to avoid repeated checks.
 
     Ensures:
         - Returns True if voice service responds
@@ -89,25 +87,7 @@ async def is_voice_available() -> bool:
     Returns:
         bool: True if voice service is available
     """
-    global _voice_available
-
-    # Return cached result if available
-    if _voice_available is not None:
-        return _voice_available
-
-    # Try to ping the voice service
-    try:
-        # Send a silent/minimal notification to test connectivity
-        # Using a very short message that won't be intrusive
-        await cosa_interface.notify_progress( "Initializing...", priority="low" )
-        _voice_available = True
-        logger.info( "Voice service available - using voice-first mode" )
-
-    except Exception as e:
-        _voice_available = False
-        logger.warning( f"Voice service unavailable ({e}) - falling back to CLI mode" )
-
-    return _voice_available
+    return await _core_voice_io.is_voice_available()
 
 
 def get_mode_description() -> str:
@@ -117,26 +97,19 @@ def get_mode_description() -> str:
     Returns:
         str: Description of current mode
     """
-    if _force_cli_mode:
-        return "CLI mode (forced)"
-    elif _voice_available is True:
-        return "Voice mode (primary)"
-    elif _voice_available is False:
-        return "CLI mode (voice unavailable)"
-    else:
-        return "Mode not yet determined"
+    return _core_voice_io.get_mode_description()
 
 
 # =============================================================================
-# Voice-First I/O Functions
+# Re-export Voice-First I/O Functions
 # =============================================================================
 
 async def notify(
     message: str,
     priority: str = "medium",
-    abstract: Optional[str] = None,
-    session_name: Optional[str] = None,
-    job_id: Optional[str] = None
+    abstract: Optional[ str ] = None,
+    session_name: Optional[ str ] = None,
+    job_id: Optional[ str ] = None
 ) -> None:
     """
     Send a progress notification (voice-first).
@@ -159,25 +132,14 @@ async def notify(
         session_name: Optional human-readable session name for UI display
         job_id: Optional agentic job ID for routing to job cards (e.g., "dr-a1b2c3d4")
     """
-    # Check for forced CLI mode or unavailable voice
-    if _force_cli_mode or not await is_voice_available():
-        print( f"  {message}" )
-        if abstract:
-            print( f"\n  Context:\n{abstract}\n" )
-        return
-
-    try:
-        await cosa_interface.notify_progress( message, priority, abstract, session_name, job_id )
-    except Exception as e:
-        logger.warning( f"Voice notification failed: {e}" )
-        print( f"  {message}" )  # Fallback to print
+    await _core_voice_io.notify( message, priority, abstract, session_name, job_id )
 
 
 async def ask_yes_no(
     question: str,
     default: str = "no",
     timeout: int = 60,
-    abstract: Optional[str] = None
+    abstract: Optional[ str ] = None
 ) -> bool:
     """
     Ask a yes/no question (voice-first).
@@ -204,25 +166,7 @@ async def ask_yes_no(
     Returns:
         bool: True if user approved, False otherwise
     """
-    if _force_cli_mode or not await is_voice_available():
-        # CLI fallback - show abstract if provided
-        if abstract:
-            print( f"\n  Context:\n{abstract}\n" )
-        default_hint = "Y/n" if default == "yes" else "y/N"
-        response = input( f"  {question} [{default_hint}]: " ).strip().lower()
-        if not response:
-            return default == "yes"
-        return response in [ "y", "yes", "yeah", "yep", "sure", "ok", "okay" ]
-
-    try:
-        return await cosa_interface.ask_confirmation( question, default, timeout, abstract )
-    except Exception as e:
-        logger.warning( f"Voice ask_yes_no failed: {e}" )
-        # Fallback to CLI
-        if abstract:
-            print( f"\n  Context:\n{abstract}\n" )
-        response = input( f"  {question} [y/N]: " ).strip().lower()
-        return response in [ "y", "yes" ]
+    return await _core_voice_io.ask_yes_no( question, default, timeout, abstract )
 
 
 async def get_input(
@@ -252,23 +196,7 @@ async def get_input(
     Returns:
         str or None: User's response, or None on timeout/error
     """
-    if _force_cli_mode or not await is_voice_available():
-        # CLI fallback
-        response = input( f"  {prompt}: " ).strip()
-        if not response and not allow_empty:
-            return None
-        return response
-
-    try:
-        response = await cosa_interface.get_feedback( prompt, timeout )
-        if not response and not allow_empty:
-            return None
-        return response
-    except Exception as e:
-        logger.warning( f"Voice get_input failed: {e}" )
-        # Fallback to CLI
-        response = input( f"  {prompt}: " ).strip()
-        return response if response or allow_empty else None
+    return await _core_voice_io.get_input( prompt, allow_empty, timeout )
 
 
 async def choose(
@@ -305,81 +233,11 @@ async def choose(
     Returns:
         str: The selected option label (or custom input)
     """
-    if not options:
-        raise ValueError( "Options list cannot be empty" )
-
-    # Normalize options to dict format for consistent handling
-    normalized_options = []
-    for opt in options:
-        if isinstance( opt, str ):
-            normalized_options.append( { "label": opt, "description": "" } )
-        elif isinstance( opt, dict ):
-            normalized_options.append( {
-                "label"       : opt.get( "label", str( opt ) ),
-                "description" : opt.get( "description", "" )
-            } )
-        else:
-            normalized_options.append( { "label": str( opt ), "description": "" } )
-
-    # Extract labels for return values
-    labels = [ opt[ "label" ] for opt in normalized_options ]
-
-    if _force_cli_mode or not await is_voice_available():
-        # CLI fallback - numbered menu with descriptions
-        print( f"\n  {question}" )
-        for i, opt in enumerate( normalized_options, 1 ):
-            if opt[ "description" ]:
-                print( f"    {i}. {opt[ 'label' ]} - {opt[ 'description' ]}" )
-            else:
-                print( f"    {i}. {opt[ 'label' ]}" )
-
-        if allow_custom:
-            print( f"    {len( normalized_options ) + 1}. Other (type your own)" )
-
-        response = input( "  Enter number: " ).strip()
-        try:
-            idx = int( response ) - 1
-            if 0 <= idx < len( labels ):
-                return labels[ idx ]
-            elif allow_custom and idx == len( labels ):
-                custom = input( "  Enter your choice: " ).strip()
-                return custom if custom else labels[ 0 ]
-        except ValueError:
-            pass
-
-        print( f"  Invalid selection, using default: {labels[ 0 ]}" )
-        return labels[ 0 ]
-
-    try:
-        # Build question format for cosa_interface (already has descriptions)
-        questions = [ {
-            "question"    : question,
-            "header"      : "Choice",
-            "multiSelect" : False,
-            "options"     : normalized_options
-        } ]
-
-        result = await cosa_interface.present_choices( questions, timeout )
-        selection = result.get( "answers", {} ).get( "Choice" )
-
-        # Handle custom "Other" response
-        if selection and selection not in labels:
-            # User selected "Other" and provided custom text
-            return selection
-
-        if selection and selection in labels:
-            return selection
-
-        return labels[ 0 ]  # Default
-
-    except Exception as e:
-        logger.warning( f"Voice choose failed: {e}" )
-        # Fallback to CLI
-        return labels[ 0 ]
+    return await _core_voice_io.choose( question, options, timeout, allow_custom )
 
 
 # =============================================================================
-# Progressive Narrowing Functions (Theme/Topic Selection)
+# Re-export Progressive Narrowing Functions
 # =============================================================================
 
 async def select_themes(
@@ -404,55 +262,7 @@ async def select_themes(
     Returns:
         list[int]: Selected theme indices (0-based)
     """
-    if _force_cli_mode or not await is_voice_available():
-        # CLI fallback
-        print( "\n  Select research themes (comma-separated numbers, or 'all'):" )
-        for i, theme in enumerate( themes, 1 ):
-            topic_count = len( theme.get( "subquery_indices", [] ) )
-            print( f"    {i}. {theme[ 'name' ]} ({topic_count} topics)" )
-            print( f"       {theme.get( 'description', '' )}" )
-
-        response = input( "  Your selection: " ).strip().lower()
-        if response == "all":
-            return list( range( len( themes ) ) )
-
-        try:
-            indices = [ int( x.strip() ) - 1 for x in response.split( "," ) ]
-            return [ i for i in indices if 0 <= i < len( themes ) ]
-        except ValueError:
-            return []
-
-    # Voice mode - use present_choices with multiSelect
-    questions = [ {
-        "question"    : "Which research themes interest you? Select all that apply.",
-        "header"      : "Themes",
-        "multiSelect" : True,
-        "options"     : [
-            {
-                "label"       : theme[ "name" ],
-                "description" : f"{len( theme.get( 'subquery_indices', [] ) )} topics: {theme.get( 'description', '' )}"
-            }
-            for theme in themes
-        ]
-    } ]
-
-    try:
-        result = await cosa_interface.present_choices( questions, timeout )
-        selected_names = result.get( "answers", {} ).get( "Themes", [] )
-
-        # Handle single selection (string) vs multi (list)
-        if isinstance( selected_names, str ):
-            selected_names = [ selected_names ]
-
-        # Map names back to indices
-        return [
-            i for i, theme in enumerate( themes )
-            if theme[ "name" ] in selected_names
-        ]
-
-    except Exception as e:
-        logger.warning( f"Voice select_themes failed: {e}" )
-        return []
+    return await _core_voice_io.select_themes( themes, timeout )
 
 
 async def select_topics(
@@ -478,52 +288,24 @@ async def select_topics(
     Returns:
         list[int]: Selected topic indices (0-based)
     """
-    if _force_cli_mode or not await is_voice_available():
-        # CLI fallback
-        print( "\n  Refine topic selection (comma-separated numbers, 'all', or 'none'):" )
-        for i, topic in enumerate( topics, 1 ):
-            print( f"    {i}. {topic.get( 'topic', 'Unknown' )}" )
+    return await _core_voice_io.select_topics( topics, preselected, timeout )
 
-        response = input( "  Your selection: " ).strip().lower()
-        if response == "all":
-            return list( range( len( topics ) ) )
-        if response == "none":
-            return []
 
-        try:
-            indices = [ int( x.strip() ) - 1 for x in response.split( "," ) ]
-            return [ i for i in indices if 0 <= i < len( topics ) ]
-        except ValueError:
-            return list( range( len( topics ) ) )  # Default to all on error
+# =============================================================================
+# Backward Compatibility: Module-Level State Access
+# =============================================================================
 
-    # Voice mode
-    questions = [ {
-        "question"    : "Which specific topics should I research? Deselect any you want to skip.",
-        "header"      : "Topics",
-        "multiSelect" : True,
-        "options"     : [
-            {
-                "label"       : topic.get( "topic", "Unknown" )[ :50 ],
-                "description" : topic.get( "objective", "" )[ :80 ]
-            }
-            for topic in topics
-        ]
-    } ]
+# For backward compatibility, expose the module state variables
+# These are read-only views; use the functions above to modify state
+@property
+def _force_cli_mode():
+    """Read-only access to CLI mode state."""
+    return _core_voice_io._force_cli_mode
 
-    try:
-        result = await cosa_interface.present_choices( questions, timeout )
-        selected = result.get( "answers", {} ).get( "Topics", [] )
-
-        if isinstance( selected, str ):
-            selected = [ selected ]
-
-        # Map back to indices
-        topic_names = [ t.get( "topic", "" )[ :50 ] for t in topics ]
-        return [ i for i, name in enumerate( topic_names ) if name in selected ]
-
-    except Exception as e:
-        logger.warning( f"Voice select_topics failed: {e}" )
-        return list( range( len( topics ) ) )  # Default to all on error
+@property
+def _voice_available():
+    """Read-only access to voice availability state."""
+    return _core_voice_io._voice_available
 
 
 # =============================================================================
@@ -531,42 +313,42 @@ async def select_topics(
 # =============================================================================
 
 def quick_smoke_test():
-    """Quick smoke test for voice_io module."""
+    """Quick smoke test for Deep Research voice_io wrapper module."""
     import cosa.utils.util as cu
 
-    cu.print_banner( "Voice I/O Smoke Test", prepend_nl=True )
+    cu.print_banner( "Deep Research Voice I/O Wrapper Smoke Test", prepend_nl=True )
 
     try:
-        # Test 1: Module state functions
-        print( "Testing module state functions..." )
-        assert _force_cli_mode is False
+        # Test 1: Module imports and configuration
+        print( "Testing module configuration..." )
+        assert _core_voice_io._cosa_interface is not None
+        print( "✓ Core voice_io configured with cosa_interface" )
+
+        # Test 2: set_cli_mode works
+        print( "Testing set_cli_mode..." )
         set_cli_mode( True )
-        assert _force_cli_mode is True
+        assert _core_voice_io._force_cli_mode is True
         set_cli_mode( False )
-        assert _force_cli_mode is False
+        assert _core_voice_io._force_cli_mode is False
         print( "✓ set_cli_mode works correctly" )
 
-        # Test 2: reset_voice_check
+        # Test 3: reset_voice_check works
         print( "Testing reset_voice_check..." )
-        global _voice_available
-        _voice_available = True
+        _core_voice_io._voice_available = True
         reset_voice_check()
-        assert _voice_available is None
+        assert _core_voice_io._voice_available is None
         print( "✓ reset_voice_check works correctly" )
 
-        # Test 3: get_mode_description
+        # Test 4: get_mode_description works
         print( "Testing get_mode_description..." )
-        _voice_available = None
-        desc = get_mode_description()
-        assert "not yet determined" in desc.lower()
-
+        _core_voice_io._voice_available = None
         set_cli_mode( True )
         desc = get_mode_description()
         assert "forced" in desc.lower()
         set_cli_mode( False )
         print( "✓ get_mode_description works correctly" )
 
-        # Test 4: Async function signatures
+        # Test 5: Async function signatures
         print( "Testing async function signatures..." )
         import inspect
         assert inspect.iscoroutinefunction( is_voice_available )
@@ -578,33 +360,25 @@ def quick_smoke_test():
         assert inspect.iscoroutinefunction( select_topics )
         print( "✓ All async functions have correct signatures" )
 
-        # Test 4b: choose() accepts both List[str] and List[dict]
+        # Test 6: notify has job_id parameter
+        print( "Testing notify() has job_id parameter..." )
+        sig = inspect.signature( notify )
+        assert "job_id" in sig.parameters
+        print( "✓ notify() supports job_id parameter" )
+
+        # Test 7: choose() accepts both List[str] and List[dict]
         print( "Testing choose() option normalization..." )
-
-        # Test with string list
-        string_options = [ "Option A", "Option B", "Option C" ]
-
-        # Test with dict list
-        dict_options = [
-            { "label": "Choice 1", "description": "First choice description" },
-            { "label": "Choice 2", "description": "Second choice description" }
-        ]
-
-        # Verify both formats are accepted (can't run full async test without mocking)
-        # We just verify the function signature accepts both
         sig = inspect.signature( choose )
         params = list( sig.parameters.keys() )
         assert "options" in params
         assert "allow_custom" in params
         print( "✓ choose() accepts Union[List[str], List[dict]] and allow_custom param" )
 
-        # Test 5: CLI mode fallback (force CLI mode for safe testing)
+        # Test 8: CLI mode fallback
         print( "Testing CLI mode fallback..." )
         set_cli_mode( True )
 
         async def test_cli_fallback():
-            # This should use CLI fallback (print), not voice
-            # We can't fully test without mocking input()
             mode = get_mode_description()
             assert "forced" in mode.lower()
 
@@ -613,9 +387,9 @@ def quick_smoke_test():
         print( "✓ CLI mode fallback configured correctly" )
 
         # Reset state
-        _voice_available = None
+        _core_voice_io._voice_available = None
 
-        print( "\n✓ Voice I/O smoke test completed successfully" )
+        print( "\n✓ Deep Research voice_io wrapper smoke test completed successfully" )
 
     except Exception as e:
         print( f"\n✗ Smoke test failed: {e}" )
