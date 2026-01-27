@@ -34,6 +34,7 @@ from .api_client import ResearchAPIClient, ANTHROPIC_AVAILABLE, ENV_VAR_NAME, KE
 from .orchestrator import ResearchOrchestratorAgent, OrchestratorState
 from . import cosa_interface
 from . import voice_io
+from . import search_cache
 
 from cosa.config.configuration_manager import ConfigurationManager
 
@@ -133,6 +134,21 @@ Examples:
     )
 
     parser.add_argument(
+        "--audience",
+        type=str,
+        choices=[ "beginner", "general", "expert", "academic" ],
+        default=None,
+        help="Target audience level (default: expert from config). Options: beginner, general, expert, academic"
+    )
+
+    parser.add_argument(
+        "--audience-context",
+        type=str,
+        default=None,
+        help="Custom audience description (e.g., 'AI architect familiar with distributed systems')"
+    )
+
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable debug output"
@@ -219,6 +235,7 @@ async def run_research(
     query: str,
     config: ResearchConfig,
     cost_tracker: CostTracker,
+    user_email: str,
     no_confirm: bool = False,
     debug: bool = False,
     verbose: bool = False
@@ -230,6 +247,7 @@ async def run_research(
         query: The research query
         config: Research configuration
         cost_tracker: Cost tracker for usage
+        user_email: User email for cache directory (multi-tenancy)
         no_confirm: Skip confirmation prompts
         debug: Enable debug output
         verbose: Enable verbose output
@@ -303,7 +321,11 @@ async def run_research(
 
         plan_response = await api_client.call_with_json_output(
             system_prompt = PLANNING_SYSTEM_PROMPT,
-            user_message  = get_planning_prompt( query ),
+            user_message  = get_planning_prompt(
+                query            = query,
+                target_audience  = config.target_audience,
+                audience_context = config.audience_context
+            ),
             call_type     = "planning",
         )
 
@@ -377,10 +399,15 @@ async def run_research(
                     "Sending to your screen for selection.",
                     priority="medium"
                 )
-                selected_theme_indices = await voice_io.select_themes( themes )
+                try:
+                    selected_theme_indices = await voice_io.select_themes( themes )
+                except RuntimeError as e:
+                    # Technical failure - user already notified by select_themes
+                    logger.error( f"Theme selection failed: {e}" )
+                    return None
 
             if not selected_theme_indices:
-                await voice_io.notify( "No themes selected. Research cancelled.", priority="medium" )
+                await voice_io.notify( "No themes selected. Research cancelled at your request.", priority="medium" )
                 return None
 
             # Gather topics from selected themes
@@ -401,12 +428,17 @@ async def run_research(
                     priority="low"
                 )
 
-                selected_indices = await voice_io.select_topics(
-                    [ sq for _, sq in candidate_subqueries ]
-                )
+                try:
+                    selected_indices = await voice_io.select_topics(
+                        [ sq for _, sq in candidate_subqueries ]
+                    )
+                except RuntimeError as e:
+                    # Technical failure - user already notified by select_topics
+                    logger.error( f"Topic selection failed: {e}" )
+                    return None
 
                 if not selected_indices:
-                    await voice_io.notify( "No topics selected. Research cancelled.", priority="medium" )
+                    await voice_io.notify( "No topics selected. Research cancelled at your request.", priority="medium" )
                     return None
 
                 # Map back to original indices
@@ -473,25 +505,51 @@ async def run_research(
         # Research loop with partial result recovery on rate limit
         findings = []
         rate_limit_hit = False
+        cache_hits = 0
 
         try:
             for i, sq in enumerate( subqueries ):
                 topic = sq.get( "topic", "Unknown" )
                 await voice_io.notify( f"Researching topic {i + 1} of {len( subqueries )}: {topic}", priority="low" )
 
-                subagent_response = await api_client.call_subagent(
-                    system_prompt  = SUBAGENT_SYSTEM_PROMPT.format( min_sources=3, max_sources=10 ),
-                    user_message   = get_subagent_prompt(
-                        topic         = sq.get( "topic", "" ),
-                        objective     = sq.get( "objective", "" ),
-                        output_format = sq.get( "output_format", "summary" ),
-                    ),
-                    subquery_index = i,
-                    call_type      = "research",
-                )
+                # Check cache first
+                cached_result = search_cache.load_cached_result( user_email, topic )
+                if cached_result:
+                    cache_hits += 1
+                    if debug: print( f"  [Cache hit] Using cached result for: {topic[:50]}..." )
+                    await voice_io.notify( f"Using cached result for topic {i + 1}", priority="low" )
 
-                # Parse findings
-                content = subagent_response.content
+                    # Use cached content directly
+                    content = cached_result.get( "results", {} ).get( "content", "" )
+                    tokens_used = cached_result.get( "results", {} ).get( "tokens", 0 )
+
+                else:
+                    # No cache - make API call
+                    subagent_response = await api_client.call_subagent(
+                        system_prompt  = SUBAGENT_SYSTEM_PROMPT.format( min_sources=3, max_sources=10 ),
+                        user_message   = get_subagent_prompt(
+                            topic            = sq.get( "topic", "" ),
+                            objective        = sq.get( "objective", "" ),
+                            output_format    = sq.get( "output_format", "summary" ),
+                            target_audience  = config.target_audience,
+                            audience_context = config.audience_context,
+                        ),
+                        subquery_index = i,
+                        call_type      = "research",
+                    )
+
+                    content = subagent_response.content
+                    tokens_used = subagent_response.input_tokens
+
+                    # Save to cache for future use
+                    search_cache.save_to_cache(
+                        user_email,
+                        topic,
+                        { "content": content, "tokens": tokens_used }
+                    )
+                    if debug: print( f"  [Cache saved] Cached result for: {topic[:50]}..." )
+
+                # Parse findings (from cache or API response)
                 try:
                     import json
                     # Try to parse as JSON
@@ -514,12 +572,12 @@ async def run_research(
 
                 # After each call, report progress with token count and next wait estimate
                 if i < len( subqueries ) - 1:
-                    tokens_used = subagent_response.input_tokens
-                    next_wait = rate_limiter.get_estimated_wait_for_next_call()
+                    next_wait = rate_limiter.get_estimated_wait_for_next_call() if not cached_result else 0
                     remaining = len( subqueries ) - i - 1
+                    cache_note = " (cached)" if cached_result else ""
                     await voice_io.notify(
-                        f"Topic {i + 1}/{len( subqueries )} complete ({tokens_used:,} tokens). "
-                        f"{remaining} remaining. Next search in ~{next_wait:.0f} seconds.",
+                        f"Topic {i + 1}/{len( subqueries )} complete{cache_note} ({tokens_used:,} tokens). "
+                        f"{remaining} remaining." + ( f" Next search in ~{next_wait:.0f} seconds." if next_wait > 0 else "" ),
                         priority="low"
                     )
 
@@ -568,9 +626,11 @@ async def run_research(
         synthesis_response = await api_client.call_lead_agent(
             system_prompt = SYNTHESIS_SYSTEM_PROMPT,
             user_message  = get_synthesis_prompt(
-                query        = query,
-                findings     = findings,
-                plan_summary = rationale,
+                query            = query,
+                findings         = findings,
+                plan_summary     = rationale,
+                target_audience  = config.target_audience,
+                audience_context = config.audience_context,
             ),
             call_type     = "synthesis",
             max_tokens    = 8192,
@@ -896,6 +956,14 @@ def main():
     if args.max_subagents:
         config.max_subagents_complex = args.max_subagents
 
+    # Target audience configuration (CLI overrides config file)
+    config.target_audience = args.audience or config_mgr.get(
+        "deep research target audience",
+        default="expert"
+    )
+    audience_context_from_config = config_mgr.get( "deep research audience context", default="" )
+    config.audience_context = args.audience_context or audience_context_from_config or None
+
     # Create cost tracker with simplified session_id
     session_id = f"cli-{uuid.uuid4().hex[:8]}"
     cost_tracker = CostTracker(
@@ -916,6 +984,9 @@ def main():
         print( f"Session ID: {session_id}" )
         print( f"User email: {user_email}" )
         print( f"Notification sender: {cosa_interface.SENDER_ID}" )
+        print( f"\nTarget audience: {config.target_audience}" )
+        if config.audience_context:
+            print( f"Audience context: {config.audience_context}" )
         print( f"\nStorage backend: {storage_backend}" )
         if storage_backend == "gcs":
             print( f"GCS bucket: {gcs_bucket}" )
@@ -950,6 +1021,7 @@ def main():
             query        = args.query,
             config       = config,
             cost_tracker = cost_tracker,
+            user_email   = user_email,
             no_confirm   = args.no_confirm,
             debug        = args.debug,
             verbose      = args.verbose,

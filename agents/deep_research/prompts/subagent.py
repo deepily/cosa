@@ -15,7 +15,86 @@ Based on patterns from:
 - Context compression techniques from open research
 """
 
-from typing import Optional, List
+from typing import Optional, List, Literal
+
+
+# =============================================================================
+# Audience-Specific Research Guidelines
+# =============================================================================
+
+AUDIENCE_RESEARCH_GUIDELINES = {
+    "beginner": """
+## Target Audience: Beginner
+
+### Research Guidelines for Beginner Audience
+
+When researching for BEGINNER audience:
+- Prioritize: Tutorials, getting-started guides, beginner-friendly documentation
+- Look for: Clear definitions, step-by-step explanations, visual aids
+- Include: Prerequisites, common mistakes, learning paths
+- Source quality: Official tutorials > beginner blogs > advanced docs
+- Avoid: Papers, advanced technical documentation, implementation details
+
+Source evaluation for beginners:
+- HIGH VALUE: Official getting-started guides, beginner tutorials, intro documentation
+- MEDIUM VALUE: Well-explained blog posts, video transcripts, Q&A sites
+- LOW VALUE: Academic papers, advanced optimization guides, internal architecture docs
+""",
+
+    "general": """
+## Target Audience: General
+
+### Research Guidelines for General Audience
+
+When researching for GENERAL audience:
+- Prioritize: Mainstream documentation, practical guides, use case studies
+- Look for: Balanced explanations, real-world examples, common applications
+- Include: Both "what" and "why", practical benefits, typical workflows
+- Source quality: Official docs > reputable tech blogs > community resources
+- Avoid: Highly specialized papers, edge case optimizations
+
+Source evaluation for general audience:
+- HIGH VALUE: Official documentation, reputable tech publications, industry reports
+- MEDIUM VALUE: Technical blogs, conference talks, community tutorials
+- LOW VALUE: Academic papers (unless directly relevant), internal implementation details
+""",
+
+    "expert": """
+## Target Audience: Expert
+
+### Research Guidelines for Expert Audience
+
+When researching for EXPERT audience:
+- Prioritize: Technical papers, architecture docs, benchmark studies, post-mortems
+- De-prioritize: Introductory tutorials, "getting started" guides, marketing content
+- Look for: Quantitative comparisons, ablation studies, real-world case studies
+- Include: Critiques, known limitations, failure cases that practitioners encounter
+- Cite: Primary sources (papers, official docs) over secondary (blog summaries)
+
+Source evaluation for experts:
+- HIGH VALUE: arXiv papers, official documentation, engineering blogs from practitioners
+- MEDIUM VALUE: Conference talks, detailed technical tutorials, benchmark repos
+- LOW VALUE: "Introduction to X" articles, listicles, promotional content, basic tutorials
+""",
+
+    "academic": """
+## Target Audience: Academic/Researcher
+
+### Research Guidelines for Academic Audience
+
+When researching for ACADEMIC audience:
+- Prioritize: Peer-reviewed papers, seminal works, recent arXiv publications
+- Look for: Methodology details, experimental design, statistical analysis
+- Include: Citation information, conflicting findings, open research questions
+- Focus on: Primary sources, empirical evidence, theoretical foundations
+- Note: Methodological limitations, replication status, p-values where available
+
+Source evaluation for academic audience:
+- HIGH VALUE: Peer-reviewed journals, top-tier conference papers (NeurIPS, ICML, etc.)
+- MEDIUM VALUE: arXiv preprints, workshop papers, technical reports from labs
+- LOW VALUE: Blog posts (even good ones), marketing materials, non-peer-reviewed claims
+"""
+}
 
 
 SUBAGENT_SYSTEM_PROMPT = """You are a research subagent specializing in focused information gathering. Your task is to thoroughly research a specific topic and return compressed, high-quality findings.
@@ -117,10 +196,20 @@ def get_subagent_prompt(
     min_sources: int = 3,
     max_sources: int = 10,
     priority: int = 1,
-    context: Optional[ str ] = None
+    context: Optional[ str ] = None,
+    target_audience: Literal[ "beginner", "general", "expert", "academic" ] = "expert",
+    audience_context: Optional[ str ] = None
 ) -> str:
     """
     Generate the user message for subagent research.
+
+    Requires:
+        - topic and objective are non-empty strings
+        - target_audience is one of: beginner, general, expert, academic
+
+    Ensures:
+        - Returns formatted prompt with topic, objective, and audience guidelines
+        - Audience-specific source selection guidelines are included
 
     Args:
         topic: The specific topic to research
@@ -130,6 +219,8 @@ def get_subagent_prompt(
         max_sources: Maximum sources to include
         priority: Priority level (1=highest)
         context: Optional context from lead agent
+        target_audience: Expertise level of the audience (default: expert)
+        audience_context: Optional custom audience description
 
     Returns:
         str: Formatted user message for the API call
@@ -150,9 +241,17 @@ def get_subagent_prompt(
     if context:
         message += f"\n\n**Additional Context**: {context}"
 
+    # Add audience-specific research guidelines
+    audience_guidelines = AUDIENCE_RESEARCH_GUIDELINES.get( target_audience, AUDIENCE_RESEARCH_GUIDELINES[ "expert" ] )
+    message += f"\n\n{audience_guidelines}"
+
+    if audience_context:
+        message += f"\n**Additional Audience Context**: {audience_context}"
+
     message += """
 
 Use web search to gather information. Be thorough but focused on the specific objective.
+Follow the audience-specific guidelines above when selecting and evaluating sources.
 
 Respond with a JSON object following the format specified in your instructions."""
 
@@ -253,6 +352,38 @@ def quick_smoke_test():
         )
         assert "React Hooks" in prompt
         print( "✓ Context included in prompt" )
+
+        # Test 4b: Audience injection
+        print( "Testing audience injection..." )
+        prompt_expert = get_subagent_prompt(
+            topic="LLM optimization",
+            objective="Find optimization techniques",
+            output_format="list",
+            target_audience="expert"
+        )
+        assert "Target Audience: Expert" in prompt_expert
+        assert "arXiv papers" in prompt_expert
+        print( "✓ Expert audience guidelines injected" )
+
+        prompt_beginner = get_subagent_prompt(
+            topic="LLM basics",
+            objective="Explain fundamentals",
+            output_format="summary",
+            target_audience="beginner"
+        )
+        assert "Target Audience: Beginner" in prompt_beginner
+        assert "getting-started" in prompt_beginner
+        print( "✓ Beginner audience guidelines injected" )
+
+        prompt_context = get_subagent_prompt(
+            topic="Test topic",
+            objective="Test objective",
+            output_format="list",
+            target_audience="expert",
+            audience_context="ML engineer with PyTorch experience"
+        )
+        assert "ML engineer with PyTorch experience" in prompt_context
+        print( "✓ Audience context injected" )
 
         # Test 5: Parse valid response
         print( "Testing parse_subagent_response..." )

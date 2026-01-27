@@ -25,7 +25,7 @@ from cosa.cli.notification_models import (
 )
 from cosa.cli.notify_user_sync import notify_user_sync as _notify_user_sync
 from cosa.cli.notify_user_async import notify_user_async as _notify_user_async
-from cosa.utils.notification_utils import format_questions_for_tts
+from cosa.utils.notification_utils import format_questions_for_tts, convert_questions_for_api
 
 logger = logging.getLogger( __name__ )
 
@@ -240,7 +240,7 @@ async def present_choices(
             notification_type = NotificationType.CUSTOM,
             priority          = NotificationPriority.MEDIUM,
             timeout_seconds   = timeout,
-            response_options  = { "questions": questions },
+            response_options  = convert_questions_for_api( questions ),
             sender_id         = SENDER_ID,
             abstract          = abstract,
             title             = title,

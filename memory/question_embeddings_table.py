@@ -114,12 +114,12 @@ class QuestionEmbeddingsTable():
         Raises:
             - None
         """
-        if self.debug: timer = Stopwatch( msg=f"has( '{question}' )" )
-        du.print_banner( f"[{question}]" )
+        if self.debug and self.verbose: timer = Stopwatch( msg=f"has( '{question}' )" )
+        if self.debug and self.verbose: du.print_banner( f"[{question}]" )
         # Escape single quotes by doubling them to prevent SQL parsing errors
         escaped_question = question.replace( "'", "''" )
         synonyms = self._question_embeddings_tbl.search().where( f"question = '{escaped_question}'" ).limit( 1 ).select( [ "question" ] ).to_list()
-        if self.debug: timer.print( "Done!", use_millis=True )
+        if self.debug and self.verbose: timer.print( "Done!", use_millis=True )
         
         return len( synonyms ) > 0
     

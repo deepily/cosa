@@ -616,8 +616,17 @@ async def select_themes(
         ]
 
     except Exception as e:
-        logger.warning( f"Voice select_themes failed: {e}" )
-        return []
+        error_msg = str( e )
+        logger.warning( f"Voice select_themes failed: {error_msg}" )
+
+        # Notify the user about the failure
+        await notify(
+            f"Theme selection failed: {error_msg[:100]}. Please try again or use CLI mode.",
+            priority="urgent"
+        )
+
+        # Re-raise so the caller knows this was an error, not a user cancellation
+        raise RuntimeError( f"Theme selection failed: {error_msg}" ) from e
 
 
 async def select_topics(
@@ -687,8 +696,17 @@ async def select_topics(
         return [ i for i, name in enumerate( topic_names ) if name in selected ]
 
     except Exception as e:
-        logger.warning( f"Voice select_topics failed: {e}" )
-        return list( range( len( topics ) ) )  # Default to all on error
+        error_msg = str( e )
+        logger.warning( f"Voice select_topics failed: {error_msg}" )
+
+        # Notify the user about the failure
+        await notify(
+            f"Topic selection failed: {error_msg[:100]}. Please try again or use CLI mode.",
+            priority="urgent"
+        )
+
+        # Re-raise so the caller knows this was an error, not a user cancellation
+        raise RuntimeError( f"Topic selection failed: {error_msg}" ) from e
 
 
 # =============================================================================

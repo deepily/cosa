@@ -59,6 +59,8 @@ class DeepResearchToPodcastAgent:
         budget: Optional[ float ] = None,
         lead_model: Optional[ str ] = None,
         no_confirm: bool = False,
+        target_audience: Optional[ str ] = None,
+        audience_context: Optional[ str ] = None,
         # Podcast Generator options
         target_languages: Optional[ List[ str ] ] = None,
         max_segments: Optional[ int ] = None,
@@ -78,6 +80,8 @@ class DeepResearchToPodcastAgent:
             budget: Maximum budget in USD for DR (None = unlimited)
             lead_model: Model for DR lead agent (None = use default)
             no_confirm: Skip confirmation prompts in DR
+            target_audience: Expertise level (beginner/general/expert/academic)
+            audience_context: Custom audience description
 
             # Podcast Generator options
             target_languages: List of ISO language codes (default: ["en"])
@@ -95,6 +99,8 @@ class DeepResearchToPodcastAgent:
         self.budget           = budget
         self.lead_model       = lead_model
         self.no_confirm       = no_confirm
+        self.target_audience  = target_audience
+        self.audience_context = audience_context
 
         # Podcast Generator options
         self.target_languages = target_languages or [ "en" ]
@@ -277,10 +283,22 @@ class DeepResearchToPodcastAgent:
                 "deep research subagent model",
                 default="claude-sonnet-4-20250514"
             ),
+            target_audience = self.target_audience or config_mgr.get(
+                "deep research target audience",
+                default="expert"
+            ),
+            audience_context = self.audience_context or config_mgr.get(
+                "deep research audience context",
+                default=None
+            ) or None,
         )
 
+        # Generate unique session ID for this pipeline (needed by CostTracker)
+        import uuid
+        session_id = f"chain-{uuid.uuid4().hex[ :8 ]}"
+
         # Create cost tracker
-        cost_tracker = CostTracker( budget_limit=self.budget )
+        cost_tracker = CostTracker( session_id=session_id, budget_limit_usd=self.budget )
 
         try:
             # Run the research
@@ -288,6 +306,7 @@ class DeepResearchToPodcastAgent:
                 query        = self.query,
                 config       = config,
                 cost_tracker = cost_tracker,
+                user_email   = self.user_email,
                 no_confirm   = self.no_confirm,
                 debug        = self.debug,
                 verbose      = self.verbose
@@ -303,10 +322,6 @@ class DeepResearchToPodcastAgent:
                 cost_tracker = cost_tracker,
                 debug        = self.debug
             )
-
-            # Generate unique session ID for this pipeline
-            import uuid
-            session_id = f"chain-{uuid.uuid4().hex[ :8 ]}"
 
             # Save report with frontmatter
             report_path = save_report_with_frontmatter(

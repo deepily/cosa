@@ -516,9 +516,15 @@ class ResearchAPIClient:
         """
         # Web search calls need much longer delays due to rate limits
         # Each search can return 80,000+ tokens but limit is 30,000/minute
+        # With 8 retries and capped backoff:
+        #   30s + 60s + 120s + 240s + 300s×4 = ~25 min max total wait
+        # Most rate limits clear within 60-120s, so usually resolves by retry 2-3
+        max_delay = 300.0  # Default cap for non-web-search
+
         if use_web_search:
-            max_retries = 2
-            initial_delay = 30.0  # Start with 30s wait for web search rate limits
+            max_retries = 8
+            initial_delay = 30.0   # Start with 30s wait for web search rate limits
+            max_delay = 300.0      # Cap at 5 minutes per retry
 
         last_error = None
         delay = initial_delay
@@ -532,7 +538,7 @@ class ResearchAPIClient:
                 if attempt < max_retries:
                     logger.warning( f"Rate limited, retrying in {delay:.0f}s (attempt {attempt + 1}/{max_retries})" )
                     await asyncio.sleep( delay )
-                    delay *= 2  # Exponential backoff
+                    delay = min( delay * 2, max_delay )  # Exponential backoff with cap
 
             except anthropic.APIStatusError as e:
                 if e.status_code >= 500:
@@ -540,7 +546,7 @@ class ResearchAPIClient:
                     if attempt < max_retries:
                         logger.warning( f"Server error {e.status_code}, retrying in {delay:.0f}s" )
                         await asyncio.sleep( delay )
-                        delay *= 2
+                        delay = min( delay * 2, max_delay )
                 else:
                     raise  # Client errors (4xx) should not be retried
 
@@ -549,7 +555,7 @@ class ResearchAPIClient:
                 if attempt < max_retries:
                     logger.warning( f"API call failed: {e}, retrying in {delay:.0f}s" )
                     await asyncio.sleep( delay )
-                    delay *= 2
+                    delay = min( delay * 2, max_delay )
 
         raise last_error
 

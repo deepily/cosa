@@ -280,13 +280,20 @@ class NarrowingHarness:
                         priority="medium"
                     )
 
-                selected_theme_indices = await voice_io.select_themes( themes )
+                try:
+                    selected_theme_indices = await voice_io.select_themes( themes )
+                except RuntimeError as e:
+                    # Technical failure - user already notified by select_themes
+                    result.cancelled = True
+                    result.cancellation_reason = f"Theme selection failed: {e}"
+                    result.duration_seconds = time.time() - start_time
+                    return result
 
             result.selected_theme_indices = selected_theme_indices
 
             if not selected_theme_indices:
                 result.cancelled = True
-                result.cancellation_reason = "No themes selected"
+                result.cancellation_reason = "No themes selected by user"
                 result.duration_seconds = time.time() - start_time
                 return result
 
@@ -317,15 +324,22 @@ class NarrowingHarness:
                             priority="low"
                         )
 
-                    selected_indices = await voice_io.select_topics(
-                        [ sq for _, sq in candidate_subqueries ]
-                    )
+                    try:
+                        selected_indices = await voice_io.select_topics(
+                            [ sq for _, sq in candidate_subqueries ]
+                        )
+                    except RuntimeError as e:
+                        # Technical failure - user already notified by select_topics
+                        result.cancelled = True
+                        result.cancellation_reason = f"Topic selection failed: {e}"
+                        result.duration_seconds = time.time() - start_time
+                        return result
 
                 result.selected_topic_indices = selected_indices
 
                 if not selected_indices:
                     result.cancelled = True
-                    result.cancellation_reason = "No topics selected"
+                    result.cancellation_reason = "No topics selected by user"
                     result.duration_seconds = time.time() - start_time
                     return result
 

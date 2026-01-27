@@ -297,8 +297,8 @@ class NotificationRequest(BaseModel):
                     raise ValueError( f"Question {i} missing 'question' field" )
                 if 'options' not in q or not isinstance( q['options'], list ):
                     raise ValueError( f"Question {i} missing 'options' array" )
-                if len( q['options'] ) < 2 or len( q['options'] ) > 6:
-                    raise ValueError( f"Question {i} must have 2-6 options" )
+                if len( q['options'] ) < 2 or len( q['options'] ) > 20:
+                    raise ValueError( f"Question {i} must have 2-20 options" )
                 for j, opt in enumerate( q['options'] ):
                     if not isinstance( opt, dict ) or 'label' not in opt:
                         raise ValueError( f"Question {i} option {j} must have 'label'" )

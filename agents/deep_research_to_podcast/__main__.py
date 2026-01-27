@@ -127,6 +127,21 @@ Mode Options:
         help    = "Skip confirmation prompts in Deep Research (auto-approve)"
     )
 
+    parser.add_argument(
+        "--audience",
+        type    = str,
+        choices = [ "beginner", "general", "expert", "academic" ],
+        default = None,
+        help    = "Target audience level (default: expert from config)"
+    )
+
+    parser.add_argument(
+        "--audience-context",
+        type    = str,
+        default = None,
+        help    = "Custom audience description (e.g., 'AI architect familiar with LLMs')"
+    )
+
     # Podcast Generator options
     parser.add_argument(
         "--languages", "-l",
@@ -202,6 +217,10 @@ def show_dry_run( args: argparse.Namespace ) -> None:
     print( f"  Languages: {', '.join( target_languages )}" )
     if args.max_segments:
         print( f"  Max Segments: {args.max_segments}" )
+    if args.audience:
+        print( f"  Target Audience: {args.audience}" )
+    if args.audience_context:
+        print( f"  Audience Context: {args.audience_context}" )
 
     print( "\nExecution Plan:" )
     print( "  Phase 1: Deep Research" )
@@ -264,6 +283,8 @@ async def run_pipeline( args: argparse.Namespace ) -> int:
         budget           = args.budget,
         lead_model       = args.lead_model,
         no_confirm       = args.no_confirm,
+        target_audience  = args.audience,
+        audience_context = args.audience_context,
         target_languages = target_languages,
         max_segments     = args.max_segments,
         cli_mode         = args.cli_mode,

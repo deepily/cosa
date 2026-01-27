@@ -250,7 +250,7 @@ class EmbeddingManager:
             print( f"Cache MISS for key: '{du.truncate_string( cache_key )}', generating new embedding..." )
         
         # Generate embedding for the text_for_embedding (which may be normalized)
-        timer = sw.Stopwatch( msg=f"Generating embedding for [{du.truncate_string( text_for_embedding )}]...", silent=False )
+        timer = sw.Stopwatch( msg=f"Generating embedding for [{du.truncate_string( text_for_embedding )}]...", silent=not (self.debug and self.verbose) )
         
         try:
             # Get embedding model name from config - NO FALLBACK

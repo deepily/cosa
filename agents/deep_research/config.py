@@ -10,7 +10,7 @@ Design decisions:
 """
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 
 
 @dataclass
@@ -61,6 +61,12 @@ class ResearchConfig:
     include_confidence_scores     : bool = True
     include_source_quality_notes  : bool = True
     citation_style                : Literal[ "inline", "footnote", "endnote" ] = "inline"
+
+    # === Target Audience ===
+    # Controls depth, terminology, and assumptions in research output
+    # Levels: beginner, general, expert (default), academic
+    target_audience  : Literal[ "beginner", "general", "expert", "academic" ] = "expert"
+    audience_context : Optional[ str ] = None  # Custom description (e.g., "AI architect with ML background")
 
     def get_max_subagents( self, complexity: str ) -> int:
         """
@@ -120,6 +126,18 @@ def quick_smoke_test():
         assert custom.max_subagents_complex == 20
         assert custom.feedback_timeout_seconds == 600
         print( "✓ Custom config values work" )
+
+        # Test 4: Target audience defaults
+        print( "Testing target audience..." )
+        assert config.target_audience == "expert"
+        assert config.audience_context is None
+        custom_audience = ResearchConfig(
+            target_audience="academic",
+            audience_context="PhD researcher in AI safety"
+        )
+        assert custom_audience.target_audience == "academic"
+        assert custom_audience.audience_context == "PhD researcher in AI safety"
+        print( "✓ Target audience configuration works" )
 
         print( "\n✓ ResearchConfig smoke test completed successfully" )
 

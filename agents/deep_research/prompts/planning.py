@@ -14,7 +14,95 @@ Based on patterns from:
 - Anthropic Blog: Scaling heuristics
 """
 
-from typing import Optional
+from typing import Optional, Literal
+
+
+# =============================================================================
+# Audience-Specific Decomposition Guidelines
+# =============================================================================
+
+AUDIENCE_GUIDELINES = {
+    "beginner": """
+## Target Audience: Beginner
+
+### Audience-Specific Decomposition Guidelines
+
+For BEGINNER audience:
+- Include foundational/introductory topics - do not assume prior knowledge
+- Focus on: clear definitions, basic concepts, step-by-step explanations
+- Include: "What is X?" topics for all key terms and concepts
+- Prioritize: tutorials, getting-started guides, beginner-friendly resources
+- Add subqueries for: prerequisites, learning paths, common pitfalls for newcomers
+- Avoid: advanced optimizations, edge cases, implementation details
+
+Example beginner decomposition for "LLM fine-tuning":
+✓ "What is fine-tuning and why is it needed?"
+✓ "Prerequisites for fine-tuning (hardware, software, data)"
+✓ "Step-by-step guide to first fine-tuning project"
+✗ "LoRA vs QLoRA memory trade-offs" (too advanced)
+""",
+
+    "general": """
+## Target Audience: General
+
+### Audience-Specific Decomposition Guidelines
+
+For GENERAL audience:
+- Balance foundational concepts with practical applications
+- Focus on: clear explanations, real-world use cases, practical benefits
+- Include: brief definitions of technical terms, accessible comparisons
+- Prioritize: mainstream sources, well-documented approaches
+- Add subqueries for: common use cases, typical workflows, popular tools
+- Avoid: excessive jargon, highly specialized topics, academic minutiae
+
+Example general decomposition for "LLM fine-tuning":
+✓ "What is fine-tuning and when should you use it?"
+✓ "Popular fine-tuning approaches and their trade-offs"
+✓ "Tools and platforms for fine-tuning LLMs"
+✓ "Real-world success stories and applications"
+""",
+
+    "expert": """
+## Target Audience: Expert
+
+### Audience-Specific Decomposition Guidelines
+
+For EXPERT audience:
+- Skip foundational/introductory topics - assume strong domain knowledge
+- Focus on: novel approaches, architectural trade-offs, edge cases, failure modes
+- Include: performance comparisons, scalability considerations, production concerns
+- Prioritize: recent developments (last 12-18 months), contrarian viewpoints, implementation gotchas
+- Add subqueries for: limitations, known issues, alternative approaches that experts debate
+- Avoid: "What is X?" topics unless X is genuinely new (<6 months old)
+
+Example expert decomposition for "LLM fine-tuning strategies":
+✗ "What is fine-tuning?" (too basic)
+✓ "LoRA vs QLoRA vs full fine-tuning: memory/quality trade-offs"
+✓ "Catastrophic forgetting mitigation strategies comparison"
+✓ "Production deployment considerations for fine-tuned models"
+✓ "Recent advances in parameter-efficient fine-tuning (2025)"
+""",
+
+    "academic": """
+## Target Audience: Academic/Researcher
+
+### Audience-Specific Decomposition Guidelines
+
+For ACADEMIC audience:
+- Include methodological rigor and theoretical foundations
+- Focus on: primary sources (papers, studies), methodology critique, open research questions
+- Include: citations, experimental design considerations, statistical significance
+- Prioritize: peer-reviewed sources, seminal papers, recent arXiv publications
+- Add subqueries for: gaps in current research, conflicting findings, future directions
+- Avoid: marketing content, surface-level overviews, non-peer-reviewed claims
+
+Example academic decomposition for "LLM fine-tuning":
+✓ "Theoretical foundations of transfer learning in LLMs"
+✓ "Comparative analysis of PEFT methods: empirical findings"
+✓ "Open questions in fine-tuning: catastrophic forgetting, alignment"
+✓ "Methodological challenges in fine-tuning evaluation"
+"""
+}
 
 
 PLANNING_SYSTEM_PROMPT = """You are a research planning specialist. Your task is to create an optimal research plan by decomposing a query into focused, parallelizable subqueries.
@@ -139,15 +227,27 @@ You must respond with a JSON object:
 def get_planning_prompt(
     query: str,
     clarified_query: Optional[ str ] = None,
-    max_subagents: int = 10
+    max_subagents: int = 10,
+    target_audience: Literal[ "beginner", "general", "expert", "academic" ] = "expert",
+    audience_context: Optional[ str ] = None
 ) -> str:
     """
     Generate the user message for research planning.
+
+    Requires:
+        - query is a non-empty string
+        - target_audience is one of: beginner, general, expert, academic
+
+    Ensures:
+        - Returns formatted prompt with query, constraints, and audience guidelines
+        - Audience-specific decomposition guidelines are included
 
     Args:
         query: The original research query
         clarified_query: The clarified version (if clarification was done)
         max_subagents: Maximum number of subagents to suggest
+        target_audience: Expertise level of the audience (default: expert)
+        audience_context: Optional custom audience description
 
     Returns:
         str: Formatted user message for the API call
@@ -159,10 +259,18 @@ def get_planning_prompt(
     if clarified_query and clarified_query != query:
         message += f"\n\n(Original query: \"{query}\")"
 
+    # Add audience-specific guidelines
+    audience_guidelines = AUDIENCE_GUIDELINES.get( target_audience, AUDIENCE_GUIDELINES[ "expert" ] )
+    message += f"\n\n{audience_guidelines}"
+
+    if audience_context:
+        message += f"\n\n**Additional Audience Context**: {audience_context}"
+
     message += f"\n\nConstraints:"
     message += f"\n- Maximum subagents: {max_subagents}"
     message += f"\n- Prefer fewer, more focused subqueries over many shallow ones"
     message += f"\n- Prioritize parallelism when possible"
+    message += f"\n- Follow the audience-specific guidelines above when decomposing"
 
     message += "\n\nRespond with a JSON object following the format specified in your instructions."
 
@@ -230,6 +338,32 @@ def quick_smoke_test():
         assert "generative AI" in prompt
         assert "Original query" in prompt
         print( "✓ Clarified query included" )
+
+        # Test 3b: Audience injection
+        print( "Testing audience injection..." )
+        prompt_expert = get_planning_prompt(
+            query="LLM fine-tuning",
+            target_audience="expert"
+        )
+        assert "Target Audience: Expert" in prompt_expert
+        assert "Skip foundational" in prompt_expert
+        print( "✓ Expert audience guidelines injected" )
+
+        prompt_beginner = get_planning_prompt(
+            query="LLM fine-tuning",
+            target_audience="beginner"
+        )
+        assert "Target Audience: Beginner" in prompt_beginner
+        assert "do not assume prior knowledge" in prompt_beginner
+        print( "✓ Beginner audience guidelines injected" )
+
+        prompt_context = get_planning_prompt(
+            query="LLM fine-tuning",
+            target_audience="expert",
+            audience_context="AI architect with ML background"
+        )
+        assert "AI architect with ML background" in prompt_context
+        print( "✓ Audience context injected" )
 
         # Test 4: Parse valid response
         print( "Testing parse_planning_response..." )

@@ -195,14 +195,14 @@ class GistCacheTable:
             Verbatim: "What's 2+2?" → "What's 2+2?" (exact)
             Normalized: "What's 2+2?" → "What is 2+2?" (variation caught)
         """
-        if self.debug:
+        if self.debug and self.verbose:
             timer = Stopwatch( msg=f"get_cached_gist( '{cu.truncate_string( question )}' )" )
 
         try:
             # Tier 1: Try exact verbatim match (fastest, ~1-2ms)
             gist = self._get_cached_by_verbatim( question )
             if gist:
-                if self.debug:
+                if self.debug and self.verbose:
                     timer.print( f"✓ HIT (verbatim): '{gist}'", use_millis=True )
                 return gist
 
@@ -210,12 +210,12 @@ class GistCacheTable:
             question_normalized = self._normalizer.normalize( question )
             gist = self._get_cached_by_normalized( question_normalized )
             if gist:
-                if self.debug:
+                if self.debug and self.verbose:
                     timer.print( f"✓ HIT (normalized): '{gist}'", use_millis=True )
                 return gist
 
             # Both tiers missed
-            if self.debug:
+            if self.debug and self.verbose:
                 timer.print( "✗ MISS (both tiers)", use_millis=True )
 
             return None
