@@ -58,6 +58,7 @@ class PodcastGeneratorJob( AgenticJobBase ):
         session_id: str,
         target_languages: Optional[ List[ str ] ] = None,
         max_segments: Optional[ int ] = None,
+        dry_run: bool = False,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -81,6 +82,7 @@ class PodcastGeneratorJob( AgenticJobBase ):
             session_id: WebSocket session for notifications
             target_languages: List of ISO language codes (default: ["en"])
             max_segments: Limit TTS to first N segments (None = all)
+            dry_run: Simulate execution without API calls
             debug: Enable debug output
             verbose: Enable verbose output
         """
@@ -96,6 +98,7 @@ class PodcastGeneratorJob( AgenticJobBase ):
         self.research_path    = research_path
         self.target_languages = target_languages or [ "en" ]
         self.max_segments     = max_segments
+        self.dry_run          = dry_run
 
         # Results (populated after execution)
         self.audio_path    = None
@@ -167,16 +170,22 @@ class PodcastGeneratorJob( AgenticJobBase ):
         Internal async podcast generation execution.
 
         Uses the PodcastOrchestratorAgent to run the full workflow.
+        When dry_run=True, sends breadcrumb notifications and returns mock results.
 
         Returns:
             str: Conversational summary of generation results
         """
-        # Import podcast components
-        from cosa.agents.podcast_generator.orchestrator import PodcastOrchestratorAgent
-        from cosa.agents.podcast_generator.config import PodcastConfig
         from cosa.agents.podcast_generator import voice_io, cosa_interface
         import cosa.utils.util as cu
         import os
+
+        # Handle dry-run mode with breadcrumb notifications
+        if self.dry_run:
+            return await self._execute_dry_run( voice_io, cosa_interface )
+
+        # Import podcast components
+        from cosa.agents.podcast_generator.orchestrator import PodcastOrchestratorAgent
+        from cosa.agents.podcast_generator.config import PodcastConfig
 
         # Validate research document exists
         if not self.research_path.startswith( "/" ):
@@ -245,6 +254,85 @@ class PodcastGeneratorJob( AgenticJobBase ):
         # Return conversational answer
         duration = script.estimated_duration_minutes
         return f"Podcast complete! Generated {script.get_segment_count()} segments, ~{duration:.1f} minutes. Audio: {self.audio_path}"
+
+    async def _execute_dry_run( self, voice_io, cosa_interface ) -> str:
+        """
+        Execute dry-run mode with breadcrumb notifications.
+
+        Simulates the podcast generation workflow without making API calls.
+        Sends low-priority notifications at each phase and returns mock results.
+
+        Args:
+            voice_io: Voice I/O module for notifications
+            cosa_interface: COSA interface module for sender ID
+
+        Returns:
+            str: Mock conversational summary
+        """
+        import asyncio
+        import os
+
+        # Set sender_id for notifications
+        cosa_interface.SENDER_ID = cosa_interface._get_sender_id() + f"#{self.id_hash}"
+
+        filename = os.path.basename( self.research_path )
+
+        if self.debug:
+            print( f"[PodcastGeneratorJob] DRY RUN MODE for: {filename}" )
+
+        # Breadcrumb: Starting
+        await voice_io.notify( f"🧪 Dry run: Starting podcast simulation from {filename}", priority="low" )
+        await asyncio.sleep( 1.0 )
+
+        # Breadcrumb: Content analysis
+        await voice_io.notify( "🧪 Dry run: skipping content analysis", priority="low" )
+        await asyncio.sleep( 1.0 )
+
+        # Breadcrumb: Script generation
+        await voice_io.notify( "🧪 Dry run: skipping script generation", priority="low" )
+        await asyncio.sleep( 1.0 )
+
+        # Breadcrumb: TTS generation
+        await voice_io.notify( "🧪 Dry run: skipping TTS generation (10 segments)", priority="low" )
+        await asyncio.sleep( 1.0 )
+
+        # Breadcrumb: Audio stitching
+        await voice_io.notify( "🧪 Dry run: skipping audio stitching", priority="low" )
+        await asyncio.sleep( 1.0 )
+
+        # Set mock results
+        self.audio_path  = f"/io/podcasts/{self.user_email}/dry-run-{self.id_hash}/podcast.mp3"
+        self.script_path = f"/io/podcasts/{self.user_email}/dry-run-{self.id_hash}/script.md"
+
+        # Store mock artifacts
+        self.artifacts[ "audio_path" ]  = self.audio_path
+        self.artifacts[ "script_path" ] = self.script_path
+        self.artifacts[ "podcast_id" ]  = f"dry-run-{self.id_hash}"
+
+        # Mock cost summary
+        self.cost_summary = {
+            "script_cost_usd" : 0.0,
+            "audio_cost_usd"  : 0.0,
+            "total_cost_usd"  : 0.0,
+        }
+        self.artifacts[ "cost_summary" ] = self.cost_summary
+
+        completion_abstract = f"""**🧪 Dry Run Complete!**
+
+**Script**: {self.script_path} (mock - not actually created)
+
+**Audio**: {self.audio_path} (mock - not actually created)
+
+**Stats**: $0.00 | 10 segments | 5.0s (simulated)"""
+
+        # Notify completion
+        await voice_io.notify(
+            "🧪 Dry run complete! Podcast simulation finished.",
+            priority="medium",
+            abstract=completion_abstract
+        )
+
+        return f"Dry run complete. Simulated 10 segments podcast. Audio: {self.audio_path}"
 
 
 def quick_smoke_test():

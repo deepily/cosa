@@ -47,6 +47,7 @@ class ResearchToPodcastSubmitRequest( BaseModel ):
     budget           : Optional[ float ]       = Field( None, description="Maximum budget in USD for Deep Research" )
     target_languages : Optional[ List[ str ] ] = Field( None, description="ISO language codes for audio generation" )
     max_segments     : Optional[ int ]         = Field( None, description="Limit TTS to first N segments" )
+    dry_run          : bool                    = Field( False, description="Simulate execution without API calls" )
 
 
 class ResearchToPodcastSubmitResponse( BaseModel ):
@@ -140,6 +141,7 @@ async def submit_research_to_podcast(
         budget           = request.budget,
         target_languages = request.target_languages,
         max_segments     = request.max_segments,
+        dry_run          = request.dry_run,
         debug            = debug
     )
 

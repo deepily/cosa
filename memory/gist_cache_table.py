@@ -85,6 +85,13 @@ class GistCacheTable:
         else:
             self._gist_cache_tbl = db.open_table( table_name )
 
+            # Check for corruption and recover if needed
+            if self._is_table_corrupted():
+                print( "⚠️ WARNING: gist_cache table is corrupted, recreating..." )
+                db.drop_table( table_name )
+                self._create_table( db, table_name )
+                print( "✓ Table recreated successfully (cache was cleared)" )
+
         if self.debug:
             count = self._gist_cache_tbl.count_rows()
             print( f"✓ GistCacheTable initialized: {count} entries in '{table_name}'" )
@@ -131,6 +138,38 @@ class GistCacheTable:
             print( f"✓ Created FTS index on question_verbatim field" )
             print( f"✓ Created FTS index on question_normalized field" )
 
+    def _is_table_corrupted( self ) -> bool:
+        """
+        Check if the table is corrupted by attempting to read actual data.
+
+        Requires:
+            - self._gist_cache_tbl is initialized
+
+        Ensures:
+            - Returns True if table is corrupted and needs recreation
+            - Returns False if table is healthy
+
+        Raises:
+            - Re-raises unexpected exceptions (non-corruption errors)
+
+        Note:
+            count_rows() only reads metadata, not data fragments.
+            We must attempt an actual scan to detect missing fragment files.
+        """
+        try:
+            # Attempt to read actual data - this will fail if data files are missing
+            # limit(1) minimizes overhead while still triggering data access
+            # Use to_lance().scanner() to avoid nprobes warning (filter-only query, no vector search)
+            self._gist_cache_tbl.to_lance().scanner( limit=1 ).to_table().to_pylist()
+            return False
+        except Exception as e:
+            error_str = str( e ).lower()
+            # Check for LanceDB IO/NotFound errors indicating missing data files
+            if "not found" in error_str or "lance" in error_str:
+                return True
+            # Re-raise unexpected errors
+            raise
+
     def has_cached_gist( self, question: str ) -> bool:
         """
         Check if gist exists in cache for given question.
@@ -154,9 +193,11 @@ class GistCacheTable:
         """
         try:
             escaped = question.replace( "'", "''" )
-            results = self._gist_cache_tbl.search().where(
-                f"question_verbatim = '{escaped}'"
-            ).limit( 1 ).to_list()
+            # Use to_lance().scanner() to avoid nprobes warning (filter-only query, no vector search)
+            results = self._gist_cache_tbl.to_lance().scanner(
+                filter=f"question_verbatim = '{escaped}'",
+                limit=1
+            ).to_table().to_pylist()
             return len( results ) > 0
         except Exception as e:
             if self.debug:
@@ -247,12 +288,14 @@ class GistCacheTable:
         """
         try:
             escaped = question.replace( "'", "''" )
-            rows = self._gist_cache_tbl.search().where(
-                f"question_verbatim = '{escaped}'"
-            ).limit( 1 ).to_list()
+            # Use to_lance().scanner() to avoid nprobes warning (filter-only query, no vector search)
+            rows = self._gist_cache_tbl.to_lance().scanner(
+                filter=f"question_verbatim = '{escaped}'",
+                limit=1
+            ).to_table().to_pylist()
 
             if rows:
-                return rows[0]["question_gist"]
+                return rows[ 0 ][ "question_gist" ]
 
             return None
 
@@ -288,12 +331,14 @@ class GistCacheTable:
         """
         try:
             escaped = question_normalized.replace( "'", "''" )
-            rows = self._gist_cache_tbl.search().where(
-                f"question_normalized = '{escaped}'"
-            ).limit( 1 ).to_list()
+            # Use to_lance().scanner() to avoid nprobes warning (filter-only query, no vector search)
+            rows = self._gist_cache_tbl.to_lance().scanner(
+                filter=f"question_normalized = '{escaped}'",
+                limit=1
+            ).to_table().to_pylist()
 
             if rows:
-                return rows[0]["question_gist"]
+                return rows[ 0 ][ "question_gist" ]
 
             return None
 
@@ -380,7 +425,8 @@ class GistCacheTable:
             total_rows = self._gist_cache_tbl.count_rows()
 
             # Get sample of entries for stats (limit to avoid large scans)
-            sample = self._gist_cache_tbl.search().limit( 100 ).to_list()
+            # Use to_lance().scanner() to avoid nprobes warning (filter-only query, no vector search)
+            sample = self._gist_cache_tbl.to_lance().scanner( limit=100 ).to_table().to_pylist()
 
             avg_access_count = sum( r.get( "access_count", 0 ) for r in sample ) / len( sample ) if sample else 0
 
@@ -508,6 +554,71 @@ def quick_smoke_test():
         assert result1 == "sum 2 2", f"Expected 'sum 2 2', got '{result1}'"
         assert result2 == "joke request", f"Expected 'joke request', got '{result2}'"
         print( f"✓ Multiple entries work correctly" )
+
+        # Test 7: Corruption detection on healthy table
+        print( "\n" + "="*60 )
+        print( "Test 7: Corruption detection on healthy table" )
+        print( "="*60 )
+        is_corrupted = cache._is_table_corrupted()
+        if not is_corrupted:
+            print( "✓ Corruption detection correctly reports healthy table" )
+        else:
+            print( "✗ Corruption detection incorrectly reports corruption on healthy table" )
+
+        # Test 8: Simulate corruption and verify auto-recovery
+        print( "\n" + "="*60 )
+        print( "Test 8: Corruption detection and auto-recovery" )
+        print( "="*60 )
+        import shutil as shutil_test8
+
+        # Create a separate temp directory for corruption testing
+        corruption_temp_dir = tempfile.mkdtemp( prefix="gist_cache_corruption_test_" )
+        corruption_db_uri = os.path.join( corruption_temp_dir, "corrupt_test.lancedb" )
+
+        # Create a fresh cache and add data
+        corrupt_cache = GistCacheTable( corruption_db_uri, table_name="corrupt_test", debug=False )
+        corrupt_cache.cache_gist( "test question", "test gist", "test normalized" )
+        initial_count = corrupt_cache._gist_cache_tbl.count_rows()
+        print( f"  Created temp table with {initial_count} row(s)" )
+
+        # Find and delete a data fragment file to simulate corruption
+        data_dir = os.path.join( corruption_db_uri, "corrupt_test.lance", "data" )
+        if os.path.exists( data_dir ):
+            lance_files = [ f for f in os.listdir( data_dir ) if f.endswith( ".lance" ) ]
+            if lance_files:
+                # Delete the first fragment file to simulate corruption
+                corrupt_file = os.path.join( data_dir, lance_files[ 0 ] )
+                os.remove( corrupt_file )
+                print( f"  Deleted fragment file to simulate corruption" )
+
+                # Verify corruption is detected
+                is_corrupted_now = corrupt_cache._is_table_corrupted()
+                if is_corrupted_now:
+                    print( "✓ Corruption correctly detected" )
+                else:
+                    print( "✗ Failed to detect simulated corruption" )
+
+                # Test auto-recovery by creating new instance
+                print( "  Creating new cache instance (should auto-recover)..." )
+                recovered_cache = GistCacheTable( corruption_db_uri, table_name="corrupt_test", debug=False )
+                recovered_count = recovered_cache._gist_cache_tbl.count_rows()
+                print( f"  Recovered table has {recovered_count} row(s) (expected 0 - fresh table)" )
+
+                # Verify the recovered table works
+                recovered_cache.cache_gist( "new question", "new gist", "new normalized" )
+                new_count = recovered_cache._gist_cache_tbl.count_rows()
+                if new_count == 1:
+                    print( "✓ Recovered table accepts new data correctly" )
+                else:
+                    print( f"✗ Recovered table has unexpected row count: {new_count}" )
+            else:
+                print( "  ⚠ No fragment files found to corrupt (empty table)" )
+        else:
+            print( "  ⚠ Data directory not found (LanceDB structure may differ)" )
+
+        # Cleanup corruption test directory
+        shutil_test8.rmtree( corruption_temp_dir, ignore_errors=True )
+        print( f"  Cleaned up corruption test directory" )
 
         print( "\n" + "="*60 )
         print( "✓ ALL SMOKE TESTS PASSED!" )

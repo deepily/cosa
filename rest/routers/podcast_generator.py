@@ -44,6 +44,7 @@ class PodcastSubmitRequest( BaseModel ):
     research_source   : str
     target_languages  : Optional[ List[ str ] ] = None
     max_segments      : Optional[ int ]         = None
+    dry_run           : bool                    = False
 
 
 class PodcastSubmitResponse( BaseModel ):
@@ -329,6 +330,7 @@ async def submit_podcast_job(
             session_id       = session_id,
             target_languages = request.target_languages,
             max_segments     = request.max_segments,
+            dry_run          = request.dry_run,
             debug            = debug
         )
 

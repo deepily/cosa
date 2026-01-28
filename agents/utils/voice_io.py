@@ -198,7 +198,8 @@ async def notify(
     priority: str = "medium",
     abstract: Optional[ str ] = None,
     session_name: Optional[ str ] = None,
-    job_id: Optional[ str ] = None
+    job_id: Optional[ str ] = None,
+    queue_name: Optional[ str ] = None
 ) -> None:
     """
     Send a progress notification (voice-first).
@@ -220,6 +221,7 @@ async def notify(
         abstract: Optional supplementary context (markdown, URLs, details)
         session_name: Optional human-readable session name for UI display
         job_id: Optional agentic job ID for routing to job cards (e.g., "dr-a1b2c3d4")
+        queue_name: Optional queue where job is running (run/todo/done) for provisional job card registration
     """
     # Check for forced CLI mode or unavailable voice
     if _force_cli_mode or _cosa_interface is None or not await is_voice_available():
@@ -229,10 +231,12 @@ async def notify(
         return
 
     try:
-        # Check if cosa_interface.notify_progress supports job_id parameter
+        # Check if cosa_interface.notify_progress supports job_id and queue_name parameters
         import inspect
         sig = inspect.signature( _cosa_interface.notify_progress )
-        if "job_id" in sig.parameters:
+        if "queue_name" in sig.parameters:
+            await _cosa_interface.notify_progress( message, priority, abstract, session_name, job_id, queue_name )
+        elif "job_id" in sig.parameters:
             await _cosa_interface.notify_progress( message, priority, abstract, session_name, job_id )
         else:
             # Fallback for interfaces that don't support job_id yet

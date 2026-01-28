@@ -60,6 +60,7 @@ class DeepResearchToPodcastJob( AgenticJobBase ):
         budget: Optional[ float ] = None,
         target_languages: Optional[ List[ str ] ] = None,
         max_segments: Optional[ int ] = None,
+        dry_run: bool = False,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -84,6 +85,7 @@ class DeepResearchToPodcastJob( AgenticJobBase ):
             budget: Maximum budget in USD for Deep Research (None = unlimited)
             target_languages: List of ISO language codes (default: ["en"])
             max_segments: Limit TTS to first N segments (None = all)
+            dry_run: Simulate execution without API calls
             debug: Enable debug output
             verbose: Enable verbose output
         """
@@ -100,6 +102,7 @@ class DeepResearchToPodcastJob( AgenticJobBase ):
         self.budget           = budget
         self.target_languages = target_languages or [ "en" ]
         self.max_segments     = max_segments
+        self.dry_run          = dry_run
 
         # Results (populated after execution)
         self.research_path = None
@@ -169,14 +172,20 @@ class DeepResearchToPodcastJob( AgenticJobBase ):
         Internal async pipeline execution.
 
         Uses the DeepResearchToPodcastAgent to run the full workflow.
+        When dry_run=True, sends breadcrumb notifications and returns mock results.
 
         Returns:
             str: Conversational summary of pipeline results
         """
+        from cosa.agents.deep_research import voice_io, cosa_interface
+
+        # Handle dry-run mode with breadcrumb notifications
+        if self.dry_run:
+            return await self._execute_dry_run( voice_io, cosa_interface )
+
         # Import pipeline components
         from cosa.agents.deep_research_to_podcast.agent import DeepResearchToPodcastAgent
         from cosa.agents.deep_research_to_podcast.state import PipelineState
-        from cosa.agents.deep_research import voice_io, cosa_interface
 
         # Set sender_id for notifications
         cosa_interface.SENDER_ID = cosa_interface._get_sender_id() + f"#{self.id_hash}"
@@ -238,6 +247,98 @@ class DeepResearchToPodcastJob( AgenticJobBase ):
 
         # Return conversational answer
         return f"Pipeline complete! Research report and podcast generated. Total cost: ${result.total_cost:.4f}. Audio: {self.audio_path}"
+
+    async def _execute_dry_run( self, voice_io, cosa_interface ) -> str:
+        """
+        Execute dry-run mode with breadcrumb notifications.
+
+        Simulates the full research→podcast pipeline without making API calls.
+        Sends low-priority notifications at each phase and returns mock results.
+
+        Args:
+            voice_io: Voice I/O module for notifications
+            cosa_interface: COSA interface module for sender ID
+
+        Returns:
+            str: Mock conversational summary
+        """
+        import asyncio
+
+        # Set sender_id for notifications
+        cosa_interface.SENDER_ID = cosa_interface._get_sender_id() + f"#{self.id_hash}"
+
+        if self.debug:
+            print( f"[DeepResearchToPodcastJob] DRY RUN MODE for: {self.query[ :50 ]}..." )
+
+        # === Deep Research Phase Breadcrumbs ===
+        await voice_io.notify( f"🧪 Dry run: Starting research→podcast simulation", priority="low" )
+        await asyncio.sleep( 1.0 )
+
+        await voice_io.notify( "🧪 Dry run: [RESEARCH] skipping query clarification", priority="low" )
+        await asyncio.sleep( 1.0 )
+
+        await voice_io.notify( "🧪 Dry run: [RESEARCH] skipping research planning", priority="low" )
+        await asyncio.sleep( 1.0 )
+
+        await voice_io.notify( "🧪 Dry run: [RESEARCH] skipping subquery research (5 queries)", priority="low" )
+        await asyncio.sleep( 1.0 )
+
+        await voice_io.notify( "🧪 Dry run: [RESEARCH] skipping report synthesis", priority="low" )
+        await asyncio.sleep( 1.0 )
+
+        await voice_io.notify( "🧪 Dry run: [RESEARCH] skipping report write to disk", priority="low" )
+        await asyncio.sleep( 1.0 )
+
+        # === Podcast Generation Phase Breadcrumbs ===
+        await voice_io.notify( "🧪 Dry run: [PODCAST] skipping content analysis", priority="low" )
+        await asyncio.sleep( 1.0 )
+
+        await voice_io.notify( "🧪 Dry run: [PODCAST] skipping script generation", priority="low" )
+        await asyncio.sleep( 1.0 )
+
+        await voice_io.notify( "🧪 Dry run: [PODCAST] skipping TTS generation (10 segments)", priority="low" )
+        await asyncio.sleep( 1.0 )
+
+        await voice_io.notify( "🧪 Dry run: [PODCAST] skipping audio stitching", priority="low" )
+        await asyncio.sleep( 1.0 )
+
+        # Set mock results
+        self.research_path = f"/io/deep-research/{self.user_email}/dry-run-{self.id_hash}/report.md"
+        self.audio_path    = f"/io/podcasts/{self.user_email}/dry-run-{self.id_hash}/podcast.mp3"
+        self.script_path   = f"/io/podcasts/{self.user_email}/dry-run-{self.id_hash}/script.md"
+
+        # Store mock artifacts
+        self.artifacts[ "research_path" ]     = self.research_path
+        self.artifacts[ "research_abstract" ] = "Mock abstract from dry-run mode."
+        self.artifacts[ "audio_path" ]        = self.audio_path
+        self.artifacts[ "script_path" ]       = self.script_path
+
+        # Mock cost summary
+        self.cost_summary = {
+            "dr_cost_usd"    : 0.0,
+            "pg_cost_usd"    : 0.0,
+            "total_cost_usd" : 0.0,
+        }
+        self.artifacts[ "cost_summary" ] = self.cost_summary
+
+        completion_abstract = f"""**🧪 Dry Run Complete!**
+
+**Research Report**: {self.research_path} (mock - not actually created)
+
+**Podcast Script**: {self.script_path} (mock - not actually created)
+
+**Podcast Audio**: {self.audio_path} (mock - not actually created)
+
+**Stats**: $0.00 total | 0 tokens | 10.0s (simulated)"""
+
+        # Notify completion
+        await voice_io.notify(
+            "🧪 Dry run complete! Pipeline simulation finished.",
+            priority="medium",
+            abstract=completion_abstract
+        )
+
+        return f"Dry run complete. Simulated research report and 10-segment podcast. Total cost: $0.00. Audio: {self.audio_path}"
 
 
 def quick_smoke_test():

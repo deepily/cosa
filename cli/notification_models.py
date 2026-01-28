@@ -211,8 +211,8 @@ class NotificationRequest(BaseModel):
 
     sender_id: Optional[str] = Field(
         default=None,
-        pattern=r'^[a-z]+\.[a-z]+@[a-z]+\.deepily\.ai(#([a-f0-9]{8}|[a-z]+(-[a-z]+)*))?$',
-        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, deep.research@lupin.deepily.ai#cli). Supports hex suffix, simple identifier, or hyphenated topic."
+        pattern=r'^[a-z]+\.[a-z]+@[a-z]+\.deepily\.ai(#([a-f0-9]{8}|[a-z]+(-[a-z]+)*|[a-z]+-[a-f0-9]{8}))?$',
+        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, deep.research@lupin.deepily.ai#dr-a0ebba60). Supports hex suffix, hyphenated topic, or job ID (prefix-hex)."
     )
 
     response_options: Optional[dict] = Field(
@@ -601,8 +601,8 @@ class AsyncNotificationRequest(BaseModel):
 
     sender_id: Optional[str] = Field(
         default=None,
-        pattern=r'^[a-z]+\.[a-z]+@[a-z]+\.deepily\.ai(#([a-f0-9]{8}|[a-z]+(-[a-z]+)*))?$',
-        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, deep.research@lupin.deepily.ai#cli). Supports hex suffix, simple identifier, or hyphenated topic."
+        pattern=r'^[a-z]+\.[a-z]+@[a-z]+\.deepily\.ai(#([a-f0-9]{8}|[a-z]+(-[a-z]+)*|[a-z]+-[a-f0-9]{8}))?$',
+        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, deep.research@lupin.deepily.ai#dr-a0ebba60). Supports hex suffix, hyphenated topic, or job ID (prefix-hex)."
     )
 
     abstract: Optional[str] = Field(
@@ -626,6 +626,12 @@ class AsyncNotificationRequest(BaseModel):
     suppress_ding: bool = Field(
         default=False,
         description="Suppress notification sound (ding) while still speaking message via TTS. Used for conversational TTS from queue operations where interruption ding is undesirable."
+    )
+
+    queue_name: Optional[str] = Field(
+        default=None,
+        pattern=r'^(run|todo|done|dead)$',
+        description="Queue where job is running (run/todo/done/dead). Used for provisional job card registration when notifications arrive before job is fetched."
     )
 
     @field_validator( 'message' )
@@ -696,6 +702,10 @@ class AsyncNotificationRequest(BaseModel):
         # Add suppress_ding for conversational TTS (skip notification sound)
         if self.suppress_ding:
             params["suppress_ding"] = "true"
+
+        # Add queue_name for provisional job card registration
+        if self.queue_name is not None:
+            params["queue_name"] = self.queue_name
 
         return params
 
@@ -958,6 +968,8 @@ def quick_smoke_test():
         "claude.code@lupin.deepily.ai#a1b2c3d4",
         "deep.research@lupin.deepily.ai#cli",
         "podcast.gen@cosa.deepily.ai#cats-vs-dogs",
+        "deep.research@lupin.deepily.ai#dr-a0ebba60",  # Job ID format (prefix-hex)
+        "podcast.gen@lupin.deepily.ai#pod-12345678",   # Another job ID format
     ]
     all_sender_valid = True
     for sender_id in valid_sender_ids:

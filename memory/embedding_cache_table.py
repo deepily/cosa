@@ -87,7 +87,8 @@ class EmbeddingCacheTable:
         try:
             # Attempt to read actual data - this will fail if data files are missing
             # limit(1) minimizes overhead while still triggering data access
-            self._embedding_cache_tbl.search().limit( 1 ).to_list()
+            # Use to_lance().scanner() to avoid nprobes warning (filter-only query, no vector search)
+            self._embedding_cache_tbl.to_lance().scanner( limit=1 ).to_table().to_pylist()
             return False
         except Exception as e:
             error_str = str( e ).lower()
@@ -150,7 +151,12 @@ class EmbeddingCacheTable:
         try:
             # Escape single quotes by doubling them to prevent SQL parsing errors
             escaped_text = normalized_text.replace( "'", "''" )
-            results = self._embedding_cache_tbl.search().where( f"normalized_text = '{escaped_text}'" ).limit( 1 ).select( [ "normalized_text" ] ).to_list()
+            # Use to_lance().scanner() to avoid nprobes warning (filter-only query, no vector search)
+            results = self._embedding_cache_tbl.to_lance().scanner(
+                filter=f"normalized_text = '{escaped_text}'",
+                limit=1,
+                columns=[ "normalized_text" ]
+            ).to_table().to_pylist()
             if self.debug and self.verbose: timer.print( "Done!", use_millis=True )
             return len( results ) > 0
         except Exception as e:
@@ -179,7 +185,12 @@ class EmbeddingCacheTable:
         try:
             # Escape single quotes by doubling them to prevent SQL parsing errors
             escaped_text = normalized_text.replace( "'", "''" )
-            rows_returned = self._embedding_cache_tbl.search().where( f"normalized_text = '{escaped_text}'" ).limit( 1 ).select( [ "embedding" ] ).to_list()
+            # Use to_lance().scanner() to avoid nprobes warning (filter-only query, no vector search)
+            rows_returned = self._embedding_cache_tbl.to_lance().scanner(
+                filter=f"normalized_text = '{escaped_text}'",
+                limit=1,
+                columns=[ "embedding" ]
+            ).to_table().to_pylist()
             if self.debug and self.verbose: timer.print( f"Done! w/ {len( rows_returned )} rows returned", use_millis=True )
 
             if rows_returned:
@@ -341,15 +352,10 @@ def quick_smoke_test():
                     temp_db2 = lancedb.connect( temp_dir )
                     corrupted_table = temp_db2.open_table( "test_tbl" )
 
-                    # Create a minimal object to test _is_table_corrupted
-                    class CorruptionTester:
-                        def __init__( self, tbl ):
-                            self._embedding_cache_tbl = tbl
-
-                    tester = CorruptionTester( corrupted_table )
-                    # Manually call the corruption check logic
+                    # Manually call the corruption check logic using scanner pattern
                     try:
-                        corrupted_table.search().limit( 1 ).to_list()
+                        # Use to_lance().scanner() to match production code pattern
+                        corrupted_table.to_lance().scanner( limit=1 ).to_table().to_pylist()
                         detected_corruption = False
                     except Exception as e:
                         error_str = str( e ).lower()

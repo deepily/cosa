@@ -226,6 +226,7 @@ async def notify_user(
     response_options: Optional[str] = Query(None, description="JSON string of options for multiple_choice type. Structure: {questions: [{question, header, multi_select, options: [{label, description}]}]}"),
     abstract: Optional[str] = Query(None, description="Supplementary context for the notification (plan details, URLs, markdown). Displayed alongside message in action-required cards."),
     job_id: Optional[str] = Query(None, description="Agentic job ID for routing to job cards (e.g., dr-a1b2c3d4, mock-12345678)"),
+    queue_name: Optional[str] = Query(None, description="Queue where job is running (run/todo/done). Used for provisional job card registration when notifications arrive before job is fetched."),
     suppress_ding: bool = Query(False, description="Suppress notification sound (ding) while still speaking message via TTS. Used for conversational TTS from queue operations."),
     notification_queue: NotificationFifoQueue = Depends(get_notification_queue),
     ws_manager: WebSocketManager = Depends(get_websocket_manager)
@@ -389,7 +390,8 @@ async def notify_user(
                 sender_id     = resolved_sender_id,  # Sender-aware notification system
                 abstract      = abstract,  # Supplementary context for action-required cards
                 suppress_ding = suppress_ding,  # Skip notification sound (conversational TTS)
-                job_id        = job_id  # Agentic job ID for routing to job cards
+                job_id        = job_id,  # Agentic job ID for routing to job cards
+                queue_name    = queue_name  # Queue for provisional job card registration
             )
 
             # Persist to PostgreSQL for history loading
@@ -561,7 +563,8 @@ async def notify_user(
             sender_id          = resolved_sender_id,  # Sender-aware notification system
             abstract           = abstract,  # Supplementary context for action-required cards
             suppress_ding      = suppress_ding,  # Skip notification sound (conversational TTS)
-            job_id             = job_id  # Agentic job ID for routing to job cards
+            job_id             = job_id,  # Agentic job ID for routing to job cards
+            queue_name         = queue_name  # Queue for provisional job card registration
         )
 
         # DEBUG: Log the notification_item after creation

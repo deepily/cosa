@@ -37,10 +37,10 @@ router = APIRouter( tags=[ "deep-research" ] )
 class DeepResearchSubmitRequest( BaseModel ):
     """Request body for submitting a deep research job."""
     query: str = Field( ..., min_length=1, description="The research query to investigate" )
-    user_email: str = Field( ..., description="User email for report folder (multi-tenancy)" )
     budget: Optional[ float ] = Field( None, ge=0, description="Maximum budget in USD (None = unlimited)" )
     websocket_id: Optional[ str ] = Field( None, description="WebSocket session ID for notifications" )
     lead_model: Optional[ str ] = Field( None, description="Model for lead agent (None = use default)" )
+    dry_run: bool = Field( False, description="Simulate execution without API calls" )
 
 
 class DeepResearchSubmitResponse( BaseModel ):
@@ -107,12 +107,20 @@ async def submit_research(
     """
     from cosa.agents.deep_research.job import DeepResearchJob
 
-    # Get user ID from token (this is the canonical system ID)
-    user_id = current_user.get( "uid" )
+    # Get user ID and email from token (canonical source - don't trust client)
+    user_id    = current_user.get( "uid" )
+    user_email = current_user.get( "email" )
+
     if not user_id:
         raise HTTPException(
             status_code=400,
             detail="User ID not found in authentication token"
+        )
+
+    if not user_email:
+        raise HTTPException(
+            status_code=400,
+            detail="User email not found in authentication token"
         )
 
     # Use provided websocket_id or fall back to a default
@@ -123,11 +131,12 @@ async def submit_research(
         job = DeepResearchJob(
             query       = request_body.query,
             user_id     = user_id,
-            user_email  = request_body.user_email,
+            user_email  = user_email,
             session_id  = session_id,
             budget      = request_body.budget,
             lead_model  = request_body.lead_model,
             no_confirm  = True,  # Always auto-approve in queue mode
+            dry_run     = request_body.dry_run,
             debug       = False,
             verbose     = False
         )

@@ -19,7 +19,7 @@ class NotificationItem:
                  response_default: Optional[str] = None, response_options: Optional[dict] = None,
                  timeout_seconds: Optional[int] = None, sender_id: Optional[str] = None,
                  abstract: Optional[str] = None, suppress_ding: bool = False,
-                 job_id: Optional[str] = None ) -> None:
+                 job_id: Optional[str] = None, queue_name: Optional[str] = None ) -> None:
         """
         Initialize a notification item.
 
@@ -72,6 +72,9 @@ class NotificationItem:
 
         # Agentic job ID for routing to job cards (e.g., dr-a1b2c3d4, mock-12345678)
         self.job_id             = job_id
+
+        # Queue where job is running (run/todo/done) - for provisional job card registration
+        self.queue_name         = queue_name
 
     def _get_local_timestamp( self ) -> str:
         """Get timezone-aware timestamp using configured timezone from ConfigurationManager"""
@@ -148,7 +151,9 @@ class NotificationItem:
             # Suppress notification ding (conversational TTS)
             "suppress_ding"      : self.suppress_ding,
             # Agentic job ID for routing to job cards
-            "job_id"             : self.job_id
+            "job_id"             : self.job_id,
+            # Queue where job is running (for provisional job card registration)
+            "queue_name"         : self.queue_name
         }
 
 
@@ -240,7 +245,7 @@ class NotificationFifoQueue( FifoQueue ):
                          response_default: Optional[str] = None, response_options: Optional[dict] = None,
                          timeout_seconds: Optional[int] = None, sender_id: Optional[str] = None,
                          abstract: Optional[str] = None, suppress_ding: bool = False,
-                         job_id: Optional[str] = None ) -> NotificationItem:
+                         job_id: Optional[str] = None, queue_name: Optional[str] = None ) -> NotificationItem:
         """
         Push a notification with priority handling and io_tbl logging.
 
@@ -278,7 +283,8 @@ class NotificationFifoQueue( FifoQueue ):
             sender_id          = sender_id,
             abstract           = abstract,
             suppress_ding      = suppress_ding,
-            job_id             = job_id
+            job_id             = job_id,
+            queue_name         = queue_name
         )
         
         # Priority handling - urgent/high go to front, but after other urgent/high

@@ -53,6 +53,7 @@ class DeepResearchJob( AgenticJobBase ):
         budget: Optional[ float ] = None,
         lead_model: Optional[ str ] = None,
         no_confirm: bool = True,  # Default to auto-approve in queue mode
+        dry_run: bool = False,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -77,6 +78,7 @@ class DeepResearchJob( AgenticJobBase ):
             budget: Maximum budget in USD (None = unlimited)
             lead_model: Model for lead agent (None = use default)
             no_confirm: Skip confirmation prompts (default True for queue)
+            dry_run: Simulate execution without API calls
             debug: Enable debug output
             verbose: Enable verbose output
         """
@@ -93,6 +95,7 @@ class DeepResearchJob( AgenticJobBase ):
         self.budget     = budget
         self.lead_model = lead_model
         self.no_confirm = no_confirm
+        self.dry_run    = dry_run
 
         # Results (populated after execution)
         self.report_path  = None
@@ -163,10 +166,17 @@ class DeepResearchJob( AgenticJobBase ):
 
         Uses the existing Deep Research CLI functions to run research.
         Handles configuration, execution, abstract generation, and report saving.
+        When dry_run=True, sends breadcrumb notifications and returns mock results.
 
         Returns:
             str: Conversational summary of research results
         """
+        from cosa.agents.deep_research import voice_io, cosa_interface
+
+        # Handle dry-run mode with breadcrumb notifications
+        if self.dry_run:
+            return await self._execute_dry_run( voice_io, cosa_interface )
+
         # Import research components
         from cosa.agents.deep_research.config import ResearchConfig
         from cosa.agents.deep_research.cost_tracker import CostTracker, BudgetExceededError
@@ -175,7 +185,6 @@ class DeepResearchJob( AgenticJobBase ):
             generate_abstract_for_cli,
             save_report_with_frontmatter,
         )
-        from cosa.agents.deep_research import voice_io, cosa_interface
         from cosa.config.configuration_manager import ConfigurationManager
         from cosa.memory.gister import Gister
 
@@ -213,10 +222,12 @@ class DeepResearchJob( AgenticJobBase ):
             print( f"[DeepResearchJob] Semantic topic: {semantic_topic}" )
             print( f"[DeepResearchJob] Storage backend: {storage_backend}" )
 
-        # Notify start
+        # Notify start (with job_id and queue_name for job card routing)
         await voice_io.notify(
             f"Starting deep research on: {self.query[ :80 ]}",
-            priority="medium"
+            priority="medium",
+            job_id=self.id_hash,
+            queue_name="run"
         )
 
         # Create research configuration
@@ -246,7 +257,7 @@ class DeepResearchJob( AgenticJobBase ):
             )
 
             if report is None:
-                await voice_io.notify( "Research was cancelled.", priority="medium" )
+                await voice_io.notify( "Research was cancelled.", priority="medium", job_id=self.id_hash, queue_name="run" )
                 return "Research was cancelled by the user."
 
             self.report = report
@@ -295,11 +306,13 @@ class DeepResearchJob( AgenticJobBase ):
 
 **Stats**: ${cost:.4f} | {tokens:,} tokens | {duration:.1f}s"""
 
-            # Notify completion
+            # Notify completion (with job_id and queue_name for job card routing)
             await voice_io.notify(
                 f"Research complete! Cost: ${cost:.4f}",
                 priority="medium",
-                abstract=completion_abstract
+                abstract=completion_abstract,
+                job_id=self.id_hash,
+                queue_name="run"
             )
 
             # Return conversational answer
@@ -308,16 +321,102 @@ class DeepResearchJob( AgenticJobBase ):
         except BudgetExceededError as e:
             await voice_io.notify(
                 f"Research stopped: Budget exceeded. ${e.current_cost:.2f} spent of ${e.budget_limit:.2f} limit.",
-                priority="high"
+                priority="high",
+                job_id=self.id_hash,
+                queue_name="run"
             )
             raise
 
         except Exception as e:
             await voice_io.notify(
                 f"Research error: {str( e )[ :100 ]}",
-                priority="urgent"
+                priority="urgent",
+                job_id=self.id_hash,
+                queue_name="run"
             )
             raise
+
+    async def _execute_dry_run( self, voice_io, cosa_interface ) -> str:
+        """
+        Execute dry-run mode with breadcrumb notifications.
+
+        Simulates the research workflow without making API calls.
+        Sends low-priority notifications at each phase and returns mock results.
+
+        Args:
+            voice_io: Voice I/O module for notifications
+            cosa_interface: COSA interface module for sender ID
+
+        Returns:
+            str: Mock conversational summary
+        """
+        import asyncio
+
+        # Set sender_id for notifications
+        cosa_interface.SENDER_ID = cosa_interface._get_sender_id() + f"#{self.id_hash}"
+
+        if self.debug:
+            print( f"[DeepResearchJob] DRY RUN MODE for: {self.query[ :50 ]}..." )
+
+        # Breadcrumb: Starting (with job_id and queue_name for job card routing)
+        await voice_io.notify( f"🧪 Dry run: Starting research simulation", priority="low", job_id=self.id_hash, queue_name="run" )
+        await asyncio.sleep( 1.0 )
+
+        # Breadcrumb: Query clarification
+        await voice_io.notify( "🧪 Dry run: skipping query clarification", priority="low", job_id=self.id_hash, queue_name="run" )
+        await asyncio.sleep( 1.0 )
+
+        # Breadcrumb: Research planning
+        await voice_io.notify( "🧪 Dry run: skipping research planning", priority="low", job_id=self.id_hash, queue_name="run" )
+        await asyncio.sleep( 1.0 )
+
+        # Breadcrumb: Subquery research
+        await voice_io.notify( "🧪 Dry run: skipping subquery research (5 queries)", priority="low", job_id=self.id_hash, queue_name="run" )
+        await asyncio.sleep( 1.0 )
+
+        # Breadcrumb: Report synthesis
+        await voice_io.notify( "🧪 Dry run: skipping report synthesis", priority="low", job_id=self.id_hash, queue_name="run" )
+        await asyncio.sleep( 1.0 )
+
+        # Breadcrumb: Report write
+        await voice_io.notify( "🧪 Dry run: skipping report write to disk", priority="low", job_id=self.id_hash, queue_name="run" )
+        await asyncio.sleep( 1.0 )
+
+        # Set mock results
+        self.report_path  = f"/io/deep-research/{self.user_email}/dry-run-{self.id_hash}/report.md"
+        self.abstract     = "This is a mock abstract generated during dry-run mode. No actual research was performed."
+        self.report       = "# Mock Research Report\n\nThis report was generated in dry-run mode."
+
+        # Store mock artifacts
+        self.artifacts[ "report_path" ] = self.report_path
+        self.artifacts[ "abstract" ]    = self.abstract
+
+        # Mock cost summary
+        self.cost_summary = type( 'MockCostSummary', (), {
+            'duration_seconds'     : 6.0,
+            'total_cost_usd'       : 0.0,
+            'total_input_tokens'   : 0,
+            'total_output_tokens'  : 0,
+        } )()
+
+        completion_abstract = f"""**🧪 Dry Run Complete!**
+
+**Abstract**: {self.abstract}
+
+**Report**: {self.report_path} (mock - not actually created)
+
+**Stats**: $0.00 | 0 tokens | 6.0s (simulated)"""
+
+        # Notify completion (with job_id and queue_name for job card routing)
+        await voice_io.notify(
+            "🧪 Dry run complete! No cost incurred.",
+            priority="medium",
+            abstract=completion_abstract,
+            job_id=self.id_hash,
+            queue_name="run"
+        )
+
+        return f"Dry run complete. {self.abstract}"
 
 
 def quick_smoke_test():
