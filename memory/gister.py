@@ -10,11 +10,28 @@ from cosa.memory.normalizer import Normalizer
 
 class Gister:
     """
-    Extracts concise gists from questions using LLM.
+    Extracts concise gists from text using LLM.
 
     This class handles the extraction of main intents from user questions
-    by using prompt templates and LLM processing.
+    by using prompt templates and LLM processing. Supports multiple prompt
+    templates via the `prompt_key` parameter.
+
+    Caching Behavior:
+        Caching is ONLY enabled when using the default prompt template
+        (gist generation for short utterances). Non-default prompts
+        bypass the cache entirely. This design:
+
+        - Maintains high cache hit rates for the original use case
+          (short, repetitive utterances like "What's the weather?")
+        - Prevents cache pollution from unique content like session messages
+        - Avoids key collisions (same input text, different prompt → different output)
+
+        If you need caching for a new prompt type, consider whether the
+        input text will be repetitive enough to benefit from caching.
     """
+
+    # Default prompt key - only this prompt uses caching
+    DEFAULT_PROMPT_KEY = "prompt template for gist generation"
 
     def __init__( self, debug=False, verbose=False ):
         """
@@ -55,64 +72,93 @@ class Gister:
             cache_status = "enabled" if self.cache_enabled else "disabled"
             print( f"Gister initialized with {parsing_mode} XML parsing, cache {cache_status}" )
 
-    def get_gist( self, utterance: str ) -> str:
+    def get_gist( self, utterance: str, prompt_key: str = None ) -> str:
         """
-        Extract the gist of a question using LLM with caching.
+        Extract the gist of text using LLM.
 
         Requires:
             - utterance is a non-empty string
-            - Gist prompt template exists
+            - prompt_key (if provided) must exist in config
 
         Ensures:
-            - Returns a concise gist of the question
-            - Uses cached gist if available (5ms vs 500ms)
-            - Uses LLM to extract main intent for multi-word utterances
+            - Returns a concise gist/summary of the input
+            - Uses cache for default prompt only (see Caching Behavior below)
             - Returns utterance directly if it contains no spaces
-            - Caches LLM results for future lookups
             - Returns empty string if extraction fails
+
+        Args:
+            utterance: Text to extract gist from
+            prompt_key: Config key for prompt template. Defaults to
+                       DEFAULT_PROMPT_KEY for backward compatibility.
+                       Non-default prompts bypass cache entirely.
+
+        Caching Behavior:
+            - DEFAULT prompt (gist generation): Cache ENABLED
+              Designed for short, repetitive utterances with high hit rates.
+
+            - CUSTOM prompts (session titles, etc.): Cache BYPASSED
+              Prevents pollution and collisions. Custom prompts typically
+              process unique content where caching provides no benefit.
 
         Raises:
             - FileNotFoundError if prompt template missing
 
         Performance:
-            - Cache hit: ~5ms
-            - Cache miss: ~525ms (500ms LLM + 25ms cache write)
-            - Expected hit rate: 70-80%
+            - Cache hit (default prompt): ~5ms
+            - Cache miss or custom prompt: ~500ms (LLM latency)
         """
         # Shortcut: if utterance has no spaces, return it directly
         if " " not in utterance.strip():
             if self.debug: print( f"Shortcut: returning single word/token '{utterance}' without LLM" )
             return utterance.strip()
 
-        # Check cache first if enabled
-        if self.cache_enabled and self._gist_cache is not None:
+        # Determine which prompt to use
+        if prompt_key is None:
+            prompt_key = self.DEFAULT_PROMPT_KEY
+
+        # Cache only for default prompt - avoids collisions and pollution
+        use_cache = ( prompt_key == self.DEFAULT_PROMPT_KEY ) and self.cache_enabled
+
+        if self.debug and self.verbose:
+            if use_cache:
+                print( f"Gister: cache ENABLED (default prompt)" )
+            else:
+                print( f"Gister: cache BYPASSED (custom prompt: {prompt_key})" )
+
+        # Check cache (only for default prompt)
+        if use_cache and self._gist_cache is not None:
             cached_gist = self._gist_cache.get_cached_gist( utterance )
             if cached_gist is not None:
-                if self.debug: print( f"Cache HIT for '{du.truncate_string( utterance )}' → '{cached_gist}'" )
+                if self.debug and self.verbose: print( f"Cache HIT for '{du.truncate_string( utterance )}' → '{cached_gist}'" )
                 return cached_gist
 
-            if self.debug: print( f"Cache MISS for '{du.truncate_string( utterance )}' - calling LLM" )
+            if self.debug and self.verbose: print( f"Cache MISS for '{du.truncate_string( utterance )}' - calling LLM" )
 
-        # Cache miss or cache disabled - generate via LLM
-        gist = self._generate_gist_via_llm( utterance )
+        # Generate via LLM
+        gist = self._generate_gist_via_llm( utterance, prompt_key )
 
-        # Store in cache if enabled and gist was generated successfully
-        if self.cache_enabled and self._gist_cache is not None and gist:
+        # Store in cache (only for default prompt)
+        if use_cache and self._gist_cache is not None and gist:
             normalized = self._normalizer.normalize( utterance )
             self._gist_cache.cache_gist( utterance, gist, normalized=normalized )
 
         return gist
 
-    def _generate_gist_via_llm( self, utterance: str ) -> str:
+    def _generate_gist_via_llm( self, utterance: str, prompt_key: str ) -> str:
         """
         Generate gist by calling LLM (internal helper method).
 
         Requires:
             - utterance is a non-empty string with spaces
+            - prompt_key is a valid config key for a prompt template
 
         Ensures:
             - Returns gist extracted from LLM response
             - Returns empty string if extraction fails
+
+        Args:
+            utterance: Text to summarize
+            prompt_key: Config key for prompt template to use
 
         Raises:
             - FileNotFoundError if prompt template missing
@@ -120,7 +166,7 @@ class Gister:
         Performance:
             - ~500ms per call (LLM latency)
         """
-        prompt_template_path = self.config_mgr.get( "prompt template for gist generation" )
+        prompt_template_path = self.config_mgr.get( prompt_key )
         prompt_template = du.get_file_as_string( du.get_project_root() + prompt_template_path )
 
         # Process the template to replace {{PYDANTIC_XML_EXAMPLE}} with actual XML

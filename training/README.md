@@ -133,7 +133,7 @@ The full training pipeline consists of:
 python peft_trainer.py \
   --model "mistralai/Ministral-8B-Instruct-2410" \
   --model-name "Ministral-8B-Instruct-2410" \
-  --test-train-path "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/ephemera/prompts/data" \
+  --test-train-path "/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/ephemera/prompts/data" \
   --lora-dir "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora" \
   --post-training-stats \
   --post-quantization-stats \
@@ -146,12 +146,12 @@ When using the `--nuclear-kill-button` flag for advanced GPU memory management, 
 
 ```bash
 # Real-world example using the nuclear-kill-button for GPU memory management
-sudo --preserve-env=HF_HOME,NCCL_P2P_DISABLE,NCCL_IB_DISABLE,GENIE_IN_THE_BOX_ROOT,GIB_CONFIG_MGR_CLI_ARGS,DEEPILY_PROJECTS_DIR \
+sudo --preserve-env=HF_HOME,NCCL_P2P_DISABLE,NCCL_IB_DISABLE,LUPIN_ROOT,LUPIN_CONFIG_MGR_CLI_ARGS,DEEPILY_PROJECTS_DIR \
   env "PATH=$PATH" \
   python -m cosa.training.peft_trainer \
     --model mistralai/Ministral-8B-Instruct-2410 \
     --model-name Ministral-8B-Instruct-2410 \
-    --test-train-path $GENIE_IN_THE_BOX_ROOT/src/ephemera/prompts/data \
+    --test-train-path $LUPIN_ROOT/src/ephemera/prompts/data \
     --lora-dir $HF_HOME/Ministral-8B-Instruct-2410.lora \
     --pre-training-stats \
     --post-training-stats \
@@ -169,7 +169,7 @@ sudo --preserve-env=HF_HOME,NCCL_P2P_DISABLE,NCCL_IB_DISABLE,GENIE_IN_THE_BOX_RO
 sudo python peft_trainer.py \
   --model "mistralai/Ministral-8B-Instruct-2410" \
   --model-name "Ministral-8B-Instruct-2410" \
-  --test-train-path "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/ephemera/prompts/data" \
+  --test-train-path "/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/ephemera/prompts/data" \
   --lora-dir "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora" \
   --post-training-stats \
   --post-quantization-stats \
@@ -186,8 +186,8 @@ For development and debugging, you can use the `run_pipeline_adhoc` method by un
 Required environment variables:
 - `NCCL_P2P_DISABLE=1`
 - `NCCL_IB_DISABLE=1`
-- `GENIE_IN_THE_BOX_ROOT=/path/to/genie-in-the-box`
-- `GIB_CONFIG_MGR_CLI_ARGS`
+- `LUPIN_ROOT=/path/to/lupin`
+- `LUPIN_CONFIG_MGR_CLI_ARGS`
 - `DEEPILY_PROJECTS_DIR=/path/to/projects`
 
 ## Output Directory Structure

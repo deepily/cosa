@@ -13,7 +13,7 @@ This prompt orchestrates the complete end-of-session ritual for the COSA (Collec
 ## Context: COSA Repository Structure
 
 - **Repository Type**: Git submodule within parent "Lupin" project
-- **Location**: `/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa/`
+- **Location**: `/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa/`
 - **Parent Project**: Lupin (located at `../..`)
 - **Dual History Management**: Both COSA and parent Lupin histories must be maintained
 - **Project Prefix**: `[COSA]` for all todo items and notifications
@@ -24,7 +24,7 @@ This prompt orchestrates the complete end-of-session ritual for the COSA (Collec
 **CRITICAL**: Send notifications after completing each subsequent step to keep user informed of progress.
 
 **Notification Configuration**:
-- **Script Path**: `/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh`
+- **Script Path**: `/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/scripts/notify.sh`
 - **Target**: `ricardo.felipe.ruiz@gmail.com`
 - **Format**: `[COSA] [Step Description] - [Status]`
 - **Priorities**:
@@ -51,7 +51,7 @@ Update the COSA repository's history.md file with today's session information.
 **Requirements**:
 - **Date Format**: yyyy.mm.dd (e.g., 2025.09.27)
 - **Sorting**: Newest entries at top, chronological descending order
-- **Location**: `/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa/history.md`
+- **Location**: `/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa/history.md`
 - **Token Management**: If approaching 25k tokens, archive older months to `history/YYYY-MM-history.md`
 
 **Content Structure**:
@@ -91,11 +91,11 @@ Update the COSA repository's history.md file with today's session information.
 **CONDITIONAL**: Only update if parent Lupin history doesn't already contain today's COSA session information.
 
 **Check First**:
-- Read `/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/history.md`
+- Read `/mnt/DATA01/include/www.deepily.ai/projects/lupin/history.md`
 - Look for today's date (yyyy.mm.dd format) and COSA-related content
 - **ONLY UPDATE** if today's COSA session work is not already documented
 
-**Location**: `/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/history.md`
+**Location**: `/mnt/DATA01/include/www.deepily.ai/projects/lupin/history.md`
 
 **Update Format** (if needed):
 ```markdown
@@ -120,7 +120,7 @@ Update the COSA repository's history.md file with today's session information.
 Update relevant planning and tracking documents in the `rnd/` directory.
 
 **Requirements**:
-- **Location**: `/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa/rnd/`
+- **Location**: `/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa/rnd/`
 - **Document Naming**: Always begin with date in yyyy.mm.dd format
 - **README Update**: Add links to any new research documents created
 
@@ -138,7 +138,7 @@ Generate comprehensive summary of all git changes in COSA repository.
 **Git Commands to Run**:
 ```bash
 # Change to COSA directory
-cd /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa/
+cd /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa/
 
 # Check status
 git status
@@ -205,7 +205,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 - **Commit Scope**: Only commit to COSA repository, never parent Lupin
 - **PYTHONPATH**: Always set when running COSA modules:
   ```bash
-  export PYTHONPATH="/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src:$PYTHONPATH"
+  export PYTHONPATH="/mnt/DATA01/include/www.deepily.ai/projects/lupin/src:$PYTHONPATH"
   ```
 
 ### Configuration Management

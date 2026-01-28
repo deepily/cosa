@@ -16,7 +16,7 @@ allowed-tools: Bash(.*), TodoWrite, Read, Write, Edit, Grep, Glob
 **Identity**:
 - **Prefix**: [COSA]
 - **Project Name**: COSA (Collection of Small Agents)
-- **Working Directory**: /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa
+- **Working Directory**: /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa
 
 **Paths**:
 - **Logs Directory**: tests/results/logs
@@ -29,7 +29,7 @@ allowed-tools: Bash(.*), TodoWrite, Read, Write, Edit, Grep, Glob
 - **Unit**: ./tests/unit/scripts/run-cosa-unit-tests.sh
 
 **Environment**:
-- **PYTHONPATH**: /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src
+- **PYTHONPATH**: /mnt/DATA01/include/www.deepily.ai/projects/lupin/src
 
 **Remediation Settings**:
 - **Default Scope**: FULL (fix all issues in priority order)
@@ -45,7 +45,7 @@ allowed-tools: Bash(.*), TodoWrite, Read, Write, Edit, Grep, Glob
 1. **MUST use the following project-specific configuration**:
    - **[SHORT_PROJECT_PREFIX]**: [COSA]
    - **Project Name**: COSA (Collection of Small Agents)
-   - **Working Directory**: /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa
+   - **Working Directory**: /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa
    - **Baseline Report**: Auto-detect latest from tests/results/reports/*baseline*.md (or use provided path)
    - **Scope Parameter**: FULL|CRITICAL_ONLY|SELECTIVE|ANALYSIS_ONLY (default: FULL)
    - **Paths, Test Scripts, Environment**: Same as plan-test-baseline

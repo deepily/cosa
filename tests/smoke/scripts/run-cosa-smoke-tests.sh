@@ -25,7 +25,7 @@ CONFIG_FILE="$SMOKE_TEST_DIR/config/smoke_test_config.ini"
 
 # CoSA framework configuration (this script is in CoSA directory)
 COSA_ROOT="$PROJECT_ROOT"
-PYTHONPATH_BASE="/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src"
+PYTHONPATH_BASE="/mnt/DATA01/include/www.deepily.ai/projects/lupin/src"
 
 # Color codes for output
 RED='\033[0;31m'

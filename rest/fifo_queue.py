@@ -1,6 +1,14 @@
 from collections import OrderedDict
 from typing import Any, Optional
-from cosa.rest.queue_extensions import UserJobTracker
+import re
+from cosa.rest.queue_extensions import user_job_tracker
+
+# Notification service imports for TTS migration (Session 97)
+from cosa.cli.notify_user_async import notify_user_async
+from cosa.cli.notification_models import (
+    AsyncNotificationRequest,
+    NotificationPriority
+)
 
 
 class FifoQueue:
@@ -50,7 +58,7 @@ class FifoQueue:
         self.emit_enabled    = emit_enabled
         
         # User job tracking singleton for user-based routing
-        self.user_job_tracker = UserJobTracker()
+        self.user_job_tracker = user_job_tracker
         
     def pop_blocking_object( self ) -> Optional[Any]:
         """
@@ -421,43 +429,184 @@ class FifoQueue:
         """
         return self.queue_list.copy()
 
-    def _emit_speech( self, msg: str, user_id: str = None, websocket_id: str = None, job: Any = None ) -> None:
+    # ========================================================================
+    # NOTIFICATION SERVICE METHODS (Session 97 - TTS Migration)
+    # Replacement for legacy _emit_speech WebSocket-based TTS
+    # ========================================================================
+
+    def _get_notification_job_id( self, job: Any ) -> Optional[str]:
         """
-        Unified speech emission with smart routing.
-        
-        Priority: job context → user_id → websocket_id → broadcast
-        
+        Extract notification-compatible job_id from job object.
+
+        Frontend registers jobs by their id_hash (64-char SHA256 or short format).
+        We pass through whatever format the job uses so notifications route correctly.
+
         Requires:
-            - Subclass has self.emit_speech_callback attribute
-            - job parameter (if provided) has id_hash attribute
-            
+            - job may have id_hash attribute
+
         Ensures:
-            - Determines user_id from job if available
-            - Calls emit_speech_callback with proper parameters
-            - Handles exceptions gracefully
-            
+            - Returns job's id_hash if available (any format)
+            - Returns None if job has no id_hash
+
         Args:
-            msg: The message to convert to speech
-            user_id: Explicit user ID for routing (optional)
-            websocket_id: WebSocket session ID for routing (optional) 
-            job: Job object containing id_hash for user lookup (optional)
-            
+            job: Job object that may have id_hash attribute
+
+        Returns:
+            Optional[str]: Job's id_hash for notification routing, or None
+        """
+        if not job:
+            return None
+
+        if hasattr( job, 'id_hash' ) and job.id_hash:
+            return job.id_hash
+
+        return None
+
+    def _get_target_user_email( self, job: Any ) -> str:
+        """
+        Get target user email from job metadata for notification routing.
+
+        Requires:
+            - job (if provided) may have user_email attribute or metadata dict
+
+        Ensures:
+            - Returns user email if available in job metadata
+            - Falls back to default email if not found
+
+        Args:
+            job: Job object that may have user_email attribute
+
+        Returns:
+            str: Target user email for notification routing
+        """
+        if job:
+            # Check for email stored directly on job (set during push)
+            if hasattr( job, 'user_email' ) and job.user_email:
+                return job.user_email
+
+            # Check for email in metadata dict
+            if hasattr( job, 'metadata' ) and isinstance( job.metadata, dict ):
+                if 'user_email' in job.metadata:
+                    return job.metadata[ 'user_email' ]
+
+            # Try to resolve email from user_job_tracker (legacy path)
+            if hasattr( job, 'id_hash' ):
+                user_id = self.user_job_tracker.get_user_for_job( job.id_hash )
+                if user_id:
+                    # Look up user email from auth database using user service
+                    try:
+                        from cosa.rest.user_service import get_user_by_id
+                        user_data = get_user_by_id( user_id )
+                        if user_data and user_data.get( "email" ):
+                            email = user_data[ "email" ]
+                            print( f"[NOTIFY] Resolved email from user_id: {email}" )
+                            return email
+                        else:
+                            print( f"[NOTIFY] user_service returned no email for user_id={user_id}" )
+                    except Exception as e:
+                        print( f"[NOTIFY] Failed to look up email for user_id={user_id}: {e}" )
+
+        # Fallback to default email
+        # Note: Using hardcoded default since not all queue subclasses have config_mgr
+        return "ricardo.felipe.ruiz@gmail.com"
+
+    def _notify(
+        self,
+        msg: str,
+        job: Any = None,
+        priority: str = "high",
+        notification_type: str = "task"
+    ) -> None:
+        """
+        Send notification via notification service (replaces _emit_speech).
+
+        Queue notifications default to:
+        - priority="high" → message is spoken via TTS
+        - suppress_ding=True → no notification sound (conversational flow)
+
+        Requires:
+            - msg is a non-empty string
+            - job (if provided) has id_hash attribute
+
+        Ensures:
+            - Notification is sent to target user
+            - If job_id available, routes to job card in UI
+            - Message is spoken (high priority) without ding
+            - Handles exceptions gracefully
+
+        Args:
+            msg: The message to send (will be spoken via TTS)
+            job: Job object for context-based routing (optional)
+            priority: Notification priority ('urgent', 'high', 'medium', 'low')
+            notification_type: Type of notification ('task', 'progress', 'alert', 'custom')
+
         Raises:
             - None (exceptions handled internally)
         """
-        # Determine user_id from job context if available
-        if job and hasattr( job, 'id_hash' ) and not user_id:
-            user_id = self.user_job_tracker.get_user_for_job( job.id_hash )
-            if user_id:
-                print( f"[FIFO] Resolved user_id {user_id} from job {job.id_hash}" )
-        
-        if hasattr( self, 'emit_speech_callback' ) and self.emit_speech_callback:
-            try:
-                # Use named parameters to ensure correct routing
-                self.emit_speech_callback( msg, user_id=user_id, websocket_id=websocket_id )
-            except Exception as e:
-                print( f"[ERROR] emit_speech_callback failed: {e}" )
-    
+        try:
+            request = AsyncNotificationRequest(
+                message           = msg,
+                notification_type = notification_type,
+                priority          = priority,
+                suppress_ding     = True,  # Queue notifications = TTS only, no ding
+                target_user       = self._get_target_user_email( job ),
+                job_id            = self._get_notification_job_id( job ),
+                sender_id         = f"queue.{self.queue_name or 'unknown'}@lupin.deepily.ai"
+            )
+            notify_user_async( request )
+
+            if hasattr( self, 'debug' ) and self.debug:
+                print( f"[NOTIFY] Sent notification: {priority}/{notification_type} - {msg[:50]}..." )
+
+        except Exception as e:
+            print( f"[ERROR] _notify() failed: {e}" )
+
+    # ============================================================================
+    # DEPRECATED: Legacy _emit_speech implementation (Session 97)
+    # Replaced by _notify() method using notification service
+    # Keeping commented for reference during migration verification
+    # TODO: Remove after migration verified stable (target: Session 100+)
+    # ============================================================================
+    # def _emit_speech( self, msg: str, user_id: str = None, websocket_id: str = None, job: Any = None ) -> None:
+    #     """
+    #     [DEPRECATED] Unified speech emission with smart routing.
+    #
+    #     Replaced by: _notify() method
+    #     Reason: Migration to notification service for job_id routing, blocking queries, and suppress_ding
+    #
+    #     Priority: job context → user_id → websocket_id → broadcast
+    #
+    #     Requires:
+    #         - Subclass has self.emit_speech_callback attribute
+    #         - job parameter (if provided) has id_hash attribute
+    #
+    #     Ensures:
+    #         - Determines user_id from job if available
+    #         - Calls emit_speech_callback with proper parameters
+    #         - Handles exceptions gracefully
+    #
+    #     Args:
+    #         msg: The message to convert to speech
+    #         user_id: Explicit user ID for routing (optional)
+    #         websocket_id: WebSocket session ID for routing (optional)
+    #         job: Job object containing id_hash for user lookup (optional)
+    #
+    #     Raises:
+    #         - None (exceptions handled internally)
+    #     """
+    #     # Determine user_id from job context if available
+    #     if job and hasattr( job, 'id_hash' ) and not user_id:
+    #         user_id = self.user_job_tracker.get_user_for_job( job.id_hash )
+    #         if user_id:
+    #             print( f"[FIFO] Resolved user_id {user_id} from job {job.id_hash}" )
+    #
+    #     if hasattr( self, 'emit_speech_callback' ) and self.emit_speech_callback:
+    #         try:
+    #             # Use named parameters to ensure correct routing
+    #             self.emit_speech_callback( msg, user_id=user_id, websocket_id=websocket_id )
+    #         except Exception as e:
+    #             print( f"[ERROR] emit_speech_callback failed: {e}" )
+
     def _emit_queue_update( self ) -> None:
         """
         Automatically emit queue state update via WebSocket.

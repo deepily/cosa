@@ -303,41 +303,85 @@ async def get_queue(
 
     # Step 5: Handle done queue special case (metadata + HTML)
     if queue_name == "done":
-        # Extract structured job data from SolutionSnapshot objects
+        # Extract structured job data from SolutionSnapshot or AgenticJobBase objects
         structured_jobs = []
-        for snapshot in jobs:
-            # Generate job metadata from SolutionSnapshot fields
+        for job in jobs:
+            # Check if this is an AgenticJobBase (MockAgenticJob, DeepResearchJob, etc.)
+            is_agentic_job = hasattr( job, 'JOB_TYPE' ) and hasattr( job, 'artifacts' )
+
+            # Generate job metadata using unified interface properties
+            # All job types now have: job_type, question, last_question_asked, answer,
+            # answer_conversational, run_date, created_date, session_id
             job_data = {
-                "html": snapshot.get_html(),
-                "job_id": snapshot.id_hash,
-                "question_text": snapshot.last_question_asked or snapshot.question,
-                "response_text": snapshot.answer_conversational or snapshot.answer,
-                "timestamp": snapshot.run_date or snapshot.created_date,
-                "user_id": authorized_filter,
-                "has_audio_cache": False  # Will be determined by frontend cache check
+                "html"            : job.get_html(),
+                "job_id"          : job.id_hash,
+                "question_text"   : job.last_question_asked,
+                "response_text"   : job.answer_conversational or job.answer,
+                "timestamp"       : job.run_date or job.created_date,
+                "user_id"         : authorized_filter,
+                "session_id"      : job.session_id,  # For job-notification correlation
+                "agent_type"      : job.job_type,  # Unified property replaces getattr() chain
+                "has_interactions": bool( job.session_id ),  # True if can query notifications
+                "has_audio_cache" : False,  # Will be determined by frontend cache check
+                "is_cache_hit"    : getattr( job, 'is_cache_hit', False ),  # For Time Saved Dashboard
+                # Phase 7: Agentic job artifacts for enhanced done cards
+                "report_path"     : job.artifacts.get( 'report_path' ) if is_agentic_job else None,
+                "abstract"        : job.artifacts.get( 'abstract' ) if is_agentic_job else None,
+                "cost_summary"    : getattr( job, 'cost_summary', None ),
+                "started_at"      : getattr( job, 'started_at', None ),
+                "completed_at"    : getattr( job, 'completed_at', None ),
+                "status"          : getattr( job, 'status', 'completed' ),
+                "error"           : getattr( job, 'error', None ),
             }
+
+            # Calculate duration for agentic jobs
+            if is_agentic_job and job_data[ "started_at" ] and job_data[ "completed_at" ]:
+                try:
+                    start = datetime.fromisoformat( job_data[ "started_at" ] )
+                    end   = datetime.fromisoformat( job_data[ "completed_at" ] )
+                    job_data[ "duration_seconds" ] = ( end - start ).total_seconds()
+                except Exception:
+                    job_data[ "duration_seconds" ] = None
+            else:
+                job_data[ "duration_seconds" ] = None
+
             structured_jobs.append( job_data )
 
         # Maintain backward compatibility: return both structured data and HTML list
         return {
-            f"{queue_name}_jobs": [job["html"] for job in structured_jobs],
+            f"{queue_name}_jobs": [ job[ "html" ] for job in structured_jobs ],
             f"{queue_name}_jobs_metadata": structured_jobs,
             "filtered_by": authorized_filter,
-            "is_admin_view": is_admin(current_user) and (user_filter is not None),
-            "total_jobs": len(structured_jobs)
+            "is_admin_view": is_admin( current_user ) and ( user_filter is not None ),
+            "total_jobs": len( structured_jobs )
         }
 
-    # Step 6: Format as HTML for non-done queues
-    html_list = [job.get_html() for job in jobs]
+    # Step 6: Handle todo/run queues with metadata (Phase 7)
+    # Using unified interface properties - all job types now have consistent attributes
+    structured_jobs = []
+    for job in jobs:
+        job_data = {
+            "html"         : job.get_html(),
+            "job_id"       : job.id_hash,
+            "question_text": job.last_question_asked,
+            "timestamp"    : job.run_date or job.created_date,
+            "user_id"      : authorized_filter,
+            "session_id"   : job.session_id,
+            "agent_type"   : job.job_type,  # Unified property replaces getattr() chain
+            "status"       : getattr( job, 'status', 'pending' ),
+            "started_at"   : getattr( job, 'started_at', None ),
+        }
+        structured_jobs.append( job_data )
 
-    # Step 7: Return with metadata
-    is_admin_override = is_admin(current_user) and (user_filter is not None)
+    # Return both HTML list and metadata
+    is_admin_override = is_admin( current_user ) and ( user_filter is not None )
 
     return {
-        f"{queue_name}_jobs": html_list,
+        f"{queue_name}_jobs": [ job[ "html" ] for job in structured_jobs ],
+        f"{queue_name}_jobs_metadata": structured_jobs,
         "filtered_by": authorized_filter,
         "is_admin_view": is_admin_override,
-        "total_jobs": len(html_list)
+        "total_jobs": len( structured_jobs )
     }
 
 @router.post("/reset-queues")
@@ -405,3 +449,100 @@ async def reset_queues(
     except Exception as e:
         print( f"[ERROR] Failed to reset queues: {e}" )
         raise HTTPException( status_code=500, detail=f"Failed to reset queues: {str(e)}" )
+
+
+@router.get( "/get-job-interactions/{job_id}" )
+async def get_job_interactions(
+    job_id: str,
+    current_user: dict = Depends( get_current_user ),
+    done_queue = Depends( get_done_queue )
+):
+    """
+    Get notification interaction history for a completed job.
+
+    Requires:
+        - job_id is a valid job identifier
+        - current_user is authenticated
+        - Job belongs to current user OR user is admin
+
+    Ensures:
+        - Returns job metadata + interaction history
+        - Interactions ordered newest-first
+        - Returns empty interactions list if job has no session_id
+
+    Returns:
+        dict: {job_id, session_id, job_metadata, interactions: [...]}
+    """
+    from datetime import timezone, timedelta
+    from cosa.rest.queue_extensions import user_job_tracker
+    from cosa.rest.db.database import get_db
+    from cosa.rest.db.repositories.notification_repository import NotificationRepository
+    from cosa.rest.db.repositories.user_repository import UserRepository
+    from cosa.rest.postgres_models import Notification
+
+    print( f"[API] /api/get-job-interactions/{job_id} called by user: {current_user['uid']}" )
+
+    # Find job in done queue
+    job = None
+    for snapshot in done_queue.get_all_jobs():
+        if snapshot.id_hash == job_id:
+            job = snapshot
+            break
+
+    if not job:
+        print( f"[API] Job not found: {job_id}" )
+        raise HTTPException( status_code=404, detail=f"Job not found: {job_id}" )
+
+    # Authorization check
+    job_owner = user_job_tracker.get_user_for_job( job_id )
+    if job_owner and job_owner != current_user["uid"] and not is_admin( current_user ):
+        print( f"[API] Unauthorized access to job {job_id} by {current_user['uid']}" )
+        raise HTTPException( status_code=403, detail="Not authorized to view this job" )
+
+    # Build response using unified interface properties
+    # All job types (SolutionSnapshot, AgenticJobBase) now have consistent attributes
+    response = {
+        "job_id"       : job_id,
+        "session_id"   : job.session_id,
+        "job_metadata" : {
+            "question"    : job.last_question_asked,
+            "answer"      : job.answer_conversational or job.answer,
+            "agent_type"  : job.job_type,  # Unified property replaces getattr() chain
+            "run_date"    : job.run_date,
+            "created_date": job.created_date
+        },
+        "interactions"      : [],
+        "interaction_count" : 0
+    }
+
+    # Query notifications by job_id (direct lookup - much simpler than time-window)
+    try:
+        with get_db() as db:
+            print( f"[API] Querying notifications for job_id={job_id}" )
+
+            notifications = db.query( Notification ).filter(
+                Notification.job_id == job_id
+            ).order_by( Notification.created_at.desc() ).all()
+
+            response["interactions"] = [
+                {
+                    "id"                 : str( n.id ),
+                    "type"               : n.type,
+                    "message"            : n.message,
+                    "timestamp"          : n.created_at.isoformat(),
+                    "response_requested" : n.response_requested,
+                    "response_value"     : n.response_value,
+                    "priority"           : n.priority
+                }
+                for n in notifications
+            ]
+            response["interaction_count"] = len( notifications )
+
+            print( f"[API] Found {len( notifications )} interactions for job {job_id}" )
+
+    except Exception as e:
+        print( f"[API] Error querying notifications: {e}" )
+        # Return empty interactions rather than failing
+        pass
+
+    return response

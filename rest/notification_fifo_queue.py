@@ -16,8 +16,10 @@ class NotificationItem:
                  source: str = "claude_code", user_id: Optional[str] = None,
                  id: Optional[str] = None, title: Optional[str] = None,
                  response_requested: bool = False, response_type: Optional[str] = None,
-                 response_default: Optional[str] = None, timeout_seconds: Optional[int] = None,
-                 sender_id: Optional[str] = None ) -> None:
+                 response_default: Optional[str] = None, response_options: Optional[dict] = None,
+                 timeout_seconds: Optional[int] = None, sender_id: Optional[str] = None,
+                 abstract: Optional[str] = None, suppress_ding: bool = False,
+                 job_id: Optional[str] = None, queue_name: Optional[str] = None ) -> None:
         """
         Initialize a notification item.
 
@@ -33,6 +35,7 @@ class NotificationItem:
             - Initializes tracking fields
             - Stores Phase 2.2 response-required fields
             - Sets sender_id with fallback to unknown sender
+            - Stores abstract for supplementary context
 
         Raises:
             - None
@@ -55,11 +58,24 @@ class NotificationItem:
         self.response_requested = response_requested
         self.response_type      = response_type
         self.response_default   = response_default
+        self.response_options   = response_options  # Multiple-choice options
         self.timeout_seconds    = timeout_seconds
 
         # Sender identification for multi-project grouping
         self.sender_id          = sender_id or "claude.code@unknown.deepily.ai"
-        
+
+        # Supplementary context for notification (plan details, URLs, markdown)
+        self.abstract           = abstract
+
+        # Suppress notification ding (used for conversational TTS from queue operations)
+        self.suppress_ding      = suppress_ding
+
+        # Agentic job ID for routing to job cards (e.g., dr-a1b2c3d4, mock-12345678)
+        self.job_id             = job_id
+
+        # Queue where job is running (run/todo/done) - for provisional job card registration
+        self.queue_name         = queue_name
+
     def _get_local_timestamp( self ) -> str:
         """Get timezone-aware timestamp using configured timezone from ConfigurationManager"""
         try:
@@ -67,24 +83,45 @@ class NotificationItem:
             import fastapi_app.main as main_module
             config_mgr = main_module.config_mgr
             app_debug = main_module.app_debug
-            
-            # Get timezone from config, default to America/New_York (East Coast)  
+
+            # Get timezone from config, default to America/New_York (East Coast)
             timezone_name = config_mgr.get( "app_timezone", default="America/New_York" )
-            
+
             if app_debug: print( f"[TIMEZONE-DEBUG] NotificationItem using timezone: {timezone_name}" )
-            
+
             # Use existing util function for timezone-aware datetime, then convert to ISO format
             tz_date = du.get_current_datetime_raw( tz_name=timezone_name )
             result = tz_date.isoformat()
-            
+
             if app_debug: print( f"[TIMEZONE-DEBUG] NotificationItem timestamp: {result}" )
-            
+
             return result
         except Exception as e:
             # Fallback to UTC if configuration or timezone is invalid
             print( f"[TIMEZONE] Warning: NotificationItem falling back to UTC: {e}" )
-            return datetime.now().isoformat()
-        
+            from datetime import timezone
+            return datetime.now( timezone.utc ).isoformat()
+
+    def _get_time_display( self ) -> str:
+        """Get formatted time with timezone abbreviation (e.g., '14:30 EST') for UI display."""
+        try:
+            # Import here to avoid circular imports
+            import fastapi_app.main as main_module
+            config_mgr = main_module.config_mgr
+
+            # Get timezone from config
+            timezone_name = config_mgr.get( "app_timezone", default="America/New_York" )
+
+            # Get current time in configured timezone
+            tz_date = du.get_current_datetime_raw( tz_name=timezone_name )
+
+            # Format as "HH:MM TZ" (e.g., "14:30 EST")
+            return tz_date.strftime( '%H:%M %Z' )
+        except Exception as e:
+            # Fallback to simple time without timezone
+            print( f"[TIMEZONE] Warning: time_display falling back to simple format: {e}" )
+            return datetime.now().strftime( '%H:%M' )
+
     def to_dict( self ) -> Dict[str, Any]:
         """Convert notification to dictionary for JSON serialization."""
         return {
@@ -97,6 +134,7 @@ class NotificationItem:
             "source"             : self.source,
             "user_id"            : self.user_id,
             "timestamp"          : self.timestamp,
+            "time_display"       : self._get_time_display(),  # "HH:MM TZ" for UI display
             "played"             : self.played,
             "play_count"         : self.play_count,
             "last_played"        : self.last_played,
@@ -104,9 +142,18 @@ class NotificationItem:
             "response_requested" : self.response_requested,
             "response_type"      : self.response_type,
             "response_default"   : self.response_default,
+            "response_options"   : self.response_options,  # Multiple-choice options
             "timeout_seconds"    : self.timeout_seconds,
             # Sender identification
-            "sender_id"          : self.sender_id
+            "sender_id"          : self.sender_id,
+            # Supplementary context
+            "abstract"           : self.abstract,
+            # Suppress notification ding (conversational TTS)
+            "suppress_ding"      : self.suppress_ding,
+            # Agentic job ID for routing to job cards
+            "job_id"             : self.job_id,
+            # Queue where job is running (for provisional job card registration)
+            "queue_name"         : self.queue_name
         }
 
 
@@ -195,8 +242,10 @@ class NotificationFifoQueue( FifoQueue ):
                          source: str = "claude_code", user_id: Optional[str] = None,
                          id: Optional[str] = None, title: Optional[str] = None,
                          response_requested: bool = False, response_type: Optional[str] = None,
-                         response_default: Optional[str] = None, timeout_seconds: Optional[int] = None,
-                         sender_id: Optional[str] = None ) -> NotificationItem:
+                         response_default: Optional[str] = None, response_options: Optional[dict] = None,
+                         timeout_seconds: Optional[int] = None, sender_id: Optional[str] = None,
+                         abstract: Optional[str] = None, suppress_ding: bool = False,
+                         job_id: Optional[str] = None, queue_name: Optional[str] = None ) -> NotificationItem:
         """
         Push a notification with priority handling and io_tbl logging.
 
@@ -212,11 +261,12 @@ class NotificationFifoQueue( FifoQueue ):
             - Auto-emits WebSocket event via parent class
             - Includes Phase 2.2 response-required fields if provided
             - Sets sender_id for multi-project grouping
+            - Includes abstract for supplementary context if provided
 
         Raises:
             - None (handles errors gracefully)
         """
-        # Create notification item with Phase 2.2 fields and sender_id
+        # Create notification item with Phase 2.2 fields, sender_id, abstract, and suppress_ding
         notification = NotificationItem(
             message            = message,
             type               = type,
@@ -228,8 +278,13 @@ class NotificationFifoQueue( FifoQueue ):
             response_requested = response_requested,
             response_type      = response_type,
             response_default   = response_default,
+            response_options   = response_options,  # Multiple-choice options
             timeout_seconds    = timeout_seconds,
-            sender_id          = sender_id
+            sender_id          = sender_id,
+            abstract           = abstract,
+            suppress_ding      = suppress_ding,
+            job_id             = job_id,
+            queue_name         = queue_name
         )
         
         # Priority handling - urgent/high go to front, but after other urgent/high

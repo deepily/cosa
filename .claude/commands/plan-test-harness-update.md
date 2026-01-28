@@ -16,7 +16,7 @@ allowed-tools: Bash(.*), TodoWrite, Read, Write, Edit, Grep, Glob
 **Identity**:
 - **Prefix**: [COSA]
 - **Project Name**: COSA (Collection of Small Agents)
-- **Working Directory**: /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa
+- **Working Directory**: /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa
 
 **Paths**:
 - **Reports Directory**: tests/results/reports
@@ -39,7 +39,7 @@ allowed-tools: Bash(.*), TodoWrite, Read, Write, Edit, Grep, Glob
 1. **MUST use the following project-specific configuration**:
    - **[SHORT_PROJECT_PREFIX]**: [COSA]
    - **Project Name**: COSA (Collection of Small Agents)
-   - **Working Directory**: /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa
+   - **Working Directory**: /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa
    - **Date Range**: Last 7 days (default), or parse user-provided date/range
    - **Component Classification**: See above
    - Do NOT proceed without these parameters

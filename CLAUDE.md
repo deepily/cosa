@@ -21,13 +21,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Run COSA modules from the cosa directory:
   ```bash
   # First, add the parent src directory to PYTHONPATH
-  export PYTHONPATH="/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src:$PYTHONPATH"
+  export PYTHONPATH="/mnt/DATA01/include/www.deepily.ai/projects/lupin/src:$PYTHONPATH"
   # Then you can run modules like:
   python -m cosa.agents.foo_bar
   ```
 
 ## Memories
-- Don't forget to add the following path to the Python path environment variable so that you can call Cosa objects from within the Cosa Directory: `Bash(export PYTHONPATH="/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src:$PYTHONPATH"`
+- Don't forget to add the following path to the Python path environment variable so that you can call Cosa objects from within the Cosa Directory: `Bash(export PYTHONPATH="/mnt/DATA01/include/www.deepily.ai/projects/lupin/src:$PYTHONPATH"`
 - The configuration manager always needs an environment variable when it's instantiated, like this `self.config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )`
 - Every time that you add, modify or delete a new key value pair to the configuration manager contained `lupin-app.ini` I want you to make sure that there is an explainer value provided for the same key value in `lupin-app-splainer.ini`
 - When you start up, I want you to read two Two history files: 1) The history file that is at your repo root, and 2) The history file contained within the parent `Genie in the box project` root found in `../..` These two histories are related.

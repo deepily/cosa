@@ -417,7 +417,8 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
             "token_refresh_check_interval_ms": 600000,    # 10 mins in milliseconds
             "token_expiry_threshold_secs": 300,           # 5 mins in seconds
             "token_refresh_dedup_window_ms": 60000,       # 60 secs in milliseconds
-            "websocket_heartbeat_interval_secs": 30       # Reference value (secs)
+            "websocket_heartbeat_interval_secs": 30,      # Reference value (secs)
+            "app_timezone": "America/New_York"            # IANA timezone for display
         }
 
     Example:
@@ -429,7 +430,8 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
             "token_refresh_check_interval_ms": 600000,
             "token_expiry_threshold_secs": 300,
             "token_refresh_dedup_window_ms": 60000,
-            "websocket_heartbeat_interval_secs": 30
+            "websocket_heartbeat_interval_secs": 30,
+            "app_timezone": "America/New_York"
         }
     """
     # Note: user_id parameter required by Depends() - validates JWT token
@@ -454,6 +456,10 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
         "websocket_heartbeat_interval_seconds",
         default=30
     )
+    app_timezone = config_mgr.get(
+        "app_timezone",
+        default="America/New_York"
+    )
 
     return {
         # Convert minutes → milliseconds (for setInterval)
@@ -466,5 +472,8 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
         "token_refresh_dedup_window_ms": int( dedup_window_secs * 1000 ),
 
         # Already in seconds (reference value for logging/debugging)
-        "websocket_heartbeat_interval_secs": int( heartbeat_interval_secs )
+        "websocket_heartbeat_interval_secs": int( heartbeat_interval_secs ),
+
+        # IANA timezone name for client-side date/time formatting
+        "app_timezone": app_timezone
     }

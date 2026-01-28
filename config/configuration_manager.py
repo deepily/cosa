@@ -48,7 +48,7 @@ def singleton( cls: type ) -> Callable[..., Any]:
                 print( "No ConfigurationManager() singleton instance to reset" )
         
         if cls not in instances:
-            print( "Instantiating ConfigurationManager() singleton...", end="\n\n" )
+            # print( "Instantiating ConfigurationManager() singleton...", end="\n\n" )
             instances[ cls ] = cls( *args, **kwargs )
         else:
             if instances[ cls ].get( "app_debug", default=False, return_type="boolean" ):
@@ -815,8 +815,11 @@ class ConfigurationManager():
         return_type = return_type.lower()
 
         if return_type == "boolean":
-            # Allow the default value to be passed in as a Boolean or as a string
-            return value == "True" or value is True
+            # Handle already-boolean values
+            if isinstance( value, bool ):
+                return value
+            # Case-insensitive string comparison
+            return str( value ).lower() == "true"
         elif return_type == "float":
             return float( value )
         elif return_type.startswith( "int" ):

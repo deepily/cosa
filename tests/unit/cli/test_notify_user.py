@@ -271,7 +271,7 @@ class TestNotifyUser( unittest.TestCase ):
             
             # Verify error messages
             mock_print.assert_any_call( f"✗ Connection error: Cannot reach server at {self.test_server_url}" )
-            mock_print.assert_any_call( "  Check that Lupin is running and COSA_APP_SERVER_URL is correct" )
+            mock_print.assert_any_call( "  Check that Lupin is running and LUPIN_APP_SERVER_URL is correct" )
     
     def test_notify_user_timeout_error( self ):
         """
@@ -362,7 +362,7 @@ class TestNotifyUser( unittest.TestCase ):
             result = notify_user( self.test_message )
             
             # Verify environment variable lookup
-            mock_getenv.assert_called_with( "COSA_APP_SERVER_URL", "http://localhost:7999" )
+            mock_getenv.assert_called_with( "LUPIN_APP_SERVER_URL", "http://localhost:7999" )
             
             # Verify trailing slash removed
             call_args = mock_post.call_args
@@ -413,7 +413,7 @@ class TestNotifyUser( unittest.TestCase ):
             
             # Verify error messages
             mock_print.assert_any_call( "❌ Environment validation failed:" )
-            mock_print.assert_any_call( "  - COSA_APP_SERVER_URL must start with http:// or https://" )
+            mock_print.assert_any_call( "  - LUPIN_APP_SERVER_URL must start with http:// or https://" )
     
     def test_validate_environment_invalid_url_format( self ):
         """

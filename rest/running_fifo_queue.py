@@ -3,6 +3,7 @@ from cosa.agents.receptionist_agent import ReceptionistAgent
 from cosa.agents.weather_agent import WeatherAgent
 from cosa.rest.fifo_queue import FifoQueue
 from cosa.agents.agent_base import AgentBase
+from cosa.agents.agentic_job_base import AgenticJobBase
 from cosa.memory.input_and_output_table import InputAndOutputTable
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.memory.gist_normalizer import GistNormalizer
@@ -146,9 +147,14 @@ class RunningFifoQueue( FifoQueue ):
             truncated_question = du.truncate_string( running_job.last_question_asked, max_len=64 )
 
             run_timer = sw.Stopwatch( "Starting job run timer..." )
-            
+
             # Process based on job type
-            if isinstance( running_job, AgentBase ):
+            # IMPORTANT: Check AgenticJobBase FIRST since it's a separate hierarchy from AgentBase
+            if isinstance( running_job, AgenticJobBase ):
+                # Agentic jobs (Deep Research, Podcast, etc.) - long-running, non-cacheable
+                running_job = self._handle_agentic_job( running_job, truncated_question, run_timer )
+
+            elif isinstance( running_job, AgentBase ):
                 # NEW: Check cache BEFORE agent execution
                 question = running_job.last_question_asked
 
@@ -164,7 +170,8 @@ class RunningFifoQueue( FifoQueue ):
                     if self.debug: print( f"[CACHE] 🎯 CACHE HIT: Found cached solution from {cached_snapshot.run_date} (score: {score:.1f}%)" )
 
                     # Convert cached snapshot to proper format and use it
-                    running_job = self._format_cached_result( cached_snapshot, truncated_question, run_timer )
+                    # Pass original running_job to get current user context for done queue
+                    running_job = self._format_cached_result( cached_snapshot, running_job, truncated_question, run_timer )
                 else:
                     # CACHE MISS - Continue with normal agent execution
                     if self.debug: print( f"[CACHE] ❌ CACHE MISS: Running agent for new question" )
@@ -206,29 +213,124 @@ class RunningFifoQueue( FifoQueue ):
         for line in response[ "output" ].split( "\n" ): print( line )
         
         self.pop()  # Auto-emits 'run_update'
-        
-        self._emit_speech( "I'm sorry Dave, I'm afraid I can't do that. Please check your logs", job=running_job )
-        
+
+        # TTS Migration (Session 97): Use notification service instead of _emit_speech
+        self._notify( "I'm sorry Dave, I'm afraid I can't do that. Please check your logs", job=running_job, priority="urgent" )
+
         self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
-        
+
         return running_job
-    
+
+    def _handle_agentic_job( self, running_job: AgenticJobBase, truncated_question: str, job_timer: sw.Stopwatch ) -> Any:
+        """
+        Handle execution of AgenticJobBase instances (Deep Research, Podcast, etc.).
+
+        Agentic jobs are long-running background tasks that:
+        - Run for minutes (not seconds)
+        - Send progress notifications during execution
+        - Don't cache results (each run is unique)
+        - Generate artifacts (reports, audio files, etc.)
+
+        Requires:
+            - running_job is an AgenticJobBase instance
+            - truncated_question is a string
+            - job_timer is a running Stopwatch
+
+        Ensures:
+            - Executes job's do_all() method
+            - Moves job to done queue on success, dead queue on failure
+            - NO snapshot caching (is_cacheable = False)
+            - Emits speech with conversational answer
+            - Returns the job instance
+
+        Raises:
+            - None (exceptions handled internally)
+        """
+        msg = f"Running AgenticJob [{running_job.JOB_TYPE}] for [{truncated_question}]..."
+        du.print_banner( msg=msg, prepend_nl=True )
+
+        try:
+            # Execute the job (synchronous wrapper around async execution)
+            formatted_output = running_job.do_all()
+
+            du.print_banner( f"AgenticJob [{running_job.id_hash}] complete!", prepend_nl=True, end="\n" )
+            job_timer.print( "Done!", use_millis=True )
+
+            if running_job.code_ran_to_completion() and running_job.formatter_ran_to_completion():
+                # Success path
+                # TTS Migration (Session 97): Use notification service instead of _emit_speech
+                self._notify( running_job.answer_conversational, job=running_job )
+
+                # Move through queue system
+                self.pop()  # Auto-emits 'run_update'
+                self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
+
+                # Log to I/O table (skip if not available)
+                try:
+                    self.io_tbl.insert_io_row(
+                        input_type   = running_job.routing_command,
+                        input        = running_job.last_question_asked,
+                        output_raw   = str( running_job.artifacts ),
+                        output_final = running_job.answer_conversational
+                    )
+                except Exception as io_e:
+                    if self.debug: print( f"[AGENTIC] I/O table write skipped: {io_e}" )
+
+            else:
+                # Job reported failure via status
+                error_msg = running_job.error or "Unknown error"
+                du.print_banner( f"AgenticJob failed: {error_msg}", prepend_nl=True )
+
+                # TTS Migration (Session 97): Use notification service instead of _emit_speech
+                self._notify(
+                    f"The {running_job.JOB_TYPE} job encountered an error: {error_msg[ :100 ]}",
+                    job=running_job,
+                    priority="urgent"
+                )
+
+                self.pop()  # Auto-emits 'run_update'
+                self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
+
+        except Exception as e:
+            # Unexpected exception during execution
+            du.print_stack_trace(
+                e,
+                explanation=f"AgenticJob do_all() failed",
+                caller="RunningFifoQueue._handle_agentic_job()",
+                debug=self.debug
+            )
+
+            running_job.status = "failed"
+            running_job.error  = str( e )
+
+            # TTS Migration (Session 97): Use notification service instead of _emit_speech
+            self._notify(
+                f"The {running_job.JOB_TYPE} job crashed unexpectedly. Please check the logs.",
+                job=running_job,
+                priority="urgent"
+            )
+
+            self.pop()  # Auto-emits 'run_update'
+            self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
+
+        return running_job
+
     def _handle_base_agent( self, running_job: AgentBase, truncated_question: str, agent_timer: sw.Stopwatch ) -> Any:
         """
         Handle execution of AgentBase instances.
-        
+
         Requires:
             - running_job is an AgentBase instance
             - truncated_question is a string
             - agent_timer is a running Stopwatch
-            
+
         Ensures:
             - Executes agent's do_all() method
             - Handles serialization for eligible agents
             - Updates queues and database
             - Emits socket updates
             - Returns the job (possibly converted to SolutionSnapshot)
-            
+
         Raises:
             - Catches and handles all exceptions internally
         """
@@ -251,9 +353,10 @@ class RunningFifoQueue( FifoQueue ):
         du.print_banner( f"Job [{running_job.last_question_asked}] complete...", prepend_nl=True, end="\n" )
         
         if running_job.code_ran_to_completion() and running_job.formatter_ran_to_completion():
-            
+
             # If we've arrived at this point, then we've successfully run the agentic part of this job
-            self._emit_speech( running_job.answer_conversational, job=running_job )
+            # TTS Migration (Session 97): Use notification service instead of _emit_speech
+            self._notify( running_job.answer_conversational, job=running_job )
             agent_timer.print( "Done!", use_millis=True )
 
             # Only the ReceptionistAgent and WeatherAgent are not being serialized as a solution snapshot
@@ -334,8 +437,9 @@ class RunningFifoQueue( FifoQueue ):
 
         formatted_output = running_job.run_formatter()
         print( formatted_output )
-        self._emit_speech( running_job.answer_conversational, job=running_job )
-        
+        # TTS Migration (Session 97): Use notification service instead of _emit_speech
+        self._notify( running_job.answer_conversational, job=running_job )
+
         self.pop()  # Auto-emits 'run_update'
         self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
 
@@ -371,21 +475,23 @@ class RunningFifoQueue( FifoQueue ):
         
         return running_job
 
-    def _format_cached_result( self, cached_snapshot: Any, truncated_question: str, run_timer: sw.Stopwatch ) -> Any:
+    def _format_cached_result( self, cached_snapshot: Any, original_job: Any, truncated_question: str, run_timer: sw.Stopwatch ) -> Any:
         """
         Format cached snapshot result to behave like a freshly executed job.
 
         Requires:
             - cached_snapshot is a valid SolutionSnapshot with results
+            - original_job is the job from which to get current user context
             - truncated_question is a string for logging
             - run_timer is a running Stopwatch
 
         Ensures:
             - Emits speech for cached result
-            - Updates queues (moves to done queue)
+            - Updates queues (moves user-contextualized copy to done queue)
+            - Records replay on canonical snapshot for analytics
             - Emits websocket updates
             - Updates runtime stats
-            - Returns a properly formatted cached result
+            - Returns a properly formatted cached result with current user context
 
         Raises:
             - None (handles errors gracefully)
@@ -393,28 +499,58 @@ class RunningFifoQueue( FifoQueue ):
         msg = f"Using CACHED result for [{truncated_question}]..."
         du.print_banner( msg=msg, prepend_nl=True )
 
-        # Emit the cached answer as speech
-        self._emit_speech( cached_snapshot.answer_conversational, job=cached_snapshot )
+        # Calculate time saved (first_run_ms - current cache retrieval time)
+        run_timer.stop()
+        cache_retrieval_ms = run_timer.get_elapsed_millis()
+        first_run_ms       = cached_snapshot.runtime_stats.get( "first_run_ms", 0 )
+        time_saved_ms      = max( 0, first_run_ms - cache_retrieval_ms )
+
+        # Get current user context from original job
+        current_user_id    = getattr( original_job, 'user_id', '' )
+        current_session_id = getattr( original_job, 'session_id', '' )
+
+        # Record replay on canonical snapshot (updates LanceDB record for analytics)
+        cached_snapshot.record_replay(
+            user_id=current_user_id,
+            session_id=current_session_id,
+            time_saved_ms=time_saved_ms
+        )
+
+        # Update runtime stats on canonical snapshot
+        cached_snapshot.update_runtime_stats( run_timer )
+
+        # Persist updated stats to LanceDB (canonical snapshot with replay history)
+        self.snapshot_mgr.save_snapshot( cached_snapshot )
+
+        # Create user-contextualized copy for done queue (FIX: use current user, not original creator)
+        done_queue_entry = cached_snapshot.for_current_user(
+            user_id=current_user_id,
+            session_id=current_session_id
+        )
+
+        # FIX (Session 98): Preserve original job's id_hash for user association matching
+        # The user_job_tracker has association: original_job.id_hash -> user_id
+        # Without this fix, done queue filter returns 0 jobs because cached snapshot has different id_hash
+        done_queue_entry.id_hash = original_job.id_hash
+
+        # Emit the cached answer as speech (use done_queue_entry for routing)
+        # TTS Migration (Session 97): Use notification service instead of _emit_speech
+        self._notify( cached_snapshot.answer_conversational, job=done_queue_entry )
 
         # Move job through the queue system properly
         self.pop()  # Remove from running queue, auto-emits 'run_update'
-        self.jobs_done_queue.push( cached_snapshot )  # Add to done queue, auto-emits 'done_update'
+        self.jobs_done_queue.push( done_queue_entry )  # Add COPY to done queue, auto-emits 'done_update'
 
-        # Update runtime stats to show this was a cache hit
         run_timer.print( "CACHE HIT - result retrieved in ", use_millis=True )
-        cached_snapshot.update_runtime_stats( run_timer )
-
-        # Persist updated runtime stats to LanceDB (fixes runtime stats not persisting on cache hits)
-        self.snapshot_mgr.save_snapshot( cached_snapshot )
-
-        # Update the run_date to current time to show when it was retrieved
-        cached_snapshot.run_date = cached_snapshot.get_timestamp()
+        print( f"⏱️ Time saved by cache hit: {time_saved_ms}ms" )
 
         du.print_banner( f"CACHED Job [{cached_snapshot.question}] complete!", prepend_nl=True, end="\n" )
 
         if self.debug:
             du.print_banner( "cached_snapshot.runtime_stats", prepend_nl=True )
             pprint.pprint( cached_snapshot.runtime_stats )
+            print( f"Done queue entry user_id: {done_queue_entry.user_id} (current user)" )
+            print( f"Canonical snapshot user_id: {cached_snapshot.user_id} (original creator)" )
 
         # Write to database to track cache hit
         self.io_tbl.insert_io_row(
@@ -424,7 +560,7 @@ class RunningFifoQueue( FifoQueue ):
             output_final=cached_snapshot.answer_conversational
         )
 
-        return cached_snapshot
+        return done_queue_entry
 
 def quick_smoke_test():
     """

@@ -99,9 +99,13 @@ class PromptTemplateProcessor:
         xml_example = self.get_example_for_agent( routing_command )
         
         if xml_example:
-            processed = template.replace( '{{PYDANTIC_XML_EXAMPLE}}', xml_example )
+            # Append </stop> sentinel for vLLM stop token termination
+            # This ensures LLM generates complete XML (including </response>) before stopping
+            # The </stop> token is configured in model params as the stop sequence
+            xml_with_sentinel = xml_example.rstrip() + "</stop>"
+            processed = template.replace( '{{PYDANTIC_XML_EXAMPLE}}', xml_with_sentinel )
             if self.debug:
-                print( f"✓ Replaced XML marker with {len(xml_example)} chars of XML" )
+                print( f"✓ Replaced XML marker with {len(xml_with_sentinel)} chars of XML (includes </stop> sentinel)" )
             return processed
         else:
             if self.debug:
@@ -153,8 +157,9 @@ class PromptTemplateProcessor:
             assert '{{PYDANTIC_XML_EXAMPLE}}' not in processed, "Marker not replaced"
             assert '<response>' in processed, "XML not injected"
             assert '<brainstorm>' in processed, "Math agent specific XML missing"
+            assert '</stop>' in processed, "Sentinel marker not added"
             if debug:
-                print( "    ✓ Template marker replacement works" )
+                print( "    ✓ Template marker replacement works (with </stop> sentinel)" )
             
             # Test 3: Template without marker (should pass through)
             if debug:

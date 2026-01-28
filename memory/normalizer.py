@@ -147,9 +147,9 @@ class Normalizer:
         # Initialize configuration manager
         self._config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         
-        # Get debug and verbose from config
-        self.debug   = self._config_mgr.get( "app_debug", False )
-        self.verbose = self._config_mgr.get( "app_verbose", False )
+        # Get debug and verbose from config (must specify return_type="boolean")
+        self.debug   = self._config_mgr.get( "app_debug", False, return_type="boolean" )
+        self.verbose = self._config_mgr.get( "app_verbose", False, return_type="boolean" )
         
         # Get spaCy model name from config
         model_name = self._config_mgr.get( "spacy model name", "en_core_web_sm" )
@@ -215,7 +215,7 @@ class Normalizer:
             # Check if token text (lowercased) is a filler word
             if token.text.lower() not in self.FILLER_WORDS:
                 tokens.append( token )
-            elif self.debug:
+            elif self.debug and self.verbose:
                 print( f"Removing filler: '{token.text}'" )
                 
         return tokens

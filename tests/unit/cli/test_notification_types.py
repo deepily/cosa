@@ -248,7 +248,7 @@ class TestNotificationTypes( unittest.TestCase ):
         self.assertTrue( ENV_CLI_PATH.startswith( "COSA_" ) )
         
         # Test server URL environment variable
-        self.assertEqual( ENV_SERVER_URL, "COSA_APP_SERVER_URL" )
+        self.assertEqual( ENV_SERVER_URL, "LUPIN_APP_SERVER_URL" )
         self.assertIsInstance( ENV_SERVER_URL, str )
         self.assertTrue( ENV_SERVER_URL.startswith( "COSA_" ) )
         

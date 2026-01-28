@@ -17,7 +17,7 @@ allowed-tools: Bash(.*), TodoWrite, Read, Write, Edit
 **Identity**:
 - **Prefix**: [COSA]
 - **Project Name**: COSA (Collection of Small Agents)
-- **Working Directory**: /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa
+- **Working Directory**: /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa
 
 **Paths**:
 - **Logs Directory**: tests/results/logs
@@ -32,7 +32,7 @@ allowed-tools: Bash(.*), TodoWrite, Read, Write, Edit
 **Health Checks**: None required (framework library, no running services)
 
 **Environment**:
-- **PYTHONPATH**: /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src
+- **PYTHONPATH**: /mnt/DATA01/include/www.deepily.ai/projects/lupin/src
 
 ---
 
@@ -43,7 +43,7 @@ allowed-tools: Bash(.*), TodoWrite, Read, Write, Edit
 1. **MUST use the following project-specific configuration**:
    - **[SHORT_PROJECT_PREFIX]**: [COSA]
    - **Project Name**: COSA (Collection of Small Agents)
-   - **Working Directory**: /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa
+   - **Working Directory**: /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa
    - **Paths**:
      - Logs Directory: tests/results/logs
      - Reports Directory: tests/results/reports
@@ -53,7 +53,7 @@ allowed-tools: Bash(.*), TodoWrite, Read, Write, Edit
      - Unit: ./tests/unit/scripts/run-cosa-unit-tests.sh
    - **Health Checks**: None required (framework library, no running services)
    - **Environment**:
-     - PYTHONPATH: /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src
+     - PYTHONPATH: /mnt/DATA01/include/www.deepily.ai/projects/lupin/src
    - Do NOT proceed without these parameters
 
 2. **MUST read the canonical workflow document**:

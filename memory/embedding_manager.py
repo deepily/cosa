@@ -229,7 +229,7 @@ class EmbeddingManager:
         if normalize_for_cache:
             cache_key = self.normalize_text_for_cache( text )
             text_for_embedding = cache_key  # Generate embedding for normalized text
-            if self.debug:
+            if self.debug and self.verbose:
                 print( f"[EMBED-DEBUG] Original: '{du.truncate_string( text, 60 )}'" )
                 print( f"[EMBED-DEBUG] Normalized: '{du.truncate_string( cache_key, 60 )}'" )
         else:
@@ -250,7 +250,7 @@ class EmbeddingManager:
             print( f"Cache MISS for key: '{du.truncate_string( cache_key )}', generating new embedding..." )
         
         # Generate embedding for the text_for_embedding (which may be normalized)
-        timer = sw.Stopwatch( msg=f"Generating embedding for [{du.truncate_string( text_for_embedding )}]...", silent=False )
+        timer = sw.Stopwatch( msg=f"Generating embedding for [{du.truncate_string( text_for_embedding )}]...", silent=not (self.debug and self.verbose) )
         
         try:
             # Get embedding model name from config - NO FALLBACK

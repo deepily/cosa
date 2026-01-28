@@ -516,6 +516,11 @@ class Notification( Base ):
         nullable=False,
         index=True
     )
+    job_id: Mapped[Optional[str]] = mapped_column(
+        String( 64 ),
+        nullable=True,
+        index=True
+    )  # Agentic job ID for routing - short format (e.g., "dr-a1b2c3d4") or SHA256 hash (64 chars)
 
     # Content
     title: Mapped[Optional[str]] = mapped_column(
@@ -525,6 +530,10 @@ class Notification( Base ):
     message: Mapped[str] = mapped_column(
         Text,
         nullable=False
+    )
+    abstract: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True
     )
     type: Mapped[str] = mapped_column(
         String( 50 ),
@@ -574,6 +583,10 @@ class Notification( Base ):
         String( 255 ),
         nullable=True
     )
+    response_options: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True
+    )
     timeout_seconds: Mapped[Optional[int]] = mapped_column(
         BigInteger,
         nullable=True
@@ -585,6 +598,14 @@ class Notification( Base ):
         nullable=False,
         default="created",
         server_default="created",
+        index=True
+    )
+
+    # Soft delete / archive flag for hiding notifications without deletion
+    is_hidden: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default="false",
         index=True
     )
 

@@ -31,25 +31,28 @@ import re
 # Helper Functions
 # ============================================================================
 
-def extract_sender_from_message( message: str ) -> Optional[str]:
+def extract_sender_from_message( message: str, agent_type: str = "claude.code" ) -> Optional[str]:
     """
     Extract sender ID from message prefix like [LUPIN] or [COSA].
 
     Requires:
         - message is a string
+        - agent_type is a valid agent identifier (e.g., "claude.code", "deep.research")
 
     Ensures:
-        - Returns claude.code@{project}.deepily.ai if [PREFIX] found
+        - Returns {agent_type}@{project}.deepily.ai if [PREFIX] found
         - Returns None if no prefix found
         - Project name is lowercased
 
     Examples:
         "[LUPIN] Build complete" -> "claude.code@lupin.deepily.ai"
         "[COSA] Tests passed"    -> "claude.code@cosa.deepily.ai"
+        "[LUPIN] Research done", "deep.research" -> "deep.research@lupin.deepily.ai"
         "No prefix message"      -> None
 
     Args:
         message: Notification message text
+        agent_type: Agent type identifier (default: "claude.code")
 
     Returns:
         str or None: Sender ID in email format, or None if no prefix
@@ -57,8 +60,58 @@ def extract_sender_from_message( message: str ) -> Optional[str]:
     match = re.match( r'^\[([A-Z]+)\]', message )
     if match:
         project = match.group( 1 ).lower()
-        return f"claude.code@{project}.deepily.ai"
+        return f"{agent_type}@{project}.deepily.ai"
     return None
+
+
+def parse_sender_id( sender_id: str ) -> dict:
+    """
+    Parse sender_id into components (backward compatible).
+
+    Requires:
+        - sender_id is a string in format: agent@project.deepily.ai
+          or agent@project.deepily.ai#session_id
+
+    Ensures:
+        - Returns dict with agent_type, project, session_id, full_sender_id, base_sender_id
+        - session_id is None for old format (backward compatible)
+        - Works with both old and new formats
+
+    Examples:
+        parse_sender_id( "claude.code@lupin.deepily.ai" )
+        -> { "agent_type": "claude.code", "project": "lupin", "session_id": None, ... }
+
+        parse_sender_id( "claude.code@lupin.deepily.ai#a1b2c3d4" )
+        -> { "agent_type": "claude.code", "project": "lupin", "session_id": "a1b2c3d4", ... }
+
+    Args:
+        sender_id: Full sender_id string
+
+    Returns:
+        dict with parsed components
+    """
+    # Handle new format with session_id
+    if "#" in sender_id:
+        base, session_id = sender_id.rsplit( "#", 1 )
+    else:
+        base = sender_id
+        session_id = None
+
+    # Parse agent type and project
+    try:
+        agent_part, domain = base.split( "@", 1 )
+        project = domain.split( "." )[ 0 ]
+    except ( ValueError, IndexError ):
+        agent_part = "unknown"
+        project = "unknown"
+
+    return {
+        "agent_type"     : agent_part,
+        "project"        : project,
+        "session_id"     : session_id,
+        "full_sender_id" : sender_id,
+        "base_sender_id" : base
+    }
 
 
 # ============================================================================
@@ -85,6 +138,7 @@ class ResponseType(str, Enum):
     """Response type for notifications."""
     YES_NO = "yes_no"
     OPEN_ENDED = "open_ended"
+    MULTIPLE_CHOICE = "multiple_choice"
 
 
 # ============================================================================
@@ -157,8 +211,36 @@ class NotificationRequest(BaseModel):
 
     sender_id: Optional[str] = Field(
         default=None,
-        pattern=r'^claude\.code@[a-z]+\.deepily\.ai$',
-        description="Sender ID (e.g., claude.code@lupin.deepily.ai). Auto-extracted from [PREFIX] if not provided."
+        pattern=r'^[a-z]+\.[a-z]+@[a-z]+\.deepily\.ai(#([a-f0-9]{8}|[a-z]+(-[a-z]+)*|[a-z]+-[a-f0-9]{8}))?$',
+        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, deep.research@lupin.deepily.ai#dr-a0ebba60). Supports hex suffix, hyphenated topic, or job ID (prefix-hex)."
+    )
+
+    response_options: Optional[dict] = Field(
+        default=None,
+        description="Options for multiple_choice type. Structure: {questions: [{question, header, multi_select, options: [{label, description}]}]}"
+    )
+
+    abstract: Optional[str] = Field(
+        default=None,
+        max_length=5000,
+        description="Supplementary context for the notification (plan details, URLs, markdown). Displayed alongside message in action-required cards."
+    )
+
+    session_name: Optional[str] = Field(
+        default=None,
+        max_length=50,
+        description="Human-readable session name (e.g., 'cats vs dogs comparison'). If provided, used instead of auto-generated name in UI."
+    )
+
+    job_id: Optional[str] = Field(
+        default=None,
+        pattern=r'^([a-z]+-[a-f0-9]{8}|[a-f0-9]{64})$',
+        description="Agentic job ID for routing notifications to job cards. Accepts short format (e.g., 'dr-a1b2c3d4') or SHA256 hash (64 hex chars)."
+    )
+
+    suppress_ding: bool = Field(
+        default=False,
+        description="Suppress notification sound (ding) while still speaking message via TTS. Used for conversational TTS from queue operations where interruption ding is undesirable."
     )
 
     @field_validator( 'message' )
@@ -181,6 +263,47 @@ class NotificationRequest(BaseModel):
         if not stripped:
             raise ValueError( 'Message cannot be empty or whitespace-only' )
         return stripped
+
+    @field_validator( 'response_options' )
+    @classmethod
+    def validate_multiple_choice_options( cls, v: Optional[dict], info ) -> Optional[dict]:
+        """
+        Validate response_options for multiple_choice type.
+
+        Requires:
+            - v is None or a dict with 'questions' array
+            - Each question has 'question', 'header', 'multi_select', 'options'
+            - Each option has 'label' and optional 'description'
+
+        Ensures:
+            - Returns validated dict or None
+            - Raises ValueError if structure is invalid
+
+        Raises:
+            - ValueError if options structure is malformed
+        """
+        if v is None:
+            return v
+
+        response_type = info.data.get( 'response_type' )
+        if response_type == ResponseType.MULTIPLE_CHOICE:
+            if 'questions' not in v or not isinstance( v['questions'], list ):
+                raise ValueError( "response_options must have 'questions' array for multiple_choice type" )
+
+            for i, q in enumerate( v['questions'] ):
+                if not isinstance( q, dict ):
+                    raise ValueError( f"Question {i} must be a dict" )
+                if 'question' not in q:
+                    raise ValueError( f"Question {i} missing 'question' field" )
+                if 'options' not in q or not isinstance( q['options'], list ):
+                    raise ValueError( f"Question {i} missing 'options' array" )
+                if len( q['options'] ) < 2 or len( q['options'] ) > 20:
+                    raise ValueError( f"Question {i} must have 2-20 options" )
+                for j, opt in enumerate( q['options'] ):
+                    if not isinstance( opt, dict ) or 'label' not in opt:
+                        raise ValueError( f"Question {i} option {j} must have 'label'" )
+
+        return v
 
     @field_validator( 'response_default' )
     @classmethod
@@ -251,6 +374,27 @@ class NotificationRequest(BaseModel):
             resolved_sender_id = extract_sender_from_message( self.message )
         if resolved_sender_id:
             params["sender_id"] = resolved_sender_id
+
+        # Add response_options for multiple_choice type (JSON serialized)
+        if self.response_options is not None:
+            import json
+            params["response_options"] = json.dumps( self.response_options )
+
+        # Add abstract for supplementary context
+        if self.abstract is not None:
+            params["abstract"] = self.abstract
+
+        # Add session_name for UI display
+        if self.session_name is not None:
+            params["session_name"] = self.session_name
+
+        # Add job_id for routing to job cards
+        if self.job_id is not None:
+            params["job_id"] = self.job_id
+
+        # Add suppress_ding for conversational TTS (skip notification sound)
+        if self.suppress_ding:
+            params["suppress_ding"] = "true"
 
         return params
 
@@ -457,8 +601,37 @@ class AsyncNotificationRequest(BaseModel):
 
     sender_id: Optional[str] = Field(
         default=None,
-        pattern=r'^claude\.code@[a-z]+\.deepily\.ai$',
-        description="Sender ID (e.g., claude.code@lupin.deepily.ai). Auto-extracted from [PREFIX] if not provided."
+        pattern=r'^[a-z]+\.[a-z]+@[a-z]+\.deepily\.ai(#([a-f0-9]{8}|[a-z]+(-[a-z]+)*|[a-z]+-[a-f0-9]{8}))?$',
+        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, deep.research@lupin.deepily.ai#dr-a0ebba60). Supports hex suffix, hyphenated topic, or job ID (prefix-hex)."
+    )
+
+    abstract: Optional[str] = Field(
+        default=None,
+        max_length=5000,
+        description="Supplementary context for the notification (plan details, URLs, markdown). Displayed alongside message in action-required cards."
+    )
+
+    session_name: Optional[str] = Field(
+        default=None,
+        max_length=50,
+        description="Human-readable session name (e.g., 'cats vs dogs comparison'). If provided, used instead of auto-generated name in UI."
+    )
+
+    job_id: Optional[str] = Field(
+        default=None,
+        pattern=r'^([a-z]+-[a-f0-9]{8}|[a-f0-9]{64})$',
+        description="Agentic job ID for routing notifications to job cards. Accepts short format (e.g., 'dr-a1b2c3d4') or SHA256 hash (64 hex chars)."
+    )
+
+    suppress_ding: bool = Field(
+        default=False,
+        description="Suppress notification sound (ding) while still speaking message via TTS. Used for conversational TTS from queue operations where interruption ding is undesirable."
+    )
+
+    queue_name: Optional[str] = Field(
+        default=None,
+        pattern=r'^(run|todo|done|dead)$',
+        description="Queue where job is running (run/todo/done/dead). Used for provisional job card registration when notifications arrive before job is fetched."
     )
 
     @field_validator( 'message' )
@@ -513,6 +686,26 @@ class AsyncNotificationRequest(BaseModel):
             resolved_sender_id = extract_sender_from_message( self.message )
         if resolved_sender_id:
             params["sender_id"] = resolved_sender_id
+
+        # Add abstract for supplementary context
+        if self.abstract is not None:
+            params["abstract"] = self.abstract
+
+        # Add session_name for UI display
+        if self.session_name is not None:
+            params["session_name"] = self.session_name
+
+        # Add job_id for routing to job cards
+        if self.job_id is not None:
+            params["job_id"] = self.job_id
+
+        # Add suppress_ding for conversational TTS (skip notification sound)
+        if self.suppress_ding:
+            params["suppress_ding"] = "true"
+
+        # Add queue_name for provisional job card registration
+        if self.queue_name is not None:
+            params["queue_name"] = self.queue_name
 
         return params
 
@@ -597,3 +790,250 @@ class AsyncNotificationResponse(BaseModel):
             bool: True if error occurred
         """
         return self.status in ("error", "connection_error", "timeout")
+
+
+# ============================================================================
+# Smoke Test
+# ============================================================================
+
+def quick_smoke_test():
+    """
+    Quick smoke test for notification_models - validates Pydantic models and job_id field.
+
+    Tests:
+        1. NotificationRequest basic creation
+        2. AsyncNotificationRequest basic creation
+        3. job_id validation (valid patterns)
+        4. job_id validation (invalid patterns - should reject)
+        5. job_id inclusion in to_api_params()
+        6. sender_id validation patterns
+        7. Response models creation
+    """
+    import cosa.utils.util as cu
+    from pydantic import ValidationError
+
+    cu.print_banner( "Notification Models Smoke Test", prepend_nl=True )
+
+    tests_passed = 0
+    tests_failed = 0
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Test 1: NotificationRequest basic creation
+    # ─────────────────────────────────────────────────────────────────────────
+    print( "\n1. Testing NotificationRequest basic creation..." )
+    try:
+        req = NotificationRequest(
+            message="Test message",
+            response_type=ResponseType.YES_NO
+        )
+        assert req.message == "Test message"
+        assert req.response_type == ResponseType.YES_NO
+        assert req.job_id is None  # Default
+        print( "   ✓ NotificationRequest created successfully" )
+        tests_passed += 1
+    except Exception as e:
+        print( f"   ✗ Failed: {e}" )
+        tests_failed += 1
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Test 2: AsyncNotificationRequest basic creation
+    # ─────────────────────────────────────────────────────────────────────────
+    print( "\n2. Testing AsyncNotificationRequest basic creation..." )
+    try:
+        async_req = AsyncNotificationRequest(
+            message="Async test message"
+        )
+        assert async_req.message == "Async test message"
+        assert async_req.job_id is None  # Default
+        print( "   ✓ AsyncNotificationRequest created successfully" )
+        tests_passed += 1
+    except Exception as e:
+        print( f"   ✗ Failed: {e}" )
+        tests_failed += 1
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Test 3: job_id validation - valid patterns
+    # ─────────────────────────────────────────────────────────────────────────
+    print( "\n3. Testing job_id validation (valid patterns)..." )
+    valid_job_ids = [
+        "dr-a1b2c3d4",      # Deep Research prefix (short format)
+        "pod-12345678",     # Podcast prefix (short format)
+        "aj-abcdef01",      # Agentic job prefix (short format)
+        "x-00000000",       # Single letter prefix (short format)
+        "61d021320bed364e82d50af9128ddf8e1a63d8680d76ec06b1b03e27d8dee435",  # SHA256 hash (queue job format)
+        "0" * 64,           # All zeros SHA256 (edge case)
+        "f" * 64,           # All f's SHA256 (edge case)
+    ]
+    all_valid_passed = True
+    for job_id in valid_job_ids:
+        try:
+            req = NotificationRequest(
+                message="Test",
+                response_type=ResponseType.YES_NO,
+                job_id=job_id
+            )
+            assert req.job_id == job_id
+            print( f"   ✓ Valid job_id accepted: {job_id}" )
+        except ValidationError as e:
+            print( f"   ✗ Valid job_id rejected: {job_id} - {e}" )
+            all_valid_passed = False
+
+    if all_valid_passed:
+        tests_passed += 1
+    else:
+        tests_failed += 1
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Test 4: job_id validation - invalid patterns (should reject)
+    # ─────────────────────────────────────────────────────────────────────────
+    print( "\n4. Testing job_id validation (invalid patterns - should reject)..." )
+    invalid_job_ids = [
+        "DR-a1b2c3d4",      # Uppercase prefix (invalid)
+        "dr_a1b2c3d4",      # Underscore instead of hyphen
+        "dr-a1b2c3d",       # Too short (7 hex chars for short format)
+        "dr-a1b2c3d4e",     # Too long (9 hex chars for short format)
+        "dr-ABCDEF01",      # Uppercase hex (invalid)
+        "123-a1b2c3d4",     # Numeric prefix (invalid)
+        "dr-ghijklmn",      # Non-hex characters
+        "",                 # Empty string
+        "a" * 63,           # SHA256 too short (63 chars)
+        "a" * 65,           # SHA256 too long (65 chars)
+        "A" * 64,           # SHA256 uppercase (invalid)
+        "g" * 64,           # SHA256 non-hex characters
+    ]
+    all_invalid_rejected = True
+    for job_id in invalid_job_ids:
+        try:
+            req = NotificationRequest(
+                message="Test",
+                response_type=ResponseType.YES_NO,
+                job_id=job_id
+            )
+            print( f"   ✗ Invalid job_id accepted (should reject): {job_id}" )
+            all_invalid_rejected = False
+        except ValidationError:
+            print( f"   ✓ Invalid job_id correctly rejected: {job_id!r}" )
+
+    if all_invalid_rejected:
+        tests_passed += 1
+    else:
+        tests_failed += 1
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Test 5: job_id inclusion in to_api_params()
+    # ─────────────────────────────────────────────────────────────────────────
+    print( "\n5. Testing job_id inclusion in to_api_params()..." )
+    try:
+        # Test NotificationRequest
+        req_with_job = NotificationRequest(
+            message="Test with job_id",
+            response_type=ResponseType.YES_NO,
+            job_id="dr-a1b2c3d4"
+        )
+        params = req_with_job.to_api_params()
+        assert "job_id" in params, "job_id missing from params"
+        assert params["job_id"] == "dr-a1b2c3d4"
+        print( "   ✓ NotificationRequest.to_api_params() includes job_id" )
+
+        # Test AsyncNotificationRequest
+        async_req_with_job = AsyncNotificationRequest(
+            message="Async test with job_id",
+            job_id="pod-12345678"
+        )
+        async_params = async_req_with_job.to_api_params()
+        assert "job_id" in async_params, "job_id missing from async params"
+        assert async_params["job_id"] == "pod-12345678"
+        print( "   ✓ AsyncNotificationRequest.to_api_params() includes job_id" )
+
+        # Test None job_id is excluded
+        req_no_job = NotificationRequest(
+            message="Test without job_id",
+            response_type=ResponseType.YES_NO
+        )
+        params_no_job = req_no_job.to_api_params()
+        assert "job_id" not in params_no_job, "job_id should not be in params when None"
+        print( "   ✓ None job_id correctly excluded from params" )
+
+        tests_passed += 1
+    except Exception as e:
+        print( f"   ✗ Failed: {e}" )
+        tests_failed += 1
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Test 6: sender_id validation patterns
+    # ─────────────────────────────────────────────────────────────────────────
+    print( "\n6. Testing sender_id validation patterns..." )
+    valid_sender_ids = [
+        "claude.code@lupin.deepily.ai",
+        "claude.code@lupin.deepily.ai#a1b2c3d4",
+        "deep.research@lupin.deepily.ai#cli",
+        "podcast.gen@cosa.deepily.ai#cats-vs-dogs",
+        "deep.research@lupin.deepily.ai#dr-a0ebba60",  # Job ID format (prefix-hex)
+        "podcast.gen@lupin.deepily.ai#pod-12345678",   # Another job ID format
+    ]
+    all_sender_valid = True
+    for sender_id in valid_sender_ids:
+        try:
+            req = NotificationRequest(
+                message="Test",
+                response_type=ResponseType.YES_NO,
+                sender_id=sender_id
+            )
+            print( f"   ✓ Valid sender_id accepted: {sender_id}" )
+        except ValidationError as e:
+            print( f"   ✗ Valid sender_id rejected: {sender_id}" )
+            all_sender_valid = False
+
+    if all_sender_valid:
+        tests_passed += 1
+    else:
+        tests_failed += 1
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Test 7: Response models creation
+    # ─────────────────────────────────────────────────────────────────────────
+    print( "\n7. Testing response models creation..." )
+    try:
+        # NotificationResponse
+        response = NotificationResponse(
+            response_value="yes",
+            exit_code=0,
+            status="responded"
+        )
+        assert response.success is True
+        assert response.is_error is False
+        print( "   ✓ NotificationResponse created successfully" )
+
+        # AsyncNotificationResponse
+        async_response = AsyncNotificationResponse(
+            success=True,
+            status="queued",
+            target_user="test@example.com",
+            connection_count=2
+        )
+        assert async_response.is_queued is True
+        assert async_response.is_error is False
+        print( "   ✓ AsyncNotificationResponse created successfully" )
+
+        tests_passed += 1
+    except Exception as e:
+        print( f"   ✗ Failed: {e}" )
+        tests_failed += 1
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Summary
+    # ─────────────────────────────────────────────────────────────────────────
+    print( "\n" + "=" * 60 )
+    print( f"Smoke Test Results: {tests_passed} passed, {tests_failed} failed" )
+    print( "=" * 60 )
+
+    if tests_failed == 0:
+        print( "\n✓ All smoke tests passed!" )
+        return True
+    else:
+        print( f"\n✗ {tests_failed} test(s) failed" )
+        return False
+
+
+if __name__ == "__main__":
+    quick_smoke_test()

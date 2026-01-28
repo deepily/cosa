@@ -126,12 +126,51 @@ class BaseXMLModel( BaseModel ):
         """
         if not xml_string or not xml_string.strip():
             raise XMLParsingError( "XML string is empty or whitespace" )
-        
+
+        # Strip any prefix before XML declaration or root tag
+        # LLMs sometimes output text like "Output" or "Here is the response:" before XML
+        xml_cleaned = xml_string.strip()
+        xml_start = -1
+
+        # Look for XML declaration first
+        decl_pos = xml_cleaned.find( '<?xml' )
+        if decl_pos > 0:
+            xml_start = decl_pos
+            print( f"[XML-PARSER] WARNING: Stripping {decl_pos} chars before XML declaration: '{xml_cleaned[:min( decl_pos, 50 )]}...'" )
+
+        # If no declaration, look for common root tags
+        if xml_start < 0:
+            for tag in [ '<response>', '<response ', '<result>', '<result ', '<output>', '<output ' ]:
+                tag_pos = xml_cleaned.find( tag )
+                if tag_pos > 0:
+                    xml_start = tag_pos
+                    print( f"[XML-PARSER] WARNING: Stripping {tag_pos} chars before root tag: '{xml_cleaned[:min( tag_pos, 50 )]}...'" )
+                    break
+
+        # Apply the fix if we found a prefix to strip
+        if xml_start > 0:
+            xml_cleaned = xml_cleaned[xml_start:]
+
+        # Strip any suffix after closing root tag
+        # LLMs sometimes echo prompt content or continue generating after valid XML
+        # Use find() not rfind() - we want the FIRST closing tag (the actual XML),
+        # not a later mention of "</response>" in explanation text
+        for closing_tag in [ '</response>', '</result>', '</output>' ]:
+            closing_pos = xml_cleaned.find( closing_tag )  # find = first occurrence
+            if closing_pos > 0:
+                end_pos = closing_pos + len( closing_tag )
+                if end_pos < len( xml_cleaned ):
+                    suffix_len = len( xml_cleaned ) - end_pos
+                    suffix_preview = xml_cleaned[ end_pos : end_pos + 50 ].replace( '\n', '\\n' )
+                    print( f"[XML-PARSER] WARNING: Stripping {suffix_len} chars after closing tag: '{suffix_preview}...'" )
+                    xml_cleaned = xml_cleaned[ :end_pos ]
+                break
+
         try:
             # Parse XML to dictionary
             # Preserve whitespace in XML text content to maintain code indentation
             # See: https://github.com/deepily/lupin/issues/5 - Math Agent code generation fails due to stripped indentation
-            xml_dict = xmltodict.parse( xml_string.strip(), strip_whitespace=False )
+            xml_dict = xmltodict.parse( xml_cleaned, strip_whitespace=False )
             
             # Extract data based on root tag
             if root_tag is None:

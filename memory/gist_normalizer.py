@@ -93,9 +93,9 @@ class GistNormalizer:
         if not text or not text.strip():
             return ""
         
-        if self.verbose: 
+        if self.debug and self.verbose:
             du.print_banner( f"Processing text ({len(text)} chars)" )
-            if self.debug: print( f"Input: {text[:100]}..." )
+            print( f"Input: {text[:100]}..." )
         
         # Step 1: Extract the gist
         gist = self.gister.get_gist( text )
@@ -106,7 +106,7 @@ class GistNormalizer:
         # Step 2: Normalize the gist
         normalized_gist = self.normalizer.normalize( gist )
         
-        if self.verbose: 
+        if self.debug and self.verbose:
             du.print_banner( f"Result: {normalized_gist}" )
         
         return normalized_gist

@@ -236,7 +236,12 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             pa.field( "updated_date", pa.string() ),
             pa.field( "run_date", pa.string() ),
             pa.field( "runtime_stats", pa.string() ),  # JSON serialized
-            
+
+            # Replay tracking for Time Saved Dashboard
+            pa.field( "replay_history", pa.string() ),   # JSON serialized list
+            pa.field( "replay_stats", pa.string() ),     # JSON serialized dict
+            pa.field( "is_cache_hit", pa.bool_() ),
+
             # Vector embeddings (1536 dimensions for OpenAI embeddings)
             pa.field( "question_embedding", pa.list_( pa.float32(), 1536 ) ),
             pa.field( "question_normalized_embedding", pa.list_( pa.float32(), 1536 ) ),
@@ -246,7 +251,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             pa.field( "thoughts_embedding", pa.list_( pa.float32(), 1536 ) ),
             pa.field( "solution_gist_embedding", pa.list_( pa.float32(), 1536 ) ),
         ])
-    
+
     def _snapshot_to_record( self, snapshot: SolutionSnapshot ) -> Dict[str, Any]:
         """
         Convert SolutionSnapshot to LanceDB record format.
@@ -328,7 +333,12 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             "updated_date": getattr( snapshot, 'updated_date', time.strftime( "%Y-%m-%d @ %H:%M:%S %Z" ) ),
             "run_date": getattr( snapshot, 'run_date', '' ) or '',
             "runtime_stats": json.dumps( getattr( snapshot, 'runtime_stats', {} ) ),
-            
+
+            # Replay tracking for Time Saved Dashboard
+            "replay_history": json.dumps( getattr( snapshot, 'replay_history', [] ) ),
+            "replay_stats": json.dumps( getattr( snapshot, 'replay_stats', {} ) ),
+            "is_cache_hit": getattr( snapshot, 'is_cache_hit', False ),
+
             # Vector embeddings
             "question_embedding": normalize_embedding( getattr( snapshot, 'question_embedding', [] ) ),
             "question_normalized_embedding": normalize_embedding( getattr( snapshot, 'question_normalized_embedding', [] ) ),
@@ -410,6 +420,19 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         except:
             runtime_stats = {}
 
+        # Deserialize replay tracking fields
+        try:
+            replay_history = json.loads( record.get( "replay_history", "[]" ) )
+        except:
+            replay_history = []
+
+        try:
+            replay_stats = json.loads( record.get( "replay_stats", "{}" ) )
+        except:
+            replay_stats = {}
+
+        is_cache_hit = record.get( "is_cache_hit", False )
+
         # Create SolutionSnapshot with ALL fields INCLUDING embeddings
         # CRITICAL: Passing embeddings to constructor prevents 977ms regeneration
         snapshot = SolutionSnapshot(
@@ -446,7 +469,11 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             solution_embedding=self._ensure_list( record.get( "solution_embedding", [] ) ),
             code_embedding=self._ensure_list( record.get( "code_embedding", [] ) ),
             thoughts_embedding=self._ensure_list( record.get( "thoughts_embedding", [] ) ),
-            solution_gist_embedding=self._ensure_list( record.get( "solution_gist_embedding", [] ) )
+            solution_gist_embedding=self._ensure_list( record.get( "solution_gist_embedding", [] ) ),
+            # Replay tracking for Time Saved Dashboard
+            replay_history=replay_history,
+            replay_stats=replay_stats,
+            is_cache_hit=is_cache_hit
         )
 
         return snapshot

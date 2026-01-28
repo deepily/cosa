@@ -309,7 +309,7 @@ class TestHuggingFaceDownloader( unittest.TestCase ):
             
             # Import and run main (would execute __main__ block)
             # We need to trigger the main execution
-            exec( compile( open( "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa/training/hf_downloader.py" ).read(), 
+            exec( compile( open( "/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa/training/hf_downloader.py" ).read(), 
                           "hf_downloader.py", "exec" ) )
             
             # Verify usage message
@@ -343,7 +343,7 @@ class TestHuggingFaceDownloader( unittest.TestCase ):
             mock_getenv.side_effect = getenv_side_effect
             
             # Execute main block
-            exec( compile( open( "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa/training/hf_downloader.py" ).read(), 
+            exec( compile( open( "/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa/training/hf_downloader.py" ).read(), 
                           "hf_downloader.py", "exec" ) )
             
             # Verify error message
@@ -377,7 +377,7 @@ class TestHuggingFaceDownloader( unittest.TestCase ):
             mock_getenv.side_effect = getenv_side_effect
             
             # Execute main block
-            exec( compile( open( "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa/training/hf_downloader.py" ).read(), 
+            exec( compile( open( "/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa/training/hf_downloader.py" ).read(), 
                           "hf_downloader.py", "exec" ) )
             
             # Verify error message

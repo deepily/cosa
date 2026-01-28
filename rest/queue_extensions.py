@@ -72,6 +72,10 @@ class UserJobTracker:
                 self.job_to_user: Dict[str, str] = {}
                 # Map user_id to list of job_ids
                 self.user_jobs: Dict[str, List[str]] = {}
+                # Map session_id to list of job_ids (for job-notification correlation)
+                self.session_to_jobs: Dict[str, List[str]] = {}
+                # Map job_id to session_id (reverse lookup)
+                self.job_to_session: Dict[str, str] = {}
                 self._initialized = True
                 print( "[UserJobTracker] Singleton instance initialized" )
 
@@ -160,6 +164,70 @@ class UserJobTracker:
                     self.user_jobs[user_id].remove( job_id )
                     if not self.user_jobs[user_id]:
                         del self.user_jobs[user_id]
+
+
+    def associate_job_with_session( self, job_id: str, session_id: str ) -> None:
+        """
+        Associate a job with a WebSocket session for notification correlation.
+
+        Requires:
+            - job_id is a valid job identifier
+            - session_id is a valid WebSocket session identifier
+
+        Ensures:
+            - Job is mapped to session
+            - Session's job list is updated
+            - Thread-safe operation
+
+        Raises:
+            - None
+        """
+        if not session_id:  # Skip empty session IDs
+            return
+
+        with self._lock:
+            self.job_to_session[job_id] = session_id
+
+            if session_id not in self.session_to_jobs:
+                self.session_to_jobs[session_id] = []
+            self.session_to_jobs[session_id].append( job_id )
+
+    def get_session_for_job( self, job_id: str ) -> Optional[str]:
+        """
+        Get the session ID associated with a job.
+
+        Requires:
+            - job_id is a string
+
+        Ensures:
+            - Returns session_id if job exists
+            - Returns None if job not found
+            - Thread-safe read operation
+
+        Raises:
+            - None
+        """
+        with self._lock:
+            return self.job_to_session.get( job_id )
+
+    def get_jobs_for_session( self, session_id: str ) -> List[str]:
+        """
+        Get all job IDs for a session.
+
+        Requires:
+            - session_id is a string
+
+        Ensures:
+            - Returns list of job IDs for session
+            - Returns empty list if session not found
+            - Returns copy to prevent external modification
+            - Thread-safe read operation
+
+        Raises:
+            - None
+        """
+        with self._lock:
+            return self.session_to_jobs.get( session_id, [] ).copy()
 
 
 # Global instance for tracking user jobs

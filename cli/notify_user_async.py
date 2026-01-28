@@ -14,7 +14,7 @@ Exit Codes:
     1: Error (validation, network, user not found)
 
 Environment Variables:
-    COSA_APP_SERVER_URL: Server URL (default: http://localhost:7999)
+    LUPIN_APP_SERVER_URL: Server URL (default: http://localhost:7999)
 """
 
 import os
@@ -368,7 +368,7 @@ Exit Codes:
   1  Error (validation, network, user not found)
 
 Environment Variables:
-  COSA_APP_SERVER_URL            Server URL (default: http://localhost:7999)
+  LUPIN_APP_SERVER_URL            Server URL (default: http://localhost:7999)
   LUPIN_ENV                      Environment name (default: local)
   LUPIN_NOTIFICATION_RECIPIENT   Global notification recipient email (overrides config file)
         """

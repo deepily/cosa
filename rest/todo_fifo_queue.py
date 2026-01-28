@@ -1,6 +1,6 @@
 import random
 import threading
-from typing import Any, Optional
+from typing import Any, Optional, Dict, Type, List
 
 from cosa.agents.confirmation_dialog import ConfirmationDialogue
 from cosa.rest.fifo_queue import FifoQueue
@@ -26,6 +26,34 @@ from cosa.utils import util_xml as dux
 
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.rest.queue_extensions import user_job_tracker
+
+# Notification service imports for TTS migration (Session 97)
+from cosa.cli.notify_user_sync import notify_user_sync
+from cosa.cli.notification_models import (
+    NotificationRequest,
+    ResponseType
+)
+
+# Mode-to-Agent mapping for direct routing (bypasses LLM router)
+MODE_TO_AGENT = {
+    "math"        : MathAgent,
+    "calendar"    : CalendaringAgent,
+    "weather"     : WeatherAgent,
+    "receptionist": ReceptionistAgent,
+    "todo"        : TodoListAgent,
+    "datetime"    : DateAndTimeAgent,
+}
+
+# Mode metadata for UI display
+MODE_METADATA = {
+    "system"      : { "display_name": "System",        "description": "Normal LLM-based routing" },
+    "math"        : { "display_name": "Math Agent",    "description": "Direct math calculations" },
+    "calendar"    : { "display_name": "Calendar",      "description": "Calendar management" },
+    "weather"     : { "display_name": "Weather",       "description": "Weather queries" },
+    "receptionist": { "display_name": "Receptionist",  "description": "General assistance" },
+    "todo"        : { "display_name": "Todo List",     "description": "Task management" },
+    "datetime"    : { "display_name": "Date & Time",   "description": "Date/time queries" },
+}
 
 class TodoFifoQueue( FifoQueue ):
     """
@@ -101,6 +129,10 @@ class TodoFifoQueue( FifoQueue ):
         # Producer-consumer coordination
         self.condition = threading.Condition()
         self.consumer_running = False
+
+        # User mode state for direct agent routing (bypasses LLM router)
+        # Key: user_id (str), Value: mode name (str) or None for system mode
+        self.user_mode_state: Dict[str, Optional[str]] = {}
         
     def parse_salutations( self, transcription: str ) -> tuple[str, str]:
         """
@@ -134,9 +166,107 @@ class TodoFifoQueue( FifoQueue ):
         
         # Get the remaining string after salutations
         remaining_string = ' '.join( words[ index: ] )
-        
+
         return ' '.join( prefix_holder ), remaining_string
-    
+
+    # ========================================================================
+    # User Mode Management Methods
+    # ========================================================================
+
+    def get_user_mode( self, user_id: str ) -> Optional[str]:
+        """
+        Get the current mode for a user.
+
+        Requires:
+            - user_id is a non-empty string
+
+        Ensures:
+            - Returns mode string if set, None if in system mode
+
+        Raises:
+            - None
+        """
+        return self.user_mode_state.get( user_id )
+
+    def set_user_mode( self, user_id: str, mode: Optional[str] ) -> Optional[str]:
+        """
+        Set the mode for a user.
+
+        Requires:
+            - user_id is a non-empty string
+            - mode is None (system) or a valid mode key from MODE_TO_AGENT
+
+        Ensures:
+            - User's mode is updated in state dictionary
+            - Returns the previous mode (or None)
+
+        Raises:
+            - ValueError if mode is not a valid mode key
+        """
+        if mode is not None and mode not in MODE_TO_AGENT:
+            valid_modes = list( MODE_TO_AGENT.keys() )
+            raise ValueError( f"Invalid mode '{mode}'. Available modes: {valid_modes}" )
+
+        previous = self.user_mode_state.get( user_id )
+
+        if mode is None:
+            self.user_mode_state.pop( user_id, None )
+        else:
+            self.user_mode_state[ user_id ] = mode
+
+        if self.debug:
+            prev_display = previous or "system"
+            new_display  = mode or "system"
+            print( f"[MODE] User {user_id}: {prev_display} -> {new_display}" )
+
+        return previous
+
+    def clear_user_mode( self, user_id: str ) -> Optional[str]:
+        """
+        Clear the mode for a user (return to system mode).
+
+        Requires:
+            - user_id is a non-empty string
+
+        Ensures:
+            - User is removed from mode state dictionary
+            - Returns the previous mode (or None)
+
+        Raises:
+            - None
+        """
+        previous = self.user_mode_state.pop( user_id, None )
+
+        if self.debug:
+            prev_display = previous or "system"
+            print( f"[MODE] User {user_id}: {prev_display} -> system (cleared)" )
+
+        return previous
+
+    def get_available_modes( self ) -> List[Dict[str, str]]:
+        """
+        Get list of available modes with display names and descriptions.
+
+        Ensures:
+            - Returns list of mode dictionaries with key, display_name, description
+            - Includes "system" mode as first option
+
+        Raises:
+            - None
+        """
+        modes = []
+        for key, metadata in MODE_METADATA.items():
+            modes.append( {
+                "key"         : key,
+                "display_name": metadata[ "display_name" ],
+                "description" : metadata[ "description" ]
+            } )
+        return modes
+
+    # ========================================================================
+    # End User Mode Management Methods
+    # ========================================================================
+
     def _is_fit( self, question: str ) -> bool:
         """
         Validate if job is suitable for processing.
@@ -266,7 +396,7 @@ class TodoFifoQueue( FifoQueue ):
             'gist': len( embedding_gist ) > 0
         }
 
-        if self.debug:
+        if self.debug and self.verbose:
             print( f"Three-level representation:" )
             print( f"  Verbatim:   '{query_verbatim}'" )
             print( f"  Normalized: '{query_normalized}'" )
@@ -336,30 +466,74 @@ class TodoFifoQueue( FifoQueue ):
                 print( "push_job(): Skipping snapshot search..." )
                 similar_snapshots = [ ]
         
+        # Flag to track if we need LLM routing (set when no cache match or user declines confirmation)
+        needs_llm_routing = False
+
         # if we've got a set of similar snapshot candidates, then check its score before pushing it onto the queue
         if len( similar_snapshots ) > 0:
-        
+
             best_score    = similar_snapshots[ 0 ][ 0 ]
             best_snapshot = similar_snapshots[ 0 ][ 1 ]
-            
+
             # verify that this is what they were looking for, according to the similarity threshold for confirmation
             if best_score < self.config_mgr.get( "similarity_threshold_confirmation", default=98.0, return_type="float" ):
-                
-                blocking_object = {
-                    "best_score": best_score,
-                    "best_snapshot": best_snapshot,
-                    "question": question
-                }
-                self.push_blocking_object( blocking_object )
+
+                # TTS Migration (Session 97): Use notification service blocking query instead of _emit_speech
+                # This replaces the legacy push_blocking_object() pattern with a proper blocking query
                 msg = f"Is that the same as: {best_snapshot.question}?"
                 du.print_banner( msg )
-                print( "Blocking object pushed onto queue, waiting for response..." )
-                self._emit_speech( msg, user_id=user_id, websocket_id=websocket_id )
-                return msg
-            
-            # This is an exact match, so queue it up
+                print( "Asking user for confirmation via notification service..." )
+
+                request = NotificationRequest(
+                    message          = msg,
+                    response_type    = ResponseType.YES_NO,
+                    response_default = "no",
+                    timeout_seconds  = 30,
+                    priority         = "high",
+                    suppress_ding    = True,  # Queue TTS - no ding
+                    target_user      = self._get_target_user_email( best_snapshot ),
+                    sender_id        = f"queue.{self.queue_name or 'todo'}@lupin.deepily.ai"
+                )
+
+                response = notify_user_sync(
+                    request,
+                    retry_on_timeout = True,    # Enable exponential backoff
+                    max_attempts     = 3,       # 30s → 60s → 120s
+                    backoff_multiplier = 2.0
+                )
+
+                if response.status == "responded" and response.response_value == "yes":
+                    # User confirmed - use cached result
+                    print( f"User confirmed cached result match (score: {best_score}%)" )
+                    # Update last question asked before we throw it on the queue
+                    best_snapshot.last_question_asked = ( salutations + ' ' + question ).strip()
+                    self._dump_code( best_snapshot )
+
+                    # Log query with match results (snapshot found)
+                    match_result = {
+                        'snapshot_id': best_snapshot.id_hash,
+                        'type': 'user_confirmed_similarity_match',
+                        'confidence': best_score
+                    }
+                    embeddings = {
+                        'verbatim': embedding_verbatim,
+                        'normalized': embedding_normalized,
+                        'gist': embedding_gist
+                    }
+                    self._log_query_with_results(
+                        query_verbatim, query_normalized, query_gist,
+                        user_id, websocket_id, embeddings, cache_hits, match_result
+                    )
+
+                    return self._queue_best_snapshot( best_snapshot, best_score, user_id )
+                else:
+                    # User declined, timeout, or offline - fall through to LLM routing
+                    print( f"User response: '{response.status}:{response.response_value}' - routing as new question..." )
+                    needs_llm_routing = True
+
+            # This is an exact match (high confidence), so queue it up
             else:
-                
+
                 # update last question asked before we throw it on the queue
                 best_snapshot.last_question_asked = ( salutations + ' ' + question ).strip()
                 self._dump_code( best_snapshot )
@@ -381,18 +555,36 @@ class TodoFifoQueue( FifoQueue ):
                 )
 
                 return self._queue_best_snapshot( best_snapshot, best_score, user_id )
-            
         else:
-            
-            print( "No similar snapshots found, calling routing LLM..." )
+            # No similar snapshots found
+            needs_llm_routing = True
+
+        # Route through LLM if no cache match or user declined confirmation
+        if needs_llm_routing:
+
+            print( "Routing through LLM (no cache match or user declined)..." )
             
             # Note the distinction between salutation and the question: all agents except the receptionist get the question only.
             # The receptionist gets the salutation plus the question to help it decide how it will respond.
             salutation_plus_question = ( salutations + " " + question ).strip()
 
-            # We're going to give the routing function maximum information, hence including the salutation with the question
-            # ¡OJO! I know this is a tad adhoc-ish, but it's what we want... for the moment at least
-            command, args = self._get_routing_command( salutation_plus_question )
+            # NEW: Check user mode BEFORE LLM routing
+            user_mode = self.get_user_mode( user_id )
+
+            if user_mode and user_mode in MODE_TO_AGENT:
+                # Direct routing - bypass LLM router when user is in agent mode
+                command = f"agent router go to {user_mode}"
+                args = ""
+                if self.debug:
+                    print( f"[MODE] User {user_id} in '{user_mode}' mode - bypassing LLM router" )
+                    print( f"[MODE] Direct routing to: {command}" )
+            else:
+                # Normal LLM-based routing (system mode)
+                # We're going to give the routing function maximum information, hence including the salutation with the question
+                # ¡OJO! I know this is a tad adhoc-ish, but it's what we want... for the moment at least
+                command, args = self._get_routing_command( salutation_plus_question )
+                if self.debug:
+                    print( f"[ROUTER] LLM selected: {command}" )
             
             starting_a_new_job = "New {agent_type} job..."
             ding_for_new_job   = False
@@ -401,16 +593,17 @@ class TodoFifoQueue( FifoQueue ):
             
             # TODO: implement search and summarize training and routing
             if question.lower().strip().startswith( "search and summarize" ):
-                
+
                 msg = du.print_banner( f"TO DO: train and implement 'agent router go to search and summary' command {command}" )
                 print( msg )
-                self._emit_speech( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} I'm gonna ask our research librarian about that", user_id=user_id )
+                # TTS Migration (Session 97): Use notification service instead of _emit_speech
+                self._notify( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} I'm gonna ask our research librarian about that" )
                 search = LupinSearch( query=question_gist )
                 search.search_and_summarize_the_web()
                 msg = search.get_results( scope="summary" )
             
             elif command == "agent router go to calendar":
-                agent = CalendaringAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = CalendaringAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="calendaring" )
                 ding_for_new_job = True
             elif command == "agent router go to math":
@@ -420,32 +613,32 @@ class TodoFifoQueue( FifoQueue ):
                     # agent = self._get_math_refactoring_agent( question, question_gist, salutation_plus_question, self.push_counter )
                     # msg = starting_a_new_job.format( agent_type="math refactoring" )
                 else:
-                    agent = MathAgent( question=salutation_plus_question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                    agent = MathAgent( question=salutation_plus_question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                     msg = starting_a_new_job.format( agent_type="math" )
                 ding_for_new_job = True
             elif command == "agent router go to todo list":
-                agent = TodoListAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = TodoListAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="todo list" )
                 ding_for_new_job = True
             elif command == "agent router go to date and time":
-                agent = DateAndTimeAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = DateAndTimeAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="date and time" )
                 ding_for_new_job = True
             elif command == "agent router go to weather":
-                agent = WeatherAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = WeatherAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="weather" )
                 # ding_for_new_job = False
             elif command == "agent router go to receptionist" or command == "none":
                 print( f"Routing '{command}' to receptionist..." )
-                agent = ReceptionistAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = ReceptionistAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 # Randomly grab hemming and hawing string and prepend it to a randomly chosen thinking string
                 msg = f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}".strip()
                 # ding_for_new_job = False
             else:
                 msg = du.print_banner( f"TO DO: Implement else case command {command}" )
                 print( msg )
-                if self.emit_speech_callback:
-                    self.emit_speech_callback( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}", user_id=user_id )
+                # TTS Migration (Session 98): Use notification service instead of emit_speech_callback
+                self._notify( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}" )
                 search = LupinSearch( query=question_gist )
                 search.search_and_summarize_the_web()
                 msg = search.get_results( scope="summary" )
@@ -459,8 +652,8 @@ class TodoFifoQueue( FifoQueue ):
                     self.user_job_tracker.associate_job_with_user( agent.id_hash, user_id )
                     print( f"[TODO-QUEUE] Associated agent {agent.id_hash} with user {user_id}" )
             
-            if self.emit_speech_callback:
-                self.emit_speech_callback( msg, user_id=user_id )
+            # TTS Migration (Session 98): Use notification service instead of emit_speech_callback
+            self._notify( msg, job=agent )
 
             # Log query with no match results (new agent created)
             match_result = {
@@ -576,8 +769,8 @@ class TodoFifoQueue( FifoQueue ):
         
         if self.size() != 0:
             suffix = "s" if self.size() > 1 else ""
-            if self.emit_speech_callback:
-                self.emit_speech_callback( f"{self.size()} job{suffix} ahead of this one", user_id=user_id )
+            # TTS Migration (Session 98): Use notification service instead of emit_speech_callback
+            self._notify( f"{self.size()} job{suffix} ahead of this one", job=job )
         else:
             print( "No jobs ahead of this one in the todo Q" )
         
@@ -647,13 +840,12 @@ class TodoFifoQueue( FifoQueue ):
         if self.debug:
             print( f"[TODO-QUEUE] Added job and notified consumer: {item.id_hash}" )
     
-# Add me
 def quick_smoke_test():
     """Quick smoke test to validate TodoFifoQueue functionality."""
     import cosa.utils.util as du
-    
+
     du.print_banner( "TodoFifoQueue Smoke Test", prepend_nl=True )
-    
+
     # Test salutation parsing functionality
     test_cases = [
         "Good morning, my dearest receptionist. How are you feeling today?",
@@ -661,20 +853,69 @@ def quick_smoke_test():
         "Hello there! Can you help me with my schedule?",
         "What's the weather like today?"  # No salutation case
     ]
-    
+
     try:
-        queue = TodoFifoQueue( None, None, None )
+        queue = TodoFifoQueue( None, None, None, debug=True )
         print( "✓ TodoFifoQueue instantiated successfully" )
-        
+
+        # Test 1: Salutation parsing
+        print( "\n--- Salutation Parsing Tests ---" )
         for i, input_string in enumerate( test_cases, 1 ):
             print( f"\nTest {i}: '{input_string}'" )
             salutations, question = queue.parse_salutations( input_string )
             print( f"  Salutations: '{salutations}'" )
             print( f"  Question: '{question}'" )
-        
+
+        # Test 2: Mode management
+        print( "\n--- Mode Management Tests ---" )
+        test_user = "test_user_123"
+
+        # Test get mode (should be None/system by default)
+        mode = queue.get_user_mode( test_user )
+        assert mode is None, f"Expected None, got {mode}"
+        print( f"✓ Default mode is None (system)" )
+
+        # Test set mode
+        previous = queue.set_user_mode( test_user, "math" )
+        assert previous is None, f"Expected previous=None, got {previous}"
+        mode = queue.get_user_mode( test_user )
+        assert mode == "math", f"Expected 'math', got {mode}"
+        print( f"✓ Set mode to 'math' successfully" )
+
+        # Test change mode
+        previous = queue.set_user_mode( test_user, "calendar" )
+        assert previous == "math", f"Expected previous='math', got {previous}"
+        mode = queue.get_user_mode( test_user )
+        assert mode == "calendar", f"Expected 'calendar', got {mode}"
+        print( f"✓ Changed mode to 'calendar' successfully" )
+
+        # Test invalid mode
+        try:
+            queue.set_user_mode( test_user, "invalid_mode" )
+            print( "✗ Should have raised ValueError for invalid mode" )
+        except ValueError as e:
+            print( f"✓ Correctly rejected invalid mode: {e}" )
+
+        # Test clear mode
+        previous = queue.clear_user_mode( test_user )
+        assert previous == "calendar", f"Expected previous='calendar', got {previous}"
+        mode = queue.get_user_mode( test_user )
+        assert mode is None, f"Expected None after clear, got {mode}"
+        print( f"✓ Cleared mode successfully" )
+
+        # Test get_available_modes
+        available = queue.get_available_modes()
+        assert len( available ) > 0, "Expected at least one mode"
+        assert any( m[ "key" ] == "system" for m in available ), "Expected 'system' in available modes"
+        print( f"✓ get_available_modes() returns {len( available )} modes" )
+        for m in available:
+            print( f"    - {m[ 'key' ]}: {m[ 'display_name' ]}" )
+
     except Exception as e:
         print( f"✗ Error testing TodoFifoQueue: {e}" )
-    
+        import traceback
+        traceback.print_exc()
+
     print( "\n✓ TodoFifoQueue smoke test completed" )
 
 

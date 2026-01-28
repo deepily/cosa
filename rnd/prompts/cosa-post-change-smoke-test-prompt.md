@@ -35,8 +35,8 @@ Create a todo list to track the post-change verification and remediation process
 **If notification system is available**, send notification that post-change verification is starting:
 ```bash
 # Check if notification script exists
-if [ -f "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh" ]; then
-    /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh "[COSA] 🔍 COSA framework post-change verification STARTED - Comparing against baseline and preparing remediation" --type=progress --priority=medium --target-user=ricardo.felipe.ruiz@gmail.com
+if [ -f "/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/scripts/notify.sh" ]; then
+    /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/scripts/notify.sh "[COSA] 🔍 COSA framework post-change verification STARTED - Comparing against baseline and preparing remediation" --type=progress --priority=medium --target-user=ricardo.felipe.ruiz@gmail.com
 else
     echo "✓ Starting COSA framework post-change verification - notification system not available"
 fi
@@ -48,7 +48,7 @@ Execute the following commands to prepare for testing:
 
 ```bash
 # Navigate to COSA root directory
-cd /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/cosa
+cd /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/cosa
 
 # Create results directory structure
 mkdir -p tests/results/logs
@@ -60,7 +60,7 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 echo "COSA post-change verification timestamp: ${TIMESTAMP}"
 
 # Set up COSA framework environment
-export PYTHONPATH="/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src:$PYTHONPATH"
+export PYTHONPATH="/mnt/DATA01/include/www.deepily.ai/projects/lupin/src:$PYTHONPATH"
 echo "✓ COSA PYTHONPATH configured"
 
 # Verify COSA framework can be imported after changes
@@ -275,8 +275,8 @@ Add the verification and remediation session to your history:
 **If notification system is available**, send notification with final results:
 ```bash
 # Check if notification script exists
-if [ -f "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh" ]; then
-    /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh "[COSA] ✅ COSA framework post-change verification COMPLETE - [XX.X%] final pass rate, [NUMBER] issues fixed, framework [STATUS]" --type=progress --priority=medium --target-user=ricardo.felipe.ruiz@gmail.com
+if [ -f "/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/scripts/notify.sh" ]; then
+    /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/scripts/notify.sh "[COSA] ✅ COSA framework post-change verification COMPLETE - [XX.X%] final pass rate, [NUMBER] issues fixed, framework [STATUS]" --type=progress --priority=medium --target-user=ricardo.felipe.ruiz@gmail.com
 else
     echo "✓ COSA framework verification complete - [XX.X%] final pass rate, [NUMBER] issues fixed"
 fi
@@ -327,8 +327,8 @@ If critical COSA framework issues cannot be resolved:
 
 1. **Send urgent notification (if available)**:
 ```bash
-if [ -f "/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh" ]; then
-    /mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src/scripts/notify.sh "[COSA] 🚨 URGENT: Critical COSA framework issues require immediate attention - [BRIEF DESCRIPTION]" --type=alert --priority=urgent --target-user=ricardo.felipe.ruiz@gmail.com
+if [ -f "/mnt/DATA01/include/www.deepily.ai/projects/lupin/src/scripts/notify.sh" ]; then
+    /mnt/DATA01/include/www.deepily.ai/projects/lupin/src/scripts/notify.sh "[COSA] 🚨 URGENT: Critical COSA framework issues require immediate attention - [BRIEF DESCRIPTION]" --type=alert --priority=urgent --target-user=ricardo.felipe.ruiz@gmail.com
 fi
 ```
 

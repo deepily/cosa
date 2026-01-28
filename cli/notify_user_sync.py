@@ -16,7 +16,7 @@ Exit Codes:
     2: Timeout (no response within timeout period)
 
 Environment Variables:
-    COSA_APP_SERVER_URL: Server URL (default: http://localhost:7999)
+    LUPIN_APP_SERVER_URL: Server URL (default: http://localhost:7999)
 """
 
 import os
@@ -159,65 +159,40 @@ def consume_sse_stream(
         return None
 
 
-def notify_user_sync(
+def _send_sync_notification(
     request: NotificationRequest,
-    server_url: Optional[str] = None,
-    debug: bool = False
+    server_url: Optional[str],
+    debug: bool,
+    api_key: str,
+    base_url: str,
+    env: str
 ) -> NotificationResponse:
     """
-    Send response-required notification with SSE blocking.
+    Internal helper to send a single sync notification request.
 
-    Sends notification to Lupin API and blocks until user responds or timeout.
-    Uses Pydantic models for type-safe request/response handling.
+    Used by notify_user_sync() for retry logic. Separated to enable
+    exponential backoff retries without code duplication.
 
     Requires:
         - request is a validated NotificationRequest model
-        - server_url is None or a valid HTTP/HTTPS URL
-        - debug is a boolean
+        - api_key is a valid API key string
+        - base_url is the server base URL
 
     Ensures:
-        - Returns NotificationResponse with exit_code and response_value
-        - exit_code 0: Success (response received or offline with default)
-        - exit_code 1: Error (network, validation, etc.)
-        - exit_code 2: Timeout (no response within timeout)
-        - Prints status messages to stderr
-        - Uses SSE streaming for blocking until response
-
-    Raises:
-        - No exceptions raised (all handled internally)
+        - Returns NotificationResponse with status and response_value
+        - Handles all HTTP and SSE errors gracefully
 
     Args:
         request: NotificationRequest model (already validated)
-        server_url: Override server URL (uses env var if None)
-        debug: Enable debug output to stderr
+        server_url: Override server URL (for debug output)
+        debug: Enable debug output
+        api_key: API key for authentication
+        base_url: Server base URL
+        env: Environment name (for debug output)
 
     Returns:
-        NotificationResponse: Typed response with exit_code, response_value, metadata
+        NotificationResponse: Result of the notification request
     """
-
-    # Load configuration (Phase 2.5 - dynamic multi-environment config)
-    try:
-        # Determine environment (default: local)
-        env = os.getenv( 'LUPIN_ENV', 'local' )
-
-        # Load config for environment (precedence: env vars > file > defaults)
-        config = get_api_config( env )
-
-        # Load API key from configured file
-        api_key = load_api_key( config['api_key_file'] )
-
-        # Use configured API URL (can be overridden by server_url parameter)
-        base_url = server_url or config['api_url']
-        base_url = base_url.rstrip( '/' )
-
-    except Exception as e:
-        # Fallback to environment variables/defaults if config loading fails
-        if debug:
-            print( f"[DEBUG] Config loading failed, using fallback: {e}", file=sys.stderr )
-        base_url = server_url or os.getenv( ENV_SERVER_URL, DEFAULT_SERVER_URL )
-        base_url = base_url.rstrip( '/' )
-        api_key = None  # Will cause authentication error (intentional - forces user to fix config)
-
     try:
         url = f"{base_url}/api/notify"
 
@@ -231,7 +206,7 @@ def notify_user_sync(
 
         if debug:
             print( f"[DEBUG] Sending notification to: {url}", file=sys.stderr )
-            print( f"[DEBUG] Environment: {env if 'env' in locals() else 'fallback'}", file=sys.stderr )
+            print( f"[DEBUG] Environment: {env}", file=sys.stderr )
             print( f"[DEBUG] Request model: {request.model_dump_json( indent=2 )}", file=sys.stderr )
             print( f"[DEBUG] API params: {params}", file=sys.stderr )
             print( f"[DEBUG] API key: {api_key[:20]}...{api_key[-10:] if api_key else 'None'}", file=sys.stderr )
@@ -368,6 +343,112 @@ def notify_user_sync(
         )
 
 
+def notify_user_sync(
+    request: NotificationRequest,
+    server_url: Optional[str] = None,
+    debug: bool = False,
+    retry_on_timeout: bool = False,
+    max_attempts: int = 1,
+    backoff_multiplier: float = 2.0
+) -> NotificationResponse:
+    """
+    Send response-required notification with SSE blocking.
+
+    Sends notification to Lupin API and blocks until user responds or timeout.
+    Uses Pydantic models for type-safe request/response handling.
+
+    Requires:
+        - request is a validated NotificationRequest model
+        - server_url is None or a valid HTTP/HTTPS URL
+        - debug is a boolean
+        - If retry_on_timeout=True, max_attempts >= 1
+
+    Ensures:
+        - Returns NotificationResponse with exit_code and response_value
+        - exit_code 0: Success (response received or offline with default)
+        - exit_code 1: Error (network, validation, etc.)
+        - exit_code 2: Timeout (no response within timeout)
+        - If retry_on_timeout=True: Retries on timeout with exponential backoff
+        - Respects max_attempts limit
+        - Prints status messages to stderr
+        - Uses SSE streaming for blocking until response
+
+    Raises:
+        - No exceptions raised (all handled internally)
+
+    Args:
+        request: NotificationRequest model (already validated)
+        server_url: Override server URL (uses env var if None)
+        debug: Enable debug output to stderr
+        retry_on_timeout: Retry with exponential backoff on timeout (default: False)
+        max_attempts: Maximum number of attempts if retry_on_timeout=True (default: 1)
+        backoff_multiplier: Multiplier for timeout on each retry (default: 2.0)
+
+    Returns:
+        NotificationResponse: Typed response with exit_code, response_value, metadata
+    """
+
+    # Load configuration (Phase 2.5 - dynamic multi-environment config)
+    try:
+        # Determine environment (default: local)
+        env = os.getenv( 'LUPIN_ENV', 'local' )
+
+        # Load config for environment (precedence: env vars > file > defaults)
+        config = get_api_config( env )
+
+        # Load API key from configured file
+        api_key = load_api_key( config['api_key_file'] )
+
+        # Use configured API URL (can be overridden by server_url parameter)
+        base_url = server_url or config['api_url']
+        base_url = base_url.rstrip( '/' )
+
+    except Exception as e:
+        # Fallback to environment variables/defaults if config loading fails
+        if debug:
+            print( f"[DEBUG] Config loading failed, using fallback: {e}", file=sys.stderr )
+        base_url = server_url or os.getenv( ENV_SERVER_URL, DEFAULT_SERVER_URL )
+        base_url = base_url.rstrip( '/' )
+        api_key = None  # Will cause authentication error (intentional - forces user to fix config)
+        env = "fallback"
+
+    # Track current timeout for exponential backoff
+    current_timeout = request.timeout_seconds
+    attempts_made = 0
+    response = None
+
+    while attempts_made < max_attempts:
+        attempts_made += 1
+
+        # Create a copy of the request with updated timeout for this attempt
+        request_copy = request.model_copy()
+        request_copy.timeout_seconds = current_timeout
+
+        if debug:
+            print( f"[SYNC] Attempt {attempts_made}/{max_attempts}, timeout={current_timeout}s", file=sys.stderr )
+
+        response = _send_sync_notification(
+            request_copy, server_url, debug, api_key, base_url, env
+        )
+
+        # Check if we got a response or should retry
+        if response.status == "responded":
+            # Success - user responded
+            return response
+        elif response.is_timeout and retry_on_timeout and attempts_made < max_attempts:
+            # Timeout - retry with exponential backoff
+            current_timeout = int( current_timeout * backoff_multiplier )
+            if debug:
+                print( f"[SYNC] Timeout on attempt {attempts_made}, retrying with {current_timeout}s...", file=sys.stderr )
+            continue
+        else:
+            # Not retrying (offline, error, or final attempt)
+            return response
+
+    # Should have returned from the loop, but return last response as fallback
+    return response
+
+
 def main():
     """
     CLI entry point for notify_user_sync script.
@@ -420,7 +501,7 @@ Exit Codes:
   2  Timeout (no response within timeout period)
 
 Environment Variables:
-  COSA_APP_SERVER_URL            Server URL (default: http://localhost:7999)
+  LUPIN_APP_SERVER_URL            Server URL (default: http://localhost:7999)
   LUPIN_ENV                      Environment name (default: local)
   LUPIN_NOTIFICATION_RECIPIENT   Global notification recipient email (overrides config file)
         """

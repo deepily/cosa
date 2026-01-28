@@ -1,6 +1,54 @@
 # COSA Development History
 
-> **🐛 CURRENT**: 2025.12.31 - Parent Lupin Sync: Sort Order Display Bug Fix! Synced 1 file from parent Lupin Session 24. **ROOT CAUSE**: Complex chain of transformations (DB DESC → JS `.reverse()` → CSS `column-reverse` → `appendChild`) cancelled each other out incorrectly for real-time vs initial load scenarios. **THE FIX**: Changed `notification_repository.py:220` from `.desc()` → `.asc()` so DB returns oldest-first; JS then uses `insertBefore` to prepend each message, resulting in newest at top. **HOW IT WORKS NOW**: Database returns oldest→newest (ASC), JS iterates with `insertBefore` prepending each message, result is newest at top for both initial page load AND real-time WebSocket notifications. **Total Impact**: 1 file, +3/-3 lines. Phase 8 sort order bug RESOLVED, sender-aware notification system fully functional. 🐛✅
+> **🔄 CURRENT**: 2026.01.27 - Parent Lupin Sync: Sessions 103-106 API Consistency + Dry-Run Mode + LanceDB Corruption Recovery! Synced changes from parent Lupin Sessions 103-106. **SESSION 103 - GIST_CACHE CORRUPTION FIX**: Added `_is_table_corrupted()` method to `gist_cache_table.py` that performs actual data scan (not just `count_rows()` metadata check) to detect missing `.lance` fragment files. Auto-recovery: drops and recreates table on corruption detection. Added 8 smoke tests including corruption detection and recovery verification. **SESSION 104 - DRY-RUN MODE**: Added dry-run checkboxes to agentic job submission UI. Enhanced job classes with dry-run support. **SESSION 105 - SENDER_ID REGEX FIX**: Updated sender_id regex in `notification_models.py` to accept job ID format `[a-z]+-[a-f0-9]{8}` (e.g., `dr-a0ebba60`). **SESSION 106 - API CONSISTENCY**: Removed redundant `user_email` from `DeepResearchSubmitRequest` - now derived from JWT token. Added dry-run mode to all job routers. **NEW CLAUDE CODE AGENT**: Created `agents/claude_code/` package with `job.py` for Claude Code queue integration. **NEW MOCK CLIENTS**: Created `agents/podcast_generator/mock_clients.py` (~15k bytes) for testing without real API calls. **NEW QUEUE ROUTER**: Created `rest/routers/claude_code_queue.py` (~10k bytes) for Claude Code job management. **FILES CREATED**: `agents/claude_code/__init__.py`, `agents/claude_code/job.py` (~13k bytes), `agents/podcast_generator/mock_clients.py`, `rest/routers/claude_code_queue.py`. **FILES MODIFIED**: `agents/deep_research/cosa_interface.py`, `agents/deep_research/job.py` (+115 lines: dry-run mode), `agents/deep_research/voice_io.py`, `agents/deep_research_to_podcast/job.py` (+103 lines: dry-run mode), `agents/podcast_generator/job.py` (+94 lines: dry-run mode), `agents/utils/voice_io.py`, `cli/notification_models.py` (+20 lines: sender_id regex), `memory/embedding_cache_table.py`, `memory/gist_cache_table.py` (+135 lines: corruption recovery), `rest/notification_fifo_queue.py`, `rest/routers/deep_research.py`, `rest/routers/deep_research_to_podcast.py`, `rest/routers/notifications.py`, `rest/routers/podcast_generator.py`. **Total Impact**: 14 files modified, 4 new files created, +503/-55 lines (net +448 lines). 🔄✅
+>
+> **🔄 PREVIOUS**: 2026.01.26 - Parent Lupin Sync: Sessions 100-102 Agentic Job UI Cards + Deep Research to Podcast Pipeline! Synced changes from parent Lupin Sessions 100-102. **SESSION 100 - PHASES 0-2**: (1) Created unified `agents/utils/voice_io.py` consolidating implementations from deep_research and podcast_generator, (2) Created `agents/deep_research_to_podcast/` package with `agent.py` wrapper and `__main__.py` CLI entry point, (3) **Expertise Level Configuration** - Added `target_audience` (beginner/general/expert/academic) and `audience_context` to Deep Research, with AUDIENCE_GUIDELINES dictionaries in `prompts/planning.py`, `prompts/subagent.py`, `prompts/synthesis.py`. **SESSION 101 - PHASES 3-6**: (1) Created `agents/podcast_generator/job.py` - PodcastGeneratorJob class wrapping PodcastOrchestratorAgent with queue integration, (2) Created `agents/deep_research_to_podcast/job.py` - DeepResearchToPodcastJob wrapping chained workflow, (3) Created `rest/routers/podcast_generator.py` with smart input detection (direct path mode vs description→LLM fuzzy matching), (4) Created `rest/routers/deep_research_to_podcast.py` for standard query-based submission. **SESSION 102 - BUG FIX CLOSURE**: Closed Sessions 100-101 bug fix queue (4 fixes completed, 2 carried over). **FILES CREATED**: `agents/utils/voice_io.py`, `agents/deep_research_to_podcast/job.py`, `agents/podcast_generator/job.py`, `rest/routers/podcast_generator.py`, `rest/routers/deep_research_to_podcast.py` (5 new files). **FILES MODIFIED**: `agents/deep_research/cli.py`, `agents/deep_research/config.py`, `agents/deep_research/prompts/planning.py`, `agents/deep_research/prompts/subagent.py`, `agents/deep_research/prompts/synthesis.py`, `agents/deep_research_to_podcast/__main__.py`, `agents/deep_research_to_podcast/agent.py`, `agents/podcast_generator/cosa_interface.py`, `cli/notification_models.py`, `config/configuration_manager.py`, + 10 memory/other files. **Total Impact**: 20 files modified, 5 new files created, +673/-85 lines (net +588 lines). 🔄✅
+>
+> **🔄 PREVIOUS**: 2026.01.25 - Parent Lupin Sync: Sessions 97-99 TTS Migration + LanceDB Corruption Recovery! Synced changes from parent Lupin Sessions 97-99. **SESSION 97-98 - TTS MIGRATION**: Completed migration from legacy `_emit_speech` WebSocket system to notification service. Added `_notify()`, `_get_notification_job_id()`, `_get_target_user_email()` methods to FifoQueue base class. Migrated all `emit_speech_callback` calls in `running_fifo_queue.py` (7 calls) and `todo_fifo_queue.py` (3 calls) to use `_notify()`. Commented out legacy `_emit_speech()` in `fifo_queue.py`. **JOB_ID FORMAT EXPANSION**: Updated `job_id` pattern in both `NotificationRequest` and `AsyncNotificationRequest` from `^[a-z]+-[a-f0-9]{8}$` to `^([a-z]+-[a-f0-9]{8}|[a-f0-9]{64})$` to accept SHA256 hashes (64 hex chars) in addition to short format. Updated `postgres_models.py` job_id column from `String(32)` to `String(64)`. Updated `_get_notification_job_id()` to pass through any id_hash format without regex filtering. **CACHE HIT BUG FIX (Session 98)**: Fixed critical bug where done queue jobs from cache hits weren't appearing in user's filtered queue view. Root cause: `for_current_user()` creates snapshot copy with cached entry's id_hash, but user association used original job's id_hash. Fix: Added `done_queue_entry.id_hash = original_job.id_hash` after copy creation in `running_fifo_queue.py`. **SESSION 99 - LANCEDB CORRUPTION RECOVERY**: Added auto-recovery for LanceDB embedding cache corruption. New `_is_table_corrupted()` method performs actual data scan (not just `count_rows()` metadata check) to detect missing `.lance` fragment files. On corruption detection, automatically drops and recreates table with fresh schema. Added comprehensive smoke tests (2 new tests) including simulated corruption recovery. **FILES MODIFIED**: `cli/notification_models.py` (+27 lines: job_id pattern + smoke tests), `memory/embedding_cache_table.py` (+119 lines: corruption detection + recovery + tests), `rest/fifo_queue.py` (+3/-7 lines: simplified job_id passthrough + user email lookup), `rest/postgres_models.py` (+2/-2 lines: job_id column size), `rest/running_fifo_queue.py` (+5 lines: id_hash preservation fix), `rest/todo_fifo_queue.py` (+6/-6 lines: TTS migration). **Total Impact**: 6 files modified, +166/-38 lines (net +128 lines). 🔄✅
+>
+> **🔄 PREVIOUS**: 2026.01.23 - Parent Lupin Sync: Sessions 95-96 Bug Fix Mode + TTS Investigation! Synced changes from parent Lupin Sessions 95-96. **SESSION 95 - BUG FIX MODE**: Fixed 4 bugs: (1) cosa-voice MCP project detection order bug (CoSA detected as Lupin), (2) LanceDB/PostgreSQL permissions issue - changed ownership and permissions via sudo chown/chmod, (3) Podcast Generator English audio generation bug - unconditional English inclusion fixed with conditional check, (4) English audio notifications missing language identifier - added "English" to notification messages. **SESSION 96 - TODO REVIEW + TTS INVESTIGATION PLANNING**: Light session focused on TODO management and initial TTS architecture investigation. Reviewed all outstanding TODO items, marked Podcast Generator Full Audio Test and Job Queue Progressive Disclosure UI as DONE. Added new TTS Consolidation Investigation TODO. Investigated `_emit_speech` (5 callers in queue code) vs notification service. Key user correction: MCP is facade over notification service; latency assumptions need re-evaluation. **QUEUE INTERACTION ORDERING FIX**: Changed `get_job_interactions()` endpoint to return notifications in descending order (newest-first) instead of ascending (oldest-first) - more intuitive UX with recent activity at top. **Files Modified**: `rest/routers/queues.py` (+2/-2 lines). **Total Impact**: 1 file modified, minor change. 🔄✅
+>
+> **🔄 PREVIOUS**: 2026.01.22 - Parent Lupin Sync: Sessions 92-94 Queue System Class Hierarchy Unification + Podcast Generator Multi-Language Support! Synced changes from parent Lupin Sessions 92-94. **SESSION 94 - QUEUE SYSTEM CLASS HIERARCHY UNIFICATION**: Added unified properties across all three queue-compatible classes for clean, consistent interface. `AgenticJobBase`: Added `question`, `answer`, `job_type`, `created_date` properties. `SolutionSnapshot`: Added `job_type` property (maps to `agent_class_name`). `AgentBase`: Added `job_type` (class name), `created_date` properties. Created new `QueueableJob` Protocol (`rest/queue_protocol.py` ~180 lines) documenting unified interface with type safety. Simplified `queues.py` - replaced `getattr()` chains with direct attribute access using `job.job_type`. **SESSION 93 - PODCAST GENERATOR MULTI-LANGUAGE TRANSLATION SUPPORT**: Added support for generating podcasts in multiple languages (English default, Spanish opt-in). ISO codes: en, es, es-ES (Castilian), es-MX (Mexican), es-AR (Argentinian). Native generation - Claude generates scripts directly in target language (not post-translation). Phase 4b loop - after English approval, generates/reviews each additional language with full user approval flow. TTS support: Language-aware voice lookup with multilingual model fallback (eleven_multilingual_v2). Prosody validation: Verifies prosody markers preserved across translations. CLI: Added `--languages` / `-l` argument (e.g., `--languages en,es-MX`). **Files Created**: `rest/queue_protocol.py` (~180 lines). **Files Modified**: `agents/agentic_job_base.py`, `agents/agent_base.py`, `memory/solution_snapshot.py`, `rest/routers/queues.py`, `agents/podcast_generator/config.py`, `agents/podcast_generator/tts_client.py`, `agents/podcast_generator/prompts/script_generation.py`, `agents/podcast_generator/state.py`, `agents/podcast_generator/orchestrator.py`, `agents/podcast_generator/__main__.py`, `agents/podcast_generator/voice_io.py`, `rest/routers/notifications.py`. **Total Impact**: 12 files modified, 1 new file created, ~+350 lines. 🔄✅
+>
+> **🔄 PREVIOUS**: 2026.01.21 - Parent Lupin Sync: Sessions 88-91 Bug Fixes + Notification Enhancements + Queue Endpoint Fixes! Synced changes from parent Lupin Sessions 88-91. **SESSION 88 - BULK DELETE NOTIFICATIONS**: Added `DELETE /notifications/bulk/{user_email}` endpoint for "Clear All" button functionality. New `bulk_delete_by_user()` method in `notification_repository.py` with optional hours filter parameter. **SESSION 89 - GIST ENHANCEMENT**: Updated `/notifications/generate-gist` endpoint to accept both messages and abstracts arrays, prioritizing first 5 abstracts + first 5 messages for richer session name generation. **SESSION 90 - PODCAST GENERATOR NOTIFICATION ENHANCEMENTS**: Added `character_count` field to `TTSSegmentResult` dataclass for audio cost tracking. Added `ELEVENLABS_COST_PER_1K_CHARS` constant. Enhanced `do_all_async()` and `do_audio_only_async()` completion notifications with clickable links (View Script, Download MP3, View Research) and cost breakdown (Script Cost + Audio Cost = Total Cost). **SESSION 91 - GET_JOB_INTERACTIONS ENDPOINT FIXES**: Fixed import path bug - changed `cosa.rest.db.models.notification` to `cosa.rest.postgres_models`. Fixed AttributeError for MockAgenticJob by using `getattr()` with safe defaults for `agent_class_name`, `question`, `answer`, `created_date` attributes. **HOST NAME UPDATES**: Updated personality.py smoke tests from Alex/Jordan to Nora/Quentin (host name changes). **Total Impact**: 6 files modified, +240/-39 lines (net +201 lines). 🔄✅
+>
+> **🔄 PREVIOUS**: 2026.01.20 - Parent Lupin Sync: Sessions 80-87 Podcast Generator Phase 2 TTS + MockAgenticJob Test Harness + Queue Enhancements! Synced major changes from parent Lupin Sessions 80-87. **SESSION 80 - PODCAST GENERATOR PHASE 2 PLANNING**: Created implementation plan for TTS audio generation using ElevenLabs multi-voice synthesis with pydub audio processing. **SESSIONS 82-86 - PODCAST GENERATOR PHASE 2 IMPLEMENTATION**: (1) Created `tts_client.py` (~620 lines) - ElevenLabs WebSocket batch generation with TTSSegmentResult dataclass, voice mapping, retry logic with notifications, ETA tracking. (2) Created `audio_stitcher.py` (~405 lines) - pydub-based concatenation with 300ms silence on speaker changes. (3) Enhanced `orchestrator.py` (+405 lines) - Added Phase 5 (GENERATING_AUDIO) and Phase 6 (STITCHING_AUDIO), progress notifications every 10% milestone, retry callbacks, audio-only mode via `--generate-audio` flag. (4) Enhanced `__main__.py` (+135 lines) - Added `--generate-audio/-a` and `--max-segments/-m` CLI flags. (5) Fixed 4 bugs: wrong user_id extraction, duplicate "podcast" filename, non-clickable links, 0.0 duration. (6) Added `calculated_duration_minutes` property to `state.py`. **SESSION 85 - MOCKAGENTICJOB TEST HARNESS**: Created `agents/test_harness/` package (~473 lines) for zero-cost queue testing. MockAgenticJob class simulates long-running jobs with configurable iterations, sleep duration, failure probability, and real cosa-voice notifications with job_id routing. **SESSION 85 - MOCK JOB API**: Created `rest/routers/mock_job.py` (~198 lines) with `POST /api/mock-job/submit` endpoint. **SESSION 83-85 - JOB_ID PARAMETER**: Added `job_id: Optional[str]` parameter to notification system for job-based routing in `notification_models.py` (+258 lines) and agent cosa_interface files. **SESSION 85 - QUEUE API ENHANCEMENTS**: Enhanced `rest/routers/queues.py` (+81 lines) to expose job artifacts (report_path, abstract, cost_summary) in metadata for done/dead queues. **SESSION 86 - FILE SERVING ENDPOINT**: Created `rest/routers/io_files.py` (~174 lines) with `GET /api/io/file` for serving .md, .mp3, .pdf files with security validation. **Total Impact**: 11 files modified (+1073 lines), 5 new files created (~1870 lines), net ~+2943 lines. 🔄✅
+>
+> **🔄 PREVIOUS**: 2026.01.19 - Parent Lupin Sync: Sessions 72-78 Notification Utils Consolidation + Podcast Generator Bug Fixes + Deep Research UX Improvements! Synced changes from parent Lupin Sessions 72-78. **SESSION 72 - UNIFIED `_format_questions_for_tts()`**: Created new shared utility `utils/notification_utils.py` (~135 lines) consolidating 3 identical implementations into single source of truth. Exports `format_questions_for_tts()` (TTS-friendly message without options) and `convert_questions_for_api()` (camelCase→snake_case conversion). Updated `agents/deep_research/cosa_interface.py` (-74 lines, +5 lines), `agents/podcast_generator/cosa_interface.py` (-28 lines, +4 lines) to use shared utility. Fixed pre-existing broken smoke tests. **SESSION 74b - PROGRESSIVE NARROWING TEST HARNESS**: Created `agents/deep_research/narrowing_harness.py` and `narrowing_mocks.py` for isolated testing of theme clustering logic. **SESSIONS 74-76 - PODCAST GENERATOR BUG FIXES**: Multiple critical fixes: (1) Bug 7 - filename preservation across revisions via `_original_script_path` tracking, (2) Bug 8 - iterative review loop with `while not script_approved:` pattern, (3) Save timing fix - moved save to AFTER user decision not before, (4) Version suffix for revisions (`-v2.md`, `-v3.md`). **SESSION 78 - DEEP RESEARCH CLI UX IMPROVEMENTS**: Added `options` array to clarification.py JSON schema for multiple-choice clarifications. Updated voice_io.py `choose()` to accept `Union[List[str], List[dict]]` with `allow_custom` parameter. **NEW FILE**: `agents/podcast_generator/voice_io.py` - voice I/O abstraction layer. **Total Impact**: 10 files modified, 4 new files created, +830/-227 lines (net +603 lines). 🔄✅
+>
+> **🔄 PREVIOUS**: 2026.01.18 - Parent Lupin Sync: Sessions 68-71 Deep Research Queue Integration + Podcast Generator + Bug Fixes! Synced changes from parent Lupin Sessions 68-71. **SESSION 68 - TTS VERBOSITY FIX**: Modified `_format_questions_for_tts()` in cosa_voice_mcp.py to return ONLY question text - options now UI-only, not spoken aloud. **SESSION 69b - DEEP RESEARCH BACKGROUND JOB INTEGRATION (PHASES 1-4)**: Created `agents/agentic_job_base.py` (~175 lines) abstract class for long-running agentic jobs with execution state tracking, artifacts dict, is_cacheable=False property. Created `agents/deep_research/job.py` (~320 lines) DeepResearchJob implementation wrapping CLI logic with voice notifications. Created `rest/routers/deep_research.py` (+90 lines) with `POST /api/deep-research/submit` endpoint. Modified `rest/running_fifo_queue.py` (+95 lines) with AgenticJobBase processing in `_handle_agentic_job()` method. **SESSION 70 - PODCAST GENERATOR PHASE 1**: Created entire `agents/podcast_generator/` package (11 files, ~2700 lines) with orchestrator state machine, Dynamic Duo host personalities, prosody annotations, cosa_interface voice I/O, prompts, and 28 unit tests. **SESSION 71 - DUPLICATE MC OPTIONS FIX**: Updated `agents/deep_research/cosa_interface.py` and `agents/podcast_generator/cosa_interface.py` to match correct `_format_questions_for_tts()` implementation - options display in UI only, not in TTS. **Total Impact**: 4 files modified, 13+ files created across 2 new packages, +3500 lines (estimated). 🔄✅
+>
+> **🔄 PREVIOUS**: 2026.01.17 - Parent Lupin Sync: Session 67 Sender ID and Session Name Separation for Deep Research CLI! Synced changes from parent Lupin Session 67. **THE PROBLEM**: Three concepts were conflated in the Deep Research CLI: (1) sender_id included semantic topic which complicated routing, (2) `voice_io.notify()` didn't support `abstract` parameter, (3) `session_name` wasn't passed through to UI. **DESIGN DECISIONS**: (1) Sender ID now uses static `#cli` suffix for consistent routing, (2) Session name generated with spaces ("cats vs dogs") for display, (3) Semantic topic derived from session name (hyphens for file naming). **notification_models.py CHANGES**: Updated sender_id regex from `[a-z]+-[a-z]+-[a-z]+` to `[a-z]+(-[a-z]+)*` allowing simple identifiers like `#cli`. Added `session_name` field to both `NotificationRequest` and `AsyncNotificationRequest` with `to_api_params()` support. **voice_io.py CHANGES**: Added `abstract` and `session_name` parameters to `notify()` function, passes through to cosa_interface. **cosa_interface.py CHANGES**: Added `SESSION_NAME` module-level variable (auto-included in notifications). Updated `notify_progress()` to accept and use `abstract` and `session_name`. **cli.py CHANGES**: Changed sender_id from `#semantic-topic` to static `#cli`. Now generates `session_name` with spaces using new prompt template. Derives `semantic_topic` by converting spaces to hyphens for file naming. Simplified `session_id` to `cli-{uuid8}`. Sets `cosa_interface.SESSION_NAME` for automatic inclusion. Added `--no-save` and `--save-to-directory` CLI flags for report persistence control. Added YAML frontmatter generation with abstract. **orchestrator.py CHANGES**: Major enhancement with report saving logic, abstract generation using Haiku model, YAML frontmatter structure. **Total Impact**: 5 files modified, +709/-80 lines (net +629 lines). 🔄✅
+>
+> **🔄 PREVIOUS**: 2026.01.16 - Parent Lupin Sync: Session 64 Deep Research Semantic Session IDs + Rate Limit Error Handling! Synced changes from parent Lupin Session 64. **SEMANTIC SESSION IDs FOR DEEP RESEARCH**: Created 3-word hyphenated topic extraction using Gister class with new `research-topic.txt` prompt template. New sender_id format: `deep.research@lupin.deepily.ai#python-javascript-comparison`. Added topic generation call in `cli.py` before any notifications using existing Gister infrastructure. **RATE LIMIT ERROR HANDLING**: When Anthropic 429 errors occur after waiting, now provides user-friendly error explaining 30k tokens/min limit vs ~80k tokens per web search. Added partial results recovery - research continues even if some topics fail due to rate limits. **NEW RATE_LIMITER.PY**: Created `agents/deep_research/rate_limiter.py` (~150 lines) with `WebSearchRateLimiter` class implementing sliding window token tracking, proactive delay calculation, and user notification during enforced delays. **SENDER_ID REGEX FIX**: Updated regex pattern in `notification_models.py` from `(#[a-f0-9]{8})?` to `(#([a-f0-9]{8}|[a-z]+-[a-z]+-[a-z]+))?` to support both hex session IDs and semantic 3-word topics. **ABSTRACT FIELD SUPPORT**: Added `abstract` field to `NotificationRequest` and `AsyncNotificationRequest` for supplementary context in action-required notifications. **NEW STATS ROUTER**: Created `rest/routers/stats.py` for time-saved dashboard data and solution replay analytics. **Total Impact**: 13 files modified + 2 new files (rate_limiter.py, stats.py), +487/-89 lines (net +398 lines). 🔄✅
+>
+> **🔄 PREVIOUS**: 2026.01.15 - Parent Lupin Sync: Sessions 58-60 Stop Token Sentinel Pattern + Gister Prompt_Key + Deep Research Sender Identity! Synced changes from parent Lupin Sessions 58-60. **STOP TOKEN SENTINEL PATTERN (Session 58)**: Fixed vLLM stop token termination causing truncated XML. Previous config used `stop_sequence` but vLLM code looked for `stop` - stop tokens were NEVER being sent! Solution: Use `</stop>` sentinel AFTER `</response>` so LLM generates complete XML before stopping. Updated `prompt_template_processor.py` to automatically append `</stop>` to XML examples in ALL prompt templates. **XML PARSER SUFFIX STRIPPING (Session 58)**: Enhanced `util_xml_pydantic.py` to strip LLM suffix text after closing `</response>` tag - uses `find()` (first occurrence) not `rfind()` to avoid matching later mentions in explanation text. **GISTER PROMPT_KEY PARAMETER (Session 58)**: Added `prompt_key` parameter to `Gister.get_gist()` enabling different prompt templates (e.g., `session-title.txt` for 3-5 word session titles). Cache-bypassing for non-default prompts prevents collisions and pollution. **DEEP RESEARCH AGENT SENDER IDENTITY (Session 59)**: Added `_get_sender_id()` function and `SENDER_ID` module constant to `cosa_interface.py` with format `deep.research@{project}.deepily.ai`. Updated all 4 notification functions (`notify_progress`, `ask_confirmation`, `get_feedback`, `present_choices`) to pass `sender_id`. **NOTIFICATION MODELS REGEX UPDATE (Session 59)**: Changed sender_id regex from `^claude\.code@...` to `^[a-z]+\.[a-z]+@...` to support multiple agent types (claude.code, deep.research, etc.). Updated `extract_sender_from_message()` to accept `agent_type` parameter. **AGENT SESSION_ID FIX (Session 60)**: Minor fix - 6 agent files (calendaring, datetime, math, receptionist, todo, weather) and 4 memory files updated with consistent formatting. **Total Impact**: 18 files modified, +186/-71 lines (net +115 lines). 🔄✅
+>
+> **🔄 PREVIOUS**: 2026.01.14 - Parent Lupin Sync: Session 57 Job Queue Progressive Disclosure UI + Deep Research Agent Voice-First UX! Synced major changes from parent Lupin Session 57. **JOB QUEUE PROGRESSIVE DISCLOSURE - DATA MODEL**: Added `session_id` parameter to `SolutionSnapshot.__init__()` and `AgentBase.__init__()` for job-notification correlation. Updated 6 agent constructors in `todo_fifo_queue.py` to pass `session_id=websocket_id` (CalendaringAgent, MathAgent, TodoListAgent, DateAndTimeAgent, WeatherAgent, ReceptionistAgent). Extended `UserJobTracker` in `queue_extensions.py` with `session_to_jobs`/`job_to_session` dicts and 3 correlation methods: `associate_job_with_session()`, `get_session_for_job()`, `get_jobs_for_session()` (+68 lines). **JOB QUEUE PROGRESSIVE DISCLOSURE - API LAYER**: Enhanced `/api/queue/{type}` response with `session_id`, `agent_type`, `has_interactions` fields in job metadata. Added new endpoint `GET /api/get-job-interactions/{job_id}` (~130 lines) that returns job metadata + notifications within ±5 minute window of job execution. **GIST GENERATION ENDPOINT**: Added `POST /notifications/generate-gist` endpoint (~68 lines) using Gister class for LLM-powered session name generation from notification messages. **DEEP RESEARCH AGENT**: New directory `agents/deep_research/` with 10 files (~12k lines total): voice_io.py (280 lines - voice-first abstraction layer), cli.py (CLI with --cli-mode flag), orchestrator.py, state.py, config.py, cosa_interface.py, api_client.py, cost_tracker.py, nodes/, tools/, prompts/. **Total Impact**: 6 files modified (+288 lines), 1 new directory (deep_research/ with 10+ files). 🔄✅
+>
+> **🔄 PREVIOUS**: 2026.01.13 - Parent Lupin Sync: Session 56 Conversation Identity Architecture Phases 1-3! Synced changes from parent Lupin Session 56. **CONVERSATION IDENTITY - THE PROBLEM**: Parallel Claude Code sessions shared same sender_id (`claude.code@lupin.deepily.ai`), causing interleaved messages and ambiguous voice routing. **NEW SENDER_ID FORMAT**: `claude.code@{project}.deepily.ai#{session_id}` (e.g., `claude.code@lupin.deepily.ai#a1b2c3d4`). **PHASE 1 - SESSION IDENTITY (notification_models.py)**: Added `parse_sender_id()` helper function (50 lines) for extracting agent_type, project, session_id from sender_id strings (backward compatible with old format). Updated regex patterns in `NotificationRequest` and `AsyncNotificationRequest` to accept optional `#session_id` suffix. **PHASE 2 - ACTIVE CONVERSATION ROUTING (notification_repository.py)**: Added `get_active_conversation()` method returning most recent sender_id for voice routing. Added `get_sessions_for_project()` method listing all sessions for a project with is_active indicator. **PHASE 2 - API ENDPOINTS (notifications.py)**: Added `GET /notifications/active-conversation/{user_email}` endpoint for voice routing. Added `GET /notifications/project-sessions/{project}/{user_email}` endpoint for UI session listing. Added WebSocket broadcast of `active_conversation_changed` event after each notification (fire-and-forget AND action-required). **Total Impact**: 3 files modified, +197 lines. 🔄✅
+>
+> **🔄 PREVIOUS**: 2026.01.12 - Parent Lupin Sync: Session 52-55 User Mode System + UI Enhancements + Bug Fixes! Synced major changes from parent Lupin Sessions 52-55. **USER-LEVEL MODE SYSTEM (Session 52)**: Added stateful mode system allowing users to bypass LLM router and route directly to specific agents. New `MODE_TO_AGENT` mapping and `MODE_METADATA` dict in `todo_fifo_queue.py` (+213 lines). New methods: `get_user_mode()`, `set_user_mode()`, `clear_user_mode()`, `get_available_modes()`. Routing logic integration - `push_job()` checks mode BEFORE LLM router. **NEW MODE ROUTER**: Created `rest/routers/mode.py` (277 lines) with 4 REST endpoints using `/current` path (extracts `user_id` from auth token). **DISPATCHER DEBUG OUTPUT (Session 53-54)**: Enhanced `dispatcher.py` with Docker environment detection (`/var/lupin` check for Docker-specific MCP config), TASK FINISHED banner, RESULT debug line with cost, added `--verbose` flag for stream-json. **CLAUDE CODE ROUTER DEBUG**: Enhanced `claude_code.py` with granular message tracing (assistant keys, message field types, content blocks). **DATETIME BUG FIX (Session 55)**: Fixed 500 error on `/api/notify/response` - changed `datetime.utcnow()` (naive) to `datetime.now(timezone.utc)` (aware) at notifications.py:711. **XML PARSER ROBUSTNESS**: Enhanced `util_xml_pydantic.py` (+24 lines) to strip LLM prefix text before XML (e.g., "Output" or "Here is the response:") - finds `<?xml` or common root tags and strips preceding chars. **TTS ERROR HANDLING**: Enhanced `speech.py` (+32 lines) with better ElevenLabs error parsing (quota_exceeded, rate_limit, auth_error) and full TTS text logging. **Total Impact**: 6 files modified + 1 new file (mode.py), +345 lines. 🔄✅
+>
+> **🔄 PREVIOUS**: 2026.01.09 - Parent Lupin Sync: Session 51 Claude Code Dispatcher Streaming Fixes! Synced changes from parent Lupin Session 51. **DISPATCHER STREAMING OVERHAUL**: Completely rewrote `_run_bounded()` method in `dispatcher.py` (~80 lines changed). **ISSUE 1 - OUTPUT FORMAT**: Changed `--output-format json` (single final result) to `--output-format stream-json` (realtime streaming). **ISSUE 2 - SYNC SUBPROCESS**: Changed `subprocess.run()` (blocking) to `asyncio.create_subprocess_exec()` with async line-by-line streaming via `async for line in process.stdout`. **ISSUE 3 - TIMEOUT HANDLING**: Replaced `subprocess.TimeoutExpired` with `asyncio.wait_for()` + `asyncio.TimeoutError` for proper async timeout. **CLAUDE CODE ROUTER UPDATES**: Updated `claude_code.py` router (~50 lines changed). Fixed message handling for stream-json format vs SDK objects in `_send_websocket_message()`. Changed `background_tasks.add_task()` to `asyncio.create_task()` for proper async scheduling. Added comprehensive debug logging throughout dispatch flow. **SYSTEM ROUTER ADDITION**: Added `app_timezone` field to `/api/config/client` endpoint for client-side timezone configuration (~15 lines in `system.py`). **CURRENT BLOCKER**: Claude Code CLI not installed in Docker container - testing blocked. **Total Impact**: 3 files, +186/-44 lines. 🐳⏳
+>
+> **🔄 PREVIOUS**: 2026.01.08 - Parent Lupin Sync: Session 47-48 Timestamp Fixes + Claude Code UI Router! Synced changes from parent Lupin Sessions 47-48. **TIMESTAMP FORMATTING**: Added `_get_time_display()` method to `NotificationItem` class (notification_fifo_queue.py) generating "HH:MM TZ" format for WebSocket notifications. Added `get_formatted_time_display()` and `get_formatted_date_display()` helper functions to notifications.py router. Updated `/api/notify/response` endpoint and WebSocket broadcast to include `time_display` and `date_display` fields. Updated `get_sender_conversation()` and `get_sender_conversation_by_date()` endpoints with proper timezone-aware timestamp serialization and `time_display` field. **NEW CLAUDE CODE ROUTER**: Created `rest/routers/claude_code.py` (520 lines) - REST API for Claude Code UI Card dispatch. Endpoints: `POST /dispatch` (Option A/B task dispatch), `POST /{task_id}/inject` (inject message into Option B session), `POST /{task_id}/interrupt` (interrupt Option B session), `POST /{task_id}/end` (end Option B session), `GET /{task_id}/status` (get task status), `WebSocket /ws/{task_id}` (streaming responses). Includes Pydantic models (`DispatchRequest`, `DispatchResponse`, `InjectRequest`, `TaskTypeEnum`), session management dict, WebSocket connection tracking, and comprehensive smoke test. **Total Impact**: 3 files (2 modified, 1 created), ~+580 lines. 🔄✅
+>
+> **🔄 PREVIOUS**: 2026.01.07 - Parent Lupin Sync: Directory Reorganization + MessageHistory + Bug Fixes! Synced changes from parent Lupin Sessions 45-46. **DIRECTORY REORGANIZATION**: Moved `claude_code_dispatcher.py` into new `orchestration/claude_code/` subpackage. Files: `__init__.py` (47 lines - subpackage exports), `dispatcher.py` (renamed from claude_code_dispatcher.py), `message_history.py` (260 lines - NEW). Updated `orchestration/__init__.py` to re-export from subpackage for backwards compatibility, added `SessionInfo`, `SDK_AVAILABLE`, `MessageHistory` to exports. **NEW `MessageHistory` CLASS**: Tracks conversation history for session continuity across SDK `interrupt()` boundaries. Methods: `set_original_prompt()`, `add_assistant_text()`, `add_user_message()`, `get_context_prompt()`. Enables context injection into new sessions after SDK session restarts. Full smoke test (9 tests) included. **BUG FIXES**: (1) `util.py:78-87` timestamp fix - changed `dt.now()` → `dt.now( pytz.UTC )` for correct timezone conversion, (2) `notification_fifo_queue.py:87-88` fallback fix - changed naive `datetime.now()` → `datetime.now( timezone.utc )`, (3) `speech.py:858-860` PCM streaming - added `output_format=pcm_24000` to ElevenLabs WebSocket URL for smooth Web Audio API playback. **VALIDATION RELAXATION**: Increased multiple-choice options limit from 2-4 → 2-6 options. **Total Impact**: 6 files modified + 3 files created + 1 file deleted, ~+300/-730 lines (net -430 lines due to file move). 🔄✅
+>
+> **🔄 PREVIOUS**: 2026.01.06 - Parent Lupin Sync: Directory Rename Cleanup + Continuous Session Loop Architecture! Synced changes from parent Lupin Sessions 40-44. **DIRECTORY RENAME CLEANUP (Sessions 40-41)**: Updated 25+ files with remaining `genie-in-the-box` → `lupin` references. Files include: CLAUDE.md, CLAUDE.local.md, 9 slash commands in `.claude/commands/`, test scripts, README files, smoke test prompts. **CONTINUOUS SESSION LOOP ARCHITECTURE (Session 44)**: Major refactor of `claude_code_dispatcher.py` (+125/-20 lines). NEW `SessionInfo` TypedDict tracks client + pending_messages queue + running flag. `_run_interactive()` now uses `while running` loop to stay connected for message injection. After response loop exits, checks `asyncio.Queue` for pending messages. `inject()` now queues messages instead of direct send. `end_session()` NEW method gracefully ends session. **REQUIREMENTS UPDATES**: Version updates and cleanup in requirements.txt. **DELETED**: `training/__init__.py` (unused). **Total Impact**: 25 files, +183/-106 lines. 🔄✅
+>
+> **🔄 PREVIOUS**: 2026.01.06 - Parent Lupin Sync: Directory Rename Part D + Venv Dependency Resolution! Synced from parent Lupin Session 40. **VENV RECREATED**: Deleted and recreated `.venv` after parent directory rename (`genie-in-the-box` → `lupin`). **DEPENDENCY CONFLICTS RESOLVED**: Complex numpy 1.x vs 2.x ecosystem conflict. Removed `auto_gptq==0.7.1` (archived April 2025, unused - only format string reference in quantizer.py). Upgraded `auto_round==0.4.6` → `0.9.4`. Downgraded `numpy==2.2.5` → `1.26.4` (auto-round requires <2.0). Downgraded `spacy==3.8.7` → `3.7.6`, `thinc==8.3.6` → `8.2.5`, `blis==1.3.0` → `0.7.11` (thinc 8.2.5 requires numpy<2.0). **NEW DEPENDENCIES ADDED**: `bcrypt==5.0.0`, `psycopg2-binary==2.9.11`, `fastmcp==2.14.2`. **KEY DISCOVERY**: auto-gptq is ARCHIVED (April 2025), successor is gptqmodel which requires numpy>=2.2 - mutually exclusive with Intel's auto-round ecosystem. **MCP SERVER**: Re-registered cosa-voice, now shows "Connected". **Total Impact**: requirements.txt (~15 changes). 🔄✅
+>
+> **🔄 PREVIOUS**: 2026.01.05 - Parent Lupin Sync: Multiple-Choice Question Support! Synced infrastructure from parent Lupin Sessions 37-38. **NEW RESPONSE TYPE**: Added `multiple_choice` to `ResponseType` enum for Claude Code's `AskUserQuestion` tool support. **MODEL CHANGES**: Added `response_options` field (JSONB) to `NotificationRequest`, `NotificationItem`, `Notification` PostgreSQL model, and `NotificationRepository.create_notification()`. **VALIDATION**: New `validate_multiple_choice_options()` validator ensures proper question structure (2-4 options, required labels). **API UPDATES**: `/api/notify` endpoint now accepts `response_options` JSON query param with validation for `multiple_choice` type. **README**: Added Option B interactive session examples, bidirectional control docs, and test coverage table. **Total Impact**: 6 files, +158/-15 lines. 🔄✅
+
+> **🔄 PREVIOUS**: 2026.01.03 - Parent Lupin Sync: ClaudeCodeDispatcher Rename! Synced class rename from parent Lupin Session 33. **RENAME**: `CosaDispatcher` → `ClaudeCodeDispatcher` across 2 files (18 total occurrences) for clearer branding - the dispatcher invokes Claude Code, not just COSA. **FILES MODIFIED**: `orchestration/__init__.py` (5 renames in imports, exports, docstring, example), `orchestration/claude_code_dispatcher.py` (13 renames in class definition, docstring, smoke tests, CLI entry point). **Total Impact**: 2 files, +15/-15 lines (pure rename, no functional changes). All 9 smoke tests passing. 🔄✅
+
+> **🚀 PREVIOUS**: 2026.01.02 - Claude Code Dispatcher + SQLite→PostgreSQL Notifications Migration! Synced major infrastructure from parent Lupin Sessions 28-32. **NEW ORCHESTRATION MODULE**: Created `src/cosa/orchestration/` package (3 files, 821 lines) with `CosaDispatcher` class for programmatic Claude Code invocation supporting bounded (print mode) and interactive (SDK client) execution modes. **SQLITE→POSTGRESQL MIGRATION**: Deleted deprecated `rest/notifications_database.py` (513 lines) - all notification CRUD now uses PostgreSQL repository pattern. **REPOSITORY ENHANCEMENT**: Added `get_expired_notifications()` method for background cleanup tasks, fixed ORDER BY bug using `func.max()` instead of string literal. **API MIGRATION**: Updated `notifications.py` router to use PostgreSQL repository pattern (removed NotificationsDatabase import/dependency, updated 4 endpoints). **SDK DEPENDENCY**: Added `claude-agent-sdk==0.1.18` to requirements.txt. **Total Impact**: 4 files modified, 3 files created, 1 file deleted, +832/-604 lines (net +228 lines). 🚀✅
+
+> **🎨 PREVIOUS**: 2026.01.01 - Parent Lupin Sync: Notifications UI Refactoring (Date-Based Grouping)! Synced 9 files from parent Lupin Session 27. **ENV VAR RENAME**: `COSA_APP_SERVER_URL` → `LUPIN_APP_SERVER_URL` across 4 CLI files for Lupin branding consistency. **NEW `is_hidden` FIELD**: Added soft delete column to Notification model with index for efficient visible-only queries (postgres_models.py:588-595). **4 NEW REPOSITORY METHODS**: `get_sender_conversations_by_date()` for date-grouped notifications, `soft_delete_by_date()` for soft delete by date, `get_sender_dates()` for date summaries, `get_visible_senders_with_counts()` for visible sender aggregation (notification_repository.py +273 lines). **4 NEW API ENDPOINTS**: `GET /conversation-by-date` (date-grouped notifications), `DELETE /date/{sender}/{user}/{date}` (soft delete), `GET /sender-dates` (date summaries), `GET /senders-visible` (visible senders with new counts) (notifications.py +346 lines). **SQLALCHEMY FIX**: Added `case` import for compatibility with visible-only filtering. **UNIT TESTS UPDATED**: Updated 3 test assertions for env var rename. **Total Impact**: 9 files, +637/-12 lines (net +625 lines). 🎨✅
+
+> **🐛 PREVIOUS**: 2025.12.31 - Parent Lupin Sync: Sort Order Display Bug Fix! Synced 1 file from parent Lupin Session 24. **ROOT CAUSE**: Complex chain of transformations (DB DESC → JS `.reverse()` → CSS `column-reverse` → `appendChild`) cancelled each other out incorrectly for real-time vs initial load scenarios. **THE FIX**: Changed `notification_repository.py:220` from `.desc()` → `.asc()` so DB returns oldest-first; JS then uses `insertBefore` to prepend each message, resulting in newest at top. **HOW IT WORKS NOW**: Database returns oldest→newest (ASC), JS iterates with `insertBefore` prepending each message, result is newest at top for both initial page load AND real-time WebSocket notifications. **Total Impact**: 1 file, +3/-3 lines. Phase 8 sort order bug RESOLVED, sender-aware notification system fully functional. 🐛✅
 
 > **📬 PREVIOUS**: 2025.12.30 - Parent Lupin Sync: Sender-Aware Notification System Infrastructure! Synced 8 files from parent Lupin Sessions 19-23 (Phase 1-6 implementation). **NEW `Notification` SQLAlchemy MODEL**: 128-line PostgreSQL model with sender routing, timestamps, response handling, and state machine (postgres_models.py:479-612). **NEW `NotificationRepository` CLASS**: 462-line repository with CRUD operations, sender-based grouping, activity-anchored window loading, state management (notification_repository.py - NEW FILE). **CLI SENDER SUPPORT**: Added `sender_id` field to `NotificationRequest` and `AsyncNotificationRequest` with auto-extraction from `[PREFIX]` in message via `extract_sender_from_message()` helper (notification_models.py:27-64, 158-163, 248-253, 458-463, 503-515). **API SENDER RESOLUTION**: Added `resolve_sender_id()` helper and `sender_id` query param to `/api/notify` endpoint, PostgreSQL persistence for history loading (notifications.py:135-166, 186, 289-290, 328-349). **NEW HISTORY ENDPOINTS**: `/notifications/senders/{user_email}` (get senders with activity), `/notifications/history/{sender_id}/{user_email}` (get sender conversation history), `/notifications/conversation/{sender_id}/{user_email}` DELETE (delete sender conversation). **FIFO QUEUE UPDATE**: Added `sender_id` field to `NotificationItem` (notification_fifo_queue.py). **DATABASE CONTEXT MANAGER**: Added `get_db()` context manager for session management (database.py). **Total Impact**: 8 files (7 modified, 1 created), +585 insertions/-33 deletions (net +552 lines). 📬✅
 
@@ -31,6 +79,364 @@
 > **Previous Achievement**: 2025.11.10 - Phase 2.5.4 API Key Authentication Infrastructure COMPLETE! Header-based API key authentication (X-API-Key header) implemented. Fixed critical schema bug (api_keys.user_id INTEGER→TEXT). Integration testing infrastructure created (10 tests).
 
 > **Previous Achievement**: 2025.11.08 - Notification System Phase 2.3 CLI Modernization COMMITTED! Split async/sync notification clients with Pydantic validation (1,376 lines across 3 new files).
+
+---
+
+## 2026.01.05 - Parent Lupin Sync: Multiple-Choice Question Support
+
+### Summary
+Synced 6 files from parent Lupin Sessions 37-38 (2026.01.05). Added multiple-choice question response type to the notification system, enabling full support for Claude Code's `AskUserQuestion` tool with multi-question flows.
+
+### Work Performed
+
+#### New Response Type: MULTIPLE_CHOICE - COMPLETE ✅
+**File**: `cli/notification_models.py` (+52 lines)
+
+Added `MULTIPLE_CHOICE = "multiple_choice"` to `ResponseType` enum alongside existing `YES_NO` and `OPEN_ENDED` types.
+
+**New Fields**:
+- `response_options: Optional[dict]` - Structure for multiple-choice questions containing `{questions: [{question, header, multi_select, options: [{label, description}]}]}`
+
+**New Validator**: `validate_multiple_choice_options()` (30 lines)
+- Validates `questions` array exists for `multiple_choice` type
+- Each question must have `question` field and `options` array
+- Each question must have 2-4 options
+- Each option must have a `label` field
+- Design by Contract docstring included
+
+**Query Param Serialization**: Added JSON serialization of `response_options` in `to_query_params()` method
+
+#### PostgreSQL Model Update - COMPLETE ✅
+**File**: `rest/postgres_models.py` (+4 lines)
+
+Added `response_options` JSONB column to `Notification` model:
+```python
+response_options: Mapped[Optional[dict]] = mapped_column(
+    JSONB,
+    nullable=True
+)
+```
+
+#### Repository Update - COMPLETE ✅
+**File**: `rest/db/repositories/notification_repository.py` (+2 lines)
+
+Added `response_options: Optional[dict] = None` parameter to `create_notification()` method and passed through to model instantiation.
+
+#### FIFO Queue Update - COMPLETE ✅
+**File**: `rest/notification_fifo_queue.py` (+7/-4 lines)
+
+Added `response_options` field throughout the notification queue infrastructure:
+- `NotificationItem.__init__()` - New parameter and attribute
+- `NotificationItem.to_dict()` - Include in serialization
+- `NotificationFifoQueue.push_notification()` - Accept and pass through
+
+#### API Endpoint Update - COMPLETE ✅
+**File**: `rest/routers/notifications.py` (+39/-6 lines)
+
+Enhanced `/api/notify` endpoint:
+- New query parameter: `response_options: Optional[str]` (JSON string)
+- Added `"multiple_choice"` to `valid_response_types`
+- Validation: `multiple_choice` requires `response_options`
+- JSON parsing with error handling for malformed input
+- Passed `parsed_response_options` to all notification creation paths (DB, queue, WebSocket)
+
+#### README Documentation - COMPLETE ✅
+**File**: `orchestration/README.md` (+62/-3 lines)
+
+Added comprehensive documentation:
+- Option B: Interactive Sessions example with `on_message` callback
+- Bidirectional Control section (`inject()`, `interrupt()`, `get_active_sessions()`)
+- Test Coverage table (3 test files, 42 total tests)
+- Related Documents section update
+
+### Files Modified
+
+**COSA Repository** (6 files):
+
+| File | Lines Changed | Description |
+|------|---------------|-------------|
+| `cli/notification_models.py` | +52 | ResponseType enum + response_options field + validator |
+| `rest/postgres_models.py` | +4 | response_options JSONB column |
+| `rest/db/repositories/notification_repository.py` | +2 | create_notification() parameter |
+| `rest/notification_fifo_queue.py` | +7/-4 | NotificationItem field + serialization |
+| `rest/routers/notifications.py` | +39/-6 | API endpoint with validation |
+| `orchestration/README.md` | +62/-3 | Option B docs + test coverage |
+
+**Total Impact**: 6 files, +158 insertions/-15 deletions (net +143 lines)
+
+### Integration with Parent Lupin
+
+**Parent Sessions Context** (2026.01.05, Sessions 37-38):
+- Session 37: Option B Phase 1 manual testing complete
+- Session 38: Multiple-choice question notifications - all 5 phases complete
+  - Phase 4: Multi-question navigation (state tracking, navigation buttons)
+  - Phase 5: MCP voice tool `ask_multiple_choice()` added
+
+**Database Migration Note**: Parent Lupin already has the `response_options` column via ALTER TABLE. COSA models updated to match.
+
+### Current Status
+
+- **ResponseType.MULTIPLE_CHOICE**: ✅ Added to enum
+- **response_options Field**: ✅ Added to all layers (model, request, queue, API)
+- **Validation**: ✅ Pydantic validator for question structure
+- **API Endpoint**: ✅ Updated with JSON parsing and validation
+- **README**: ✅ Comprehensive Option B documentation added
+
+### Next Session Priorities
+
+1. Sync any additional parent Lupin changes
+2. Monitor for frontend changes requiring backend updates
+
+---
+
+## 2026.01.02 - Claude Code Dispatcher + SQLite→PostgreSQL Notifications Migration
+
+### Summary
+Synced major infrastructure from parent Lupin Sessions 28-32 (2026.01.02). Created new orchestration module for programmatic Claude Code invocation, completed SQLite→PostgreSQL migration for notifications system, and added required SDK dependency.
+
+### Work Performed
+
+#### New Orchestration Module - COMPLETE ✅
+**Location**: `src/cosa/orchestration/` (3 files, 821 lines)
+
+Created production-ready Claude Code task dispatcher with dual execution modes:
+
+**Files Created**:
+- `__init__.py` (38 lines) - Module exports: CosaDispatcher, Task, TaskType, TaskResult
+- `claude_code_dispatcher.py` (651 lines) - Main dispatcher implementation
+- `README.md` (142 lines) - Comprehensive documentation with examples
+
+**Key Features**:
+1. **TaskType.BOUNDED** (Option A): Print mode (`claude -p`) for CI/CD pipelines, scheduled jobs, bounded tasks
+2. **TaskType.INTERACTIVE** (Option B): SDK client for open-ended sessions with bidirectional control
+3. **MCP Voice Integration**: Configures Claude Code to use MCP voice tools (`converse()`, `notify()`, `ask_yes_no()`)
+4. **Environment-Aware**: Uses `LUPIN_ROOT` for production paths, auto-detects project from task
+
+**Classes**:
+- `TaskType` - Enum for execution modes (BOUNDED, INTERACTIVE)
+- `Task` - Task definition with id, project, prompt, type, max_turns, timeout_seconds
+- `TaskResult` - Result dataclass with success, session_id, cost_usd, duration_ms, error
+- `CosaDispatcher` - Main dispatcher with dispatch(), inject(), interrupt(), get_active_sessions()
+
+**Smoke Tests**: 9 comprehensive tests validating enums, classes, defaults, LUPIN_ROOT requirement, command construction
+
+#### SQLite→PostgreSQL Migration - COMPLETE ✅
+**Deleted**: `rest/notifications_database.py` (513 lines)
+
+Removed deprecated SQLite-based NotificationsDatabase class. All notification CRUD operations now use PostgreSQL repository pattern via `NotificationRepository`.
+
+#### Repository Enhancement - COMPLETE ✅
+**File**: `rest/db/repositories/notification_repository.py` (+29 lines)
+
+1. **New Method `get_expired_notifications()`**:
+   - Returns notifications where state='delivered' AND expires_at < now
+   - Used by background cleanup tasks
+   - Ordered by expires_at ascending (oldest expiration first)
+
+2. **ORDER BY Bug Fix** (2 locations):
+   - Line 153: Changed `desc( 'last_activity' )` → `desc( func.max( Notification.created_at ) )`
+   - Line 674: Same fix for sender ordering
+   - Root cause: SQLAlchemy string literal didn't reference actual expression
+
+3. **Smoke Test Update**: Added `get_expired_notifications` to method validation list
+
+#### API Migration - COMPLETE ✅
+**File**: `rest/routers/notifications.py` (+117/-91 lines, net +26)
+
+Migrated from SQLite NotificationsDatabase to PostgreSQL repository pattern:
+
+1. **Import Cleanup**:
+   - Removed: `from ..notifications_database import NotificationsDatabase`
+   - Removed: `get_notifications_database()` dependency function
+
+2. **notify_user() Endpoint**:
+   - Replaced `notification_db.create_notification()` with `repo.create_notification()`
+   - Added proper UUID conversion for recipient_id
+   - Added `expires_at` calculation
+   - Replaced `notification_db.update_state()` with `repo.update_state()`/`repo.mark_expired()`
+
+3. **submit_notification_response() Endpoint**:
+   - Replaced `notification_db.get_notification()` with `repo.get_by_id()`
+   - Updated state checking to use SQLAlchemy model attributes
+   - Proper response value handling (dict wrapping for simple strings)
+   - Replaced `notification_db.update_response()` with `repo.update_response()`
+
+#### SDK Dependency - COMPLETE ✅
+**File**: `requirements.txt` (+1 line)
+
+Added `claude-agent-sdk==0.1.18` for interactive mode support in CosaDispatcher.
+
+### Files Summary
+
+**Created** (3 files, 831 lines):
+| File | Lines | Description |
+|------|-------|-------------|
+| `orchestration/__init__.py` | 38 | Module exports |
+| `orchestration/claude_code_dispatcher.py` | 651 | Main dispatcher implementation |
+| `orchestration/README.md` | 142 | Documentation with examples |
+
+**Modified** (3 files, +147/-94 lines):
+| File | Changes | Description |
+|------|---------|-------------|
+| `requirements.txt` | +1 | SDK dependency |
+| `rest/db/repositories/notification_repository.py` | +29 | New method + ORDER BY fix |
+| `rest/routers/notifications.py` | +117/-91 | PostgreSQL migration |
+
+**Deleted** (1 file, -513 lines):
+| File | Lines | Description |
+|------|-------|-------------|
+| `rest/notifications_database.py` | 513 | Deprecated SQLite database |
+
+**Total Impact**: 7 files (3 created, 3 modified, 1 deleted), +832/-604 lines (net +228 lines)
+
+### Integration with Parent Lupin
+
+**Parent Sessions Context** (2026.01.02, Sessions 28-32):
+- Session 28: MCP Voice Integration Phases 4-5 complete (E2E testing)
+- Session 29: MCP Voice Integration documentation complete
+- Session 30: Notification sender card ordering bug fixed
+- Session 31: Option A dispatcher implementation complete (moved from R&D to production)
+- Session 32: Voice-first UX + action required card bug fixes
+
+### Current Status
+- **Orchestration Module**: ✅ Production-ready with 9/9 smoke tests passing
+- **PostgreSQL Migration**: ✅ Complete - all notifications use repository pattern
+- **SQLite Removal**: ✅ Deprecated file deleted
+
+### Next Session Priorities
+1. Run integration tests to verify PostgreSQL migration
+2. Test dispatcher E2E with Lupin server running
+3. Document any Python environment requirements for SDK
+
+---
+
+## 2026.01.01 - Parent Lupin Sync: Notifications UI Refactoring (Date-Based Grouping)
+
+### Summary
+Synced 9 files from parent Lupin Session 27 (2026.01.01). Major infrastructure update adding date-based notification grouping for accordion-style UI display, soft delete capability, and environment variable renaming for Lupin branding consistency.
+
+### Work Performed
+
+#### Environment Variable Rename - COMPLETE ✅
+**Files**: 4 CLI files (+4/-4 lines each)
+
+Renamed `COSA_APP_SERVER_URL` → `LUPIN_APP_SERVER_URL` for Lupin branding consistency:
+- `cli/notification_types.py` - ENV constant definition
+- `cli/notify_user.py` - Module docstring + help text
+- `cli/notify_user_async.py` - Module docstring + help text
+- `cli/notify_user_sync.py` - Module docstring + help text
+
+#### Soft Delete Infrastructure - COMPLETE ✅
+**File**: `rest/postgres_models.py` (+8 lines)
+
+Added `is_hidden` column to Notification model for soft delete capability:
+```python
+is_hidden: Mapped[bool] = mapped_column(
+    Boolean,
+    default=False,
+    server_default="false",
+    index=True  # Efficient visible-only queries
+)
+```
+
+#### Date-Based Repository Methods - COMPLETE ✅
+**File**: `rest/db/repositories/notification_repository.py` (+273 lines)
+
+Added 4 new repository methods with Design by Contract docstrings:
+
+1. **`get_sender_conversations_by_date()`** - Load conversation grouped by date (ISO format)
+   - Activity-anchored window loading (defaults to sender's last activity)
+   - Timezone-aware date grouping (default: America/New_York)
+   - Returns dict of date_string → list of notifications
+   - Dates sorted descending (newest first)
+
+2. **`soft_delete_by_date()`** - Soft delete all notifications for a sender on a specific date
+   - Sets `is_hidden=True` instead of physical delete
+   - Timezone-aware date boundary calculation
+   - Returns count of hidden notifications
+
+3. **`get_sender_dates()`** - Get date summaries for a sender
+   - Returns list of dates with notification counts
+   - Excludes hidden notifications by default
+
+4. **`get_visible_senders_with_counts()`** - Get visible senders with new message counts
+   - Uses SQLAlchemy `case()` for conditional aggregation
+   - Returns senders with unread/total counts
+
+Also added `case` import from SQLAlchemy for conditional expressions.
+
+#### Date-Based API Endpoints - COMPLETE ✅
+**File**: `rest/routers/notifications.py` (+346 lines)
+
+Added 4 new API endpoints with Design by Contract docstrings:
+
+1. **`GET /notifications/conversation-by-date/{sender_id}/{user_email}`**
+   - Returns notifications organized by date for accordion-style UI
+   - Query params: `hours` (window size), `anchor` (ISO timestamp), `include_hidden`
+   - Uses configured timezone from `app_timezone` config key
+
+2. **`DELETE /notifications/date/{sender_id}/{user_email}/{date_string}`**
+   - Soft delete all notifications for a sender on a specific date
+   - Validates ISO date format (YYYY-MM-DD)
+   - Returns hidden count and status
+
+3. **`GET /notifications/sender-dates/{sender_id}/{user_email}`**
+   - Get date summaries for a sender
+   - Returns list of dates with notification counts
+
+4. **`GET /notifications/senders-visible/{user_email}`**
+   - Get visible senders with new message counts
+   - Excludes hidden notifications from counts
+
+#### Unit Tests Updated - COMPLETE ✅
+**Files**: 2 test files (+3/-3 lines)
+
+Updated test assertions for environment variable rename:
+- `tests/unit/cli/test_notification_types.py` - ENV constant assertion
+- `tests/unit/cli/test_notify_user.py` - Help text assertions (2 locations)
+
+### Files Modified
+
+**COSA Repository** (9 files):
+
+| File | Lines Changed | Description |
+|------|---------------|-------------|
+| `cli/notification_types.py` | +1/-1 | ENV var rename |
+| `cli/notify_user.py` | +2/-2 | Docstring + help text |
+| `cli/notify_user_async.py` | +2/-2 | Docstring + help text |
+| `cli/notify_user_sync.py` | +2/-2 | Docstring + help text |
+| `rest/postgres_models.py` | +8 | is_hidden column |
+| `rest/db/repositories/notification_repository.py` | +273 | 4 new methods + case import |
+| `rest/routers/notifications.py` | +346 | 4 new endpoints |
+| `tests/unit/cli/test_notification_types.py` | +1/-1 | Test assertion |
+| `tests/unit/cli/test_notify_user.py` | +2/-2 | Test assertions |
+
+**Total Impact**: 9 files, +637 insertions/-12 deletions (net +625 lines)
+
+### Integration with Parent Lupin
+
+**Parent Session Context** (2026.01.01, Session 27):
+- Major UI overhaul renaming "Fresh Queue" to "Notifications"
+- Date accordion UI for grouping notifications by date
+- Frontend files renamed: queue-fresh.{html,js,css} → notifications.{html,js,css}
+- Class renamed: FreshQueueUI → NotificationsUI
+
+**Database Migration Created** (in parent Lupin):
+- `src/scripts/sql/migrations/2025.01.01-add-is-hidden-to-notifications.sql`
+- Adds `is_hidden` column with partial indexes for efficient visible-only queries
+
+### Current Status
+
+- **Environment Variables**: ✅ Renamed to LUPIN_APP_SERVER_URL
+- **Soft Delete**: ✅ is_hidden column added with index
+- **Date Grouping**: ✅ 4 repository methods + 4 API endpoints
+- **Unit Tests**: ✅ Updated for env var rename
+- **History Health**: ✅ ~17.8k tokens (parent Lupin) - healthy
+
+### Next Session Priorities
+
+1. Continue tracking parent Lupin work
+2. Monitor for any additional UI/API changes
 
 ---
 

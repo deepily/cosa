@@ -142,37 +142,37 @@ class InputAndOutputTable():
         if async_embedding is None:
             # Get from configuration, default to True
             async_embedding = self._config_mgr.get( "async embedding generation", default=True, return_type="boolean" )
-            if self.debug: print( f"Got async_embedding from config: {async_embedding}" )
+            if self.debug and self.verbose: print( f"Got async_embedding from config: {async_embedding}" )
         
         # Generate embeddings based on async setting
         if async_embedding and (not input_embedding or not output_final_embedding):
             # Async mode: generate embeddings in background thread, then insert complete row
-            if self.debug: print( "Using async embedding generation..." )
+            if self.debug and self.verbose: print( "Using async embedding generation..." )
             timer.print( "Method returning immediately (async embedding generation started)", use_millis=True, end="\n" )
             
             # Start background thread to generate embeddings and insert row
             def generate_embeddings_and_insert():
-                async_timer = Stopwatch( msg=f"Async embedding generation for '{input[:debug_truncate_len]}...'", silent=False )
+                async_timer = Stopwatch( msg=f"Async embedding generation for '{input[:debug_truncate_len]}...'", silent=not (self.debug and self.verbose) )
                 try:
                     # Generate missing embeddings with cache hit detection
                     if not input_embedding:
-                        if self.debug: print( f"  Generating input embedding for: '{input[:debug_truncate_len]}...'" )
+                        if self.debug and self.verbose: print( f"  Generating input embedding for: '{input[:debug_truncate_len]}...'" )
                         # Check if it's in cache by trying the has() method first
                         input_cache_hit = self._question_embeddings_tbl.has( input )
-                        if self.debug: print( f"  Input embedding cache {'HIT' if input_cache_hit else 'MISS'}" )
+                        if self.debug and self.verbose: print( f"  Input embedding cache {'HIT' if input_cache_hit else 'MISS'}" )
                         final_input_embedding = self._question_embeddings_tbl.get_embedding( input )
                     else:
                         final_input_embedding = input_embedding
-                        if self.debug: print( f"  Input embedding provided (skipping generation)" )
+                        if self.debug and self.verbose: print( f"  Input embedding provided (skipping generation)" )
                     
                     if not output_final_embedding:
                         output_str = str(output_final) if output_final else ""
-                        if self.debug: print( f"  Generating output embedding for: '{output_str[:debug_truncate_len]}...'" )
+                        if self.debug and self.verbose: print( f"  Generating output embedding for: '{output_str[:debug_truncate_len]}...'" )
                         # Note: EmbeddingManager handles its own cache hit detection internally
                         final_output_embedding = self._embedding_mgr.generate_embedding( output_final, normalize_for_cache=True )
                     else:
                         final_output_embedding = output_final_embedding
-                        if self.debug: print( f"  Output embedding provided (skipping generation)" )
+                        if self.debug and self.verbose: print( f"  Output embedding provided (skipping generation)" )
                     
                     # Create complete row with all embeddings
                     new_row = [ {
@@ -209,7 +209,7 @@ class InputAndOutputTable():
             
         else:
             # Sync mode: generate embeddings before inserting (original behavior)
-            if self.debug: print( "Using synchronous embedding generation..." )
+            if self.debug and self.verbose: print( "Using synchronous embedding generation..." )
             
             new_row = [ {
                 "date"                             : date,

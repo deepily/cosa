@@ -25,7 +25,7 @@ RUNNER_SCRIPT="$UNIT_TEST_DIR/infrastructure/unit_test_runner.py"
 
 # CoSA framework configuration (this script is in CoSA directory)
 COSA_ROOT="$PROJECT_ROOT"
-PYTHONPATH_BASE="/mnt/DATA01/include/www.deepily.ai/projects/genie-in-the-box/src"
+PYTHONPATH_BASE="/mnt/DATA01/include/www.deepily.ai/projects/lupin/src"
 
 # Color codes for output (disabled in CI mode)
 RED='\033[0;31m'

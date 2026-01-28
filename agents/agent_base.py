@@ -72,7 +72,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         """
         pass
     
-    def __init__( self, df_path_key: Optional[str]=None, question: str="", question_gist: str="", last_question_asked: str="", push_counter: int=-1, routing_command: Optional[str]=None, user_id: str="ricardo_felipe_ruiz_6bdc", debug: bool=False, verbose: bool=False, auto_debug: bool=False, inject_bugs: bool=False ) -> None:
+    def __init__( self, df_path_key: Optional[str]=None, question: str="", question_gist: str="", last_question_asked: str="", push_counter: int=-1, routing_command: Optional[str]=None, user_id: str="ricardo_felipe_ruiz_6bdc", session_id: str="", debug: bool=False, verbose: bool=False, auto_debug: bool=False, inject_bugs: bool=False ) -> None:
         """
         Initialize a base agent with configuration and state.
         
@@ -108,6 +108,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.df_path_key           = df_path_key
         self.routing_command       = routing_command
         self.user_id               = user_id
+        self.session_id            = session_id  # WebSocket session ID for job-notification correlation
         
         # Added to allow behavioral compatibility with solution snapshot object
         self.run_date              = ss.SolutionSnapshot.get_timestamp( microseconds=True )
@@ -137,7 +138,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.xml_parser_factory    = XmlParserFactory( config_mgr=self.config_mgr )
         
         self.df                    = None
-        self.do_not_serialize      = { "df", "config_mgr", "xml_parser_factory", "two_word_id", "execution_state", "websocket_id", "user_id" }
+        self.do_not_serialize      = { "df", "config_mgr", "xml_parser_factory", "two_word_id", "execution_state", "websocket_id", "user_id", "session_id" }
 
         self.model_name            = self.config_mgr.get( f"llm spec key for {routing_command}" )
         template_path              = self.config_mgr.get( f"prompt template for {routing_command}" )
@@ -472,19 +473,50 @@ class AgentBase( RunnableCode, abc.ABC ):
     def formatter_ran_to_completion( self ) -> bool:
         """
         Check if formatter completed successfully.
-        
+
         Requires:
             - None
-            
+
         Ensures:
             - Returns True if answer_conversational is set
             - Returns False if answer_conversational is None
-            
+
         Raises:
             - None
         """
         return self.answer_conversational is not None
-    
+
+    # =========================================================================
+    # Unified Interface Properties (for QueueableJob protocol compatibility)
+    # =========================================================================
+
+    @property
+    def job_type( self ) -> str:
+        """
+        Unified job type identifier.
+
+        Derived from the class name for AgentBase subclasses, providing
+        consistent type identification across all job types (AgentBase,
+        SolutionSnapshot, AgenticJobBase).
+
+        Returns:
+            str: Class name (e.g., "MathAgent", "CalendarAgent")
+        """
+        return self.__class__.__name__
+
+    @property
+    def created_date( self ) -> str:
+        """
+        Creation timestamp (unified interface).
+
+        For agents, this is the same as run_date since agents are
+        created and executed in the same flow.
+
+        Returns:
+            str: Timestamp of agent creation/execution
+        """
+        return self.run_date
+
     def do_all( self ) -> str:
         """
         Execute complete agent workflow: prompt -> code -> format.
@@ -696,11 +728,12 @@ def quick_smoke_test():
                 def __init__( self ):
                     # Minimal initialization to test inheritance
                     self.xml_response_tag_names = [ "test" ]
-                
+                    self.run_date = "2025-01-22 @ 10:00:00 EST"
+
                 @staticmethod
                 def restore_from_serialized_state( file_path: str ):
                     return TestAgent()
-            
+
             # Test that abstract methods are properly defined
             test_agent = TestAgent()
             if hasattr( test_agent, 'restore_from_serialized_state' ):
@@ -709,6 +742,31 @@ def quick_smoke_test():
                 print( "✗ Inheritance chain validation failed" )
         except Exception as e:
             print( f"⚠ Inheritance chain test had issues: {e}" )
+
+        # Test 10: Validate unified interface properties
+        print( "\nTesting unified interface properties..." )
+        try:
+            class TestAgentForProperties( AgentBase ):
+                def __init__( self ):
+                    self.xml_response_tag_names = [ "test" ]
+                    self.run_date = "2025-01-22 @ 10:00:00 EST"
+
+                @staticmethod
+                def restore_from_serialized_state( file_path: str ):
+                    return TestAgentForProperties()
+
+            prop_agent = TestAgentForProperties()
+
+            # Test job_type property
+            assert prop_agent.job_type == "TestAgentForProperties", f"job_type should be class name, got {prop_agent.job_type}"
+            print( f"✓ job_type property works: {prop_agent.job_type}" )
+
+            # Test created_date property
+            assert prop_agent.created_date == prop_agent.run_date, "created_date should equal run_date"
+            print( f"✓ created_date property works: {prop_agent.created_date}" )
+
+        except Exception as e:
+            print( f"⚠ Unified interface properties test had issues: {e}" )
         
     except Exception as e:
         print( f"✗ Error during AgentBase testing: {e}" )

@@ -8,7 +8,7 @@ integration, and multimodal content processing with agent request detection.
 Generated on: 2025-01-24
 """
 
-from fastapi import APIRouter, Request, Query, HTTPException, File, UploadFile, Depends
+from fastapi import APIRouter, Request, Query, HTTPException, File, UploadFile, Depends, WebSocket
 from fastapi.responses import JSONResponse
 from typing import Optional
 import base64
@@ -188,9 +188,9 @@ async def upload_and_transcribe_mp3_file(
         body = await request.body()
         decoded_audio = base64.b64decode(body)
         
-        # path = gc.docker_path.format("recording.mp3")
-        # TODO: replace this with a unique file name to avoid runtime collisions?
-        path = "/var/io/recording.mp3"
+        # Get recording path from config
+        recording_path = config_mgr.get( "audio_recording_file_path" )
+        path = du.get_project_root() + recording_path
         
         if app_debug: 
             print(f"Saving file recorded audio bytes to [{path}]...", end="")
@@ -801,8 +801,12 @@ async def stream_tts_elevenlabs(
         if not api_key:
             raise ValueError("ElevenLabs API key not available")
         
-        print(f"[TTS-ELEVENLABS] Starting generation for: '{msg}' with voice {voice_id}")
-        print(f"[TTS-ELEVENLABS] Using model: {model_id}, profile: {quality_profile}")
+        print( f"[TTS-ELEVENLABS] Starting generation with voice {voice_id}" )
+        print( f"[TTS-ELEVENLABS] Using model: {model_id}, profile: {quality_profile}" )
+        print( f"[TTS-ELEVENLABS] >>>> FULL TTS TEXT ({len( msg )} chars):" )
+        print( f"[TTS-ELEVENLABS] >>>>" )
+        print( f"{msg}" )
+        print( f"[TTS-ELEVENLABS] <<<<" )
         
         # Get app_verbose from main module (same pattern as other dependencies)
         import fastapi_app.main as main_module
@@ -856,8 +860,9 @@ Speed            : {speed:.2f}"""
             "provider": "elevenlabs"
         })
         
-        # ElevenLabs WebSocket streaming endpoint with dynamic model
-        elevenlabs_ws_url = f"wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}"
+        # ElevenLabs WebSocket streaming endpoint with dynamic model and PCM 24000 format
+        # PCM 24000 enables smooth Web Audio API playback without MP3 decoding gaps
+        elevenlabs_ws_url = f"wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}&output_format=pcm_24000"
         
         # Connect to ElevenLabs WebSocket with authentication header
         elevenlabs_ws = await websockets.connect(
@@ -914,39 +919,61 @@ Speed            : {speed:.2f}"""
                 if not ws_manager.is_connected(session_id):
                     print(f"[TTS-ELEVENLABS] Client connection lost for {session_id}")
                     break
-                
+
                 try:
                     # Parse ElevenLabs message
                     data = json.loads(message)
-                    
+
+                    # DEBUG: Log all non-audio messages from ElevenLabs
+                    if not data.get("audio"):
+                        print( f"[TTS-ELEVENLABS] <<<< RAW MESSAGE: {json.dumps( data, indent=2 )}" )
+
                     if data.get("audio"):
                         # Decode base64 audio chunk
                         audio_chunk = base64.b64decode(data["audio"])
-                        
+
                         # Forward audio chunk to client WebSocket
                         await websocket.send_bytes(audio_chunk)
                         chunk_count += 1
-                        
+                        if chunk_count <= 3:
+                            print( f"[TTS-ELEVENLABS] Audio chunk #{chunk_count}: {len(audio_chunk)} bytes" )
+
                     elif data.get("isFinal"):
                         # End of stream
-                        print(f"[TTS-ELEVENLABS] Stream complete")
+                        print(f"[TTS-ELEVENLABS] Stream complete (isFinal=true)")
                         break
-                        
-                    elif data.get("error"):
-                        error_msg = data.get("error", "Unknown ElevenLabs error")
-                        
+
+                    elif data.get( "error" ):
+                        error_msg = data.get( "error", "Unknown ElevenLabs error" )
+
                         # Detailed logging for developers (shows real error for debugging)
-                        print(f"[TTS-ELEVENLABS] ElevenLabs API Error: {error_msg}")
-                        
-                        # Generic user-facing error message (this is what user sees now!)
-                        await websocket.send_json({
-                            "type": "tts_error",
-                            "text": "TTS service temporarily unavailable",
-                            "status": "error",
-                            "provider": "elevenlabs",
-                            "details": "Please try again in a moment"
-                        })
-                        
+                        print( f"[TTS-ELEVENLABS] !!!! ERROR DETECTED !!!!" )
+                        print( f"[TTS-ELEVENLABS] Raw error field: {error_msg}" )
+                        print( f"[TTS-ELEVENLABS] Full error data: {json.dumps( data, indent=2 )}" )
+
+                        # Parse error type for user-friendly message
+                        error_code   = "unknown"
+                        user_message = "TTS service temporarily unavailable"
+
+                        if "quota_exceeded" in error_msg.lower():
+                            error_code   = "quota_exceeded"
+                            user_message = "ElevenLabs quota exceeded. TTS unavailable until reset."
+                        elif "rate_limit" in error_msg.lower():
+                            error_code   = "rate_limit"
+                            user_message = "Too many TTS requests. Please wait a moment."
+                        elif "unauthorized" in error_msg.lower() or "invalid" in error_msg.lower():
+                            error_code   = "auth_error"
+                            user_message = "TTS authentication failed."
+
+                        await websocket.send_json( {
+                            "type"       : "tts_error",
+                            "text"       : user_message,
+                            "error_code" : error_code,
+                            "status"     : "error",
+                            "provider"   : "elevenlabs",
+                            "details"    : error_msg
+                        } )
+
                         # Break instead of raise to allow graceful completion
                         break
                         
@@ -983,10 +1010,176 @@ Speed            : {speed:.2f}"""
         if websocket:
             try:
                 await websocket.send_json({
-                    "type": "error", 
+                    "type": "error",
                     "text": f"ElevenLabs TTS error: {str(e)}",
                     "status": "error",
                     "provider": "elevenlabs"
                 })
             except:
                 pass  # Connection might be lost
+
+
+@router.websocket( "/ws/pcm-tts" )
+async def websocket_pcm_tts_endpoint(
+    websocket: WebSocket,
+    model_id: Optional[str] = Query( default="eleven_turbo_v2_5" ),
+    voice_id: Optional[str] = Query( default="G7ILShrCNLfmS0A37SXS" )
+):
+    """
+    WebSocket endpoint for PCM 24000 streaming from ElevenLabs.
+
+    Connects to ElevenLabs with output_format=pcm_24000 and forwards
+    raw PCM chunks to the browser for Web Audio API playback with
+    precise scheduling (similar to Gemini Live approach).
+
+    Requires:
+        - ElevenLabs API key available via du.get_api_key("eleven11")
+        - model_id is a valid ElevenLabs model identifier
+        - voice_id is a valid ElevenLabs voice identifier
+
+    Ensures:
+        - Accepts WebSocket connection from client
+        - Connects to ElevenLabs WebSocket with PCM 24000 format
+        - Streams raw PCM chunks directly to browser (no base64 encoding)
+        - Sends JSON status messages for connection state and errors
+        - Sends completion message with chunk count and total bytes
+
+    Args:
+        websocket: FastAPI WebSocket connection
+        model_id: ElevenLabs model ID (default: eleven_turbo_v2_5)
+        voice_id: ElevenLabs voice ID (default: Sam)
+    """
+    await websocket.accept()
+
+    # Get ElevenLabs API key using COSA utility
+    api_key = du.get_api_key( "eleven11" )
+    if not api_key:
+        await websocket.send_json( {
+            "type"    : "error",
+            "message" : "ElevenLabs API key not available"
+        } )
+        await websocket.close()
+        return
+
+    print( f"[PCM-TTS] Using model_id: {model_id}, voice_id: {voice_id}" )
+
+    # ElevenLabs WebSocket URL with PCM 24000 format
+    elevenlabs_url = (
+        f"wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input"
+        f"?model_id={model_id}&output_format=pcm_24000"
+    )
+
+    try:
+        print( f"[PCM-TTS] Connecting to ElevenLabs..." )
+        elevenlabs_ws = await websockets.connect(
+            elevenlabs_url,
+            additional_headers={ "xi-api-key": api_key }
+        )
+
+        async with elevenlabs_ws:
+            print( f"[PCM-TTS] Connected to ElevenLabs WebSocket" )
+
+            # Send status to client
+            await websocket.send_json( {
+                "type"    : "status",
+                "message" : "Connected to ElevenLabs, starting stream..."
+            } )
+
+            # Send configuration message
+            config_message = {
+                "text"              : " ",  # Initial space to start stream
+                "voice_settings"    : {
+                    "stability"         : 0.5,
+                    "similarity_boost"  : 0.5,
+                    "style"             : 0.0,
+                    "use_speaker_boost" : False
+                },
+                "generation_config" : {
+                    "chunk_length_schedule" : [120, 160, 250, 290]  # Low latency
+                }
+            }
+            await elevenlabs_ws.send( json.dumps( config_message ) )
+
+            # Send test text for demo
+            test_text = (
+                "Hello! This is a test of PCM streaming from ElevenLabs. "
+                "The audio should sound smooth without any choppy stuttering. "
+                "If you can hear this clearly without gaps or glitches, "
+                "then the PCM 24000 format with Web Audio API scheduling is working correctly."
+            )
+
+            text_message = {
+                "text"                   : test_text,
+                "try_trigger_generation" : True
+            }
+            await elevenlabs_ws.send( json.dumps( text_message ) )
+
+            # Send end-of-stream marker
+            await elevenlabs_ws.send( json.dumps( { "text": "" } ) )
+
+            print( f"[PCM-TTS] Sent text, streaming audio..." )
+
+            # Stream audio chunks from ElevenLabs to client
+            chunk_count = 0
+            total_bytes = 0
+
+            async for message in elevenlabs_ws:
+                try:
+                    data = json.loads( message )
+
+                    if data.get( "audio" ):
+                        # Decode base64 audio chunk from ElevenLabs
+                        audio_chunk = base64.b64decode( data["audio"] )
+                        chunk_count += 1
+                        total_bytes += len( audio_chunk )
+
+                        # Forward raw PCM bytes to client
+                        await websocket.send_bytes( audio_chunk )
+
+                        if chunk_count <= 5:
+                            print( f"[PCM-TTS] Sent chunk {chunk_count}: {len( audio_chunk )} bytes" )
+
+                    elif data.get( "isFinal" ):
+                        print( f"[PCM-TTS] Stream complete (isFinal=true)" )
+                        break
+
+                    elif data.get( "error" ):
+                        error_msg = data.get( "error", "Unknown error" )
+                        print( f"[PCM-TTS] ElevenLabs error: {error_msg}" )
+                        await websocket.send_json( {
+                            "type"    : "error",
+                            "message" : f"ElevenLabs error: {error_msg}"
+                        } )
+                        break
+
+                except json.JSONDecodeError:
+                    print( f"[PCM-TTS] Non-JSON message received" )
+
+            # Send completion message
+            await websocket.send_json( {
+                "type"        : "complete",
+                "chunks"      : chunk_count,
+                "total_bytes" : total_bytes
+            } )
+
+            print( f"[PCM-TTS] Finished: {chunk_count} chunks, {total_bytes} bytes total" )
+
+    except websockets.exceptions.WebSocketException as e:
+        print( f"[PCM-TTS] WebSocket error: {e}" )
+        try:
+            await websocket.send_json( {
+                "type"    : "error",
+                "message" : f"WebSocket error: {str( e )}"
+            } )
+        except:
+            pass
+
+    except Exception as e:
+        print( f"[PCM-TTS] Error: {e}" )
+        try:
+            await websocket.send_json( {
+                "type"    : "error",
+                "message" : f"Error: {str( e )}"
+            } )
+        except:
+            pass
