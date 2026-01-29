@@ -2,14 +2,16 @@
 Background consumer thread for producer-consumer queue pattern.
 
 This module implements the consumer side of the TodoFifoQueue -> RunningFifoQueue
-producer-consumer pattern, replacing the old polling-based approach with 
+producer-consumer pattern, replacing the old polling-based approach with
 event-driven processing using threading.Condition.
 """
 
 import threading
 import time
 from typing import Any
+from datetime import datetime
 import cosa.utils.util as du
+from cosa.rest.queue_util import emit_job_state_transition
 
 
 def start_todo_producer_run_consumer_thread( todo_queue: Any, running_queue: Any ) -> threading.Thread:
@@ -59,10 +61,23 @@ def start_todo_producer_run_consumer_thread( todo_queue: Any, running_queue: Any
                 if job:
                     if todo_queue.debug:
                         print( f"[CONSUMER] Processing job: {getattr( job, 'last_question_asked', 'Unknown job' )}" )
-                    
+
+                    # Emit job state transition (todo -> run) before moving to running queue
+                    job_id = getattr( job, 'id_hash', None )
+                    if job_id and hasattr( running_queue, 'websocket_mgr' ):
+                        user_id = running_queue.user_job_tracker.get_user_for_job( job_id ) if hasattr( running_queue, 'user_job_tracker' ) else None
+                        # Phase 6.1: Include card-rendering metadata for client-side card creation
+                        metadata = {
+                            'question_text' : getattr( job, 'last_question_asked', getattr( job, 'question', 'Unknown' ) ),
+                            'agent_type'    : getattr( job, 'agent_class_name', getattr( job, 'JOB_TYPE', 'Unknown' ) ),
+                            'timestamp'     : getattr( job, 'created_date', datetime.now().isoformat() ),
+                            'started_at'    : datetime.now().isoformat()
+                        }
+                        emit_job_state_transition( running_queue.websocket_mgr, job_id, 'todo', 'run', user_id, metadata )
+
                     # Move to running queue
                     running_queue.push( job )  # Auto-emits 'run_update'
-                    
+
                     # Process the job (new method we'll add to RunningFifoQueue)
                     if hasattr( running_queue, '_process_job' ):
                         running_queue._process_job( job )
