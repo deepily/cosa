@@ -825,7 +825,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         try:
             # Get existing snapshot's id_hash from cache
             existing_id_hash = self._question_lookup[snapshot.question]
-            existing_record = self._id_lookup[existing_id_hash]
+            existing_record  = self._id_lookup[existing_id_hash]
 
             # CRITICAL: Preserve the original id_hash when updating!
             # The incoming snapshot may have a NEW id_hash (generated from its creation time),
@@ -839,8 +839,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             return self._full_replace_snapshot( snapshot )
 
         except Exception as e:
-            if self.debug:
-                print( f"  ✗ Update failed: {e}" )
+            if self.debug: print( f"  ✗ Update failed: {e}" )
             raise e
     
     def _full_replace_snapshot( self, snapshot: SolutionSnapshot ) -> bool:
@@ -880,8 +879,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             if snapshot.question in self._question_lookup:
                 del self._question_lookup[snapshot.question]
 
-            if self.debug:
-                print( f"[CACHE DEBUG] Invalidated cache for {id_hash[:8]}... before merge" )
+            if self.debug: print( f"[CACHE DEBUG] Invalidated cache for {id_hash[:8]}... before merge" )
 
             # Use proper LanceDB merge_insert for atomic upsert
             (
@@ -928,11 +926,9 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                     print( f"[CACHE DEBUG] ⚠ DB read failed, using in-memory record" )
 
             # Verify cache consistency in debug mode
-            if self.debug:
-                self._verify_cache_consistency( id_hash )
+            if self.debug: self._verify_cache_consistency( id_hash )
 
-            if self.debug:
-                print( f"  ✓ Merge completed for id_hash: {id_hash[:8]}..." )
+            if self.debug: print( f"  ✓ Merge completed for id_hash: {id_hash[:8]}..." )
 
             # Update canonical synonyms table for hierarchical search
             self._update_canonical_synonyms( snapshot )
@@ -940,8 +936,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             return True
             
         except Exception as e:
-            if self.debug:
-                print( f"  ✗ Merge failed: {e}" )
+            if self.debug: print( f"  ✗ Merge failed: {e}" )
             raise e
 
     def _verify_cache_consistency( self, id_hash: str ) -> bool:

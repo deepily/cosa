@@ -652,7 +652,8 @@ class TodoFifoQueue( FifoQueue ):
                 # Associate the agent with the user for routing
                 if hasattr( agent, 'id_hash' ):
                     self.user_job_tracker.associate_job_with_user( agent.id_hash, user_id )
-                    print( f"[TODO-QUEUE] Associated agent {agent.id_hash} with user {user_id}" )
+                    print( f"[DEBUG-TRACK] [TODO-QUEUE] NEW AGENT: id_hash={agent.id_hash}, user={user_id}, type={type( agent ).__name__}" )
+                    print( f"[DEBUG-TRACK] [TODO-QUEUE] Tracker state: {dict( self.user_job_tracker.job_to_user )}" )
             
             # TTS Migration (Session 98): Use notification service instead of emit_speech_callback
             self._notify( msg, job=agent )
@@ -777,11 +778,12 @@ class TodoFifoQueue( FifoQueue ):
             print( "No jobs ahead of this one in the todo Q" )
         
         self.push( job )  # Auto-emits 'todo_update' via parent class
-        
+
         # Associate the snapshot job with the user for routing
         if user_id and hasattr( job, 'id_hash' ):
             self.user_job_tracker.associate_job_with_user( job.id_hash, user_id )
-            print( f"[TODO-QUEUE] Associated snapshot job {job.id_hash} with user {user_id}" )
+            print( f"[DEBUG-TRACK] [TODO-QUEUE] CACHE HIT: id_hash={job.id_hash}, user={user_id}" )
+            print( f"[DEBUG-TRACK] [TODO-QUEUE] Tracker state: {dict( self.user_job_tracker.job_to_user )}" )
         
         return f'Job added to queue. Queue size [{self.size()}]'
     

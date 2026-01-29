@@ -397,11 +397,18 @@ class FifoQueue:
         # Get job IDs associated with this user
         user_job_ids = self.user_job_tracker.get_jobs_for_user( user_id )
 
+        # Session 108 DEBUG: Log filtering details
+        all_job_ids = [ getattr( job, 'id_hash', 'NO_HASH' ) for job in self.queue_list ]
+        print( f"[DEBUG-TRACK] get_jobs_for_user({user_id}): user_job_ids={user_job_ids}" )
+        print( f"[DEBUG-TRACK] get_jobs_for_user({user_id}): queue has {len( self.queue_list )} jobs with ids={all_job_ids}" )
+
         # Filter queue_list to only include jobs matching user's job IDs
         filtered_jobs = [
             job for job in self.queue_list
             if hasattr( job, 'id_hash' ) and job.id_hash in user_job_ids
         ]
+
+        print( f"[DEBUG-TRACK] get_jobs_for_user({user_id}): returning {len( filtered_jobs )} filtered jobs" )
 
         return filtered_jobs
 
