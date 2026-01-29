@@ -156,13 +156,14 @@ async def submit_claude_code_to_queue(
             verbose    = False
         )
 
+        # Session 108: Associate BEFORE push to prevent race condition
+        # The consumer thread may grab the job immediately after push(), so user mapping must exist first
+        user_job_tracker.associate_job_with_user( job.id_hash, user_id )
+        user_job_tracker.associate_job_with_session( job.id_hash, session_id )
+
         # Push to todo queue
         # The todo queue's push method handles WebSocket notifications
         todo_queue.push( job )
-
-        # Associate job with user for queue filtering
-        user_job_tracker.associate_job_with_user( job.id_hash, user_id )
-        user_job_tracker.associate_job_with_session( job.id_hash, session_id )
 
         # Get queue position (approximate - queue length after push)
         queue_position = todo_queue.size()

@@ -648,12 +648,12 @@ class TodoFifoQueue( FifoQueue ):
             if ding_for_new_job:
                 self.websocket_mgr.emit( 'notification_sound_update', { 'soundFile': '/static/gentle-gong.mp3' } )
             if agent is not None:
-                self.push( agent )
-                # Associate the agent with the user for routing
-                if hasattr( agent, 'id_hash' ):
+                # Session 108: Generate compound hash AND associate BEFORE push to prevent race condition
+                # The consumer thread may grab the job immediately after push(), so user mapping must exist first
+                if hasattr( agent, 'id_hash' ) and user_id:
+                    agent.id_hash = self.user_job_tracker.generate_user_scoped_hash( agent.id_hash, user_id )
                     self.user_job_tracker.associate_job_with_user( agent.id_hash, user_id )
-                    print( f"[DEBUG-TRACK] [TODO-QUEUE] NEW AGENT: id_hash={agent.id_hash}, user={user_id}, type={type( agent ).__name__}" )
-                    print( f"[DEBUG-TRACK] [TODO-QUEUE] Tracker state: {dict( self.user_job_tracker.job_to_user )}" )
+                self.push( agent )
             
             # TTS Migration (Session 98): Use notification service instead of emit_speech_callback
             self._notify( msg, job=agent )
@@ -766,25 +766,29 @@ class TodoFifoQueue( FifoQueue ):
         
         job.run_date     = du.get_current_datetime()
         job.push_counter = self.push_counter + 1
-        job.id_hash      = SolutionSnapshot.generate_id_hash( job.push_counter, job.run_date )
-        
+
+        # Session 108: Use compound hash (base_hash + user_id) for user-scoped job identification
+        # This ensures: 1) Same user, same question = same hash (idempotent)
+        #               2) Different users = different hashes (no collision)
+        #               3) Database can extract base hash for persistence
+        job.id_hash = self.user_job_tracker.generate_user_scoped_hash( best_snapshot.id_hash, user_id )
+
         print()
-        
+
         if self.size() != 0:
             suffix = "s" if self.size() > 1 else ""
             # TTS Migration (Session 98): Use notification service instead of emit_speech_callback
             self._notify( f"{self.size()} job{suffix} ahead of this one", job=job )
         else:
             print( "No jobs ahead of this one in the todo Q" )
-        
-        self.push( job )  # Auto-emits 'todo_update' via parent class
 
-        # Associate the snapshot job with the user for routing
+        # Session 108: Associate BEFORE push to prevent race condition
+        # The consumer thread may grab the job immediately after push(), so user mapping must exist first
         if user_id and hasattr( job, 'id_hash' ):
             self.user_job_tracker.associate_job_with_user( job.id_hash, user_id )
-            print( f"[DEBUG-TRACK] [TODO-QUEUE] CACHE HIT: id_hash={job.id_hash}, user={user_id}" )
-            print( f"[DEBUG-TRACK] [TODO-QUEUE] Tracker state: {dict( self.user_job_tracker.job_to_user )}" )
-        
+
+        self.push( job )  # Auto-emits 'todo_update' via parent class
+
         return f'Job added to queue. Queue size [{self.size()}]'
     
     def _get_routing_command( self, question: str ) -> tuple[str, str]:

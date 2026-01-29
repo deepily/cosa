@@ -471,22 +471,8 @@ class RunningFifoQueue( FifoQueue ):
             )
             if serialize_snapshot:
 
-                # Session 108 DEBUG: Track id_hash through SolutionSnapshot conversion
-                original_id_hash = getattr( running_job, 'id_hash', None )
-                original_user    = self.user_job_tracker.get_user_for_job( original_id_hash ) if original_id_hash else None
-                print( f"[DEBUG-TRACK] BEFORE SolutionSnapshot.create: id_hash={original_id_hash}, user={original_user}" )
-
                 # recast the agent object as a solution snapshot object and add it to the snapshot manager
                 running_job = SolutionSnapshot.create( running_job )
-
-                # Session 108 DEBUG: Verify id_hash preserved after conversion
-                new_id_hash = getattr( running_job, 'id_hash', None )
-                new_user    = self.user_job_tracker.get_user_for_job( new_id_hash ) if new_id_hash else None
-                print( f"[DEBUG-TRACK] AFTER SolutionSnapshot.create: id_hash={new_id_hash}, user={new_user}" )
-                if original_id_hash != new_id_hash:
-                    print( f"[DEBUG-TRACK] WARNING: id_hash CHANGED during conversion!" )
-                if original_user and not new_user:
-                    print( f"[DEBUG-TRACK] WARNING: User association LOST during conversion!" )
 
                 # KLUDGE! I shouldn't have to do this!
                 print( f"KLUDGE! Setting running_job.answer_conversational to [{formatted_output}]...")
@@ -558,10 +544,6 @@ class RunningFifoQueue( FifoQueue ):
             self.pop()  # Auto-emits 'run_update'
             if serialize_snapshot:
                 self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
-                # Session 108: Defensive re-association after done queue push
-                if user_id and hasattr( running_job, 'id_hash' ):
-                    self.user_job_tracker.associate_job_with_user( running_job.id_hash, user_id )
-                    print( f"[DEBUG-TRACK] Re-associated done job (agent path) {running_job.id_hash} with user {user_id}" )
 
             # Write the job to the database for posterity's sake
             self.io_tbl.insert_io_row( input_type=running_job.routing_command, input=running_job.last_question_asked, output_raw=running_job.answer, output_final=running_job.answer_conversational )
@@ -642,12 +624,6 @@ class RunningFifoQueue( FifoQueue ):
 
         self.pop()  # Auto-emits 'run_update'
         self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
-
-        # Session 108: Defensive re-association after done queue push
-        # The id_hash may change during processing; ensure user association is current
-        if user_id and hasattr( running_job, 'id_hash' ):
-            self.user_job_tracker.associate_job_with_user( running_job.id_hash, user_id )
-            print( f"[DEBUG-TRACK] Re-associated done job {running_job.id_hash} with user {user_id}" )
 
         # If we've arrived at this point, then we've successfully run the job
         run_timer.print( "Solution snapshot full run complete ", use_millis=True )

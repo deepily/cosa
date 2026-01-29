@@ -827,41 +827,45 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             existing_id_hash = self._question_lookup[snapshot.question]
             existing_record  = self._id_lookup[existing_id_hash]
 
-            # CRITICAL: Preserve the original id_hash when updating!
-            # The incoming snapshot may have a NEW id_hash (generated from its creation time),
-            # but we must use the ORIGINAL id_hash so merge_insert matches the existing record.
-            # Without this, merge_insert("id_hash") finds no match and INSERTS instead of UPDATE.
-            # See: 2025.12 duplicate snapshot investigation - root cause fix
-            snapshot.id_hash = existing_id_hash
-
-            # For now, use merge_insert for all updates (safest approach)
-            # TODO: Add smart detection for partial updates in future iterations
-            return self._full_replace_snapshot( snapshot )
+            # Session 108: DON'T modify snapshot.id_hash directly!
+            # The snapshot object may be shared (e.g., in the done queue) and modifying it
+            # would break user-job tracking which relies on the compound hash.
+            # Instead, pass the existing_id_hash to _full_replace_snapshot which will
+            # use it for the database record without modifying the source object.
+            # See: 2025.12 duplicate snapshot investigation + Session 108 compound hash fix
+            return self._full_replace_snapshot( snapshot, db_id_hash=existing_id_hash )
 
         except Exception as e:
             if self.debug: print( f"  ✗ Update failed: {e}" )
             raise e
     
-    def _full_replace_snapshot( self, snapshot: SolutionSnapshot ) -> bool:
+    def _full_replace_snapshot( self, snapshot: SolutionSnapshot, db_id_hash: str = None ) -> bool:
         """
         Replace entire snapshot using LanceDB merge_insert operation.
-        
+
         Uses the proper LanceDB merge_insert API which handles atomicity
         and persistence correctly, unlike the old delete/add pattern.
-        
+
         Requires:
             - snapshot is valid SolutionSnapshot
-            
+            - db_id_hash (optional) overrides record's id_hash for database matching
+
         Ensures:
             - Snapshot replaced using merge_insert
             - Cache updated with new data
             - Returns True if successful
-            
+
         Raises:
             - Exception if merge fails
         """
         try:
             record = self._snapshot_to_record( snapshot )
+
+            # Session 108: Use provided db_id_hash for database operations if available
+            # This allows the snapshot object to keep its compound hash (for user tracking)
+            # while the database uses the base hash for merge matching
+            if db_id_hash:
+                record["id_hash"] = db_id_hash
             id_hash = record["id_hash"]
 
             # DEBUG: Print pre-merge stats
