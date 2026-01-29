@@ -24,8 +24,10 @@ from cosa.utils import util     as du
 from cosa.utils import util_xml as dux
 
 
+from datetime import datetime
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.rest.queue_extensions import user_job_tracker
+from cosa.rest.queue_util import emit_job_state_transition
 
 # Notification service imports for TTS migration (Session 97)
 from cosa.cli.notify_user_sync import notify_user_sync
@@ -818,15 +820,16 @@ class TodoFifoQueue( FifoQueue ):
     
     def push( self, item: Any ) -> None:
         """
-        Override parent's push to add producer-consumer coordination.
-        
+        Override parent's push to add producer-consumer coordination and emit pending→todo transition.
+
         Requires:
             - item must have an 'id_hash' attribute
-            
+
         Ensures:
             - Item is added to queue via parent method
+            - Emits pending→todo state transition for UI rendering
             - Consumer thread is notified of new work
-            
+
         Raises:
             - AttributeError if item doesn't have id_hash
         """
@@ -836,9 +839,21 @@ class TodoFifoQueue( FifoQueue ):
             super().push( item )
             # Notify consumer thread that work is available
             self.condition.notify()
-            
+
+        # Emit pending → todo state transition for UI rendering
+        user_id = getattr( item, 'user_id', None )
+        if user_id is None:
+            user_id = self.user_job_tracker.get_user_for_job( item.id_hash )
+
+        metadata = {
+            'question_text' : getattr( item, 'last_question_asked', getattr( item, 'question', str( item ) ) ),
+            'agent_type'    : getattr( item, 'agent_class_name', getattr( item, 'JOB_TYPE', 'Unknown' ) ),
+            'timestamp'     : getattr( item, 'created_date', datetime.now().isoformat() )
+        }
+        emit_job_state_transition( self.websocket_mgr, item.id_hash, 'pending', 'todo', user_id, metadata )
+
         if self.debug:
-            print( f"[TODO-QUEUE] Added job and notified consumer: {item.id_hash}" )
+            print( f"[TODO-QUEUE] Added job, emitted pending→todo, and notified consumer: {item.id_hash}" )
     
 def quick_smoke_test():
     """Quick smoke test to validate TodoFifoQueue functionality."""
