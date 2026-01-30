@@ -28,6 +28,7 @@ from datetime import datetime
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.rest.queue_extensions import user_job_tracker
 from cosa.rest.queue_util import emit_job_state_transition
+from cosa.rest.queue_protocol import is_queueable_job
 
 # Notification service imports for TTS migration (Session 97)
 from cosa.cli.notify_user_sync import notify_user_sync
@@ -607,7 +608,7 @@ class TodoFifoQueue( FifoQueue ):
                 msg = search.get_results( scope="summary" )
             
             elif command == "agent router go to calendar":
-                agent = CalendaringAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = CalendaringAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="calendaring" )
                 ding_for_new_job = True
             elif command == "agent router go to math":
@@ -617,24 +618,24 @@ class TodoFifoQueue( FifoQueue ):
                     # agent = self._get_math_refactoring_agent( question, question_gist, salutation_plus_question, self.push_counter )
                     # msg = starting_a_new_job.format( agent_type="math refactoring" )
                 else:
-                    agent = MathAgent( question=salutation_plus_question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                    agent = MathAgent( question=salutation_plus_question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                     msg = starting_a_new_job.format( agent_type="math" )
                 ding_for_new_job = True
             elif command == "agent router go to todo list":
-                agent = TodoListAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = TodoListAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="todo list" )
                 ding_for_new_job = True
             elif command == "agent router go to date and time":
-                agent = DateAndTimeAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = DateAndTimeAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="date and time" )
                 ding_for_new_job = True
             elif command == "agent router go to weather":
-                agent = WeatherAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = WeatherAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="weather" )
                 # ding_for_new_job = False
             elif command == "agent router go to receptionist" or command == "none":
                 print( f"Routing '{command}' to receptionist..." )
-                agent = ReceptionistAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = ReceptionistAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 # Randomly grab hemming and hawing string and prepend it to a randomly chosen thinking string
                 msg = f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}".strip()
                 # ding_for_new_job = False
@@ -655,8 +656,6 @@ class TodoFifoQueue( FifoQueue ):
                 if hasattr( agent, 'id_hash' ) and user_id:
                     agent.id_hash = self.user_job_tracker.generate_user_scoped_hash( agent.id_hash, user_id )
                     self.user_job_tracker.associate_job_with_user( agent.id_hash, user_id )
-                # Session 109: Set user_email for TTS notification routing
-                agent.user_email = user_email
                 self.push( agent )
             
             # TTS Migration (Session 98): Use notification service instead of emit_speech_callback
@@ -755,9 +754,8 @@ class TodoFifoQueue( FifoQueue ):
             - Queue is initialized
 
         Ensures:
-            - Creates a copy of the snapshot
+            - Creates a copy of the snapshot with user_email for TTS routing
             - Configures job with current settings
-            - Sets user_email on job for TTS notification routing
             - Pushes job to queue
             - Emits socket updates
             - Returns status message
@@ -765,12 +763,12 @@ class TodoFifoQueue( FifoQueue ):
         Raises:
             - None
         """
-        job = best_snapshot.get_copy()
+        job = best_snapshot.get_copy( user_email=user_email )
         print( "Python object ID for copied job: " + str( id( job ) ) )
         job.debug   = self.debug
         job.verbose = self.verbose
         job.add_synonymous_question( best_snapshot.last_question_asked, score=best_score )
-        
+
         job.run_date     = du.get_current_datetime()
         job.push_counter = self.push_counter + 1
 
@@ -779,9 +777,6 @@ class TodoFifoQueue( FifoQueue ):
         #               2) Different users = different hashes (no collision)
         #               3) Database can extract base hash for persistence
         job.id_hash = self.user_job_tracker.generate_user_scoped_hash( best_snapshot.id_hash, user_id )
-
-        # Session 109: Set user_email for TTS notification routing
-        job.user_email = user_email
 
         print()
 
@@ -839,7 +834,7 @@ class TodoFifoQueue( FifoQueue ):
         Override parent's push to add producer-consumer coordination and emit pending→todo transition.
 
         Requires:
-            - item must have an 'id_hash' attribute
+            - item must implement QueueableJob protocol
 
         Ensures:
             - Item is added to queue via parent method
@@ -847,24 +842,23 @@ class TodoFifoQueue( FifoQueue ):
             - Consumer thread is notified of new work
 
         Raises:
-            - AttributeError if item doesn't have id_hash
+            - TypeError if item doesn't implement QueueableJob protocol (via parent)
         """
         # Use condition variable for producer-consumer coordination
         with self.condition:
-            # Call parent's push method
+            # Call parent's push method (includes Protocol validation)
             super().push( item )
             # Notify consumer thread that work is available
             self.condition.notify()
 
         # Emit pending → todo state transition for UI rendering
-        user_id = getattr( item, 'user_id', None )
-        if user_id is None:
-            user_id = self.user_job_tracker.get_user_for_job( item.id_hash )
+        # Phase 2: Direct attribute access - Protocol guarantees these exist
+        user_id = item.user_id or self.user_job_tracker.get_user_for_job( item.id_hash )
 
         metadata = {
-            'question_text' : getattr( item, 'last_question_asked', getattr( item, 'question', str( item ) ) ),
-            'agent_type'    : getattr( item, 'agent_class_name', getattr( item, 'JOB_TYPE', 'Unknown' ) ),
-            'timestamp'     : getattr( item, 'created_date', datetime.now().isoformat() )
+            'question_text' : item.last_question_asked,
+            'agent_type'    : item.job_type,
+            'timestamp'     : item.created_date
         }
         emit_job_state_transition( self.websocket_mgr, item.id_hash, 'pending', 'todo', user_id, metadata )
 

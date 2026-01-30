@@ -60,6 +60,13 @@ class QueueableJob( Protocol ):
     """Command used to route this job to the appropriate handler."""
 
     # =========================================================================
+    # User Context (Session 110+)
+    # =========================================================================
+
+    user_email: str
+    """User email address for TTS notification routing."""
+
+    # =========================================================================
     # Timestamps
     # =========================================================================
 
@@ -68,6 +75,12 @@ class QueueableJob( Protocol ):
 
     created_date: str
     """When the job was created (unified - may equal run_date)."""
+
+    started_at: str
+    """When the job started running (ISO format timestamp, may be None)."""
+
+    completed_at: str
+    """When the job completed (ISO format timestamp, may be None)."""
 
     # =========================================================================
     # Question/Answer (Unified Names)
@@ -98,6 +111,19 @@ class QueueableJob( Protocol ):
     - SolutionSnapshot: Returns agent_class_name (e.g., "MathAgent")
     - AgenticJobBase: Returns JOB_TYPE (e.g., "deep_research")
     """
+
+    # =========================================================================
+    # Status Tracking (Session 111)
+    # =========================================================================
+
+    is_cache_hit: bool
+    """Whether this job was served from cache (for Time Saved Dashboard)."""
+
+    status: str
+    """Current job status: 'pending', 'running', 'completed', or 'failed'."""
+
+    error: str
+    """Error message if job failed (None if successful)."""
 
     # =========================================================================
     # Required Methods
@@ -179,18 +205,24 @@ def quick_smoke_test():
         print( "Testing protocol implementation check..." )
 
         class MockJob:
-            id_hash              = "test-123"
-            push_counter         = 0
-            user_id              = "user123"
-            session_id           = "session456"
-            routing_command      = "test"
-            run_date             = "2025-01-22"
-            created_date         = "2025-01-22"
-            question             = "test question"
-            last_question_asked  = "test question"
-            answer               = "test answer"
+            id_hash               = "test-123"
+            push_counter          = 0
+            user_id               = "user123"
+            user_email            = "test@test.com"
+            session_id            = "session456"
+            routing_command       = "test"
+            run_date              = "2025-01-22"
+            created_date          = "2025-01-22"
+            started_at            = None
+            completed_at          = None
+            question              = "test question"
+            last_question_asked   = "test question"
+            answer                = "test answer"
             answer_conversational = "Test answer"
-            job_type             = "MockJob"
+            job_type              = "MockJob"
+            is_cache_hit          = False
+            status                = "pending"
+            error                 = None
 
             def get_html( self ):
                 return "<li>test</li>"

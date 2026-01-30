@@ -2,6 +2,7 @@ from collections import OrderedDict
 from typing import Any, Optional
 import re
 from cosa.rest.queue_extensions import user_job_tracker
+from cosa.rest.queue_protocol import is_queueable_job
 
 # Notification service imports for TTS migration (Session 97)
 from cosa.cli.notify_user_async import notify_user_async
@@ -133,19 +134,22 @@ class FifoQueue:
     def push( self, item: Any ) -> None:
         """
         Add an item to the end of the queue.
-        
+
         Requires:
-            - item must have an 'id_hash' attribute
-            
+            - item must implement QueueableJob protocol
+
         Ensures:
             - Item is added to end of queue_list
             - Item is added to queue_dict with id_hash as key
             - push_counter is incremented
-            
+
         Raises:
-            - AttributeError if item doesn't have id_hash
+            - TypeError if item doesn't implement QueueableJob protocol
         """
-        
+        # Phase 1: Enforce Protocol at boundary - validate ONCE on entry
+        if not is_queueable_job( item ):
+            raise TypeError( f"Job must implement QueueableJob protocol, got {type( item ).__name__}" )
+
         self.queue_list.append( item )
         self.queue_dict[ item.id_hash ] = item
         self.push_counter += 1
@@ -497,9 +501,9 @@ class FifoQueue:
         Raises:
             - None (exceptions handled internally)
         """
-        # Session 109: Simplified email resolution - use target_user or job.user_email directly
+        # Session 110: user_email is now a first-class constructor parameter (no hasattr needed)
         resolved_email = target_user
-        if not resolved_email and job and hasattr( job, 'user_email' ) and job.user_email:
+        if not resolved_email and job and job.user_email:
             resolved_email = job.user_email
         if not resolved_email:
             # Fallback to default email
@@ -667,59 +671,86 @@ def quick_smoke_test():
         except Exception as e:
             print( f"⚠ Basic queue functionality issues: {e}" )
         
-        # Test 4: Queue operations with mock objects
+        # Test 4: Queue operations with mock objects implementing QueueableJob protocol
         print( "Testing queue operations..." )
         try:
-            # Create simple mock objects for testing
-            class MockItem:
+            # Create mock objects that implement the QueueableJob protocol
+            class MockQueueableItem:
+                """Mock item implementing QueueableJob protocol for testing."""
                 def __init__( self, id_hash, name ):
-                    self.id_hash = id_hash
-                    self.name = name
-                
+                    self.id_hash              = id_hash
+                    self.name                 = name
+                    self.push_counter         = 0
+                    self.user_id              = "test_user"
+                    self.session_id           = "test_session"
+                    self.routing_command      = "test"
+                    self.run_date             = "2025-01-30"
+                    self.created_date         = "2025-01-30"
+                    self.question             = name
+                    self.last_question_asked  = name
+                    self.answer               = "test answer"
+                    self.answer_conversational = "Test answer"
+                    self.job_type             = "MockJob"
+                    self.user_email           = "test@test.com"
+                    self.is_cache_hit         = False
+                    self.started_at           = None
+                    self.completed_at         = None
+                    self.status               = "pending"
+                    self.error                = None
+
                 def get_html( self ):
                     return f"<li id='{self.id_hash}'>{self.name}</li>"
-            
+
+                def do_all( self ):
+                    return "done"
+
+                def code_ran_to_completion( self ):
+                    return True
+
+                def formatter_ran_to_completion( self ):
+                    return True
+
             queue = FifoQueue()
-            
+
             # Test push operations
-            item1 = MockItem( "hash1", "Item 1" )
-            item2 = MockItem( "hash2", "Item 2" )
-            
+            item1 = MockQueueableItem( "hash1", "Item 1" )
+            item2 = MockQueueableItem( "hash2", "Item 2" )
+
             queue.push( item1 )
             queue.push( item2 )
-            
+
             if queue.size() == 2 and not queue.is_empty():
                 print( "✓ Push operations working" )
             else:
                 print( "✗ Push operations failed" )
-            
+
             # Test head operation
             head_item = queue.head()
             if head_item and head_item.id_hash == "hash1":
                 print( "✓ Head operation working" )
             else:
                 print( "✗ Head operation failed" )
-            
+
             # Test get_by_id_hash
             retrieved_item = queue.get_by_id_hash( "hash2" )
             if retrieved_item and retrieved_item.name == "Item 2":
                 print( "✓ Get by ID hash working" )
             else:
                 print( "✗ Get by ID hash failed" )
-            
+
             # Test pop operation
             popped_item = queue.pop()
             if popped_item and popped_item.id_hash == "hash1" and queue.size() == 1:
                 print( "✓ Pop operation working" )
             else:
                 print( "✗ Pop operation failed" )
-            
+
             # Test delete operation
             if queue.delete_by_id_hash( "hash2" ) and queue.is_empty():
                 print( "✓ Delete by ID hash working" )
             else:
                 print( "✗ Delete by ID hash failed" )
-            
+
         except Exception as e:
             print( f"⚠ Queue operations testing issues: {e}" )
         
@@ -752,26 +783,53 @@ def quick_smoke_test():
         print( "Testing HTML generation functionality..." )
         try:
             queue = FifoQueue()
-            
-            # Use mock items that have get_html method
-            class MockHtmlItem:
+
+            # Use mock items that implement QueueableJob protocol
+            class MockHtmlQueueableItem:
+                """Mock item implementing QueueableJob protocol for HTML testing."""
                 def __init__( self, id_hash, content ):
-                    self.id_hash = id_hash
-                    self.content = content
-                
+                    self.id_hash              = id_hash
+                    self.content              = content
+                    self.push_counter         = 0
+                    self.user_id              = "test_user"
+                    self.session_id           = "test_session"
+                    self.routing_command      = "test"
+                    self.run_date             = "2025-01-30"
+                    self.created_date         = "2025-01-30"
+                    self.question             = content
+                    self.last_question_asked  = content
+                    self.answer               = "test answer"
+                    self.answer_conversational = "Test answer"
+                    self.job_type             = "MockJob"
+                    self.user_email           = "test@test.com"
+                    self.is_cache_hit         = False
+                    self.started_at           = None
+                    self.completed_at         = None
+                    self.status               = "pending"
+                    self.error                = None
+
                 def get_html( self ):
                     return f"<div id='{self.id_hash}'>{self.content}</div>"
-            
-            queue.push( MockHtmlItem( "html1", "Content 1" ) )
-            queue.push( MockHtmlItem( "html2", "Content 2" ) )
-            
+
+                def do_all( self ):
+                    return "done"
+
+                def code_ran_to_completion( self ):
+                    return True
+
+                def formatter_ran_to_completion( self ):
+                    return True
+
+            queue.push( MockHtmlQueueableItem( "html1", "Content 1" ) )
+            queue.push( MockHtmlQueueableItem( "html2", "Content 2" ) )
+
             html_list = queue.get_html_list()
-            
+
             if len( html_list ) == 2 and all( "<div" in item for item in html_list ):
                 print( "✓ HTML generation working" )
             else:
                 print( "⚠ HTML generation may have issues" )
-            
+
         except Exception as e:
             print( f"⚠ HTML generation functionality issues: {e}" )
         
@@ -847,29 +905,56 @@ def quick_smoke_test():
         print( "\\nTesting queue state consistency..." )
         try:
             queue = FifoQueue()
-            
+
             # Test state consistency between operations
-            class TestItem:
+            class TestQueueableItem:
+                """Mock item implementing QueueableJob protocol for state testing."""
                 def __init__( self, id_hash ):
-                    self.id_hash = id_hash
-                
+                    self.id_hash              = id_hash
+                    self.push_counter         = 0
+                    self.user_id              = "test_user"
+                    self.session_id           = "test_session"
+                    self.routing_command      = "test"
+                    self.run_date             = "2025-01-30"
+                    self.created_date         = "2025-01-30"
+                    self.question             = id_hash
+                    self.last_question_asked  = id_hash
+                    self.answer               = "test answer"
+                    self.answer_conversational = "Test answer"
+                    self.job_type             = "MockJob"
+                    self.user_email           = "test@test.com"
+                    self.is_cache_hit         = False
+                    self.started_at           = None
+                    self.completed_at         = None
+                    self.status               = "pending"
+                    self.error                = None
+
                 def get_html( self ):
                     return f"<item>{self.id_hash}</item>"
-            
+
+                def do_all( self ):
+                    return "done"
+
+                def code_ran_to_completion( self ):
+                    return True
+
+                def formatter_ran_to_completion( self ):
+                    return True
+
             # Add multiple items and test consistency
             for i in range( 5 ):
-                queue.push( TestItem( f"test_{i}" ) )
-            
+                queue.push( TestQueueableItem( f"test_{i}" ) )
+
             # Check list/dict consistency
             list_size = len( queue.queue_list )
             dict_size = len( queue.queue_dict )
             reported_size = queue.size()
-            
+
             if list_size == dict_size == reported_size == 5:
                 print( "✓ Queue state consistency validated" )
             else:
                 print( f"⚠ State inconsistency: list={list_size}, dict={dict_size}, size={reported_size}" )
-            
+
         except Exception as e:
             print( f"⚠ Queue state consistency issues: {e}" )
     

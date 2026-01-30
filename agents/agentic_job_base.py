@@ -96,6 +96,7 @@ class AgenticJobBase( ABC ):
         self.completed_at = None
         self.status       = "pending"  # pending, running, completed, failed
         self.error        = None
+        self.is_cache_hit = False      # Agentic jobs are never cache hits
 
         # Results (populated by subclasses after execution)
         self.result       = None

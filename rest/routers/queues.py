@@ -17,6 +17,7 @@ from typing import Dict, Any, Optional
 from cosa.rest.auth import get_current_user
 from cosa.rest.queue_auth import authorize_queue_filter
 from cosa.rest.auth_middleware import is_admin
+from cosa.agents.agentic_job_base import AgenticJobBase
 
 router = APIRouter(prefix="/api", tags=["queues"])
 
@@ -307,8 +308,8 @@ async def get_queue(
         # Extract structured job data from SolutionSnapshot or AgenticJobBase objects
         structured_jobs = []
         for job in jobs:
-            # Check if this is an AgenticJobBase (MockAgenticJob, DeepResearchJob, etc.)
-            is_agentic_job = hasattr( job, 'JOB_TYPE' ) and hasattr( job, 'artifacts' )
+            # Phase 3: Explicit type check replaces duck typing hasattr() checks
+            is_agentic_job = isinstance( job, AgenticJobBase )
 
             # Generate job metadata using unified interface properties
             # All job types now have: job_type, question, last_question_asked, answer,
@@ -324,15 +325,15 @@ async def get_queue(
                 "agent_type"      : job.job_type,  # Unified property replaces getattr() chain
                 "has_interactions": bool( job.session_id ),  # True if can query notifications
                 "has_audio_cache" : False,  # Will be determined by frontend cache check
-                "is_cache_hit"    : getattr( job, 'is_cache_hit', False ),  # For Time Saved Dashboard
+                "is_cache_hit"    : job.is_cache_hit,  # For Time Saved Dashboard
                 # Phase 7: Agentic job artifacts for enhanced done cards
                 "report_path"     : job.artifacts.get( 'report_path' ) if is_agentic_job else None,
                 "abstract"        : job.artifacts.get( 'abstract' ) if is_agentic_job else None,
-                "cost_summary"    : getattr( job, 'cost_summary', None ),
-                "started_at"      : getattr( job, 'started_at', None ),
-                "completed_at"    : getattr( job, 'completed_at', None ),
-                "status"          : getattr( job, 'status', 'completed' ),
-                "error"           : getattr( job, 'error', None ),
+                "cost_summary"    : job.cost_summary if is_agentic_job else None,
+                "started_at"      : job.started_at,
+                "completed_at"    : job.completed_at,
+                "status"          : job.status,
+                "error"           : job.error,
             }
 
             # Calculate duration for agentic jobs
@@ -369,8 +370,8 @@ async def get_queue(
             "user_id"      : authorized_filter,
             "session_id"   : job.session_id,
             "agent_type"   : job.job_type,  # Unified property replaces getattr() chain
-            "status"       : getattr( job, 'status', 'pending' ),
-            "started_at"   : getattr( job, 'started_at', None ),
+            "status"       : job.status,
+            "started_at"   : job.started_at,
         }
         structured_jobs.append( job_data )
 

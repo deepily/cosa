@@ -60,17 +60,19 @@ def start_todo_producer_run_consumer_thread( todo_queue: Any, running_queue: Any
                 
                 if job:
                     if todo_queue.debug:
-                        print( f"[CONSUMER] Processing job: {getattr( job, 'last_question_asked', 'Unknown job' )}" )
+                        # Phase 2: Direct attribute access - Protocol guarantees this exists
+                        print( f"[CONSUMER] Processing job: {job.last_question_asked}" )
 
                     # Emit job state transition (todo -> run) before moving to running queue
-                    job_id = getattr( job, 'id_hash', None )
-                    if job_id and hasattr( running_queue, 'websocket_mgr' ):
+                    # Phase 2: Direct attribute access - Protocol guarantees these exist
+                    job_id = job.id_hash
+                    if hasattr( running_queue, 'websocket_mgr' ):
                         user_id = running_queue.user_job_tracker.get_user_for_job( job_id ) if hasattr( running_queue, 'user_job_tracker' ) else None
                         # Phase 6.1: Include card-rendering metadata for client-side card creation
                         metadata = {
-                            'question_text' : getattr( job, 'last_question_asked', getattr( job, 'question', 'Unknown' ) ),
-                            'agent_type'    : getattr( job, 'agent_class_name', getattr( job, 'JOB_TYPE', 'Unknown' ) ),
-                            'timestamp'     : getattr( job, 'created_date', datetime.now().isoformat() ),
+                            'question_text' : job.last_question_asked,
+                            'agent_type'    : job.job_type,
+                            'timestamp'     : job.created_date,
                             'started_at'    : datetime.now().isoformat()
                         }
                         emit_job_state_transition( running_queue.websocket_mgr, job_id, 'todo', 'run', user_id, metadata )
