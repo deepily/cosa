@@ -187,12 +187,13 @@ async def push(
     if not websocket_id:
         raise HTTPException(status_code=400, detail="Field 'websocket_id' cannot be empty")
     
-    user_id = current_user["uid"]
-    print(f"[API] /api/push called - question: '{question}', websocket_id: {websocket_id}, user_id: {user_id}")
+    user_id    = current_user["uid"]
+    user_email = current_user["email"]
+    print( f"[API] /api/push called - question: '{question}', websocket_id: {websocket_id}, user_id: {user_id}, user_email: {user_email}" )
 
-    # Push to queue with websocket_id and user_id
+    # Push to queue with websocket_id, user_id, and user_email for TTS routing
     try:
-        result = todo_queue.push_job(question, websocket_id, user_id)
+        result = todo_queue.push_job( question, websocket_id, user_id, user_email )
         print(f"[API] /api/push successful - result: {result}")
     except Exception as e:
         print(f"[API] /api/push failed - error: {str(e)}")

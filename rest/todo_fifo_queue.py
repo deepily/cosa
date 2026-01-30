@@ -327,16 +327,17 @@ class TodoFifoQueue( FifoQueue ):
                 if self.debug:
                     print( f"[TODO-QUEUE] Failed to send rejection notification: {e}" )
     
-    def push_job( self, question: str, websocket_id: str, user_id: str = "ricardo_felipe_ruiz_6bdc" ) -> str:
+    def push_job( self, question: str, websocket_id: str, user_id: str, user_email: str ) -> str:
         """
         Push a new job onto the queue based on the question.
-        
+
         Requires:
             - question is a non-empty string
             - websocket_id is a non-empty string
             - user_id is a valid system ID
+            - user_email is a valid email address for TTS routing
             - Queue and snapshot manager are initialized
-            
+
         Ensures:
             - Handles blocking objects for confirmation
             - Searches for similar snapshots if applicable
@@ -344,7 +345,8 @@ class TodoFifoQueue( FifoQueue ):
             - Returns status message
             - Associates websocket_id and user_id with the job
             - Passes user_id to agent creation for event routing
-            
+            - Sets user_email on agent/job for TTS notification routing
+
         Raises:
             - None (exceptions handled internally)
         """
@@ -442,8 +444,8 @@ class TodoFifoQueue( FifoQueue ):
             )
 
             self._dump_code( best_snapshot )
-            return self._queue_best_snapshot( best_snapshot, best_score, user_id )
-                
+            return self._queue_best_snapshot( best_snapshot, best_score, user_id, user_email )
+
         # if we're not running the previous best snapshot, then we need to find a similar one before queuing the job
         else:
 
@@ -493,7 +495,7 @@ class TodoFifoQueue( FifoQueue ):
                     timeout_seconds  = 30,
                     priority         = "high",
                     suppress_ding    = True,  # Queue TTS - no ding
-                    target_user      = self._get_target_user_email( best_snapshot ),
+                    target_user      = user_email,
                     sender_id        = f"queue.{self.queue_name or 'todo'}@lupin.deepily.ai"
                 )
 
@@ -527,7 +529,7 @@ class TodoFifoQueue( FifoQueue ):
                         user_id, websocket_id, embeddings, cache_hits, match_result
                     )
 
-                    return self._queue_best_snapshot( best_snapshot, best_score, user_id )
+                    return self._queue_best_snapshot( best_snapshot, best_score, user_id, user_email )
                 else:
                     # User declined, timeout, or offline - fall through to LLM routing
                     print( f"User response: '{response.status}:{response.response_value}' - routing as new question..." )
@@ -556,7 +558,7 @@ class TodoFifoQueue( FifoQueue ):
                     user_id, websocket_id, embeddings, cache_hits, match_result
                 )
 
-                return self._queue_best_snapshot( best_snapshot, best_score, user_id )
+                return self._queue_best_snapshot( best_snapshot, best_score, user_id, user_email )
         else:
             # No similar snapshots found
             needs_llm_routing = True
@@ -599,7 +601,7 @@ class TodoFifoQueue( FifoQueue ):
                 msg = du.print_banner( f"TO DO: train and implement 'agent router go to search and summary' command {command}" )
                 print( msg )
                 # TTS Migration (Session 97): Use notification service instead of _emit_speech
-                self._notify( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} I'm gonna ask our research librarian about that" )
+                self._notify( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} I'm gonna ask our research librarian about that", target_user=user_email )
                 search = LupinSearch( query=question_gist )
                 search.search_and_summarize_the_web()
                 msg = search.get_results( scope="summary" )
@@ -640,7 +642,7 @@ class TodoFifoQueue( FifoQueue ):
                 msg = du.print_banner( f"TO DO: Implement else case command {command}" )
                 print( msg )
                 # TTS Migration (Session 98): Use notification service instead of emit_speech_callback
-                self._notify( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}" )
+                self._notify( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}", target_user=user_email )
                 search = LupinSearch( query=question_gist )
                 search.search_and_summarize_the_web()
                 msg = search.get_results( scope="summary" )
@@ -653,6 +655,8 @@ class TodoFifoQueue( FifoQueue ):
                 if hasattr( agent, 'id_hash' ) and user_id:
                     agent.id_hash = self.user_job_tracker.generate_user_scoped_hash( agent.id_hash, user_id )
                     self.user_job_tracker.associate_job_with_user( agent.id_hash, user_id )
+                # Session 109: Set user_email for TTS notification routing
+                agent.user_email = user_email
                 self.push( agent )
             
             # TTS Migration (Session 98): Use notification service instead of emit_speech_callback
@@ -739,22 +743,25 @@ class TodoFifoQueue( FifoQueue ):
             if len( lines_of_code ) > 0:
                 print()
                 
-    def _queue_best_snapshot( self, best_snapshot: SolutionSnapshot, best_score: float=100.0, user_id: str = None ) -> str:
+    def _queue_best_snapshot( self, best_snapshot: SolutionSnapshot, best_score: float, user_id: str, user_email: str ) -> str:
         """
         Queue the best matching snapshot for execution.
-        
+
         Requires:
             - best_snapshot is a valid SolutionSnapshot
             - best_score is between 0 and 100
+            - user_id is a valid system ID
+            - user_email is a valid email address for TTS routing
             - Queue is initialized
-            
+
         Ensures:
             - Creates a copy of the snapshot
             - Configures job with current settings
+            - Sets user_email on job for TTS notification routing
             - Pushes job to queue
             - Emits socket updates
             - Returns status message
-            
+
         Raises:
             - None
         """
@@ -772,6 +779,9 @@ class TodoFifoQueue( FifoQueue ):
         #               2) Different users = different hashes (no collision)
         #               3) Database can extract base hash for persistence
         job.id_hash = self.user_job_tracker.generate_user_scoped_hash( best_snapshot.id_hash, user_id )
+
+        # Session 109: Set user_email for TTS notification routing
+        job.user_email = user_email
 
         print()
 

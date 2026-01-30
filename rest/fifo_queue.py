@@ -462,60 +462,13 @@ class FifoQueue:
 
         return None
 
-    def _get_target_user_email( self, job: Any ) -> str:
-        """
-        Get target user email from job metadata for notification routing.
-
-        Requires:
-            - job (if provided) may have user_email attribute or metadata dict
-
-        Ensures:
-            - Returns user email if available in job metadata
-            - Falls back to default email if not found
-
-        Args:
-            job: Job object that may have user_email attribute
-
-        Returns:
-            str: Target user email for notification routing
-        """
-        if job:
-            # Check for email stored directly on job (set during push)
-            if hasattr( job, 'user_email' ) and job.user_email:
-                return job.user_email
-
-            # Check for email in metadata dict
-            if hasattr( job, 'metadata' ) and isinstance( job.metadata, dict ):
-                if 'user_email' in job.metadata:
-                    return job.metadata[ 'user_email' ]
-
-            # Try to resolve email from user_job_tracker (legacy path)
-            if hasattr( job, 'id_hash' ):
-                user_id = self.user_job_tracker.get_user_for_job( job.id_hash )
-                if user_id:
-                    # Look up user email from auth database using user service
-                    try:
-                        from cosa.rest.user_service import get_user_by_id
-                        user_data = get_user_by_id( user_id )
-                        if user_data and user_data.get( "email" ):
-                            email = user_data[ "email" ]
-                            print( f"[NOTIFY] Resolved email from user_id: {email}" )
-                            return email
-                        else:
-                            print( f"[NOTIFY] user_service returned no email for user_id={user_id}" )
-                    except Exception as e:
-                        print( f"[NOTIFY] Failed to look up email for user_id={user_id}: {e}" )
-
-        # Fallback to default email
-        # Note: Using hardcoded default since not all queue subclasses have config_mgr
-        return "ricardo.felipe.ruiz@gmail.com"
-
     def _notify(
         self,
         msg: str,
         job: Any = None,
         priority: str = "high",
-        notification_type: str = "task"
+        notification_type: str = "task",
+        target_user: str = None
     ) -> None:
         """
         Send notification via notification service (replaces _emit_speech).
@@ -539,24 +492,34 @@ class FifoQueue:
             job: Job object for context-based routing (optional)
             priority: Notification priority ('urgent', 'high', 'medium', 'low')
             notification_type: Type of notification ('task', 'progress', 'alert', 'custom')
+            target_user: Email address for TTS routing (uses job.user_email if not provided)
 
         Raises:
             - None (exceptions handled internally)
         """
+        # Session 109: Simplified email resolution - use target_user or job.user_email directly
+        resolved_email = target_user
+        if not resolved_email and job and hasattr( job, 'user_email' ) and job.user_email:
+            resolved_email = job.user_email
+        if not resolved_email:
+            # Fallback to default email
+            resolved_email = "ricardo.felipe.ruiz@gmail.com"
+            print( f"[NOTIFY] Warning: No user_email found, using fallback: {resolved_email}" )
+
         try:
             request = AsyncNotificationRequest(
                 message           = msg,
                 notification_type = notification_type,
                 priority          = priority,
                 suppress_ding     = True,  # Queue notifications = TTS only, no ding
-                target_user       = self._get_target_user_email( job ),
+                target_user       = resolved_email,
                 job_id            = self._get_notification_job_id( job ),
                 sender_id         = f"queue.{self.queue_name or 'unknown'}@lupin.deepily.ai"
             )
             notify_user_async( request )
 
             if hasattr( self, 'debug' ) and self.debug:
-                print( f"[NOTIFY] Sent notification: {priority}/{notification_type} - {msg[:50]}..." )
+                print( f"[NOTIFY] Sent notification to {resolved_email}: {priority}/{notification_type} - {msg[:50]}..." )
 
         except Exception as e:
             print( f"[ERROR] _notify() failed: {e}" )
