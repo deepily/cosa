@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Optional
 
 from cosa.agents.agentic_job_base import AgenticJobBase
+from cosa.agents.deep_research.cost_tracker import SessionSummary
 
 
 class DeepResearchJob( AgenticJobBase ):
@@ -391,13 +392,13 @@ class DeepResearchJob( AgenticJobBase ):
         self.artifacts[ "report_path" ] = self.report_path
         self.artifacts[ "abstract" ]    = self.abstract
 
-        # Mock cost summary
-        self.cost_summary = type( 'MockCostSummary', (), {
-            'duration_seconds'     : 6.0,
-            'total_cost_usd'       : 0.0,
-            'total_input_tokens'   : 0,
-            'total_output_tokens'  : 0,
-        } )()
+        # Mock cost summary - uses SessionSummary dataclass for proper JSON serialization
+        self.cost_summary = SessionSummary(
+            duration_seconds    = 6.0,
+            total_cost_usd      = 0.0,
+            total_input_tokens  = 0,
+            total_output_tokens = 0,
+        )
 
         completion_abstract = f"""**🧪 Dry Run Complete!**
 
