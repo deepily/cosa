@@ -245,6 +245,11 @@ class SolutionSnapshot( RunnableCode ):
         }
         self.is_cache_hit          = is_cache_hit
 
+        # QueueableJob protocol compliance - status tracking attributes
+        self.status                = "pending"
+        self.started_at            = ""
+        self.completed_at          = ""
+
         # Is there is no synonymous questions to be found then just recycle the current question
         # Handle corrupted data: ensure synonymous_questions is a valid dict/OrderedDict
         if not isinstance( synonymous_questions, dict ):
@@ -441,8 +446,12 @@ class SolutionSnapshot( RunnableCode ):
                      code_example=agent.prompt_response_dict.get( "example", "N/A" ),
                          thoughts=agent.prompt_response_dict.get( "thoughts", "N/A" ),
                            answer=agent.code_response_dict.get( "output", "N/A" ),
-            answer_conversational=agent.answer_conversational
-               
+            answer_conversational=agent.answer_conversational,
+            # User context pass-through from agent (AgentBase guarantees these attributes)
+                          user_id=agent.user_id,
+                       user_email=agent.user_email,
+                       session_id=agent.session_id
+
                # TODO: Reconcile how we're going to get a dynamic path to the solution file's directory
                # solution_directory=calendaring_agent.solution_directory
         )
@@ -691,22 +700,6 @@ class SolutionSnapshot( RunnableCode ):
             snapshot_copy.user_email = user_email
         return snapshot_copy
     
-    def get_html( self ) -> str:
-        """
-        Get HTML representation of snapshot.
-        
-        Requires:
-            - id_hash, run_date, last_question_asked are set
-            
-        Ensures:
-            - Returns HTML list item string
-            - Includes play and delete spans
-            
-        Raises:
-            - None
-        """
-        return f"<li id='{self.id_hash}'><span class='play'>{self.run_date} Q: {self.last_question_asked}</span> <span class='delete'></span></li>"
-     
     def write_current_state_to_file( self ) -> None:
         """
         DEPRECATED: Write snapshot to JSON file.
@@ -1009,6 +1002,28 @@ class SolutionSnapshot( RunnableCode ):
         """
         return self.answer_conversational is not None
 
+    def do_all( self ) -> str:
+        """
+        Execute snapshot code and format result.
+
+        This is required by QueueableJob protocol. For snapshots,
+        it runs the cached code and formats the output.
+
+        Requires:
+            - code, code_example, code_returns are populated
+
+        Ensures:
+            - Executes stored code
+            - Formats output
+            - Returns conversational answer
+
+        Raises:
+            - Code execution errors propagated
+        """
+        self.run_code( debug=self.debug, verbose=self.verbose )
+        self.run_formatter()
+        return self.answer_conversational
+
     # =========================================================================
     # Unified Interface Properties (for QueueableJob protocol compatibility)
     # =========================================================================
@@ -1066,6 +1081,39 @@ def quick_smoke_test():
     snapshot_without_agent = SolutionSnapshot( question="test" )
     assert snapshot_without_agent.job_type == "unknown", "job_type should be 'unknown' when agent_class_name is None"
     print( f"✓ job_type without agent_class_name: {snapshot_without_agent.job_type}" )
+
+    # Test do_all() method exists (QueueableJob protocol requirement)
+    print( "\nTesting do_all() method (QueueableJob protocol)..." )
+    assert hasattr( snapshot_with_agent, 'do_all' ), "SolutionSnapshot must have do_all() method"
+    assert callable( snapshot_with_agent.do_all ), "do_all must be callable"
+    print( "✓ do_all() method exists and is callable" )
+
+    # Test QueueableJob protocol compliance
+    print( "\nTesting QueueableJob protocol compliance..." )
+    try:
+        from cosa.rest.queue_protocol import is_queueable_job
+        test_snapshot = SolutionSnapshot(
+            question="test question",
+            agent_class_name="TestAgent",
+            user_id="test_user",
+            user_email="test@example.com",
+            session_id="test_session"
+        )
+        # Protocol requires all these attributes
+        assert hasattr( test_snapshot, 'id_hash' ), "Missing id_hash"
+        assert hasattr( test_snapshot, 'push_counter' ), "Missing push_counter"
+        assert hasattr( test_snapshot, 'user_id' ), "Missing user_id"
+        assert hasattr( test_snapshot, 'user_email' ), "Missing user_email"
+        assert hasattr( test_snapshot, 'session_id' ), "Missing session_id"
+        assert hasattr( test_snapshot, 'status' ), "Missing status"
+        assert hasattr( test_snapshot, 'do_all' ), "Missing do_all method"
+        assert hasattr( test_snapshot, 'code_ran_to_completion' ), "Missing code_ran_to_completion method"
+        assert hasattr( test_snapshot, 'formatter_ran_to_completion' ), "Missing formatter_ran_to_completion method"
+
+        is_valid = is_queueable_job( test_snapshot )
+        print( f"✓ QueueableJob protocol check: {is_valid}" )
+    except ImportError:
+        print( "⚠ Could not import queue_protocol for protocol check (skipped)" )
 
     print( "\n✓ SolutionSnapshot smoke test completed" )
 

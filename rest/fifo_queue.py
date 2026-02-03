@@ -153,7 +153,6 @@ class FifoQueue:
         self.queue_list.append( item )
         self.queue_dict[ item.id_hash ] = item
         self.push_counter += 1
-        self._emit_queue_update()
     
     def get_push_counter( self ) -> int:
         """
@@ -189,7 +188,6 @@ class FifoQueue:
             # Remove from ID_hash first
             del self.queue_dict[ self.queue_list[ 0 ].id_hash ]
             result = self.queue_list.pop( 0 )
-            self._emit_queue_update()
             return result
     
     def head( self ) -> Optional[Any]:
@@ -257,7 +255,6 @@ class FifoQueue:
             
             if size_after < size_before:
                 print( f"Deleted {size_before - size_after} items from queue" )
-                self._emit_queue_update()
                 return True
             else:
                 print( "ERROR: Could not delete by id_hash - size didn't change" )
@@ -321,18 +318,17 @@ class FifoQueue:
     
     def clear( self ) -> None:
         """
-        Clear all items from the queue and emit update.
-        
+        Clear all items from the queue.
+
         Requires:
             - None
-            
+
         Ensures:
             - Empties both queue_list and queue_dict
             - Resets push_counter to 0
             - Clears blocking_object to None
             - Resets accepting_jobs to True
-            - Emits queue update via WebSocket if configured
-            
+
         Raises:
             - None
         """
@@ -341,37 +337,7 @@ class FifoQueue:
         self.push_counter = 0
         self._blocking_object = None
         self._accepting_jobs = True
-        self._emit_queue_update()
     
-    def get_html_list( self, descending: bool = False ) -> list[str]:
-        """
-        Generate HTML list from queue items.
-        
-        Requires:
-            - Each item in queue_list has get_html() method
-            
-        Ensures:
-            - Returns list of HTML strings from queue items
-            - Reverses order if descending=True
-            
-        Args:
-            descending: Whether to reverse the list order
-            
-        Returns:
-            list[str]: HTML representations of queue items
-            
-        Raises:
-            - AttributeError if items don't have get_html() method
-        """
-        html_list = []
-        for job in self.queue_list:
-            html_list.append( job.get_html() )
-        
-        if descending:
-            html_list.reverse()
-        
-        return html_list
-
     def get_jobs_for_user( self, user_id: str ) -> list[Any]:
         """
         Get raw job objects for specific user (NO authorization, NO formatting).
@@ -528,81 +494,6 @@ class FifoQueue:
         except Exception as e:
             print( f"[ERROR] _notify() failed: {e}" )
 
-    # ============================================================================
-    # DEPRECATED: Legacy _emit_speech implementation (Session 97)
-    # Replaced by _notify() method using notification service
-    # Keeping commented for reference during migration verification
-    # TODO: Remove after migration verified stable (target: Session 100+)
-    # ============================================================================
-    # def _emit_speech( self, msg: str, user_id: str = None, websocket_id: str = None, job: Any = None ) -> None:
-    #     """
-    #     [DEPRECATED] Unified speech emission with smart routing.
-    #
-    #     Replaced by: _notify() method
-    #     Reason: Migration to notification service for job_id routing, blocking queries, and suppress_ding
-    #
-    #     Priority: job context → user_id → websocket_id → broadcast
-    #
-    #     Requires:
-    #         - Subclass has self.emit_speech_callback attribute
-    #         - job parameter (if provided) has id_hash attribute
-    #
-    #     Ensures:
-    #         - Determines user_id from job if available
-    #         - Calls emit_speech_callback with proper parameters
-    #         - Handles exceptions gracefully
-    #
-    #     Args:
-    #         msg: The message to convert to speech
-    #         user_id: Explicit user ID for routing (optional)
-    #         websocket_id: WebSocket session ID for routing (optional)
-    #         job: Job object containing id_hash for user lookup (optional)
-    #
-    #     Raises:
-    #         - None (exceptions handled internally)
-    #     """
-    #     # Determine user_id from job context if available
-    #     if job and hasattr( job, 'id_hash' ) and not user_id:
-    #         user_id = self.user_job_tracker.get_user_for_job( job.id_hash )
-    #         if user_id:
-    #             print( f"[FIFO] Resolved user_id {user_id} from job {job.id_hash}" )
-    #
-    #     if hasattr( self, 'emit_speech_callback' ) and self.emit_speech_callback:
-    #         try:
-    #             # Use named parameters to ensure correct routing
-    #             self.emit_speech_callback( msg, user_id=user_id, websocket_id=websocket_id )
-    #         except Exception as e:
-    #             print( f"[ERROR] emit_speech_callback failed: {e}" )
-
-    def _emit_queue_update( self ) -> None:
-        """
-        Automatically emit queue state update via WebSocket.
-        
-        This method enables automatic client-server state synchronization
-        by emitting queue size updates whenever the queue changes.
-        
-        Requires:
-            - websocket_mgr, queue_name, and emit_enabled are configured
-            
-        Ensures:
-            - Emits "<queue_name>_update" event with current queue size
-            - Handles exceptions gracefully
-            - Only emits if all requirements are met
-            
-        Raises:
-            - None (exceptions handled internally)
-        """
-        if self.emit_enabled and self.websocket_mgr and self.queue_name:
-            try:
-                event_name = f"queue_{self.queue_name}_update"  # Fixed: Add "queue_" prefix
-                data = { 'value': self.size() }
-                self.websocket_mgr.emit( event_name, data )
-                if hasattr( self, 'debug' ) and self.debug:
-                    print( f"[QUEUE] Auto-emitted {event_name}: {data}" )
-            except Exception as e:
-                print( f"[ERROR] _emit_queue_update failed: {e}" )
-
-
 def quick_smoke_test():
     """
     Critical smoke test for FIFO queue implementation - validates base queue functionality.
@@ -619,7 +510,7 @@ def quick_smoke_test():
         print( "Testing core FIFO queue components..." )
         expected_methods = [
             "push", "pop", "head", "get_by_id_hash", "delete_by_id_hash",
-            "is_empty", "size", "has_changed", "clear", "get_html_list",
+            "is_empty", "size", "has_changed", "clear",
             "pop_blocking_object", "push_blocking_object", "is_in_focus_mode", "is_accepting_jobs"
         ]
         
@@ -697,9 +588,6 @@ def quick_smoke_test():
                     self.completed_at         = None
                     self.status               = "pending"
                     self.error                = None
-
-                def get_html( self ):
-                    return f"<li id='{self.id_hash}'>{self.name}</li>"
 
                 def do_all( self ):
                     return "done"
@@ -779,61 +667,7 @@ def quick_smoke_test():
         except Exception as e:
             print( f"⚠ Blocking object functionality issues: {e}" )
         
-        # Test 6: HTML generation functionality
-        print( "Testing HTML generation functionality..." )
-        try:
-            queue = FifoQueue()
-
-            # Use mock items that implement QueueableJob protocol
-            class MockHtmlQueueableItem:
-                """Mock item implementing QueueableJob protocol for HTML testing."""
-                def __init__( self, id_hash, content ):
-                    self.id_hash              = id_hash
-                    self.content              = content
-                    self.push_counter         = 0
-                    self.user_id              = "test_user"
-                    self.session_id           = "test_session"
-                    self.routing_command      = "test"
-                    self.run_date             = "2025-01-30"
-                    self.created_date         = "2025-01-30"
-                    self.question             = content
-                    self.last_question_asked  = content
-                    self.answer               = "test answer"
-                    self.answer_conversational = "Test answer"
-                    self.job_type             = "MockJob"
-                    self.user_email           = "test@test.com"
-                    self.is_cache_hit         = False
-                    self.started_at           = None
-                    self.completed_at         = None
-                    self.status               = "pending"
-                    self.error                = None
-
-                def get_html( self ):
-                    return f"<div id='{self.id_hash}'>{self.content}</div>"
-
-                def do_all( self ):
-                    return "done"
-
-                def code_ran_to_completion( self ):
-                    return True
-
-                def formatter_ran_to_completion( self ):
-                    return True
-
-            queue.push( MockHtmlQueueableItem( "html1", "Content 1" ) )
-            queue.push( MockHtmlQueueableItem( "html2", "Content 2" ) )
-
-            html_list = queue.get_html_list()
-
-            if len( html_list ) == 2 and all( "<div" in item for item in html_list ):
-                print( "✓ HTML generation working" )
-            else:
-                print( "⚠ HTML generation may have issues" )
-
-        except Exception as e:
-            print( f"⚠ HTML generation functionality issues: {e}" )
-        
-        # Test 7: WebSocket integration structure
+        # Test 6: WebSocket integration structure
         print( "Testing WebSocket integration structure..." )
         try:
             # Test queue with WebSocket manager (mock)
@@ -848,7 +682,7 @@ def quick_smoke_test():
         except Exception as e:
             print( f"⚠ WebSocket integration issues: {e}" )
         
-        # Test 8: Critical v000 dependency scanning
+        # Test 7: Critical v000 dependency scanning
         print( "\\n🔍 Scanning for v000 dependencies..." )
         
         # Scan the file for v000 patterns
@@ -901,7 +735,7 @@ def quick_smoke_test():
         else:
             print( "✅ EXCELLENT: No v000 dependencies found!" )
         
-        # Test 9: Queue state consistency validation
+        # Test 8: Queue state consistency validation
         print( "\\nTesting queue state consistency..." )
         try:
             queue = FifoQueue()
@@ -928,9 +762,6 @@ def quick_smoke_test():
                     self.completed_at         = None
                     self.status               = "pending"
                     self.error                = None
-
-                def get_html( self ):
-                    return f"<item>{self.id_hash}</item>"
 
                 def do_all( self ):
                     return "done"

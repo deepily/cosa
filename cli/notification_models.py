@@ -211,8 +211,8 @@ class NotificationRequest(BaseModel):
 
     sender_id: Optional[str] = Field(
         default=None,
-        pattern=r'^[a-z]+\.[a-z]+@[a-z]+\.deepily\.ai(#([a-f0-9]{8}|[a-z]+(-[a-z]+)*|[a-z]+-[a-f0-9]{8}))?$',
-        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, deep.research@lupin.deepily.ai#dr-a0ebba60). Supports hex suffix, hyphenated topic, or job ID (prefix-hex)."
+        pattern=r'^[a-z]+(\.[a-z]+)+@[a-z]+\.deepily\.ai(#([a-f0-9]{8}|[a-z]+(-[a-z]+)*|[a-z]+-[a-f0-9]{8}))?$',
+        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, claude.code.job@lupin.deepily.ai#cc-a0ebba60). Supports 2+ word agent names, hex suffix, hyphenated topic, or job ID (prefix-hex)."
     )
 
     response_options: Optional[dict] = Field(
@@ -601,8 +601,8 @@ class AsyncNotificationRequest(BaseModel):
 
     sender_id: Optional[str] = Field(
         default=None,
-        pattern=r'^[a-z]+\.[a-z]+@[a-z]+\.deepily\.ai(#([a-f0-9]{8}|[a-z]+(-[a-z]+)*|[a-z]+-[a-f0-9]{8}))?$',
-        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, deep.research@lupin.deepily.ai#dr-a0ebba60). Supports hex suffix, hyphenated topic, or job ID (prefix-hex)."
+        pattern=r'^[a-z]+(\.[a-z]+)+@[a-z]+\.deepily\.ai(#([a-f0-9]{8}|[a-z]+(-[a-z]+)*|[a-z]+-[a-f0-9]{8}))?$',
+        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, claude.code.job@lupin.deepily.ai#cc-a0ebba60). Supports 2+ word agent names, hex suffix, hyphenated topic, or job ID (prefix-hex)."
     )
 
     abstract: Optional[str] = Field(
@@ -979,6 +979,8 @@ def quick_smoke_test():
         "podcast.gen@cosa.deepily.ai#cats-vs-dogs",
         "deep.research@lupin.deepily.ai#dr-a0ebba60",  # Job ID format (prefix-hex)
         "podcast.gen@lupin.deepily.ai#pod-12345678",   # Another job ID format
+        "claude.code.job@lupin.deepily.ai",            # 3-word agent name (no session)
+        "claude.code.job@lupin.deepily.ai#cc-a1b2c3d4",  # 3-word agent name with job ID
     ]
     all_sender_valid = True
     for sender_id in valid_sender_ids:

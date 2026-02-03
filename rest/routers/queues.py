@@ -315,7 +315,6 @@ async def get_queue(
             # All job types now have: job_type, question, last_question_asked, answer,
             # answer_conversational, run_date, created_date, session_id
             job_data = {
-                "html"            : job.get_html(),
                 "job_id"          : job.id_hash,
                 "question_text"   : job.last_question_asked,
                 "response_text"   : job.answer_conversational or job.answer,
@@ -349,9 +348,8 @@ async def get_queue(
 
             structured_jobs.append( job_data )
 
-        # Maintain backward compatibility: return both structured data and HTML list
+        # Return structured metadata (HTML field deprecated - frontend uses metadata exclusively)
         return {
-            f"{queue_name}_jobs": [ job[ "html" ] for job in structured_jobs ],
             f"{queue_name}_jobs_metadata": structured_jobs,
             "filtered_by": authorized_filter,
             "is_admin_view": is_admin( current_user ) and ( user_filter is not None ),
@@ -363,7 +361,6 @@ async def get_queue(
     structured_jobs = []
     for job in jobs:
         job_data = {
-            "html"         : job.get_html(),
             "job_id"       : job.id_hash,
             "question_text": job.last_question_asked,
             "timestamp"    : job.run_date or job.created_date,
@@ -375,11 +372,10 @@ async def get_queue(
         }
         structured_jobs.append( job_data )
 
-    # Return both HTML list and metadata
+    # Return structured metadata (HTML field deprecated - frontend uses metadata exclusively)
     is_admin_override = is_admin( current_user ) and ( user_filter is not None )
 
     return {
-        f"{queue_name}_jobs": [ job[ "html" ] for job in structured_jobs ],
         f"{queue_name}_jobs_metadata": structured_jobs,
         "filtered_by": authorized_filter,
         "is_admin_view": is_admin_override,
@@ -484,7 +480,12 @@ async def get_job_interactions(
 
     print( f"[API] /api/get-job-interactions/{job_id} called by user: {current_user['uid']}" )
 
+    # Extract base hash from compound job_id format ({hash}::{session_id})
+    # The frontend sends compound IDs, but snapshot.id_hash is just the base hash
+    base_job_id = user_job_tracker.extract_base_hash( job_id )
+
     # Find job in done queue
+    # Compare full compound IDs - jobs in done_queue have compound id_hash ({hash}::{user_id})
     job = None
     for snapshot in done_queue.get_all_jobs():
         if snapshot.id_hash == job_id:
@@ -492,11 +493,11 @@ async def get_job_interactions(
             break
 
     if not job:
-        print( f"[API] Job not found: {job_id}" )
+        print( f"[API] Job not found: {job_id} (base: {base_job_id})" )
         raise HTTPException( status_code=404, detail=f"Job not found: {job_id}" )
 
-    # Authorization check
-    job_owner = user_job_tracker.get_user_for_job( job_id )
+    # Authorization check (use base_job_id for tracker lookup)
+    job_owner = user_job_tracker.get_user_for_job( base_job_id )
     if job_owner and job_owner != current_user["uid"] and not is_admin( current_user ):
         print( f"[API] Unauthorized access to job {job_id} by {current_user['uid']}" )
         raise HTTPException( status_code=403, detail="Not authorized to view this job" )

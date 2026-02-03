@@ -129,15 +129,6 @@ class QueueableJob( Protocol ):
     # Required Methods
     # =========================================================================
 
-    def get_html( self ) -> str:
-        """
-        Generate HTML representation for queue visualization.
-
-        Returns:
-            str: HTML string (typically an <li> element)
-        """
-        ...
-
     def do_all( self ) -> str:
         """
         Execute job and return conversational answer.
@@ -223,9 +214,6 @@ def quick_smoke_test():
             is_cache_hit          = False
             status                = "pending"
             error                 = None
-
-            def get_html( self ):
-                return "<li>test</li>"
 
             def do_all( self ):
                 return "done"

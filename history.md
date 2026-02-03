@@ -1,5 +1,68 @@
 # COSA Development History
 
+> **✅ SESSION 126 COMPLETE**: Directory Analyzer "Other" Files Fix (2026.02.03)
+> **Owner**: claude.code@cosa.deepily.ai#d7da6d0d
+> **Branch**: `wip-v0.1.3-2026.01.29-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Fixed Directory Analyzer classifying 97.58% of files as "Other"** - Root cause: LanceDB database files (.lance, .manifest, .txn) and Flutter SDK not excluded.
+>
+> **Changes to `repo/directory_analyzer/default_config.yaml`**:
+> - Added `.dart` extension mapping for Dart/Flutter files (127 files now categorized)
+> - Added directory exclusions: `flutter`, `.dart_tool`, `io`, `ephemera`, `long-term-memory`, `*.lancedb`
+> - Added binary file mappings: `.lance`, `.manifest`, `.txn`
+>
+> **Results for Lupin project**:
+> - Before: 97.58% "Other" (46M lines, 67k files)
+> - After: 3.57% "Other" (12k lines, 52 files)
+> - Files scanned: 59,471 → 1,223 (98% reduction in noise)
+>
+> **New distribution**: Python 39.1%, Markdown 30.9%, Dart 12.4%, JavaScript 6.4%, Other 3.6%
+>
+> **Commit**: be0afa6
+>
+> ---
+
+> **✅ SESSION 125 COMPLETE**: Directory Analyzer Package (2026.02.02)
+> **Owner**: claude.code@cosa.deepily.ai#42f82302
+> **Branch**: `wip-v0.1.3-2026.01.29-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Created new `repo/directory_analyzer/` package** - Counts lines of code across directory trees by file type with code/comment separation for Python, JavaScript, and TypeScript.
+>
+> **Design**: Reuses `FileTypeClassifier`, `LineClassifier`, and `ConfigLoader` from `branch_analyzer` package (~95% code reuse).
+>
+> **Files Created (8 new files, ~1,382 lines)**:
+> - `repo/directory_analyzer/__init__.py` (68 lines) - Package exports
+> - `repo/directory_analyzer/exceptions.py` (186 lines) - DirectoryAnalyzerError, ScannerError, ConfigurationError, FileReadError
+> - `repo/directory_analyzer/default_config.yaml` (280 lines) - Exclusion patterns, file types, output settings
+> - `repo/directory_analyzer/directory_scanner.py` (304 lines) - Walk filesystem, handle exclusions, read files
+> - `repo/directory_analyzer/statistics_collector.py` (158 lines) - Aggregate line statistics by file type and language
+> - `repo/directory_analyzer/report_formatter.py` (256 lines) - Console, JSON, and Markdown output formats
+> - `repo/directory_analyzer/analyzer.py` (279 lines) - Main orchestrator with smoke test
+> - `repo/run_directory_analyzer.py` (131 lines) - CLI entry point
+>
+> **Features**:
+> - Configurable exclusions (.git, __pycache__, node_modules, .venv, etc.)
+> - Binary file detection and skipping
+> - Multiple encoding support (utf-8, latin-1, cp1252)
+> - Code vs comment separation for Python/JS/TS
+> - Multiple output formats (console, JSON, markdown)
+>
+> **Usage**:
+> ```bash
+> python -m cosa.repo.run_directory_analyzer --path /path/to/project
+> python -m cosa.repo.run_directory_analyzer --path cosa --output json
+> ```
+>
+> **Results for COSA directory**: 121,659 lines in 392 files (86% Python: 59% code, 8% comments, 33% docstrings)
+>
+> **Commit**: b3b28e6 (34 files changed, +3,505/-1,039 lines - includes Sessions 119-124 changes)
+>
+> ---
+
 > **🔄 CURRENT**: 2026.01.28 - Git Workflow: PR #13 Merged, New Branch Created! Performed git workflow for COSA v0.1.1 release. Stashed uncommitted job state transition changes, created PR #13 to merge `wip-v0.1.1-2025.12.31-tracking-lupin-work` into `main` (Sessions 97-106: TTS Migration, Agentic Jobs, LanceDB Recovery), user merged PR, checked out main with fast-forward merge (132 files, +30,330/-1,072 lines), created new branch `wip-v0.1.2-2026.01.28-tracking-lupin-work`, unstashed changes. **PR #13**: https://github.com/deepily/cosa/pull/13 **Stashed Changes**: Job state transition events in `fifo_queue.py` and `running_fifo_queue.py` (new `_emit_job_state_transition()` method for run→done/dead transitions). **Branch**: Now on `wip-v0.1.2-2026.01.28-tracking-lupin-work` with uncommitted job state transition work restored. 🔄✅
 >
 > **🔄 PREVIOUS**: 2026.01.27 - Parent Lupin Sync: Sessions 103-106 API Consistency + Dry-Run Mode + LanceDB Corruption Recovery! Synced changes from parent Lupin Sessions 103-106. **SESSION 103 - GIST_CACHE CORRUPTION FIX**: Added `_is_table_corrupted()` method to `gist_cache_table.py` that performs actual data scan (not just `count_rows()` metadata check) to detect missing `.lance` fragment files. Auto-recovery: drops and recreates table on corruption detection. Added 8 smoke tests including corruption detection and recovery verification. **SESSION 104 - DRY-RUN MODE**: Added dry-run checkboxes to agentic job submission UI. Enhanced job classes with dry-run support. **SESSION 105 - SENDER_ID REGEX FIX**: Updated sender_id regex in `notification_models.py` to accept job ID format `[a-z]+-[a-f0-9]{8}` (e.g., `dr-a0ebba60`). **SESSION 106 - API CONSISTENCY**: Removed redundant `user_email` from `DeepResearchSubmitRequest` - now derived from JWT token. Added dry-run mode to all job routers. **NEW CLAUDE CODE AGENT**: Created `agents/claude_code/` package with `job.py` for Claude Code queue integration. **NEW MOCK CLIENTS**: Created `agents/podcast_generator/mock_clients.py` (~15k bytes) for testing without real API calls. **NEW QUEUE ROUTER**: Created `rest/routers/claude_code_queue.py` (~10k bytes) for Claude Code job management. **FILES CREATED**: `agents/claude_code/__init__.py`, `agents/claude_code/job.py` (~13k bytes), `agents/podcast_generator/mock_clients.py`, `rest/routers/claude_code_queue.py`. **FILES MODIFIED**: `agents/deep_research/cosa_interface.py`, `agents/deep_research/job.py` (+115 lines: dry-run mode), `agents/deep_research/voice_io.py`, `agents/deep_research_to_podcast/job.py` (+103 lines: dry-run mode), `agents/podcast_generator/job.py` (+94 lines: dry-run mode), `agents/utils/voice_io.py`, `cli/notification_models.py` (+20 lines: sender_id regex), `memory/embedding_cache_table.py`, `memory/gist_cache_table.py` (+135 lines: corruption recovery), `rest/notification_fifo_queue.py`, `rest/routers/deep_research.py`, `rest/routers/deep_research_to_podcast.py`, `rest/routers/notifications.py`, `rest/routers/podcast_generator.py`. **Total Impact**: 14 files modified, 4 new files created, +503/-55 lines (net +448 lines). 🔄✅

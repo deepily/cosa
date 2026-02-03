@@ -160,27 +160,19 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.prompt                = None
         
         if self.df_path_key is not None:
-            
+
             self.df = pd.read_csv( du.get_project_root() + self.config_mgr.get( self.df_path_key ) )
             self.df = dup.cast_to_datetime( self.df )
-            
+
+        # QueueableJob protocol compliance - status tracking attributes
+        self.answer       = ""
+        self.error        = ""  # Must be str, not None (protocol requirement)
+        self.status       = "pending"
+        self.is_cache_hit = False
+        self.started_at   = ""
+        self.completed_at = ""
+
         self.execution_state = AgentBase.STATE_WAITING_TO_RUN
-    
-    def get_html( self ) -> str:
-        """
-        Generate HTML representation of this agent instance.
-        
-        Requires:
-            - id_hash, run_date, and last_question_asked are initialized
-            
-        Ensures:
-            - Returns a formatted HTML <li> element with agent info
-            - HTML includes unique id, timestamp, and question
-            
-        Raises:
-            - None
-        """
-        return f"<li id='{self.id_hash}'>{self.run_date} Q: {self.last_question_asked}</li>"
     
     @abc.abstractmethod
     def restore_from_serialized_state( file_path: str ) -> 'AgentBase':

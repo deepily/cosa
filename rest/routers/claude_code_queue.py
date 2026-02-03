@@ -31,6 +31,7 @@ class ClaudeCodeQueueRequest( BaseModel ):
     task_type: str = Field( "BOUNDED", description="Task type: BOUNDED or INTERACTIVE" )
     max_turns: int = Field( 50, ge=1, le=500, description="Maximum agentic turns" )
     websocket_id: Optional[ str ] = Field( None, description="WebSocket session ID for notifications" )
+    dry_run: bool = Field( False, description="If True, simulate execution without running Claude Code" )
 
 
 class ClaudeCodeQueueResponse( BaseModel ):
@@ -63,7 +64,7 @@ def get_user_job_tracker():
     Returns:
         UserJobTracker: The user job tracker instance
     """
-    from cosa.rest.user_job_tracker import user_job_tracker
+    from cosa.rest.queue_extensions import user_job_tracker
     return user_job_tracker
 
 
@@ -152,6 +153,7 @@ async def submit_claude_code_to_queue(
             session_id = session_id,
             task_type  = task_type,
             max_turns  = request_body.max_turns,
+            dry_run    = request_body.dry_run,
             debug      = False,
             verbose    = False
         )
@@ -241,7 +243,17 @@ def quick_smoke_test():
         assert req_defaults.project == "lupin"
         assert req_defaults.task_type == "BOUNDED"
         assert req_defaults.max_turns == 50
+        assert req_defaults.dry_run == False
         print( "✓ Default values work correctly" )
+
+        # Test 5: Test dry_run flag
+        print( "Testing dry_run flag..." )
+        req_dry_run = ClaudeCodeQueueRequest(
+            prompt  = "Test prompt",
+            dry_run = True
+        )
+        assert req_dry_run.dry_run == True
+        print( "✓ dry_run flag works correctly" )
 
         print( "\n✓ Smoke test completed successfully" )
         return True
