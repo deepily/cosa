@@ -238,6 +238,41 @@ async def choose(
     return await _core_voice_io.choose( question, options, timeout, allow_custom )
 
 
+async def present_choices(
+    questions: list,
+    timeout: int = 120,
+    title: Optional[ str ] = None,
+    abstract: Optional[ str ] = None
+) -> dict:
+    """
+    Present multiple-choice questions (voice-first).
+
+    In voice mode: Uses TTS and voice UI
+    In CLI mode: Prints numbered options, waits for number input
+
+    This function supports the full question format with headers and
+    multi-select capability. For simpler use cases, see choose().
+
+    Requires:
+        - questions is a list of question objects
+        - Each question has: question, header, multiSelect, options
+
+    Ensures:
+        - Returns dict with "answers" key containing selections
+        - In CLI mode, returns first option on invalid input
+
+    Args:
+        questions: List of question objects with options
+        timeout: Seconds to wait for response
+        title: Optional title for the notification
+        abstract: Optional supplementary context
+
+    Returns:
+        dict: {"answers": {...}} with selections keyed by header
+    """
+    return await _core_voice_io.present_choices( questions, timeout, title, abstract )
+
+
 # =============================================================================
 # Re-export Progressive Narrowing Functions
 # =============================================================================

@@ -14,7 +14,8 @@ from cosa.agents.io_models.xml_models import (
     CodeBrainstormResponse, CalendarResponse, CodeResponse,
     IterativeDebuggingFullResponse, IterativeDebuggingMinimalistResponse,
     BugInjectionResponse, ReceptionistResponse, WeatherResponse,
-    VoxCommandResponse, AgentRouterResponse, GistResponse, ConfirmationResponse
+    VoxCommandResponse, AgentRouterResponse, GistResponse, ConfirmationResponse,
+    FuzzyFileMatchResponse
 )
 
 
@@ -42,6 +43,7 @@ class PromptTemplateProcessor:
         'vox command': VoxCommandResponse,
         'gist generation': GistResponse,
         'confirmation dialog': ConfirmationResponse,
+        'fuzzy file matching': FuzzyFileMatchResponse,
     }
     
     def __init__( self, debug: bool = False, verbose: bool = False ):

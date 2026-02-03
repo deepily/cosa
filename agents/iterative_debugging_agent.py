@@ -4,9 +4,9 @@ from typing import Optional, Any
 
 import cosa.utils.util as du
 import cosa.utils.util_code_runner as ucr
-import cosa.utils.util_xml as dux
 
 from cosa.agents.agent_base import AgentBase
+from cosa.agents.io_models.utils.util_xml_pydantic import remove_xml_escapes
 
 
 class IterativeDebuggingAgent( AgentBase ):
@@ -249,7 +249,7 @@ class IterativeDebuggingAgent( AgentBase ):
         else:
             # Baseline parsing (one-line-of-code)
             line_of_code = prompt_response_dict[ "one-line-of-code" ]
-        line_of_code = dux.remove_xml_escapes( line_of_code )
+        line_of_code = remove_xml_escapes( line_of_code )
         print( f"Patching line {line_number} with [{line_of_code}]")
         
         # insert the patched line of code into the code list

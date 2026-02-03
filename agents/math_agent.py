@@ -1,5 +1,4 @@
 import cosa.utils.util as du
-import cosa.utils.util_xml as dux
 
 from cosa.utils.util_stopwatch import Stopwatch
 from cosa.memory.solution_snapshot import SolutionSnapshot

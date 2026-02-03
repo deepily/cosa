@@ -21,7 +21,8 @@ from cosa.tools.search_lupin_v010 import LupinSearch
 
 # from app       import emit_audio
 from cosa.utils import util     as du
-from cosa.utils import util_xml as dux
+from cosa.agents.io_models.xml_models import CommandResponse
+from cosa.agents.io_models.utils.util_xml_pydantic import XMLParsingError
 
 
 from datetime import datetime
@@ -823,10 +824,20 @@ class TodoFifoQueue( FifoQueue ):
         llm_client = self.llm_factory.get_client( llm_spec_key, debug=self.debug, verbose=self.verbose )
         response = llm_client.run( prompt )
         if self.debug: print( f"LLM response: [{response}]" )
-        # Parse results
-        command = dux.get_value_by_xml_tag_name( response, "command" )
-        args    = dux.get_value_by_xml_tag_name( response, "args" )
-        
+
+        # Parse results using Pydantic CommandResponse model
+        try:
+            parsed = CommandResponse.from_xml( response )
+            command = parsed.command
+            args    = parsed.args or ""
+            if self.debug: print( f"Pydantic parsing extracted: command='{command}', args='{args}'" )
+        except XMLParsingError as e:
+            if self.debug: print( f"XML parsing failed: {e}" )
+            command, args = "unknown", ""
+        except Exception as e:
+            if self.debug: print( f"Unexpected error during XML parsing: {e}" )
+            command, args = "unknown", ""
+
         return command, args
     
     def push( self, item: Any ) -> None:

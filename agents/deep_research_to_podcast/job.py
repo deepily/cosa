@@ -338,7 +338,7 @@ class DeepResearchToPodcastJob( AgenticJobBase ):
             abstract=completion_abstract
         )
 
-        return f"Dry run complete. Simulated research report and 10-segment podcast. Total cost: $0.00. Audio: {self.audio_path}"
+        return "Dry run complete. Research and podcast simulation finished."
 
 
 def quick_smoke_test():

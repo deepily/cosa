@@ -170,21 +170,24 @@ class XmlPromptGenerator:
     def _get_simple_agent_router_commands( self ) -> dict:
         """
         Returns dictionary of simple agent router commands and their file paths.
-        
+
         Requires:
             - None
-        
+
         Ensures:
             - Returns command name to file path mapping
             - All file paths are tested for existence
         """
         simple_commands = {
-            "agent router go to todo list": "/src/ephemera/prompts/data/synthetic-data-agent-routing-todo-lists.txt",
-            "agent router go to math"     : "/src/ephemera/prompts/data/synthetic-data-agent-routing-math.txt",
-            "none"                        : "/src/ephemera/prompts/data/synthetic-data-none-of-the-above.txt",
+            "agent router go to todo list"          : "/src/ephemera/prompts/data/synthetic-data-agent-routing-todo-lists.txt",
+            "agent router go to math"               : "/src/ephemera/prompts/data/synthetic-data-agent-routing-math.txt",
+            "agent router go to deep research"      : "/src/ephemera/prompts/data/synthetic-data-agent-routing-deep-research.txt",
+            "agent router go to podcast generator"  : "/src/ephemera/prompts/data/synthetic-data-agent-routing-podcast-generator.txt",
+            "agent router go to research to podcast": "/src/ephemera/prompts/data/synthetic-data-agent-routing-research-to-podcast.txt",
+            "none"                                  : "/src/ephemera/prompts/data/synthetic-data-none-of-the-above.txt",
         }
         self._test_command_paths( simple_commands )
-        
+
         return simple_commands
     
     def _get_compound_agent_function_mapping_commands( self ) -> dict:
@@ -449,25 +452,6 @@ class XmlPromptGenerator:
         
         return prompt
     
-    def format_gpt_message( self, instruction: str, voice_command: str, command: str, args: str ) -> dict:
-        """
-        Formats a message for chat models.
-        
-        Requires:
-            - All parameters are strings
-        
-        Ensures:
-            - Returns message dictionary
-            - Contains required role structure
-        """
-        return {
-            "messages": [
-                {"role": "system", "content": instruction},
-                {"role": "user", "content": voice_command},
-                {"role": "assistant", "content": self.common_output_template.format( command=command, args=args )}
-            ]
-        }
-    
     def get_interjections( self, requested_length: Optional[int]=None ) -> list:
         """
         Gets a list of interjections for more natural language generation.
@@ -623,16 +607,120 @@ class XmlPromptGenerator:
     def get_domain_names( self, requested_length: int=100 ) -> list:
         """
         Generates domain names for URL commands.
-        
+
         Requires:
             - requested_length is positive integer
-        
+
         Ensures:
             - Returns list of domain names
             - Length equals requested_length
         """
         return du.generate_domain_names( requested_length )
-    
+
+    def get_research_topics( self, requested_length: Optional[int]=100 ) -> list:
+        """
+        Gets placeholder research topics for agentic job training.
+
+        Requires:
+            - requested_length is None or positive integer
+
+        Ensures:
+            - Returns list of research topics
+            - Length matches requested_length if specified
+        """
+        return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-research-topics.txt", requested_length=requested_length )
+
+    def get_budget_values( self, requested_length: Optional[int]=None ) -> list:
+        """
+        Gets placeholder budget values for deep research.
+
+        Requires:
+            - requested_length is None or positive integer
+
+        Ensures:
+            - Returns list of budget values (as strings)
+            - Length matches requested_length if specified
+        """
+        return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-budget-values.txt", requested_length=requested_length )
+
+    def get_language_codes( self, requested_length: Optional[int]=None ) -> list:
+        """
+        Gets placeholder language codes for agentic jobs.
+
+        Requires:
+            - requested_length is None or positive integer
+
+        Ensures:
+            - Returns list of language codes
+            - Length matches requested_length if specified
+        """
+        return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-language-codes.txt", requested_length=requested_length )
+
+    def get_document_paths( self, requested_length: Optional[int]=None ) -> list:
+        """
+        Gets placeholder document paths for podcast generation.
+
+        Requires:
+            - requested_length is None or positive integer
+
+        Ensures:
+            - Returns list of document paths
+            - Length matches requested_length if specified
+        """
+        return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-document-paths.txt", requested_length=requested_length )
+
+    def get_audience_levels( self, requested_length: Optional[int]=None ) -> list:
+        """
+        Gets placeholder audience levels for podcast generation.
+
+        Requires:
+            - requested_length is None or positive integer
+
+        Ensures:
+            - Returns list of audience levels
+            - Length matches requested_length if specified
+        """
+        return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-audience-levels.txt", requested_length=requested_length )
+
+    def get_audience_contexts( self, requested_length: Optional[int]=None ) -> list:
+        """
+        Gets placeholder audience context descriptions.
+
+        Requires:
+            - requested_length is None or positive integer
+
+        Ensures:
+            - Returns list of audience context descriptions
+            - Length matches requested_length if specified
+        """
+        return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-audience-contexts.txt", requested_length=requested_length )
+
+    def get_max_segments( self, requested_length: Optional[int]=None ) -> list:
+        """
+        Gets placeholder max segments values for podcast generation.
+
+        Requires:
+            - requested_length is None or positive integer
+
+        Ensures:
+            - Returns list of max segment values (as strings)
+            - Length matches requested_length if specified
+        """
+        return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-max-segments.txt", requested_length=requested_length )
+
+    def get_agentic_templates( self, requested_length: Optional[int]=None ) -> list:
+        """
+        Gets placeholder agentic voice command templates.
+
+        Requires:
+            - requested_length is None or positive integer
+
+        Ensures:
+            - Returns list of voice command templates
+            - Length matches requested_length if specified
+        """
+        return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-agentic-templates.txt", requested_length=requested_length )
+
     def serialize_prompt( self, prompt: str, prompt_path: str ) -> None:
         """
         Writes a prompt to a file.

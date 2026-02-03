@@ -7,7 +7,6 @@ import pandas as pd
 
 import cosa.utils.util as du
 import cosa.utils.util_pandas        as dup
-import cosa.utils.util_xml as dux
 import cosa.memory.solution_snapshot as ss
 
 from cosa.agents.raw_output_formatter import RawOutputFormatter
@@ -266,44 +265,20 @@ class AgentBase( RunnableCode, abc.ABC ):
         if self.debug and self.verbose: 
             print( f"_update_response_dictionary called with strategy factory..." )
         
-        # Use the factory to parse the XML response with appropriate strategy
-        try:
-            prompt_response_dict = self.xml_parser_factory.parse_agent_response(
-                xml_response=response,
-                agent_routing_command=self.routing_command,
-                xml_tag_names=self.xml_response_tag_names,
-                debug=self.debug,
-                verbose=self.verbose
-            )
-            
-            if self.debug and self.verbose:
-                print( f"Successfully parsed {len( prompt_response_dict )} fields using factory" )
-                
-            return prompt_response_dict
-            
-        except Exception as e:
-            if self.debug:
-                print( f"XML parsing failed: {e}" )
-            
-            # Fallback to legacy baseline parsing for maximum compatibility
-            if self.debug:
-                print( "Falling back to legacy baseline XML parsing..." )
-                
-            prompt_response_dict = { }
-            
-            for xml_tag in self.xml_response_tag_names:
-                
-                if self.debug and self.verbose: 
-                    print( f"Looking for xml_tag [{xml_tag}] (fallback mode)" )
-                
-                if xml_tag in [ "code", "examples" ]:
-                    # Legacy nested list parsing for code/examples
-                    xml_string = f"<{xml_tag}>" + dux.get_value_by_xml_tag_name( response, xml_tag ) + f"</{xml_tag}>"
-                    prompt_response_dict[ xml_tag ] = dux.get_nested_list( xml_string, tag_name=xml_tag, debug=self.debug, verbose=self.verbose )
-                else:
-                    prompt_response_dict[ xml_tag ] = dux.get_value_by_xml_tag_name( response, xml_tag )
-            
-            return prompt_response_dict
+        # Use the factory to parse the XML response with Pydantic strategy
+        # No fallback - Pydantic parsing is the ONLY path forward
+        prompt_response_dict = self.xml_parser_factory.parse_agent_response(
+            xml_response=response,
+            agent_routing_command=self.routing_command,
+            xml_tag_names=self.xml_response_tag_names,
+            debug=self.debug,
+            verbose=self.verbose
+        )
+
+        if self.debug and self.verbose:
+            print( f"Successfully parsed {len( prompt_response_dict )} fields using Pydantic factory" )
+
+        return prompt_response_dict
     
     def run_prompt( self, include_raw_response: bool=False ) -> dict[str, Any]:
         """

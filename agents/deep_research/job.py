@@ -417,7 +417,7 @@ class DeepResearchJob( AgenticJobBase ):
             queue_name="run"
         )
 
-        return f"Dry run complete. {self.abstract}"
+        return "Dry run complete. Research simulation finished."
 
 
 def quick_smoke_test():

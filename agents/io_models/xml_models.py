@@ -2424,6 +2424,9 @@ class AgentRouterResponse( BaseXMLModel ):
             'agent router go to receptionist',
             'agent router go to todo list',
             'agent router go to math',
+            'agent router go to deep research',
+            'agent router go to podcast generator',
+            'agent router go to research to podcast',
             'none'
         ]
         
@@ -2704,6 +2707,123 @@ class ConfirmationResponse( BaseXMLModel ):
             return False
 
 
+class FuzzyFileMatchResponse( BaseXMLModel ):
+    """
+    Fuzzy file matching response model.
+
+    Handles XML responses for matching user descriptions against file names:
+    <response>
+        <matches>2026.01.15-claude-code-analysis.md, 2026.01.10-ai-tools.md</matches>
+    </response>
+
+    The matches field contains a comma-separated list of filenames that match
+    the user's natural language description, or an empty string if no matches.
+
+    Used by Podcast Generator description mode for research document selection.
+    """
+
+    matches: str = Field(
+        ...,
+        description="Comma-separated list of matching filenames, or empty string if no matches"
+    )
+
+    @classmethod
+    def get_example_for_template( cls ) -> 'FuzzyFileMatchResponse':
+        """
+        Get example instance for prompt templates.
+
+        Returns a fuzzy file matching response example that matches the expected
+        XML structure for the fuzzy-file-matching.txt template.
+
+        Requires:
+            - None
+
+        Ensures:
+            - Returns FuzzyFileMatchResponse with sample comma-separated filenames
+        """
+        return cls(
+            matches='2026.01.15-claude-code-analysis.md, 2026.01.10-ai-tools.md'
+        )
+
+    def get_matches_list( self ) -> List[ str ]:
+        """
+        Get matches as a list of filenames.
+
+        Requires:
+            - self.matches is a string (guaranteed by Pydantic)
+
+        Ensures:
+            - Returns list of trimmed, non-empty filename strings
+            - Returns empty list if matches is empty or whitespace-only
+
+        Returns:
+            List of filename strings
+        """
+        if not self.matches or not self.matches.strip():
+            return []
+
+        return [ m.strip() for m in self.matches.split( ',' ) if m.strip() ]
+
+    @classmethod
+    def quick_smoke_test( cls, debug: bool = False ) -> bool:
+        """
+        Quick smoke test for FuzzyFileMatchResponse.
+
+        Args:
+            debug: Enable debug output
+
+        Returns:
+            True if all tests pass
+        """
+        if debug:
+            print( f"Testing {cls.__name__}..." )
+
+        try:
+            # Test base functionality
+            if not super().quick_smoke_test( debug=False ):
+                return False
+
+            # Test creation with matches
+            response = cls( matches="file1.md, file2.md, file3.md" )
+            assert response.matches == "file1.md, file2.md, file3.md"
+
+            # Test get_matches_list
+            matches_list = response.get_matches_list()
+            assert len( matches_list ) == 3
+            assert matches_list[ 0 ] == "file1.md"
+            assert matches_list[ 2 ] == "file3.md"
+
+            # Test XML generation
+            xml_str = response.to_xml()
+            assert "<matches>file1.md, file2.md, file3.md</matches>" in xml_str
+
+            # Test round-trip conversion
+            parsed = cls.from_xml( xml_str )
+            assert parsed.matches == response.matches
+
+            # Test empty matches
+            empty_response = cls( matches="" )
+            assert empty_response.get_matches_list() == []
+
+            # Test whitespace-only matches
+            whitespace_response = cls( matches="   " )
+            assert whitespace_response.get_matches_list() == []
+
+            # Test template example
+            example = cls.get_example_for_template()
+            assert "claude-code-analysis.md" in example.matches
+
+            if debug:
+                print( f"✓ {cls.__name__} smoke test PASSED" )
+
+            return True
+
+        except Exception as e:
+            if debug:
+                print( f"✗ {cls.__name__} smoke test FAILED: {e}" )
+            return False
+
+
 def quick_smoke_test() -> bool:
     """
     Quick smoke test for all XML models.
@@ -2731,7 +2851,8 @@ def quick_smoke_test() -> bool:
             VoxCommandResponse,
             AgentRouterResponse,
             GistResponse,
-            ConfirmationResponse
+            ConfirmationResponse,
+            FuzzyFileMatchResponse
         ]
         
         passed = 0

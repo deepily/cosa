@@ -686,6 +686,18 @@ class RunningFifoQueue( FifoQueue ):
         msg = f"Using CACHED result for [{truncated_question}]..."
         du.print_banner( msg=msg, prepend_nl=True )
 
+        # Re-execute cached code to get fresh output (fixes stale time queries)
+        if self.debug: print( f"[CACHE] Re-executing cached code for fresh result..." )
+        code_response = cached_snapshot.run_code( debug=self.debug, verbose=self.verbose )
+
+        if code_response.get( "return_code" ) == 0:
+            # Format fresh output
+            cached_snapshot.run_formatter()
+            if self.debug: print( f"[CACHE] ✓ Code re-executed successfully" )
+        else:
+            # Code failed - use cached answer as fallback
+            if self.debug: print( f"[CACHE] ⚠ Re-execution failed, using cached answer" )
+
         # Calculate time saved (first_run_ms - current cache retrieval time)
         run_timer.stop()
         cache_retrieval_ms = run_timer.get_elapsed_millis()

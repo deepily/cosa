@@ -1,8 +1,8 @@
 import cosa.utils.util as du
-import cosa.utils.util_xml as dux
 from cosa.config.configuration_manager import ConfigurationManager
 from cosa.agents.llm_client_factory import LlmClientFactory
 from cosa.agents.io_models.xml_models import SimpleResponse
+from cosa.agents.io_models.utils.util_xml_pydantic import XMLParsingError
 from cosa.agents.io_models.utils.prompt_template_processor import PromptTemplateProcessor
 from cosa.memory.gist_cache_table import GistCacheTable
 from cosa.memory.normalizer import Normalizer
@@ -45,15 +45,12 @@ class Gister:
             - Creates internal ConfigurationManager instance
             - Creates internal LlmClientFactory instance
             - Sets debug and verbose flags
-            - Configures XML parsing strategy (baseline or structured)
+            - Uses Pydantic XML parsing for structured responses
         """
         self.debug       = debug
         self.verbose     = verbose
         self.config_mgr  = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         self.llm_factory = LlmClientFactory()
-
-        # Check if Pydantic parsing is enabled for Gister
-        self.use_pydantic = self.config_mgr.get( "gister use pydantic xml parsing", default=False, return_type="boolean" )
 
         # Initialize normalizer for cache key generation
         self._normalizer = Normalizer()
@@ -68,9 +65,8 @@ class Gister:
             self._gist_cache = GistCacheTable( db_uri, table_name=table_name, debug=self.debug, verbose=self.verbose )
 
         if self.debug:
-            parsing_mode = "Pydantic (structured)" if self.use_pydantic else "baseline"
             cache_status = "enabled" if self.cache_enabled else "disabled"
-            print( f"Gister initialized with {parsing_mode} XML parsing, cache {cache_status}" )
+            print( f"Gister initialized with Pydantic XML parsing, cache {cache_status}" )
 
     def get_gist( self, utterance: str, prompt_key: str = None ) -> str:
         """
@@ -184,24 +180,21 @@ class Gister:
         llm_client = self.llm_factory.get_client( llm_spec_key, debug=self.debug, verbose=self.verbose )
         results = llm_client.run( prompt )
 
-        if self.use_pydantic:
-            # Use Pydantic SimpleResponse model for structured parsing
-            try:
-                response_model = SimpleResponse.from_xml( results )
-                gist = response_model.get_content()
-                if gist is None:
-                    gist = ""
-                    if self.debug: print( "Warning: Pydantic parsing returned None content" )
-                gist = gist.strip()
-                if self.debug and self.verbose: print( f"Pydantic parsing extracted gist: '{gist}'" )
-            except Exception as e:
-                if self.debug: print( f"Pydantic parsing failed, falling back to baseline: {e}" )
-                # Fallback to baseline parsing
-                gist = dux.get_value_by_xml_tag_name( results, "gist", default_value="" ).strip()
-        else:
-            # Use baseline XML parsing
-            gist = dux.get_value_by_xml_tag_name( results, "gist", default_value="" ).strip()
-            if self.debug and self.verbose: print( f"Baseline parsing extracted gist: '{gist}'" )
+        # Use Pydantic SimpleResponse model for structured parsing
+        try:
+            response_model = SimpleResponse.from_xml( results )
+            gist = response_model.get_content()
+            if gist is None:
+                gist = ""
+                if self.debug: print( "Warning: Pydantic parsing returned None content" )
+            gist = gist.strip()
+            if self.debug and self.verbose: print( f"Pydantic parsing extracted gist: '{gist}'" )
+        except XMLParsingError as e:
+            if self.debug: print( f"XML parsing failed: {e}" )
+            gist = ""
+        except Exception as e:
+            if self.debug: print( f"Unexpected error during XML parsing: {e}" )
+            gist = ""
 
         return gist
 
