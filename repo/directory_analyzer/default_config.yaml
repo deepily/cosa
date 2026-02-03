@@ -35,6 +35,21 @@ directory:
     - .hypothesis
     - .benchmarks
 
+    # SDK/Framework directories
+    - flutter
+    - .dart_tool
+
+    # Generated/Output directories
+    - io
+
+    # Training data directories
+    - ephemera
+
+    # Database directories
+    - "*.lancedb"
+    - "*.lancedb.backup*"
+    - long-term-memory
+
   # File patterns to exclude (glob patterns)
   exclude_files:
     - "*.pyc"
@@ -85,6 +100,9 @@ file_types:
     '.cjs': javascript
     '.ts': typescript
     '.tsx': typescript
+
+    # Dart/Flutter
+    '.dart': dart
 
     # Web Technologies
     '.html': html
@@ -186,6 +204,9 @@ file_types:
     '.db': binary
     '.sqlite': binary
     '.sqlite3': binary
+    '.lance': binary
+    '.manifest': binary
+    '.txn': binary
     '.pyc': binary
     '.pyo': binary
     '.class': binary
