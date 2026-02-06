@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 import cosa.utils.util as cu
 from cosa.rest.auth import get_current_user
 from cosa.rest.queue_extensions import user_job_tracker
+from cosa.rest.agentic_job_factory import create_agentic_job
 
 # Import GCS utilities
 try:
@@ -128,19 +129,27 @@ async def submit_research(
     session_id = request_body.websocket_id or f"api-{user_id[ :8 ]}"
 
     try:
-        # Create the DeepResearchJob
-        job = DeepResearchJob(
-            query       = request_body.query,
-            user_id     = user_id,
-            user_email  = user_email,
-            session_id  = session_id,
-            budget      = request_body.budget,
-            lead_model  = request_body.lead_model,
-            no_confirm  = True,  # Always auto-approve in queue mode
-            dry_run     = request_body.dry_run,
-            debug       = False,
-            verbose     = False
+        # Create the DeepResearchJob using shared factory
+        args_dict = { "query": request_body.query }
+        if request_body.budget is not None:
+            args_dict[ "budget" ] = str( request_body.budget )
+        if request_body.dry_run:
+            args_dict[ "dry_run" ] = True
+
+        job = create_agentic_job(
+            command    = "agent router go to deep research",
+            args_dict  = args_dict,
+            user_id    = user_id,
+            user_email = user_email,
+            session_id = session_id
         )
+
+        if job is None:
+            raise HTTPException( status_code=500, detail="Failed to create research job" )
+
+        # Apply lead_model if specified (factory doesn't handle this)
+        if request_body.lead_model:
+            job.lead_model = request_body.lead_model
 
         # Session 111: Associate BEFORE push to prevent race condition
         # The consumer thread may grab the job immediately after push(), so user mapping must exist first

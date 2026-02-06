@@ -30,7 +30,7 @@ from cosa.training.conf.model_config_loader import load_model_config
 import cosa.utils.util as du
 import cosa.utils.util_pytorch as dupt
 
-import cosa.agents.llm_client as llm_v010
+import cosa.agents.llm_client as llmc
 from cosa.training.quantizer import Quantizer
 from cosa.utils.util_stopwatch import Stopwatch
 
@@ -953,6 +953,74 @@ class PeftTrainer:
         model_config = load_model_config( self.model_name )
         return model_config[ "model" ][ "max_seq_length" ]
     
+    def _print_dry_run_stats( self, sample_size: float ) -> None:
+        """
+        Prints training data statistics without performing training.
+
+        Requires:
+            - sample_size is between 0.0 and 1.0
+            - Training JSONL files exist at test_train_dir
+
+        Ensures:
+            - Loads and parses training/test data
+            - Prints total row counts, effective sample counts
+            - Prints per-command distribution with imbalance analysis
+            - Does NOT load any model or perform training
+        """
+        import re
+
+        train_path = f"/{self.test_train_dir}/voice-commands-xml-train.jsonl"
+        test_path  = f"/{self.test_train_dir}/voice-commands-xml-test.jsonl"
+
+        train_rows_raw = du.get_file_as_list( train_path )
+        test_rows_raw  = du.get_file_as_list( test_path )
+
+        train_total    = len( train_rows_raw )
+        test_total     = len( test_rows_raw )
+        train_effective = int( train_total * sample_size ) if sample_size < 1.0 else train_total
+        test_effective  = int( test_total * sample_size ) if sample_size < 1.0 else test_total
+
+        # Parse commands from training data output field
+        command_pattern = re.compile( r"<command>(.*?)</command>" )
+        command_counts  = {}
+        for line in train_rows_raw[ :train_effective ]:
+            row   = json.loads( line )
+            match = command_pattern.search( row.get( "output", "" ) )
+            if match:
+                cmd = match.group( 1 )
+                command_counts[ cmd ] = command_counts.get( cmd, 0 ) + 1
+
+        separator = "=" * 65
+        print( f"\n{separator}" )
+        print( f" DRY RUN: Training Data Summary" )
+        print( f"{separator}\n" )
+        print( f"  Model:            {self.model_name}" )
+        print( f"  Sample size:      {sample_size} ({sample_size * 100:.0f}%)" )
+        print( f"  Train file:       voice-commands-xml-train.jsonl" )
+        print( f"  Test file:        voice-commands-xml-test.jsonl" )
+        print( f"\n  Training rows:    {train_total:,} total, {train_effective:,} effective" )
+        print( f"  Test rows:        {test_total:,} total, {test_effective:,} effective" )
+
+        if command_counts:
+            sorted_commands = sorted( command_counts.items() )
+            print( f"\n  Per-command distribution (training set, {len( sorted_commands )} commands):" )
+            print( f"  {'#':<4} {'Command':<55} {'Count':>7} {'Pct':>7}" )
+            print( "  " + "." * 75 )
+            for i, ( cmd, count ) in enumerate( sorted_commands, 1 ):
+                pct = 100.0 * count / train_effective
+                print( f"  {i:<4} {cmd:<55} {count:>7} {pct:>6.1f}%" )
+            print( "  " + "." * 75 )
+            print( f"  {'':4} {'TOTAL':<55} {train_effective:>7} {'100.0%':>7}" )
+
+            counts_list = list( command_counts.values() )
+            min_count   = min( counts_list )
+            max_count   = max( counts_list )
+            mean_count  = sum( counts_list ) / len( counts_list )
+            ratio       = max_count / min_count if min_count > 0 else float( "inf" )
+            print( f"\n  Min: {min_count}  Max: {max_count}  Mean: {mean_count:.1f}  Ratio: {ratio:.1f}x" )
+
+        print( f"\n{separator}" )
+
     def _get_test_train_data( self, sample_size: float=1.0 ) -> dict[str, Dataset]:
         """
         Load and prepare training and testing datasets.
@@ -1299,8 +1367,13 @@ class PeftTrainer:
                 log.append( line.strip() )
                 if self.debug and self.verbose:
                     print( f"[vLLM Server] {line.strip()}" )
-                # Check if any known error patterns appear in the output
-                if "CUDA out of memory" in line or "CUDA error" in line or "Error:" in line:
+                # Check for genuine vLLM server errors (not model-generated text containing "error")
+                # Real server errors: CUDA issues, Python exceptions at line start, vLLM-specific errors
+                is_cuda_error   = "CUDA out of memory" in line or "CUDA error" in line
+                is_server_error = line.strip().startswith( "Error:" ) or line.strip().startswith( "ERROR" )
+                is_python_error = line.strip().startswith( "Traceback" ) or line.strip().startswith( "RuntimeError" )
+                is_vllm_error   = "AsyncEngineDeadError" in line or "EngineDeadError" in line
+                if is_cuda_error or is_server_error or is_python_error or is_vllm_error:
                     print( f"[vLLM Server ERROR] Detected error: {line.strip()}" )
         
         output_thread = threading.Thread( target=print_server_output, args=(process, server_log), daemon=True )
@@ -1408,10 +1481,56 @@ class PeftTrainer:
         
         if self.debug: print( "vLLM server has been stopped" )
         return True
-    
+
+    def _wait_for_gpu_memory_release( self, max_wait_seconds=30, target_free_pct=0.90 ):
+        """
+        Polls GPU memory until sufficient memory is free after process termination.
+
+        Requires:
+            - torch.cuda is available
+            - max_wait_seconds is a positive integer
+            - target_free_pct is between 0.0 and 1.0
+
+        Ensures:
+            - Returns True when all GPUs have >= target_free_pct memory free
+            - Returns False if timeout reached (caller should handle)
+            - Prints progress during wait
+
+        Raises:
+            - None (returns False on failure)
+        """
+        gpu_count = torch.cuda.device_count()
+        if gpu_count == 0: return True
+
+        print( f"Waiting for GPU memory release (target: {target_free_pct * 100:.0f}% free)..." )
+
+        for elapsed in range( max_wait_seconds ):
+            all_clear = True
+            for i in range( gpu_count ):
+                free, total = torch.cuda.mem_get_info( i )
+                free_pct    = free / total
+                if free_pct < target_free_pct:
+                    all_clear = False
+                    break
+
+            if all_clear:
+                print( f"GPU memory released after {elapsed}s" )
+                return True
+
+            if elapsed % 5 == 0 and elapsed > 0:
+                # Show progress every 5 seconds
+                for i in range( gpu_count ):
+                    free, total = torch.cuda.mem_get_info( i )
+                    print( f"  GPU {i}: {free / ( 1024 ** 3 ):.1f} GB free / {total / ( 1024 ** 3 ):.1f} GB total ({free / total * 100:.0f}%)" )
+
+            time.sleep( 1 )
+
+        print( f"WARNING: GPU memory not fully released after {max_wait_seconds}s" )
+        return False
+
     def run_pipeline( self,
         pre_training_stats: bool=False, post_training_stats: bool=False, post_quantization_stats: bool=False, nuclear_kill_button: bool=False,
-        validation_sample_size: int=100
+        validation_sample_size: int=100, sample_size_override: float=None, dry_run: bool=False
     ) -> None:
         """
         Executes the full training pipeline from fine-tuning to quantization.
@@ -1471,13 +1590,29 @@ class PeftTrainer:
                 if vllm_server_process: self._stop_vllm_server( vllm_server_process )
                 # Release GPU resources
                 release_gpus( [ self.model, self.tokenizer ], nuclear_kill_button=nuclear_kill_button )
+                # Wait for GPU memory to actually be freed (vLLM process cleanup is async)
+                if not self._wait_for_gpu_memory_release():
+                    print( "Attempting forced GPU cache clear..." )
+                    torch.cuda.empty_cache()
+                    gc.collect()
+                    time.sleep( 5 )
         else:
             print( f"Skipping pre-training validation for {args.model_name}" )
-        
+
         # Load model-specific fine-tuning configuration
         model_config = load_model_config( self.model_name )
         fine_tune_params = model_config[ "fine_tune" ]
-        
+
+        # Allow CLI override of sample_size
+        if sample_size_override is not None:
+            fine_tune_params[ "sample_size" ] = sample_size_override
+            print( f"CLI override: sample_size = {sample_size_override}" )
+
+        # Dry-run mode: show training data stats and exit without training
+        if dry_run:
+            self._print_dry_run_stats( fine_tune_params[ "sample_size" ] )
+            return
+
         # Fine-tune using the dynamically loaded configuration
         checkpoint_dir = self.fine_tune(
             sample_size=fine_tune_params[ "sample_size" ],
@@ -1502,7 +1637,7 @@ class PeftTrainer:
                 vllm_server_process = self._start_vllm_server( merged_adapter_dir )
                 
                 # create a custom model name using as an ID the mount point for the recently quantized model directory
-                model = llm_v010.get_model( merged_adapter_dir )
+                model = llmc.LlmClient.get_model( merged_adapter_dir )
                 self.run_validation(
                     banner_prefix="POST-training:", model=model, path_prefix=lupin_root, switch="deepily", device_map="cuda:0",
                     validation_sample_size=validation_sample_size, debug=self.debug, verbose=self.verbose
@@ -1512,9 +1647,15 @@ class PeftTrainer:
                 if vllm_server_process: self._stop_vllm_server( vllm_server_process )
                 # release GPUs -- with prejudice -- before doing anything else
                 release_gpus( [ self.model, self.tokenizer ], nuclear_kill_button=nuclear_kill_button )
+                # Wait for GPU memory to actually be freed (vLLM process cleanup is async)
+                if not self._wait_for_gpu_memory_release():
+                    print( "Attempting forced GPU cache clear..." )
+                    torch.cuda.empty_cache()
+                    gc.collect()
+                    time.sleep( 5 )
         else:
             print( f"Skipping post-training validation for {args.model_name}" )
-        
+
         # Quantize the merged adapter
         quantized_model_dir = self.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
         
@@ -1525,7 +1666,7 @@ class PeftTrainer:
                 vllm_server_process = self._start_vllm_server( quantized_model_dir )
                 
                 # create a custom model name using as an ID the mount point for the recently quantized model directory
-                model = llm_v010.get_model( quantized_model_dir )
+                model = llmc.LlmClient.get_model( quantized_model_dir )
                 self.run_validation(
                     banner_prefix="POST-quantization:", model=model, path_prefix=lupin_root, switch="deepily", device_map="cuda:0",
                     validation_sample_size=validation_sample_size, debug=self.debug, verbose=self.verbose
@@ -1535,9 +1676,15 @@ class PeftTrainer:
                 if vllm_server_process: self._stop_vllm_server( vllm_server_process )
                 # release GPU before doing anything else
                 release_gpus( [ self.model, self.tokenizer ] )
+                # Wait for GPU memory to actually be freed (vLLM process cleanup is async)
+                if not self._wait_for_gpu_memory_release():
+                    print( "Attempting forced GPU cache clear..." )
+                    torch.cuda.empty_cache()
+                    gc.collect()
+                    time.sleep( 5 )
         else:
             print( f"Skipping post-quantization validation for {args.model_name}" )
-        
+
         # Print completion information
         print()
         msg = f"Finished fine-tuning, merging and quantizing {args.model_name}"
@@ -1595,7 +1742,7 @@ class PeftTrainer:
         #         vllm_server_process = self._start_vllm_server( self.model_hf_id )
         #         
         #         # Create a custom model name using the base model ID
-        #         model = llm_v010.get_model( self.model_hf_id )
+        #         model = llmc.LlmClient.get_model( self.model_hf_id )
         #         
         #         # Run validation using the server
         #         self.run_validation(
@@ -1650,7 +1797,7 @@ class PeftTrainer:
         #         vllm_server_process = self._start_vllm_server( merged_adapter_dir )
         #
         #         # create a custom model name using as an ID the mount point for the recently quantized model directory
-        #         model = llm_v010.get_model( merged_adapter_dir )
+        #         model = llmc.LlmClient.get_model( merged_adapter_dir )
         #         # TODO: add runtime configuration for sample size
         #         self.run_validation(
         #             model=model, path_prefix=lupin_root, switch="deepily", device_map="cuda:0", validation_sample_size=100, debug=False,
@@ -1681,7 +1828,7 @@ class PeftTrainer:
                 vllm_server_process = self._start_vllm_server( quantized_model_dir )
                 
                 # create a custom model name using as an ID the mount point for the recently quantized model directory
-                model = llm_v010.get_model( quantized_model_dir )
+                model = llmc.LlmClient.get_model( quantized_model_dir )
                 # TODO: add runtime configuration for sample size
                 self.run_validation(
                     model=model, path_prefix=lupin_root, switch="deepily", device_map="cuda:0",
@@ -1693,9 +1840,15 @@ class PeftTrainer:
                 if vllm_server_process: self._stop_vllm_server( vllm_server_process )
                 # release GPU before doing anything else
                 release_gpus( [ self.model, self.tokenizer ] )
+                # Wait for GPU memory to actually be freed (vLLM process cleanup is async)
+                if not self._wait_for_gpu_memory_release():
+                    print( "Attempting forced GPU cache clear..." )
+                    torch.cuda.empty_cache()
+                    gc.collect()
+                    time.sleep( 5 )
         else:
             print( f"Skipping post-quantization validation for {args.model_name}" )
-        
+
         # Print completion information
         msg = f"Finished fine-tuning, merging and quantizing {args.model_name}"
         timer.print( msg )
@@ -1808,47 +1961,22 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument( "--post-training-stats",     action="store_true", help="Run validation after training and merging",  default=False )
     parser.add_argument( "--post-quantization-stats", action="store_true", help="Run validation after quantization",          default=False )
     parser.add_argument( "--nuclear-kill-button",     action="store_true", help="Enable nuclear option for GPU memory reset", default=False )
-    
-    parser.add_argument( "--validation-sample-size",  type=int,            help="Sample size for validation",                 default=100 )
-    
+    parser.add_argument( "--dry-run",                  action="store_true", help="Show training data stats without training",   default=False )
+
+    parser.add_argument( "--validation-sample-size",  type=int,            help="Sample size for validation",                                  default=100 )
+    parser.add_argument( "--sample-size",             type=float,          help="Training data sample size (0.0-1.0, overrides model config)", default=None )
+
     return parser.parse_args()
 
-if __name__ == "__main__":
-    
-    # Check for required environment variables
-    lupin_root = check_env()
-    
-    # Validate command line arguments
-    args = parse_arguments()
-    
-    # Check for nuclear_kill_button + elevated privileges
-    if args.nuclear_kill_button:
-        if args.debug: print( "Nuclear kill button is enabled..." )
-        check_privileges( debug=args.debug )
-    else:
-        if args.debug: print( "Nuclear kill button is disabled..." )
-        
-    # instantiate a trainer...
-    trainer = PeftTrainer(
-        args.model, args.model_name, args.test_train_path, lora_dir=args.lora_dir, debug=args.debug, verbose=args.verbose
-    )
-    
-    # ... And you're off to the races!
-    trainer.run_pipeline(
-        pre_training_stats=args.pre_training_stats,
-        post_training_stats=args.post_training_stats,
-        post_quantization_stats=args.post_quantization_stats,
-        validation_sample_size=args.validation_sample_size,
-        nuclear_kill_button=args.nuclear_kill_button
-    )
-    # DO NOT REMOVE THIS LINE! Use call below for debugging
-    # trainer.run_pipeline_adhoc(
-    #     pre_training_stats=args.pre_training_stats,
-    #     post_training_stats=args.post_training_stats,
-    #     post_quantization_stats=args.post_quantization_stats,
-    #     validation_sample_size=args.validation_sample_size,
-    #     nuclear_kill_button=args.nuclear_kill_button
-    # )
+# NOTE: The actual __main__ block is below quick_smoke_test() (line ~2297)
+# DO NOT REMOVE THIS LINE! Use call below for debugging
+# trainer.run_pipeline_adhoc(
+#     pre_training_stats=args.pre_training_stats,
+#     post_training_stats=args.post_training_stats,
+#     post_quantization_stats=args.post_quantization_stats,
+#     validation_sample_size=args.validation_sample_size,
+#     nuclear_kill_button=args.nuclear_kill_button
+# )
 
 
 def quick_smoke_test():
@@ -2176,5 +2304,7 @@ if __name__ == "__main__":
         post_training_stats=args.post_training_stats,
         post_quantization_stats=args.post_quantization_stats,
         validation_sample_size=args.validation_sample_size,
-        nuclear_kill_button=args.nuclear_kill_button
+        nuclear_kill_button=args.nuclear_kill_button,
+        sample_size_override=args.sample_size,
+        dry_run=args.dry_run
     )

@@ -17,6 +17,7 @@ from cosa.agents.io_models.xml_models import (
     VoxCommandResponse, AgentRouterResponse, GistResponse, ConfirmationResponse,
     FuzzyFileMatchResponse
 )
+from cosa.agents.runtime_argument_expeditor.xml_models import ExpeditorResponse
 
 
 class PromptTemplateProcessor:
@@ -43,7 +44,8 @@ class PromptTemplateProcessor:
         'vox command': VoxCommandResponse,
         'gist generation': GistResponse,
         'confirmation dialog': ConfirmationResponse,
-        'fuzzy file matching': FuzzyFileMatchResponse,
+        'fuzzy file matching'          : FuzzyFileMatchResponse,
+        'runtime argument expeditor'   : ExpeditorResponse,
     }
     
     def __init__( self, debug: bool = False, verbose: bool = False ):

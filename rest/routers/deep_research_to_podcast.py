@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from cosa.rest.auth import get_current_user
 from cosa.rest.queue_extensions import user_job_tracker
+from cosa.rest.agentic_job_factory import create_agentic_job
 from cosa.agents.deep_research_to_podcast.job import DeepResearchToPodcastJob
 import cosa.utils.util as cu
 
@@ -133,18 +134,30 @@ async def submit_research_to_podcast(
         print( f"[submit_research_to_podcast] Budget: ${request.budget}" if request.budget else "[submit_research_to_podcast] Budget: unlimited" )
         print( f"[submit_research_to_podcast] Target languages: {request.target_languages}" )
 
-    # Create the chained job
-    job = DeepResearchToPodcastJob(
-        query            = query,
-        user_id          = user_id,
-        user_email       = user_email,
-        session_id       = session_id,
-        budget           = request.budget,
-        target_languages = request.target_languages,
-        max_segments     = request.max_segments,
-        dry_run          = request.dry_run,
-        debug            = debug
+    # Create the chained job using shared factory
+    args_dict = { "query": query }
+    if request.budget is not None:
+        args_dict[ "budget" ] = str( request.budget )
+    if request.target_languages:
+        args_dict[ "languages" ] = ",".join( request.target_languages )
+    if request.dry_run:
+        args_dict[ "dry_run" ] = True
+
+    job = create_agentic_job(
+        command    = "agent router go to research to podcast",
+        args_dict  = args_dict,
+        user_id    = user_id,
+        user_email = user_email,
+        session_id = session_id,
+        debug      = debug
     )
+
+    if job is None:
+        raise HTTPException( status_code=500, detail="Failed to create research-to-podcast job" )
+
+    # Apply max_segments if specified (factory doesn't handle this)
+    if request.max_segments:
+        job.max_segments = request.max_segments
 
     # Associate BEFORE push to prevent race condition
     # The consumer thread may grab the job immediately after push(), so user mapping must exist first

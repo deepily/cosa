@@ -309,6 +309,9 @@ class XmlCoordinator:
 
             for raw_line in raw_lines:
 
+                _, raw_line = self.prompt_generator.insert_interjection( raw_line, self.prompt_generator.interjections )
+                _, raw_line = self.prompt_generator.prepend_salutation( raw_line, self.prompt_generator.salutations )
+
                 instruction = self.prompt_generator.vox_cmd_instruction_template.format( command_choices=self.prompt_generator.vox_cmd_commands )
                 human_says  = self.prompt_generator.common_human_says_template.format( voice_command=raw_line )
                 input_text  = self.prompt_generator.common_input_template.format( human_says=human_says, response_format=self.prompt_generator.common_response_format )
@@ -397,7 +400,7 @@ class XmlCoordinator:
             print()
 
         compound_agent_router_qna_df = pd.DataFrame( {"command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts} )
-        compound_agent_router_qna_df = self._prune_duplicates_and_sample( compound_agent_router_qna_df, sample_size=( sample_size_per_command * len( self.prompt_generator.vox_cmd_compound_commands ) ), sample_size_per_command=sample_size_per_command )
+        compound_agent_router_qna_df = self._prune_duplicates_and_sample( compound_agent_router_qna_df, sample_size=( sample_size_per_command * len( self.prompt_generator.agent_router_compound_commands ) ), sample_size_per_command=sample_size_per_command )
 
         return compound_agent_router_qna_df
     
@@ -630,7 +633,7 @@ class XmlCoordinator:
                 counter += 1
 
         simple_agent_router_qna_df = pd.DataFrame( {"command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts} )
-        simple_agent_router_qna_df = self._prune_duplicates_and_sample( simple_agent_router_qna_df, sample_size=( sample_size_per_command * len( self.prompt_generator.vox_cmd_simple_commands ) ), sample_size_per_command=sample_size_per_command )
+        simple_agent_router_qna_df = self._prune_duplicates_and_sample( simple_agent_router_qna_df, sample_size=( sample_size_per_command * len( self.prompt_generator.agent_router_simple_commands ) ), sample_size_per_command=sample_size_per_command )
 
         return simple_agent_router_qna_df
 
@@ -756,44 +759,58 @@ class XmlCoordinator:
 
         return agentic_job_qna_df
 
-    def build_all_training_prompts( self, sample_size_per_compound_command: int=2000, sample_size_per_simple_command: int=400, sample_size_per_agentic_command: int=400, include_agentic_jobs: bool=True ) -> pd.DataFrame:
+    def build_all_training_prompts( self, sample_size_per_command: int=400, include_agentic_jobs: bool=True ) -> pd.DataFrame:
         """
         Builds all training prompts by combining all command types.
 
         Requires:
-            - sample_size_per_compound_command is positive integer
-            - sample_size_per_simple_command is positive integer
-            - sample_size_per_agentic_command is positive integer
+            - sample_size_per_command is positive integer
             - include_agentic_jobs is boolean
 
         Ensures:
-            - Combines all command types
+            - Combines all command types with uniform sample size
             - Calculates statistics
             - Returns unified DataFrame
         """
-        compound_vox_cmd_qna_df       = self.build_compound_vox_cmd_training_prompts( sample_size_per_command=sample_size_per_compound_command )
-        simple_vox_cmd_qna_df         = self.build_simple_vox_cmd_training_prompts( sample_size_per_command=sample_size_per_simple_command )
+        compound_vox_cmd_qna_df       = self.build_compound_vox_cmd_training_prompts( sample_size_per_command=sample_size_per_command )
+        simple_vox_cmd_qna_df         = self.build_simple_vox_cmd_training_prompts( sample_size_per_command=sample_size_per_command )
 
-        compound_router_qna_df        = self.build_compound_agent_router_training_prompts( sample_size_per_command=sample_size_per_compound_command )
-        simple_router_qna_df          = self.build_simple_agent_router_training_prompts( sample_size_per_command=sample_size_per_simple_command )
+        compound_router_qna_df        = self.build_compound_agent_router_training_prompts( sample_size_per_command=sample_size_per_command )
+        simple_router_qna_df          = self.build_simple_agent_router_training_prompts( sample_size_per_command=sample_size_per_command )
 
         # Build list of dataframes to concatenate
         dataframes_to_concat = [ compound_vox_cmd_qna_df, simple_vox_cmd_qna_df, compound_router_qna_df, simple_router_qna_df ]
 
         # Optionally include agentic job training prompts
         if include_agentic_jobs:
-            agentic_job_qna_df = self.build_agentic_job_training_prompts( sample_size_per_command=sample_size_per_agentic_command )
+            agentic_job_qna_df = self.build_agentic_job_training_prompts( sample_size_per_command=sample_size_per_command )
             dataframes_to_concat.append( agentic_job_qna_df )
 
         # Stack all dataframes vertically
         all_qna_df = pd.concat( dataframes_to_concat, ignore_index=True )
         
-        # Group by command and count the number of rows per command
-        command_counts = all_qna_df.groupby( "command" ).count().reset_index()[ [ "command", "input" ] ]
-        # sort by command ascending
-        command_counts = command_counts.sort_values( "command", ascending=True )
-        du.print_banner( f"Command counts for all {all_qna_df.shape[ 0 ]:,} training prompts", prepend_nl=True)
-        print( command_counts )
+        # ── Per-command distribution summary ──────────────────────────────────
+        counts = all_qna_df[ "command" ].value_counts().sort_index()
+        du.print_banner( f"Per-command distribution for all {all_qna_df.shape[ 0 ]:,} training prompts ({len( counts )} commands)", prepend_nl=True )
+        print( f"  {'#':<4} {'Command':<55} {'Count':>7} {'Pct':>7}" )
+        print( "  " + "." * 75 )
+        for i, ( cmd, count ) in enumerate( counts.items(), 1 ):
+            pct = 100.0 * count / len( all_qna_df )
+            print( f"  {i:<4} {cmd:<55} {count:>7} {pct:>6.1f}%" )
+        print( "  " + "." * 75 )
+        print( f"  {'':4} {'TOTAL':<55} {counts.sum():>7} {'100.0%':>7}" )
+
+        # ── Imbalance analysis ────────────────────────────────────────────────
+        min_count = counts.min()
+        max_count = counts.max()
+        ratio     = max_count / min_count if min_count > 0 else float( "inf" )
+        print( f"\n  Min: {min_count}  Max: {max_count}  Mean: {counts.mean():.1f}  Ratio: {ratio:.1f}x" )
+        if ratio > 2.0:
+            under_target = counts[ counts < sample_size_per_command ]
+            if len( under_target ) > 0:
+                print( f"\n  WARNING: {len( under_target )} commands below target ({sample_size_per_command}):" )
+                for cmd, cnt in under_target.items():
+                    print( f"    {cmd}: {cnt}" )
         
         # Calculate Max, min, and mean prompt lengths
         all_qna_df[ "prompt_length" ] = all_qna_df[ "prompt" ].apply( lambda cell: len( cell ) )
@@ -1149,17 +1166,28 @@ class XmlCoordinator:
         print( f"POST {rows_post:,} training inputs. Deleted {dupes_rows:,} rows = {dupes_pct:.1f}% duplicate questions" )
         
         if rows_post < sample_size:
-            print( f"WARNING: Sample size [{sample_size:,}] > rows_post [{rows_post:,}]. Returning all [{rows_post:,}] rows.")
+            print( f"WARNING: Sample size [{sample_size:,}] > rows_post [{rows_post:,}]. Returning all [{rows_post:,}] rows." )
             return df
         else:
-            # Sample the dataframe Using proportional distributions represented by the weights value
-            du.print_banner( f"Sampling {sample_size:,} rows/command from the pruned dataframe using the following weights:", prepend_nl=True )
-            weights = df[ "command" ].value_counts( normalize=True )
-            print( weights )
-            weights = df[ "command" ].value_counts( normalize=False )
-            print( weights )
-            
-            return df.groupby( "command" ).sample( sample_size_per_command, random_state=42 )
+            # Show per-command counts before sampling
+            group_counts = df[ "command" ].value_counts( normalize=False )
+            du.print_banner( f"Per-command counts before sampling (target: {sample_size_per_command:,}/command):", prepend_nl=True )
+            print( group_counts )
+
+            # Check for undersized groups and warn
+            undersized = group_counts[ group_counts < sample_size_per_command ]
+            if len( undersized ) > 0:
+                print( f"\n  WARNING: {len( undersized )} command(s) below target ({sample_size_per_command}):" )
+                for cmd, cnt in undersized.items():
+                    print( f"    {cmd}: {cnt} (will use all available)" )
+
+            # Sample per group: take min( target, available ) to avoid ValueError
+            sampled_groups = []
+            for command, group_df in df.groupby( "command" ):
+                n = min( sample_size_per_command, len( group_df ) )
+                sampled_groups.append( group_df.sample( n, random_state=42 ) )
+
+            return pd.concat( sampled_groups, ignore_index=True )
     
     def _get_receptionist_titles( self, requested_length: int=10 ) -> list:
         """

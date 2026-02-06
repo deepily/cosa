@@ -38,6 +38,10 @@ from cosa.cli.notification_models import (
     ResponseType
 )
 
+# Runtime Argument Expeditor imports for agentic job routing
+from cosa.agents.runtime_argument_expeditor.agent_registry import AGENTIC_AGENTS
+from cosa.agents.runtime_argument_expeditor.expeditor import RuntimeArgumentExpeditor
+
 # Mode-to-Agent mapping for direct routing (bypasses LLM router)
 MODE_TO_AGENT = {
     "math"        : MathAgent,
@@ -640,6 +644,10 @@ class TodoFifoQueue( FifoQueue ):
                 # Randomly grab hemming and hawing string and prepend it to a randomly chosen thinking string
                 msg = f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}".strip()
                 # ding_for_new_job = False
+            elif command in AGENTIC_AGENTS:
+                msg = self._handle_agentic_command(
+                    command, args, user_id, user_email, websocket_id, salutation_plus_question
+                )
             else:
                 msg = du.print_banner( f"TO DO: Implement else case command {command}" )
                 print( msg )
@@ -839,7 +847,163 @@ class TodoFifoQueue( FifoQueue ):
             command, args = "unknown", ""
 
         return command, args
-    
+
+    def _handle_agentic_command( self, command, raw_args, user_id, user_email, session_id, original_question ):
+        """
+        Handle an agentic agent command via the Runtime Argument Expeditor.
+
+        Requires:
+            - command is a key in AGENTIC_AGENTS
+            - raw_args is a string (may be empty)
+            - user_id, user_email, session_id are non-empty strings
+            - original_question is the full voice command string
+
+        Ensures:
+            - Returns human-readable status message
+            - Creates and queues an agentic job if expeditor succeeds
+            - Notifies user of cancellation if expeditor returns None
+
+        Args:
+            command: Routing command key
+            raw_args: LORA-extracted arguments
+            user_id: System user ID
+            user_email: User's email address
+            session_id: WebSocket session ID
+            original_question: Full voice command transcription
+
+        Returns:
+            str: Status message
+        """
+        # Check if expeditor is enabled
+        enabled = self.config_mgr.get(
+            "runtime argument expeditor enabled", default=True, return_type="boolean"
+        )
+        if not enabled:
+            return f"Runtime argument expeditor is disabled. Cannot process command: {command}"
+
+        # Create expeditor and run gap analysis
+        expeditor = RuntimeArgumentExpeditor(
+            config_mgr = self.config_mgr,
+            debug      = self.debug,
+            verbose    = self.verbose
+        )
+
+        args_dict = expeditor.expedite(
+            command           = command,
+            raw_args          = raw_args,
+            user_email        = user_email,
+            session_id        = session_id,
+            user_id           = user_id,
+            original_question = original_question
+        )
+
+        if args_dict is None:
+            self._notify( "Job cancelled.", target_user=user_email )
+            return "Agentic job cancelled by user or timeout."
+
+        # Create the appropriate job
+        job = self._create_agentic_job(
+            command    = command,
+            args_dict  = args_dict,
+            user_id    = user_id,
+            user_email = user_email,
+            session_id = session_id
+        )
+
+        if job is None:
+            self._notify( "Failed to create job.", target_user=user_email )
+            return "Failed to create agentic job."
+
+        # Associate job with user BEFORE push (prevents race condition)
+        if hasattr( job, 'id_hash' ) and user_id:
+            job.id_hash = self.user_job_tracker.generate_user_scoped_hash( job.id_hash, user_id )
+            self.user_job_tracker.associate_job_with_user( job.id_hash, user_id )
+
+        # Ding for new job
+        self.websocket_mgr.emit( 'notification_sound_update', { 'soundFile': '/static/gentle-gong.mp3' } )
+
+        self.push( job )
+
+        msg = f"New {job.JOB_TYPE} job submitted."
+        self._notify( msg, job=job )
+        return msg
+
+    def _create_agentic_job( self, command, args_dict, user_id, user_email, session_id ):
+        """
+        Factory method to create the correct agentic job based on command.
+
+        Requires:
+            - command is a key in AGENTIC_AGENTS
+            - args_dict contains all required arguments
+            - user_id, user_email, session_id are non-empty strings
+
+        Ensures:
+            - Returns appropriate Job instance for the command
+            - Returns None if command is unrecognized
+
+        Args:
+            command: Routing command key
+            args_dict: Complete argument dictionary from expeditor
+            user_id: System user ID
+            user_email: User's email address
+            session_id: WebSocket session ID
+
+        Returns:
+            AgenticJobBase subclass instance, or None
+        """
+        from cosa.agents.deep_research.job import DeepResearchJob
+        from cosa.agents.podcast_generator.job import PodcastGeneratorJob
+        from cosa.agents.deep_research_to_podcast.job import DeepResearchToPodcastJob
+
+        if command == "agent router go to deep research":
+            return DeepResearchJob(
+                query      = args_dict.get( "query", "" ),
+                user_id    = user_id,
+                user_email = user_email,
+                session_id = session_id,
+                budget     = float( args_dict[ "budget" ] ) if args_dict.get( "budget" ) else None,
+                no_confirm = True,
+                debug      = self.debug,
+                verbose    = self.verbose
+            )
+
+        elif command == "agent router go to podcast generator":
+            # Parse target_languages if provided
+            languages = None
+            if args_dict.get( "languages" ):
+                languages = [ lang.strip() for lang in args_dict[ "languages" ].split( "," ) ]
+
+            return PodcastGeneratorJob(
+                research_path    = args_dict.get( "research", "" ),
+                user_id          = user_id,
+                user_email       = user_email,
+                session_id       = session_id,
+                target_languages = languages,
+                debug            = self.debug,
+                verbose          = self.verbose
+            )
+
+        elif command == "agent router go to research to podcast":
+            # Parse target_languages if provided
+            languages = None
+            if args_dict.get( "languages" ):
+                languages = [ lang.strip() for lang in args_dict[ "languages" ].split( "," ) ]
+
+            return DeepResearchToPodcastJob(
+                query            = args_dict.get( "query", "" ),
+                user_id          = user_id,
+                user_email       = user_email,
+                session_id       = session_id,
+                budget           = float( args_dict[ "budget" ] ) if args_dict.get( "budget" ) else None,
+                target_languages = languages,
+                debug            = self.debug,
+                verbose          = self.verbose
+            )
+
+        else:
+            print( f"[TodoFifoQueue] Unknown agentic command: {command}" )
+            return None
+
     def push( self, item: Any ) -> None:
         """
         Override parent's push to add producer-consumer coordination and emit pending→todo transition.
