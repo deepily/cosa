@@ -1,5 +1,23 @@
 # COSA Development History
 
+> **✅ SESSION 135 COMPLETE**: Branch Transition v0.1.3 → v0.1.4 (2026.02.05)
+> **Owner**: claude.code@cosa.deepily.ai#6aeca163
+> **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Completed branch transition from v0.1.3 to v0.1.4 via PR merge workflow**:
+> - Stashed 11 modified + 3 untracked WIP files (v0.1.4 in-progress work)
+> - Created PR #15: "COSA v0.1.3: Sessions 108-128" (8 commits, 55 files, +4,316/-1,380 lines)
+> - PR merged on GitHub, fast-forwarded main to `8a596ac`
+> - Created new branch `wip-v0.1.4-2026.02.05-tracking-lupin-work` from updated main
+> - Restored stashed WIP changes cleanly (no conflicts)
+>
+> **PR #15**: https://github.com/deepily/cosa/pull/15
+> **WIP files restored**: RuntimeArgumentExpeditor, agentic_job_factory, training pipeline improvements, router updates
+>
+> ---
+
 > **✅ SESSION 126 COMPLETE**: Directory Analyzer "Other" Files Fix (2026.02.03)
 > **Owner**: claude.code@cosa.deepily.ai#d7da6d0d
 > **Branch**: `wip-v0.1.3-2026.01.29-tracking-lupin-work`
