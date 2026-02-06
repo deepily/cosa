@@ -10,7 +10,6 @@ from typing import Optional, Union, Any
 import cosa.utils.util as du
 import cosa.utils.util_stopwatch as sw
 import cosa.utils.util_code_runner as ucr
-import cosa.utils.util_xml as dux
 
 from cosa.agents.runnable_code import RunnableCode
 from cosa.agents.raw_output_formatter import RawOutputFormatter
@@ -179,7 +178,7 @@ class SolutionSnapshot( RunnableCode ):
                   id_hash: str="", solution_summary: str="", code: list[str]=[], solution_summary_gist: str="", code_returns: str="", code_example: str="", code_type: str="raw", thoughts: str="",
                   programming_language: str="Python", language_version: str="3.10",
                   question_embedding: list[float]=[ ], question_normalized_embedding: list[float]=[ ], question_gist_embedding: list[float]=[ ], solution_embedding: list[float]=[ ], code_embedding: list[float]=[ ], thoughts_embedding: list[float]=[ ], solution_gist_embedding: list[float]=[ ],
-                  solution_directory: str="/src/conf/long-term-memory/solutions/", solution_file: Optional[str]=None, user_id: str="ricardo_felipe_ruiz_6bdc", session_id: str="",
+                  solution_directory: str="/src/conf/long-term-memory/solutions/", solution_file: Optional[str]=None, user_id: str="ricardo_felipe_ruiz_6bdc", user_email: str="", session_id: str="",
                   replay_history: list=None, replay_stats: dict=None, is_cache_hit: bool=False,
                   debug: bool=False, verbose: bool=False
                   ) -> None:
@@ -198,7 +197,8 @@ class SolutionSnapshot( RunnableCode ):
             - Creates unique ID hash if not provided
             - Writes to file if embeddings were generated
             - user_id is stored for ownership tracking but excluded from serialization
-            
+            - user_email is stored for TTS notification routing but excluded from serialization
+
         Raises:
             - None (handles errors internally)
         """
@@ -231,6 +231,7 @@ class SolutionSnapshot( RunnableCode ):
         self.routing_command       = routing_command
         self.agent_class_name      = agent_class_name  # e.g., "MathAgent", "CalendarAgent", etc.
         self.user_id               = user_id
+        self.user_email            = user_email  # Email for TTS notification routing
         self.session_id            = session_id  # WebSocket session ID for job-notification correlation
 
         # Replay tracking for Time Saved Dashboard analytics
@@ -243,6 +244,11 @@ class SolutionSnapshot( RunnableCode ):
             "last_replayed"       : None
         }
         self.is_cache_hit          = is_cache_hit
+
+        # QueueableJob protocol compliance - status tracking attributes
+        self.status                = "pending"
+        self.started_at            = ""
+        self.completed_at          = ""
 
         # Is there is no synonymous questions to be found then just recycle the current question
         # Handle corrupted data: ensure synonymous_questions is a valid dict/OrderedDict
@@ -440,8 +446,12 @@ class SolutionSnapshot( RunnableCode ):
                      code_example=agent.prompt_response_dict.get( "example", "N/A" ),
                          thoughts=agent.prompt_response_dict.get( "thoughts", "N/A" ),
                            answer=agent.code_response_dict.get( "output", "N/A" ),
-            answer_conversational=agent.answer_conversational
-               
+            answer_conversational=agent.answer_conversational,
+            # User context pass-through from agent (AgentBase guarantees these attributes)
+                          user_id=agent.user_id,
+                       user_email=agent.user_email,
+                       session_id=agent.session_id
+
                # TODO: Reconcile how we're going to get a dynamic path to the solution file's directory
                # solution_directory=calendaring_agent.solution_directory
         )
@@ -662,42 +672,34 @@ class SolutionSnapshot( RunnableCode ):
         # Original method logic continues (keeping functionality for now)
         # TODO: decide what we're going to exclude from serialization, and why or why not!
         # Right now I'm just doing this for the sake of expediency as I'm playing with class inheritance for agents
-        fields_to_exclude = [ "prompt_response", "prompt_response_dict", "code_response_dict", "phind_tgi_url", "config_mgr", "_embedding_mgr", "websocket_id", "user_id" ]
+        fields_to_exclude = [ "prompt_response", "prompt_response_dict", "code_response_dict", "phind_tgi_url", "config_mgr", "_embedding_mgr", "websocket_id", "user_id", "user_email" ]
         data = { field: value for field, value in self.__dict__.items() if field not in fields_to_exclude }
         return json.dumps( data )
         
-    def get_copy( self ) -> 'SolutionSnapshot':
+    def get_copy( self, user_email: str = "" ) -> 'SolutionSnapshot':
         """
-        Get shallow copy of snapshot.
-        
+        Create a copy of this snapshot for queue execution.
+
+        Note: user_email is passed here (not in constructor) because snapshots
+        are loaded from storage without user context. The requesting user's
+        email is injected at copy time for TTS notification routing.
+
         Requires:
             - None
-            
+
         Ensures:
             - Returns new instance with same values
             - Shallow copy (references shared)
-            
+            - user_email is set on copy if provided
+
         Raises:
             - None
         """
-        return copy.copy( self )
+        snapshot_copy = copy.copy( self )
+        if user_email:
+            snapshot_copy.user_email = user_email
+        return snapshot_copy
     
-    def get_html( self ) -> str:
-        """
-        Get HTML representation of snapshot.
-        
-        Requires:
-            - id_hash, run_date, last_question_asked are set
-            
-        Ensures:
-            - Returns HTML list item string
-            - Includes play and delete spans
-            
-        Raises:
-            - None
-        """
-        return f"<li id='{self.id_hash}'><span class='play'>{self.run_date} Q: {self.last_question_asked}</span> <span class='delete'></span></li>"
-     
     def write_current_state_to_file( self ) -> None:
         """
         DEPRECATED: Write snapshot to JSON file.
@@ -1000,6 +1002,28 @@ class SolutionSnapshot( RunnableCode ):
         """
         return self.answer_conversational is not None
 
+    def do_all( self ) -> str:
+        """
+        Execute snapshot code and format result.
+
+        This is required by QueueableJob protocol. For snapshots,
+        it runs the cached code and formats the output.
+
+        Requires:
+            - code, code_example, code_returns are populated
+
+        Ensures:
+            - Executes stored code
+            - Formats output
+            - Returns conversational answer
+
+        Raises:
+            - Code execution errors propagated
+        """
+        self.run_code( debug=self.debug, verbose=self.verbose )
+        self.run_formatter()
+        return self.answer_conversational
+
     # =========================================================================
     # Unified Interface Properties (for QueueableJob protocol compatibility)
     # =========================================================================
@@ -1057,6 +1081,39 @@ def quick_smoke_test():
     snapshot_without_agent = SolutionSnapshot( question="test" )
     assert snapshot_without_agent.job_type == "unknown", "job_type should be 'unknown' when agent_class_name is None"
     print( f"✓ job_type without agent_class_name: {snapshot_without_agent.job_type}" )
+
+    # Test do_all() method exists (QueueableJob protocol requirement)
+    print( "\nTesting do_all() method (QueueableJob protocol)..." )
+    assert hasattr( snapshot_with_agent, 'do_all' ), "SolutionSnapshot must have do_all() method"
+    assert callable( snapshot_with_agent.do_all ), "do_all must be callable"
+    print( "✓ do_all() method exists and is callable" )
+
+    # Test QueueableJob protocol compliance
+    print( "\nTesting QueueableJob protocol compliance..." )
+    try:
+        from cosa.rest.queue_protocol import is_queueable_job
+        test_snapshot = SolutionSnapshot(
+            question="test question",
+            agent_class_name="TestAgent",
+            user_id="test_user",
+            user_email="test@example.com",
+            session_id="test_session"
+        )
+        # Protocol requires all these attributes
+        assert hasattr( test_snapshot, 'id_hash' ), "Missing id_hash"
+        assert hasattr( test_snapshot, 'push_counter' ), "Missing push_counter"
+        assert hasattr( test_snapshot, 'user_id' ), "Missing user_id"
+        assert hasattr( test_snapshot, 'user_email' ), "Missing user_email"
+        assert hasattr( test_snapshot, 'session_id' ), "Missing session_id"
+        assert hasattr( test_snapshot, 'status' ), "Missing status"
+        assert hasattr( test_snapshot, 'do_all' ), "Missing do_all method"
+        assert hasattr( test_snapshot, 'code_ran_to_completion' ), "Missing code_ran_to_completion method"
+        assert hasattr( test_snapshot, 'formatter_ran_to_completion' ), "Missing formatter_ran_to_completion method"
+
+        is_valid = is_queueable_job( test_snapshot )
+        print( f"✓ QueueableJob protocol check: {is_valid}" )
+    except ImportError:
+        print( "⚠ Could not import queue_protocol for protocol check (skipped)" )
 
     print( "\n✓ SolutionSnapshot smoke test completed" )
 

@@ -31,6 +31,7 @@ class ClaudeCodeQueueRequest( BaseModel ):
     task_type: str = Field( "BOUNDED", description="Task type: BOUNDED or INTERACTIVE" )
     max_turns: int = Field( 50, ge=1, le=500, description="Maximum agentic turns" )
     websocket_id: Optional[ str ] = Field( None, description="WebSocket session ID for notifications" )
+    dry_run: bool = Field( False, description="If True, simulate execution without running Claude Code" )
 
 
 class ClaudeCodeQueueResponse( BaseModel ):
@@ -63,7 +64,7 @@ def get_user_job_tracker():
     Returns:
         UserJobTracker: The user job tracker instance
     """
-    from cosa.rest.user_job_tracker import user_job_tracker
+    from cosa.rest.queue_extensions import user_job_tracker
     return user_job_tracker
 
 
@@ -152,17 +153,19 @@ async def submit_claude_code_to_queue(
             session_id = session_id,
             task_type  = task_type,
             max_turns  = request_body.max_turns,
+            dry_run    = request_body.dry_run,
             debug      = False,
             verbose    = False
         )
 
+        # Session 108: Associate BEFORE push to prevent race condition
+        # The consumer thread may grab the job immediately after push(), so user mapping must exist first
+        user_job_tracker.associate_job_with_user( job.id_hash, user_id )
+        user_job_tracker.associate_job_with_session( job.id_hash, session_id )
+
         # Push to todo queue
         # The todo queue's push method handles WebSocket notifications
         todo_queue.push( job )
-
-        # Associate job with user for queue filtering
-        user_job_tracker.associate_job_with_user( job.id_hash, user_id )
-        user_job_tracker.associate_job_with_session( job.id_hash, session_id )
 
         # Get queue position (approximate - queue length after push)
         queue_position = todo_queue.size()
@@ -240,7 +243,17 @@ def quick_smoke_test():
         assert req_defaults.project == "lupin"
         assert req_defaults.task_type == "BOUNDED"
         assert req_defaults.max_turns == 50
+        assert req_defaults.dry_run == False
         print( "✓ Default values work correctly" )
+
+        # Test 5: Test dry_run flag
+        print( "Testing dry_run flag..." )
+        req_dry_run = ClaudeCodeQueueRequest(
+            prompt  = "Test prompt",
+            dry_run = True
+        )
+        assert req_dry_run.dry_run == True
+        print( "✓ dry_run flag works correctly" )
 
         print( "\n✓ Smoke test completed successfully" )
         return True

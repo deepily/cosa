@@ -2,6 +2,7 @@ from collections import OrderedDict
 from typing import Any, Optional
 import re
 from cosa.rest.queue_extensions import user_job_tracker
+from cosa.rest.queue_protocol import is_queueable_job
 
 # Notification service imports for TTS migration (Session 97)
 from cosa.cli.notify_user_async import notify_user_async
@@ -133,23 +134,25 @@ class FifoQueue:
     def push( self, item: Any ) -> None:
         """
         Add an item to the end of the queue.
-        
+
         Requires:
-            - item must have an 'id_hash' attribute
-            
+            - item must implement QueueableJob protocol
+
         Ensures:
             - Item is added to end of queue_list
             - Item is added to queue_dict with id_hash as key
             - push_counter is incremented
-            
+
         Raises:
-            - AttributeError if item doesn't have id_hash
+            - TypeError if item doesn't implement QueueableJob protocol
         """
-        
+        # Phase 1: Enforce Protocol at boundary - validate ONCE on entry
+        if not is_queueable_job( item ):
+            raise TypeError( f"Job must implement QueueableJob protocol, got {type( item ).__name__}" )
+
         self.queue_list.append( item )
         self.queue_dict[ item.id_hash ] = item
         self.push_counter += 1
-        self._emit_queue_update()
     
     def get_push_counter( self ) -> int:
         """
@@ -185,7 +188,6 @@ class FifoQueue:
             # Remove from ID_hash first
             del self.queue_dict[ self.queue_list[ 0 ].id_hash ]
             result = self.queue_list.pop( 0 )
-            self._emit_queue_update()
             return result
     
     def head( self ) -> Optional[Any]:
@@ -253,7 +255,6 @@ class FifoQueue:
             
             if size_after < size_before:
                 print( f"Deleted {size_before - size_after} items from queue" )
-                self._emit_queue_update()
                 return True
             else:
                 print( "ERROR: Could not delete by id_hash - size didn't change" )
@@ -317,18 +318,17 @@ class FifoQueue:
     
     def clear( self ) -> None:
         """
-        Clear all items from the queue and emit update.
-        
+        Clear all items from the queue.
+
         Requires:
             - None
-            
+
         Ensures:
             - Empties both queue_list and queue_dict
             - Resets push_counter to 0
             - Clears blocking_object to None
             - Resets accepting_jobs to True
-            - Emits queue update via WebSocket if configured
-            
+
         Raises:
             - None
         """
@@ -337,37 +337,7 @@ class FifoQueue:
         self.push_counter = 0
         self._blocking_object = None
         self._accepting_jobs = True
-        self._emit_queue_update()
     
-    def get_html_list( self, descending: bool = False ) -> list[str]:
-        """
-        Generate HTML list from queue items.
-        
-        Requires:
-            - Each item in queue_list has get_html() method
-            
-        Ensures:
-            - Returns list of HTML strings from queue items
-            - Reverses order if descending=True
-            
-        Args:
-            descending: Whether to reverse the list order
-            
-        Returns:
-            list[str]: HTML representations of queue items
-            
-        Raises:
-            - AttributeError if items don't have get_html() method
-        """
-        html_list = []
-        for job in self.queue_list:
-            html_list.append( job.get_html() )
-        
-        if descending:
-            html_list.reverse()
-        
-        return html_list
-
     def get_jobs_for_user( self, user_id: str ) -> list[Any]:
         """
         Get raw job objects for specific user (NO authorization, NO formatting).
@@ -462,60 +432,13 @@ class FifoQueue:
 
         return None
 
-    def _get_target_user_email( self, job: Any ) -> str:
-        """
-        Get target user email from job metadata for notification routing.
-
-        Requires:
-            - job (if provided) may have user_email attribute or metadata dict
-
-        Ensures:
-            - Returns user email if available in job metadata
-            - Falls back to default email if not found
-
-        Args:
-            job: Job object that may have user_email attribute
-
-        Returns:
-            str: Target user email for notification routing
-        """
-        if job:
-            # Check for email stored directly on job (set during push)
-            if hasattr( job, 'user_email' ) and job.user_email:
-                return job.user_email
-
-            # Check for email in metadata dict
-            if hasattr( job, 'metadata' ) and isinstance( job.metadata, dict ):
-                if 'user_email' in job.metadata:
-                    return job.metadata[ 'user_email' ]
-
-            # Try to resolve email from user_job_tracker (legacy path)
-            if hasattr( job, 'id_hash' ):
-                user_id = self.user_job_tracker.get_user_for_job( job.id_hash )
-                if user_id:
-                    # Look up user email from auth database using user service
-                    try:
-                        from cosa.rest.user_service import get_user_by_id
-                        user_data = get_user_by_id( user_id )
-                        if user_data and user_data.get( "email" ):
-                            email = user_data[ "email" ]
-                            print( f"[NOTIFY] Resolved email from user_id: {email}" )
-                            return email
-                        else:
-                            print( f"[NOTIFY] user_service returned no email for user_id={user_id}" )
-                    except Exception as e:
-                        print( f"[NOTIFY] Failed to look up email for user_id={user_id}: {e}" )
-
-        # Fallback to default email
-        # Note: Using hardcoded default since not all queue subclasses have config_mgr
-        return "ricardo.felipe.ruiz@gmail.com"
-
     def _notify(
         self,
         msg: str,
         job: Any = None,
         priority: str = "high",
-        notification_type: str = "task"
+        notification_type: str = "task",
+        target_user: str = None
     ) -> None:
         """
         Send notification via notification service (replaces _emit_speech).
@@ -539,102 +462,37 @@ class FifoQueue:
             job: Job object for context-based routing (optional)
             priority: Notification priority ('urgent', 'high', 'medium', 'low')
             notification_type: Type of notification ('task', 'progress', 'alert', 'custom')
+            target_user: Email address for TTS routing (uses job.user_email if not provided)
 
         Raises:
             - None (exceptions handled internally)
         """
+        # Session 110: user_email is now a first-class constructor parameter (no hasattr needed)
+        resolved_email = target_user
+        if not resolved_email and job and job.user_email:
+            resolved_email = job.user_email
+        if not resolved_email:
+            # Fallback to default email
+            resolved_email = "ricardo.felipe.ruiz@gmail.com"
+            print( f"[NOTIFY] Warning: No user_email found, using fallback: {resolved_email}" )
+
         try:
             request = AsyncNotificationRequest(
                 message           = msg,
                 notification_type = notification_type,
                 priority          = priority,
                 suppress_ding     = True,  # Queue notifications = TTS only, no ding
-                target_user       = self._get_target_user_email( job ),
+                target_user       = resolved_email,
                 job_id            = self._get_notification_job_id( job ),
                 sender_id         = f"queue.{self.queue_name or 'unknown'}@lupin.deepily.ai"
             )
             notify_user_async( request )
 
             if hasattr( self, 'debug' ) and self.debug:
-                print( f"[NOTIFY] Sent notification: {priority}/{notification_type} - {msg[:50]}..." )
+                print( f"[NOTIFY] Sent notification to {resolved_email}: {priority}/{notification_type} - {msg[:50]}..." )
 
         except Exception as e:
             print( f"[ERROR] _notify() failed: {e}" )
-
-    # ============================================================================
-    # DEPRECATED: Legacy _emit_speech implementation (Session 97)
-    # Replaced by _notify() method using notification service
-    # Keeping commented for reference during migration verification
-    # TODO: Remove after migration verified stable (target: Session 100+)
-    # ============================================================================
-    # def _emit_speech( self, msg: str, user_id: str = None, websocket_id: str = None, job: Any = None ) -> None:
-    #     """
-    #     [DEPRECATED] Unified speech emission with smart routing.
-    #
-    #     Replaced by: _notify() method
-    #     Reason: Migration to notification service for job_id routing, blocking queries, and suppress_ding
-    #
-    #     Priority: job context → user_id → websocket_id → broadcast
-    #
-    #     Requires:
-    #         - Subclass has self.emit_speech_callback attribute
-    #         - job parameter (if provided) has id_hash attribute
-    #
-    #     Ensures:
-    #         - Determines user_id from job if available
-    #         - Calls emit_speech_callback with proper parameters
-    #         - Handles exceptions gracefully
-    #
-    #     Args:
-    #         msg: The message to convert to speech
-    #         user_id: Explicit user ID for routing (optional)
-    #         websocket_id: WebSocket session ID for routing (optional)
-    #         job: Job object containing id_hash for user lookup (optional)
-    #
-    #     Raises:
-    #         - None (exceptions handled internally)
-    #     """
-    #     # Determine user_id from job context if available
-    #     if job and hasattr( job, 'id_hash' ) and not user_id:
-    #         user_id = self.user_job_tracker.get_user_for_job( job.id_hash )
-    #         if user_id:
-    #             print( f"[FIFO] Resolved user_id {user_id} from job {job.id_hash}" )
-    #
-    #     if hasattr( self, 'emit_speech_callback' ) and self.emit_speech_callback:
-    #         try:
-    #             # Use named parameters to ensure correct routing
-    #             self.emit_speech_callback( msg, user_id=user_id, websocket_id=websocket_id )
-    #         except Exception as e:
-    #             print( f"[ERROR] emit_speech_callback failed: {e}" )
-
-    def _emit_queue_update( self ) -> None:
-        """
-        Automatically emit queue state update via WebSocket.
-        
-        This method enables automatic client-server state synchronization
-        by emitting queue size updates whenever the queue changes.
-        
-        Requires:
-            - websocket_mgr, queue_name, and emit_enabled are configured
-            
-        Ensures:
-            - Emits "<queue_name>_update" event with current queue size
-            - Handles exceptions gracefully
-            - Only emits if all requirements are met
-            
-        Raises:
-            - None (exceptions handled internally)
-        """
-        if self.emit_enabled and self.websocket_mgr and self.queue_name:
-            try:
-                event_name = f"queue_{self.queue_name}_update"  # Fixed: Add "queue_" prefix
-                data = { 'value': self.size() }
-                self.websocket_mgr.emit( event_name, data )
-                if hasattr( self, 'debug' ) and self.debug:
-                    print( f"[QUEUE] Auto-emitted {event_name}: {data}" )
-            except Exception as e:
-                print( f"[ERROR] _emit_queue_update failed: {e}" )
-
 
 def quick_smoke_test():
     """
@@ -652,7 +510,7 @@ def quick_smoke_test():
         print( "Testing core FIFO queue components..." )
         expected_methods = [
             "push", "pop", "head", "get_by_id_hash", "delete_by_id_hash",
-            "is_empty", "size", "has_changed", "clear", "get_html_list",
+            "is_empty", "size", "has_changed", "clear",
             "pop_blocking_object", "push_blocking_object", "is_in_focus_mode", "is_accepting_jobs"
         ]
         
@@ -704,59 +562,83 @@ def quick_smoke_test():
         except Exception as e:
             print( f"⚠ Basic queue functionality issues: {e}" )
         
-        # Test 4: Queue operations with mock objects
+        # Test 4: Queue operations with mock objects implementing QueueableJob protocol
         print( "Testing queue operations..." )
         try:
-            # Create simple mock objects for testing
-            class MockItem:
+            # Create mock objects that implement the QueueableJob protocol
+            class MockQueueableItem:
+                """Mock item implementing QueueableJob protocol for testing."""
                 def __init__( self, id_hash, name ):
-                    self.id_hash = id_hash
-                    self.name = name
-                
-                def get_html( self ):
-                    return f"<li id='{self.id_hash}'>{self.name}</li>"
-            
+                    self.id_hash              = id_hash
+                    self.name                 = name
+                    self.push_counter         = 0
+                    self.user_id              = "test_user"
+                    self.session_id           = "test_session"
+                    self.routing_command      = "test"
+                    self.run_date             = "2025-01-30"
+                    self.created_date         = "2025-01-30"
+                    self.question             = name
+                    self.last_question_asked  = name
+                    self.answer               = "test answer"
+                    self.answer_conversational = "Test answer"
+                    self.job_type             = "MockJob"
+                    self.user_email           = "test@test.com"
+                    self.is_cache_hit         = False
+                    self.started_at           = None
+                    self.completed_at         = None
+                    self.status               = "pending"
+                    self.error                = None
+
+                def do_all( self ):
+                    return "done"
+
+                def code_ran_to_completion( self ):
+                    return True
+
+                def formatter_ran_to_completion( self ):
+                    return True
+
             queue = FifoQueue()
-            
+
             # Test push operations
-            item1 = MockItem( "hash1", "Item 1" )
-            item2 = MockItem( "hash2", "Item 2" )
-            
+            item1 = MockQueueableItem( "hash1", "Item 1" )
+            item2 = MockQueueableItem( "hash2", "Item 2" )
+
             queue.push( item1 )
             queue.push( item2 )
-            
+
             if queue.size() == 2 and not queue.is_empty():
                 print( "✓ Push operations working" )
             else:
                 print( "✗ Push operations failed" )
-            
+
             # Test head operation
             head_item = queue.head()
             if head_item and head_item.id_hash == "hash1":
                 print( "✓ Head operation working" )
             else:
                 print( "✗ Head operation failed" )
-            
+
             # Test get_by_id_hash
             retrieved_item = queue.get_by_id_hash( "hash2" )
             if retrieved_item and retrieved_item.name == "Item 2":
                 print( "✓ Get by ID hash working" )
             else:
                 print( "✗ Get by ID hash failed" )
-            
+
             # Test pop operation
             popped_item = queue.pop()
             if popped_item and popped_item.id_hash == "hash1" and queue.size() == 1:
                 print( "✓ Pop operation working" )
             else:
                 print( "✗ Pop operation failed" )
-            
+
             # Test delete operation
             if queue.delete_by_id_hash( "hash2" ) and queue.is_empty():
                 print( "✓ Delete by ID hash working" )
             else:
                 print( "✗ Delete by ID hash failed" )
-            
+
         except Exception as e:
             print( f"⚠ Queue operations testing issues: {e}" )
         
@@ -785,34 +667,7 @@ def quick_smoke_test():
         except Exception as e:
             print( f"⚠ Blocking object functionality issues: {e}" )
         
-        # Test 6: HTML generation functionality
-        print( "Testing HTML generation functionality..." )
-        try:
-            queue = FifoQueue()
-            
-            # Use mock items that have get_html method
-            class MockHtmlItem:
-                def __init__( self, id_hash, content ):
-                    self.id_hash = id_hash
-                    self.content = content
-                
-                def get_html( self ):
-                    return f"<div id='{self.id_hash}'>{self.content}</div>"
-            
-            queue.push( MockHtmlItem( "html1", "Content 1" ) )
-            queue.push( MockHtmlItem( "html2", "Content 2" ) )
-            
-            html_list = queue.get_html_list()
-            
-            if len( html_list ) == 2 and all( "<div" in item for item in html_list ):
-                print( "✓ HTML generation working" )
-            else:
-                print( "⚠ HTML generation may have issues" )
-            
-        except Exception as e:
-            print( f"⚠ HTML generation functionality issues: {e}" )
-        
-        # Test 7: WebSocket integration structure
+        # Test 6: WebSocket integration structure
         print( "Testing WebSocket integration structure..." )
         try:
             # Test queue with WebSocket manager (mock)
@@ -827,7 +682,7 @@ def quick_smoke_test():
         except Exception as e:
             print( f"⚠ WebSocket integration issues: {e}" )
         
-        # Test 8: Critical v000 dependency scanning
+        # Test 7: Critical v000 dependency scanning
         print( "\\n🔍 Scanning for v000 dependencies..." )
         
         # Scan the file for v000 patterns
@@ -880,33 +735,57 @@ def quick_smoke_test():
         else:
             print( "✅ EXCELLENT: No v000 dependencies found!" )
         
-        # Test 9: Queue state consistency validation
+        # Test 8: Queue state consistency validation
         print( "\\nTesting queue state consistency..." )
         try:
             queue = FifoQueue()
-            
+
             # Test state consistency between operations
-            class TestItem:
+            class TestQueueableItem:
+                """Mock item implementing QueueableJob protocol for state testing."""
                 def __init__( self, id_hash ):
-                    self.id_hash = id_hash
-                
-                def get_html( self ):
-                    return f"<item>{self.id_hash}</item>"
-            
+                    self.id_hash              = id_hash
+                    self.push_counter         = 0
+                    self.user_id              = "test_user"
+                    self.session_id           = "test_session"
+                    self.routing_command      = "test"
+                    self.run_date             = "2025-01-30"
+                    self.created_date         = "2025-01-30"
+                    self.question             = id_hash
+                    self.last_question_asked  = id_hash
+                    self.answer               = "test answer"
+                    self.answer_conversational = "Test answer"
+                    self.job_type             = "MockJob"
+                    self.user_email           = "test@test.com"
+                    self.is_cache_hit         = False
+                    self.started_at           = None
+                    self.completed_at         = None
+                    self.status               = "pending"
+                    self.error                = None
+
+                def do_all( self ):
+                    return "done"
+
+                def code_ran_to_completion( self ):
+                    return True
+
+                def formatter_ran_to_completion( self ):
+                    return True
+
             # Add multiple items and test consistency
             for i in range( 5 ):
-                queue.push( TestItem( f"test_{i}" ) )
-            
+                queue.push( TestQueueableItem( f"test_{i}" ) )
+
             # Check list/dict consistency
             list_size = len( queue.queue_list )
             dict_size = len( queue.queue_dict )
             reported_size = queue.size()
-            
+
             if list_size == dict_size == reported_size == 5:
                 print( "✓ Queue state consistency validated" )
             else:
                 print( f"⚠ State inconsistency: list={list_size}, dict={dict_size}, size={reported_size}" )
-            
+
         except Exception as e:
             print( f"⚠ Queue state consistency issues: {e}" )
     

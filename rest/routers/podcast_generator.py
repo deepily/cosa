@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from cosa.rest.auth import get_current_user
+from cosa.rest.queue_extensions import user_job_tracker
 from cosa.agents.podcast_generator.job import PodcastGeneratorJob
 import cosa.utils.util as cu
 
@@ -106,7 +107,7 @@ def is_research_path( input_text: str, user_email: str ) -> bool:
     from cosa.config.configuration_manager import ConfigurationManager
 
     config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-    research_root = config_mgr.get( "deep research output directory", default="/io/deep-research" )
+    research_root = config_mgr.get( "deep research output path" )
     expected_prefix = f"{research_root}/{user_email}/"
 
     input_clean = input_text.strip()
@@ -121,7 +122,10 @@ def is_research_path( input_text: str, user_email: str ) -> bool:
 
 async def match_research_docs( user_email: str, description: str, debug: bool = False ) -> List[ str ]:
     """
-    List user's research docs and fuzzy match against description using LLM.
+    Match user description against research docs using LLM (kaitchup/phi_4_14b).
+
+    Uses the CoSA XML I/O pattern with PromptTemplateProcessor.
+    Response is parsed via FuzzyFileMatchResponse.from_xml() - proper Pydantic XML I/O.
 
     Requires:
         - user_email is a valid email address
@@ -139,85 +143,78 @@ async def match_research_docs( user_email: str, description: str, debug: bool = 
     Returns:
         List[ str ]: Matching document filenames
     """
-    from cosa.memory.gister import Gister
+    from cosa.agents.llm_client_factory import LlmClientFactory
+    from cosa.config.configuration_manager import ConfigurationManager
+    from cosa.agents.io_models.utils.prompt_template_processor import PromptTemplateProcessor
+    from cosa.agents.io_models.xml_models import FuzzyFileMatchResponse
 
     # Get research directory
     research_dir = f"{cu.get_project_root()}/io/deep-research/{user_email}"
 
     if not os.path.exists( research_dir ):
-        if debug:
-            print( f"[match_research_docs] Research directory not found: {research_dir}" )
+        if debug: print( f"[match_research_docs] Research directory not found: {research_dir}" )
         return []
 
     # List markdown files
     docs = [ f for f in os.listdir( research_dir ) if f.endswith( '.md' ) ]
 
     if not docs:
-        if debug:
-            print( f"[match_research_docs] No markdown files found in {research_dir}" )
+        if debug: print( f"[match_research_docs] No markdown files found in {research_dir}" )
         return []
 
     if debug:
         print( f"[match_research_docs] Found {len( docs )} research documents" )
         print( f"[match_research_docs] Description: {description}" )
 
-    # Use Gister for LLM fuzzy matching
-    gister = Gister( debug=debug )
+    # Load config and prompt template
+    config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+    template_path = config_mgr.get( "prompt template for fuzzy file matching" )
+    template = cu.get_file_as_string( cu.get_project_root() + template_path )
 
-    prompt = f"""Given this user description: "{description}"
+    # Process template to inject XML example
+    processor = PromptTemplateProcessor( debug=debug )
+    template = processor.process_template( template, 'fuzzy file matching' )
 
-Match against these research document filenames:
-{chr( 10 ).join( f'- {doc}' for doc in docs )}
+    # Format with description and file list
+    file_list = "\n".join( f"- {doc}" for doc in docs )
+    prompt = template.format( description=description, file_list=file_list )
 
-Return ONLY a JSON array of the top 3-5 best matching filenames, ordered by relevance.
-Only include filenames that reasonably match the description.
-If no good matches exist, return an empty array: []
-
-Example response: ["2026.01.15-claude-code-analysis.md", "2026.01.10-ai-tools-comparison.md"]"""
+    # Call LLM
+    llm_factory = LlmClientFactory()
+    llm_spec_key = config_mgr.get( "llm spec key for fuzzy file matching" )
+    llm_client = llm_factory.get_client( llm_spec_key, debug=debug, verbose=False )
 
     try:
-        response = gister.get_gist( prompt, prompt_key="fuzzy_match_research" )
+        response = llm_client.run( prompt )
 
-        # Parse JSON response
-        import json
-        if isinstance( response, str ):
-            # Clean up response - extract JSON array if wrapped in other text
-            response = response.strip()
-            if response.startswith( "[" ):
-                matches = json.loads( response )
-            else:
-                # Try to extract JSON array from response
-                import re
-                match = re.search( r'\[.*\]', response, re.DOTALL )
-                if match:
-                    matches = json.loads( match.group() )
-                else:
-                    matches = []
-        else:
-            matches = response if isinstance( response, list ) else []
+        if debug: print( f"[match_research_docs] LLM response: {response[ :200 ]}..." )
+
+        # Parse XML response using proper Pydantic XML I/O (NOT deprecated util_xml)
+        parsed_response = FuzzyFileMatchResponse.from_xml( response )
+        matches = parsed_response.get_matches_list()
 
         # Validate matches exist in docs
         valid_matches = [ m for m in matches if m in docs ]
 
-        if debug:
-            print( f"[match_research_docs] Matches: {valid_matches}" )
+        if debug: print( f"[match_research_docs] Matches: {valid_matches}" )
 
         return valid_matches
 
     except Exception as e:
-        if debug:
-            print( f"[match_research_docs] Error during fuzzy matching: {e}" )
+        if debug: print( f"[match_research_docs] Error during fuzzy matching: {e}" )
         return []
 
 
-async def send_document_selection_notification(
+async def get_user_document_selection(
     user_email: str,
     session_id: str,
     matches: List[ str ],
     debug: bool = False
-) -> None:
+) -> Optional[ str ]:
     """
-    Send a multiple choice notification for document selection.
+    Present document options to user and wait for selection (BLOCKING).
+
+    Uses voice_io.present_choices() which blocks until user responds.
 
     Requires:
         - user_email is a valid email
@@ -225,14 +222,17 @@ async def send_document_selection_notification(
         - matches is a non-empty list of filenames
 
     Ensures:
-        - Notification sent to user via cosa-voice
-        - User can select from matches or cancel
+        - Returns selected filename string
+        - Returns None if user cancels or times out
 
     Args:
         user_email: The user's email for notification routing
         session_id: WebSocket session ID
         matches: List of matching document filenames
         debug: Enable debug output
+
+    Returns:
+        str: Selected filename, or None if cancelled
     """
     from cosa.agents.deep_research import voice_io
 
@@ -243,18 +243,38 @@ async def send_document_selection_notification(
     options.append( { "label": "Cancel", "description": "Don't create podcast" } )
 
     if debug:
-        print( f"[send_document_selection_notification] Sending notification with {len( options )} options" )
+        print( f"[get_user_document_selection] Presenting {len( options )} options" )
 
-    await voice_io.ask_multiple_choice(
-        questions=[ {
-            "question"    : "Which research document should I use for the podcast?",
-            "header"      : "Research",
-            "multiSelect" : False,
-            "options"     : options
-        } ],
-        title="Select Research Document",
-        priority="high"
+    # Use present_choices() which BLOCKS until user responds
+    questions = [ {
+        "question"    : "Which research document should I use for the podcast?",
+        "header"      : "Research",
+        "multiSelect" : False,
+        "options"     : options
+    } ]
+
+    result = await voice_io.present_choices(
+        questions = questions,
+        timeout   = 120,
+        title     = "Select Research Document"
     )
+
+    selection = result.get( "answers", {} ).get( "Research" )
+
+    if debug:
+        print( f"[get_user_document_selection] User selected: {selection}" )
+
+    # User cancelled
+    if selection == "Cancel" or not selection:
+        return None
+
+    # Find full filename from truncated label
+    for m in matches:
+        label = m[ :35 ] + "..." if len( m ) > 35 else m
+        if label == selection or m == selection:
+            return m
+
+    return None
 
 
 @router.post(
@@ -334,21 +354,29 @@ async def submit_podcast_job(
             debug            = debug
         )
 
-        # Add to queue
-        todo_queue.push_job( job, user_id, session_id )
+        # Associate BEFORE push to prevent race condition
+        # The consumer thread may grab the job immediately after push(), so user mapping must exist first
+        user_job_tracker.associate_job_with_user( job.id_hash, user_id )
+        user_job_tracker.associate_job_with_session( job.id_hash, session_id )
+
+        # Push to todo queue
+        todo_queue.push( job )
+
+        # Get queue position (approximate - queue length after push)
+        queue_position = todo_queue.size()
 
         return PodcastSubmitResponse(
             job_id         = job.id_hash,
-            queue_position = todo_queue.get_position( job.id_hash ),
+            queue_position = queue_position,
             status         = "queued"
         )
 
     else:
-        # Flow B: Description mode (fuzzy matching)
+        # Flow B: Description mode (fuzzy matching with blocking selection)
         if debug:
             print( f"[submit_podcast_job] Description mode: {research_source}" )
 
-        # Find matching documents
+        # Step 1: Find matching documents via LLM
         matches = await match_research_docs( user_email, research_source, debug=debug )
 
         if not matches:
@@ -357,17 +385,60 @@ async def submit_podcast_job(
                 detail="No matching research documents found. Please check your research library or provide a direct file path."
             )
 
-        # Send notification for user to select
-        await send_document_selection_notification(
+        # Step 2: Present options to user and wait for selection (BLOCKING)
+        selected_filename = await get_user_document_selection(
             user_email = user_email,
             session_id = session_id,
             matches    = matches,
             debug      = debug
         )
 
-        return PodcastMatchingResponse(
-            status  = "matching",
-            message = f"Found {len( matches )} matching documents. Check notifications to select one."
+        if not selected_filename:
+            # User cancelled
+            return PodcastMatchingResponse(
+                status  = "cancelled",
+                message = "Podcast generation cancelled by user."
+            )
+
+        # Step 3: Build full path and create job (same as Flow A)
+        from cosa.config.configuration_manager import ConfigurationManager
+        config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+        research_root = config_mgr.get( "deep research output path" )
+
+        full_path = f"{cu.get_project_root()}{research_root}/{user_email}/{selected_filename}"
+
+        if not os.path.exists( full_path ):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Selected research file not found: {selected_filename}"
+            )
+
+        # Create job
+        job = PodcastGeneratorJob(
+            research_path    = full_path,
+            user_id          = user_id,
+            user_email       = user_email,
+            session_id       = session_id,
+            target_languages = request.target_languages,
+            max_segments     = request.max_segments,
+            dry_run          = request.dry_run,
+            debug            = debug
+        )
+
+        # Associate BEFORE push to prevent race condition
+        user_job_tracker.associate_job_with_user( job.id_hash, user_id )
+        user_job_tracker.associate_job_with_session( job.id_hash, session_id )
+
+        # Push to todo queue
+        todo_queue.push( job )
+
+        # Get queue position
+        queue_position = todo_queue.size()
+
+        return PodcastSubmitResponse(
+            job_id         = job.id_hash,
+            queue_position = queue_position,
+            status         = "queued"
         )
 
 

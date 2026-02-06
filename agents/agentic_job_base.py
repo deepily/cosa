@@ -96,6 +96,7 @@ class AgenticJobBase( ABC ):
         self.completed_at = None
         self.status       = "pending"  # pending, running, completed, failed
         self.error        = None
+        self.is_cache_hit = False      # Agentic jobs are never cache hits
 
         # Results (populated by subclasses after execution)
         self.result       = None
@@ -252,14 +253,18 @@ class AgenticJobBase( ABC ):
         """
         return self.answer_conversational is not None
 
-    def notify_progress( self, message: str, priority: str = "low" ) -> None:
+    def notify_progress( self, message: str, priority: str = "low", job_id: str = None ) -> None:
         """
         Send progress notification via cosa-voice.
 
         Args:
             message: Progress message to send
             priority: Notification priority (low, medium, high, urgent)
+            job_id: Job ID for routing to job card (defaults to self.id_hash)
         """
+        if job_id is None:
+            job_id = self.id_hash
+
         # Import here to avoid circular imports
         try:
             import asyncio
@@ -269,10 +274,10 @@ class AgenticJobBase( ABC ):
             try:
                 loop = asyncio.get_running_loop()
                 # Already in async context - create task
-                asyncio.create_task( voice_io.notify( message, priority=priority ) )
+                asyncio.create_task( voice_io.notify( message, priority=priority, job_id=job_id ) )
             except RuntimeError:
                 # No running loop - use asyncio.run()
-                asyncio.run( voice_io.notify( message, priority=priority ) )
+                asyncio.run( voice_io.notify( message, priority=priority, job_id=job_id ) )
 
         except ImportError as e:
             if self.debug:
@@ -281,23 +286,27 @@ class AgenticJobBase( ABC ):
             if self.debug:
                 print( f"[AgenticJobBase] Notification error: {e}" )
 
-    def notify_completion( self, message: str, abstract: str = None ) -> None:
+    def notify_completion( self, message: str, abstract: str = None, job_id: str = None ) -> None:
         """
         Send completion notification with optional abstract.
 
         Args:
             message: Completion message to send
             abstract: Optional detailed information (markdown)
+            job_id: Job ID for routing to job card (defaults to self.id_hash)
         """
+        if job_id is None:
+            job_id = self.id_hash
+
         try:
             import asyncio
             from cosa.agents.deep_research import voice_io
 
             try:
                 loop = asyncio.get_running_loop()
-                asyncio.create_task( voice_io.notify( message, priority="medium", abstract=abstract ) )
+                asyncio.create_task( voice_io.notify( message, priority="medium", abstract=abstract, job_id=job_id ) )
             except RuntimeError:
-                asyncio.run( voice_io.notify( message, priority="medium", abstract=abstract ) )
+                asyncio.run( voice_io.notify( message, priority="medium", abstract=abstract, job_id=job_id ) )
 
         except ImportError as e:
             if self.debug:
@@ -320,17 +329,6 @@ class AgenticJobBase( ABC ):
         start = datetime.fromisoformat( self.started_at )
         end   = datetime.fromisoformat( self.completed_at )
         return ( end - start ).total_seconds()
-
-    def get_html( self ) -> str:
-        """
-        Generate HTML representation for queue visualization.
-
-        Compatible with AgentBase.get_html() for queue display.
-
-        Returns:
-            str: HTML list item element
-        """
-        return f"<li id='{self.id_hash}'>{self.run_date} [{self.JOB_TYPE}] {self.last_question_asked}</li>"
 
     def __repr__( self ) -> str:
         """String representation for debugging."""
@@ -417,14 +415,7 @@ def quick_smoke_test():
         assert job.formatter_ran_to_completion() == True
         print( "✓ do_all() executed successfully" )
 
-        # Test 8: Test get_html()
-        print( "Testing get_html()..." )
-        html = job.get_html()
-        assert job.id_hash in html
-        assert "[test]" in html
-        print( f"✓ get_html() works: {html[ :60 ]}..." )
-
-        # Test 9: Test unified interface properties
+        # Test 8: Test unified interface properties
         print( "Testing unified interface properties..." )
         assert job.question == job.last_question_asked, "question should equal last_question_asked"
         assert job.answer == "Test complete", "answer should equal answer_conversational"

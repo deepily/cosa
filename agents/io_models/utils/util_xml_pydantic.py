@@ -29,6 +29,25 @@ import cosa.utils.util as du
 T = TypeVar( 'T', bound='BaseXMLModel' )
 
 
+def remove_xml_escapes( xml_string: str ) -> str:
+    """
+    Remove common XML escape sequences from a string.
+
+    This is a utility function for unescaping XML entities, not for parsing XML.
+
+    Requires:
+        - xml_string is a string that may contain XML escapes
+
+    Ensures:
+        - Returns string with XML escapes replaced:
+          - &gt; becomes >
+          - &lt; becomes <
+          - &amp; becomes &
+        - Order of replacements prevents double-unescaping
+    """
+    return xml_string.replace( "&gt;", ">" ).replace( "&lt;", "<" ).replace( "&amp;", "&" )
+
+
 class XMLParsingError( Exception ):
     """
     Custom exception for XML parsing errors.

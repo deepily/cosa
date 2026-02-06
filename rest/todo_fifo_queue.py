@@ -21,13 +21,15 @@ from cosa.tools.search_lupin_v010 import LupinSearch
 
 # from app       import emit_audio
 from cosa.utils import util     as du
-from cosa.utils import util_xml as dux
+from cosa.agents.io_models.xml_models import CommandResponse
+from cosa.agents.io_models.utils.util_xml_pydantic import XMLParsingError
 
 
 from datetime import datetime
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.rest.queue_extensions import user_job_tracker
 from cosa.rest.queue_util import emit_job_state_transition
+from cosa.rest.queue_protocol import is_queueable_job
 
 # Notification service imports for TTS migration (Session 97)
 from cosa.cli.notify_user_sync import notify_user_sync
@@ -327,16 +329,17 @@ class TodoFifoQueue( FifoQueue ):
                 if self.debug:
                     print( f"[TODO-QUEUE] Failed to send rejection notification: {e}" )
     
-    def push_job( self, question: str, websocket_id: str, user_id: str = "ricardo_felipe_ruiz_6bdc" ) -> str:
+    def push_job( self, question: str, websocket_id: str, user_id: str, user_email: str ) -> str:
         """
         Push a new job onto the queue based on the question.
-        
+
         Requires:
             - question is a non-empty string
             - websocket_id is a non-empty string
             - user_id is a valid system ID
+            - user_email is a valid email address for TTS routing
             - Queue and snapshot manager are initialized
-            
+
         Ensures:
             - Handles blocking objects for confirmation
             - Searches for similar snapshots if applicable
@@ -344,7 +347,8 @@ class TodoFifoQueue( FifoQueue ):
             - Returns status message
             - Associates websocket_id and user_id with the job
             - Passes user_id to agent creation for event routing
-            
+            - Sets user_email on agent/job for TTS notification routing
+
         Raises:
             - None (exceptions handled internally)
         """
@@ -442,8 +446,8 @@ class TodoFifoQueue( FifoQueue ):
             )
 
             self._dump_code( best_snapshot )
-            return self._queue_best_snapshot( best_snapshot, best_score, user_id )
-                
+            return self._queue_best_snapshot( best_snapshot, best_score, user_id, user_email )
+
         # if we're not running the previous best snapshot, then we need to find a similar one before queuing the job
         else:
 
@@ -493,7 +497,7 @@ class TodoFifoQueue( FifoQueue ):
                     timeout_seconds  = 30,
                     priority         = "high",
                     suppress_ding    = True,  # Queue TTS - no ding
-                    target_user      = self._get_target_user_email( best_snapshot ),
+                    target_user      = user_email,
                     sender_id        = f"queue.{self.queue_name or 'todo'}@lupin.deepily.ai"
                 )
 
@@ -527,7 +531,7 @@ class TodoFifoQueue( FifoQueue ):
                         user_id, websocket_id, embeddings, cache_hits, match_result
                     )
 
-                    return self._queue_best_snapshot( best_snapshot, best_score, user_id )
+                    return self._queue_best_snapshot( best_snapshot, best_score, user_id, user_email )
                 else:
                     # User declined, timeout, or offline - fall through to LLM routing
                     print( f"User response: '{response.status}:{response.response_value}' - routing as new question..." )
@@ -556,7 +560,7 @@ class TodoFifoQueue( FifoQueue ):
                     user_id, websocket_id, embeddings, cache_hits, match_result
                 )
 
-                return self._queue_best_snapshot( best_snapshot, best_score, user_id )
+                return self._queue_best_snapshot( best_snapshot, best_score, user_id, user_email )
         else:
             # No similar snapshots found
             needs_llm_routing = True
@@ -599,13 +603,13 @@ class TodoFifoQueue( FifoQueue ):
                 msg = du.print_banner( f"TO DO: train and implement 'agent router go to search and summary' command {command}" )
                 print( msg )
                 # TTS Migration (Session 97): Use notification service instead of _emit_speech
-                self._notify( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} I'm gonna ask our research librarian about that" )
+                self._notify( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} I'm gonna ask our research librarian about that", target_user=user_email )
                 search = LupinSearch( query=question_gist )
                 search.search_and_summarize_the_web()
                 msg = search.get_results( scope="summary" )
             
             elif command == "agent router go to calendar":
-                agent = CalendaringAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = CalendaringAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="calendaring" )
                 ding_for_new_job = True
             elif command == "agent router go to math":
@@ -615,24 +619,24 @@ class TodoFifoQueue( FifoQueue ):
                     # agent = self._get_math_refactoring_agent( question, question_gist, salutation_plus_question, self.push_counter )
                     # msg = starting_a_new_job.format( agent_type="math refactoring" )
                 else:
-                    agent = MathAgent( question=salutation_plus_question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                    agent = MathAgent( question=salutation_plus_question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                     msg = starting_a_new_job.format( agent_type="math" )
                 ding_for_new_job = True
             elif command == "agent router go to todo list":
-                agent = TodoListAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = TodoListAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="todo list" )
                 ding_for_new_job = True
             elif command == "agent router go to date and time":
-                agent = DateAndTimeAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = DateAndTimeAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="date and time" )
                 ding_for_new_job = True
             elif command == "agent router go to weather":
-                agent = WeatherAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = WeatherAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="weather" )
                 # ding_for_new_job = False
             elif command == "agent router go to receptionist" or command == "none":
                 print( f"Routing '{command}' to receptionist..." )
-                agent = ReceptionistAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                agent = ReceptionistAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 # Randomly grab hemming and hawing string and prepend it to a randomly chosen thinking string
                 msg = f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}".strip()
                 # ding_for_new_job = False
@@ -640,7 +644,7 @@ class TodoFifoQueue( FifoQueue ):
                 msg = du.print_banner( f"TO DO: Implement else case command {command}" )
                 print( msg )
                 # TTS Migration (Session 98): Use notification service instead of emit_speech_callback
-                self._notify( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}" )
+                self._notify( f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}", target_user=user_email )
                 search = LupinSearch( query=question_gist )
                 search.search_and_summarize_the_web()
                 msg = search.get_results( scope="summary" )
@@ -648,11 +652,12 @@ class TodoFifoQueue( FifoQueue ):
             if ding_for_new_job:
                 self.websocket_mgr.emit( 'notification_sound_update', { 'soundFile': '/static/gentle-gong.mp3' } )
             if agent is not None:
-                self.push( agent )
-                # Associate the agent with the user for routing
-                if hasattr( agent, 'id_hash' ):
+                # Session 108: Generate compound hash AND associate BEFORE push to prevent race condition
+                # The consumer thread may grab the job immediately after push(), so user mapping must exist first
+                if hasattr( agent, 'id_hash' ) and user_id:
+                    agent.id_hash = self.user_job_tracker.generate_user_scoped_hash( agent.id_hash, user_id )
                     self.user_job_tracker.associate_job_with_user( agent.id_hash, user_id )
-                    print( f"[TODO-QUEUE] Associated agent {agent.id_hash} with user {user_id}" )
+                self.push( agent )
             
             # TTS Migration (Session 98): Use notification service instead of emit_speech_callback
             self._notify( msg, job=agent )
@@ -738,51 +743,58 @@ class TodoFifoQueue( FifoQueue ):
             if len( lines_of_code ) > 0:
                 print()
                 
-    def _queue_best_snapshot( self, best_snapshot: SolutionSnapshot, best_score: float=100.0, user_id: str = None ) -> str:
+    def _queue_best_snapshot( self, best_snapshot: SolutionSnapshot, best_score: float, user_id: str, user_email: str ) -> str:
         """
         Queue the best matching snapshot for execution.
-        
+
         Requires:
             - best_snapshot is a valid SolutionSnapshot
             - best_score is between 0 and 100
+            - user_id is a valid system ID
+            - user_email is a valid email address for TTS routing
             - Queue is initialized
-            
+
         Ensures:
-            - Creates a copy of the snapshot
+            - Creates a copy of the snapshot with user_email for TTS routing
             - Configures job with current settings
             - Pushes job to queue
             - Emits socket updates
             - Returns status message
-            
+
         Raises:
             - None
         """
-        job = best_snapshot.get_copy()
+        job = best_snapshot.get_copy( user_email=user_email )
         print( "Python object ID for copied job: " + str( id( job ) ) )
         job.debug   = self.debug
         job.verbose = self.verbose
         job.add_synonymous_question( best_snapshot.last_question_asked, score=best_score )
-        
+
         job.run_date     = du.get_current_datetime()
         job.push_counter = self.push_counter + 1
-        job.id_hash      = SolutionSnapshot.generate_id_hash( job.push_counter, job.run_date )
-        
+
+        # Session 108: Use compound hash (base_hash + user_id) for user-scoped job identification
+        # This ensures: 1) Same user, same question = same hash (idempotent)
+        #               2) Different users = different hashes (no collision)
+        #               3) Database can extract base hash for persistence
+        job.id_hash = self.user_job_tracker.generate_user_scoped_hash( best_snapshot.id_hash, user_id )
+
         print()
-        
+
         if self.size() != 0:
             suffix = "s" if self.size() > 1 else ""
             # TTS Migration (Session 98): Use notification service instead of emit_speech_callback
             self._notify( f"{self.size()} job{suffix} ahead of this one", job=job )
         else:
             print( "No jobs ahead of this one in the todo Q" )
-        
-        self.push( job )  # Auto-emits 'todo_update' via parent class
-        
-        # Associate the snapshot job with the user for routing
+
+        # Session 108: Associate BEFORE push to prevent race condition
+        # The consumer thread may grab the job immediately after push(), so user mapping must exist first
         if user_id and hasattr( job, 'id_hash' ):
             self.user_job_tracker.associate_job_with_user( job.id_hash, user_id )
-            print( f"[TODO-QUEUE] Associated snapshot job {job.id_hash} with user {user_id}" )
-        
+
+        self.push( job )  # Auto-emits 'todo_update' via parent class
+
         return f'Job added to queue. Queue size [{self.size()}]'
     
     def _get_routing_command( self, question: str ) -> tuple[str, str]:
@@ -812,10 +824,20 @@ class TodoFifoQueue( FifoQueue ):
         llm_client = self.llm_factory.get_client( llm_spec_key, debug=self.debug, verbose=self.verbose )
         response = llm_client.run( prompt )
         if self.debug: print( f"LLM response: [{response}]" )
-        # Parse results
-        command = dux.get_value_by_xml_tag_name( response, "command" )
-        args    = dux.get_value_by_xml_tag_name( response, "args" )
-        
+
+        # Parse results using Pydantic CommandResponse model
+        try:
+            parsed = CommandResponse.from_xml( response )
+            command = parsed.command
+            args    = parsed.args or ""
+            if self.debug: print( f"Pydantic parsing extracted: command='{command}', args='{args}'" )
+        except XMLParsingError as e:
+            if self.debug: print( f"XML parsing failed: {e}" )
+            command, args = "unknown", ""
+        except Exception as e:
+            if self.debug: print( f"Unexpected error during XML parsing: {e}" )
+            command, args = "unknown", ""
+
         return command, args
     
     def push( self, item: Any ) -> None:
@@ -823,7 +845,7 @@ class TodoFifoQueue( FifoQueue ):
         Override parent's push to add producer-consumer coordination and emit pending→todo transition.
 
         Requires:
-            - item must have an 'id_hash' attribute
+            - item must implement QueueableJob protocol
 
         Ensures:
             - Item is added to queue via parent method
@@ -831,24 +853,23 @@ class TodoFifoQueue( FifoQueue ):
             - Consumer thread is notified of new work
 
         Raises:
-            - AttributeError if item doesn't have id_hash
+            - TypeError if item doesn't implement QueueableJob protocol (via parent)
         """
         # Use condition variable for producer-consumer coordination
         with self.condition:
-            # Call parent's push method
+            # Call parent's push method (includes Protocol validation)
             super().push( item )
             # Notify consumer thread that work is available
             self.condition.notify()
 
         # Emit pending → todo state transition for UI rendering
-        user_id = getattr( item, 'user_id', None )
-        if user_id is None:
-            user_id = self.user_job_tracker.get_user_for_job( item.id_hash )
+        # Phase 2: Direct attribute access - Protocol guarantees these exist
+        user_id = item.user_id or self.user_job_tracker.get_user_for_job( item.id_hash )
 
         metadata = {
-            'question_text' : getattr( item, 'last_question_asked', getattr( item, 'question', str( item ) ) ),
-            'agent_type'    : getattr( item, 'agent_class_name', getattr( item, 'JOB_TYPE', 'Unknown' ) ),
-            'timestamp'     : getattr( item, 'created_date', datetime.now().isoformat() )
+            'question_text' : item.last_question_asked,
+            'agent_type'    : item.job_type,
+            'timestamp'     : item.created_date
         }
         emit_job_state_transition( self.websocket_mgr, item.id_hash, 'pending', 'todo', user_id, metadata )
 

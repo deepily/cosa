@@ -139,6 +139,42 @@ class UserJobTracker:
         with self._lock:
             return self.user_jobs.get( user_id, [] ).copy()
 
+    def generate_user_scoped_hash( self, base_hash: str, user_id: str ) -> str:
+        """
+        Generate a compound hash unique to question + user.
+
+        Single source of truth for user-scoped job identification.
+
+        Requires:
+            - base_hash is the original question/snapshot hash
+            - user_id is the authenticated user's ID
+
+        Ensures:
+            - Returns compound hash in format "{base_hash}::{user_id}"
+            - Same inputs always produce same output (idempotent)
+            - Different users get different hashes (no collision)
+
+        Raises:
+            - None
+        """
+        return f"{base_hash}::{user_id}"
+
+    def extract_base_hash( self, compound_hash: str ) -> str:
+        """
+        Extract the base question hash from a compound hash.
+
+        Requires:
+            - compound_hash may be compound or simple format
+
+        Ensures:
+            - Returns base hash (before :: separator)
+            - Returns unchanged if no separator found
+
+        Raises:
+            - None
+        """
+        return compound_hash.split( '::' )[0] if '::' in compound_hash else compound_hash
+
     def remove_job( self, job_id: str ) -> None:
         """
         Remove a job from tracking.

@@ -1,5 +1,4 @@
 from cosa.utils import util     as du
-from cosa.utils import util_xml as dux
 
 from cosa.config.configuration_manager   import ConfigurationManager
 from cosa.agents.llm_client_factory import LlmClientFactory
@@ -95,25 +94,18 @@ class RawOutputFormatter:
             print( response )
             print()
 
-        # Use factory-based XML parsing with fallback to baseline
-        try:
-            parsed_response = self.xml_parser_factory.parse_agent_response(
-                response,
-                self.formatter_routing_command,  # Use formatter routing, not agent routing
-                [ "rephrased-answer" ],
-                debug=self.debug,
-                verbose=self.verbose
-            )
-            output = parsed_response.get( "rephrased_answer", "" )  # Pydantic field name
-            
-            if self.debug and self.verbose:
-                print( f"RawOutputFormatter: parsed via factory: {output}" )
-                
-        except Exception as e:
-            if self.debug:
-                print( f"RawOutputFormatter: factory parsing failed, falling back to baseline: {e}" )
-            # Fallback to baseline parsing for compatibility
-            output = dux.get_value_by_xml_tag_name( response, "rephrased-answer" )
+        # Use factory-based XML parsing with Pydantic - no fallback
+        parsed_response = self.xml_parser_factory.parse_agent_response(
+            response,
+            self.formatter_routing_command,  # Use formatter routing, not agent routing
+            [ "rephrased-answer" ],
+            debug=self.debug,
+            verbose=self.verbose
+        )
+        output = parsed_response.get( "rephrased_answer", "" )  # Pydantic field name
+
+        if self.debug and self.verbose:
+            print( f"RawOutputFormatter: parsed via Pydantic factory: {output}" )
 
         return output
     

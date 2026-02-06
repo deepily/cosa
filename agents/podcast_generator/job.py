@@ -281,23 +281,23 @@ class PodcastGeneratorJob( AgenticJobBase ):
             print( f"[PodcastGeneratorJob] DRY RUN MODE for: {filename}" )
 
         # Breadcrumb: Starting
-        await voice_io.notify( f"🧪 Dry run: Starting podcast simulation from {filename}", priority="low" )
+        await voice_io.notify( f"🧪 Dry run: Starting podcast simulation from {filename}", priority="low", job_id=self.id_hash )
         await asyncio.sleep( 1.0 )
 
         # Breadcrumb: Content analysis
-        await voice_io.notify( "🧪 Dry run: skipping content analysis", priority="low" )
+        await voice_io.notify( "🧪 Dry run: skipping content analysis", priority="low", job_id=self.id_hash )
         await asyncio.sleep( 1.0 )
 
         # Breadcrumb: Script generation
-        await voice_io.notify( "🧪 Dry run: skipping script generation", priority="low" )
+        await voice_io.notify( "🧪 Dry run: skipping script generation", priority="low", job_id=self.id_hash )
         await asyncio.sleep( 1.0 )
 
         # Breadcrumb: TTS generation
-        await voice_io.notify( "🧪 Dry run: skipping TTS generation (10 segments)", priority="low" )
+        await voice_io.notify( "🧪 Dry run: skipping TTS generation (10 segments)", priority="low", job_id=self.id_hash )
         await asyncio.sleep( 1.0 )
 
         # Breadcrumb: Audio stitching
-        await voice_io.notify( "🧪 Dry run: skipping audio stitching", priority="low" )
+        await voice_io.notify( "🧪 Dry run: skipping audio stitching", priority="low", job_id=self.id_hash )
         await asyncio.sleep( 1.0 )
 
         # Set mock results
@@ -329,10 +329,11 @@ class PodcastGeneratorJob( AgenticJobBase ):
         await voice_io.notify(
             "🧪 Dry run complete! Podcast simulation finished.",
             priority="medium",
-            abstract=completion_abstract
+            abstract=completion_abstract,
+            job_id=self.id_hash
         )
 
-        return f"Dry run complete. Simulated 10 segments podcast. Audio: {self.audio_path}"
+        return "Dry run complete. Podcast simulation finished."
 
 
 def quick_smoke_test():

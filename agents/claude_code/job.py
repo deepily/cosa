@@ -59,6 +59,7 @@ class ClaudeCodeJob( AgenticJobBase ):
         task_type: str = "BOUNDED",
         max_turns: int = 50,
         timeout_seconds: int = 3600,
+        dry_run: bool = False,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -86,6 +87,7 @@ class ClaudeCodeJob( AgenticJobBase ):
             task_type: "BOUNDED" (default) or "INTERACTIVE"
             max_turns: Maximum agentic turns (default 50)
             timeout_seconds: Task timeout (default 3600)
+            dry_run: If True, simulate execution without running Claude Code
             debug: Enable debug output
             verbose: Enable verbose output
         """
@@ -103,11 +105,13 @@ class ClaudeCodeJob( AgenticJobBase ):
         self.task_type       = task_type.upper()
         self.max_turns       = max_turns
         self.timeout_seconds = timeout_seconds
+        self.dry_run         = dry_run
 
         # Results (populated after execution)
-        self.task_result = None
-        self.cost_usd    = None
-        self.output_text = None
+        self.task_result  = None
+        self.cost_usd     = None
+        self.output_text  = None
+        self.cost_summary = None  # Required by queues.py for unified job interface
 
     @property
     def last_question_asked( self ) -> str:
@@ -178,21 +182,21 @@ class ClaudeCodeJob( AgenticJobBase ):
         Returns:
             str: Conversational summary of task results
         """
+        # Check for dry-run mode first
+        if self.dry_run:
+            return await self._execute_dry_run()
+
         from cosa.orchestration.claude_code import ClaudeCodeDispatcher, Task, TaskType
 
-        # Import voice_io for notifications
-        try:
-            from cosa.agents.deep_research import voice_io
-        except ImportError:
-            voice_io = None
+        # Import cosa_interface for notifications (uses notification API directly)
+        from cosa.agents.claude_code import cosa_interface
 
         # Notify start
-        if voice_io:
-            await voice_io.notify(
-                f"Starting Claude Code task: {self.prompt[ :60 ]}...",
-                priority="low",
-                job_id=self.id_hash
-            )
+        await cosa_interface.notify_progress(
+            f"Starting Claude Code task: {self.prompt[ :60 ]}...",
+            priority="low",
+            job_id=self.id_hash
+        )
 
         if self.debug:
             print( f"[ClaudeCodeJob] Dispatching {self.task_type} task" )
@@ -224,8 +228,11 @@ class ClaudeCodeJob( AgenticJobBase ):
 
         if result.success:
             # Store artifacts
-            self.cost_usd    = result.cost_usd or 0.0
-            self.output_text = result.result or ""
+            self.cost_usd     = result.cost_usd or 0.0
+            self.output_text  = result.result or ""
+            self.cost_summary = {
+                "total_cost_usd" : self.cost_usd
+            }
 
             self.artifacts = {
                 "cost_usd"    : self.cost_usd,
@@ -249,13 +256,12 @@ class ClaudeCodeJob( AgenticJobBase ):
 **Output**: {self.output_text[ :200 ] if self.output_text else "No output"}..."""
 
             # Notify completion
-            if voice_io:
-                await voice_io.notify(
-                    f"Claude Code task complete. Cost: {cost_str}",
-                    priority="medium",
-                    abstract=completion_abstract,
-                    job_id=self.id_hash
-                )
+            await cosa_interface.notify_progress(
+                f"Claude Code task complete. Cost: {cost_str}",
+                priority="medium",
+                abstract=completion_abstract,
+                job_id=self.id_hash
+            )
 
             return f"Claude Code task completed. Cost: {cost_str}. {self.output_text[ :200 ] if self.output_text else ''}"
 
@@ -269,14 +275,108 @@ class ClaudeCodeJob( AgenticJobBase ):
                 "exit_code" : result.exit_code
             }
 
-            if voice_io:
-                await voice_io.notify(
-                    f"Claude Code task failed: {error_msg[ :80 ]}",
-                    priority="urgent",
-                    job_id=self.id_hash
-                )
+            await cosa_interface.notify_progress(
+                f"Claude Code task failed: {error_msg[ :80 ]}",
+                priority="urgent",
+                job_id=self.id_hash
+            )
 
             raise RuntimeError( f"Claude Code task failed: {error_msg}" )
+
+    async def _execute_dry_run( self ) -> str:
+        """
+        Simulate ClaudeCodeJob execution for testing queue flow.
+
+        Sends breadcrumb notifications and returns mock results.
+        Does NOT invoke actual Claude Code execution.
+
+        Ensures:
+            - Sends 5 breadcrumb notifications
+            - Sets mock results with $0.00 cost
+            - Returns mock completion message
+
+        Returns:
+            str: Mock completion message
+        """
+        from cosa.agents.claude_code import cosa_interface
+        import asyncio
+
+        task_type_display = "Bounded" if self.task_type == "BOUNDED" else "Interactive"
+
+        # Breadcrumb 1: Initialization
+        await cosa_interface.notify_progress(
+            f"Dry run: Initializing Claude Code ({task_type_display})",
+            priority="low",
+            job_id=self.id_hash
+        )
+        await asyncio.sleep( 1.0 )
+
+        # Breadcrumb 2: Task parsing
+        await cosa_interface.notify_progress(
+            f"Dry run: Parsing task prompt ({len( self.prompt )} chars)",
+            priority="low",
+            job_id=self.id_hash
+        )
+        await asyncio.sleep( 1.0 )
+
+        # Breadcrumb 3: Project setup
+        await cosa_interface.notify_progress(
+            f"Dry run: Preparing project '{self.project}'",
+            priority="low",
+            job_id=self.id_hash
+        )
+        await asyncio.sleep( 1.0 )
+
+        # Breadcrumb 4: Simulated execution
+        await cosa_interface.notify_progress(
+            f"Dry run: Simulating {task_type_display.lower()} execution",
+            priority="low",
+            job_id=self.id_hash
+        )
+        await asyncio.sleep( 1.0 )
+
+        # Breadcrumb 5: Completion
+        await cosa_interface.notify_progress(
+            f"Dry run: Generating completion report",
+            priority="low",
+            job_id=self.id_hash
+        )
+        await asyncio.sleep( 1.0 )
+
+        # Set mock results
+        self.output_text  = f"Mock {task_type_display} execution completed for: {self.prompt[ :100 ]}..."
+        self.cost_usd     = 0.0
+        self.cost_summary = {
+            "total_cost_usd" : 0.0
+        }
+        self.artifacts    = {
+            "cost_usd"   : 0.0,
+            "output_text": self.output_text,
+            "task_type"  : self.task_type,
+            "project"    : self.project,
+            "dry_run"    : True
+        }
+        self.status = "completed"
+
+        # Completion notification with abstract
+        completion_abstract = f"""**Mock Claude Code Job Complete**
+
+- **Job ID**: {self.id_hash}
+- **Type**: {task_type_display}
+- **Project**: {self.project}
+- **Cost**: $0.00 (dry-run)
+- **Duration**: ~5s (simulated)
+
+This was a dry-run simulation. No actual Claude Code execution occurred."""
+
+        await cosa_interface.notify_progress(
+            f"Dry run complete: {self.id_hash}",
+            priority="medium",
+            abstract=completion_abstract,
+            job_id=self.id_hash
+        )
+
+        return self.output_text
 
     def _on_message_callback( self, task_id: str, message ) -> None:
         """
@@ -377,6 +477,26 @@ def quick_smoke_test():
         assert job.job_type == "claude_code", "job_type should equal JOB_TYPE"
         assert job.created_date == job.run_date, "created_date should equal run_date"
         print( "✓ Unified interface properties work correctly" )
+
+        # Test 10: Test dry_run flag
+        print( "Testing dry_run flag..." )
+        assert job.dry_run == False, "Default dry_run should be False"
+        job_dry = ClaudeCodeJob(
+            prompt     = "Test dry run",
+            project    = "lupin",
+            user_id    = "user789",
+            user_email = "dry@test.com",
+            session_id = "session_dry",
+            dry_run    = True
+        )
+        assert job_dry.dry_run == True, "dry_run should be True when set"
+        print( "✓ dry_run flag works correctly" )
+
+        # Test 11: Test cost_summary attribute
+        print( "Testing cost_summary attribute..." )
+        assert hasattr( job, 'cost_summary' ), "Job should have cost_summary attribute"
+        assert job.cost_summary is None, "cost_summary should be None initially"
+        print( "✓ cost_summary attribute exists and is None by default" )
 
         # Note: We don't test do_all() here as it requires Claude Code CLI
         print( "\n* Note: do_all() not tested (requires Claude Code CLI)" )

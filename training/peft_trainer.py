@@ -956,68 +956,61 @@ class PeftTrainer:
     def _get_test_train_data( self, sample_size: float=1.0 ) -> dict[str, Dataset]:
         """
         Load and prepare training and testing datasets.
-        
+
         Requires:
             - self.model_name is supported
             - Dataset files exist in test_train_dir
             - Files are in JSONL format
-            
+
         Ensures:
             - Loads train and test datasets
             - Samples data if requested
             - Formats according to model needs
             - Returns dict with 'train' and 'test' keys
-            
+
         Raises:
             - ValueError if model not supported
             - FileNotFoundError if datasets missing
         """
-        if self.model_name in [ "Mistral-7B-Instruct-v0.2", "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct",
+        # Validate model name for supported models
+        if self.model_name not in [ "Mistral-7B-Instruct-v0.2", "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct",
             "Phi-4-mini-instruct" ]:
-            extract_gpt_message = False
-        else:
             self._validate_model_name()
-        
+
         path = f"/{self.test_train_dir}/voice-commands-xml-train.jsonl"
-        train_dataset = self._get_dataset( path, sample_size=sample_size, extract_gpt_message=extract_gpt_message )
-        
+        train_dataset = self._get_dataset( path, sample_size=sample_size )
+
         path = f"/{self.test_train_dir}/voice-commands-xml-test.jsonl"
-        test_dataset = self._get_dataset( path, sample_size=sample_size, extract_gpt_message=extract_gpt_message )
-        
+        test_dataset = self._get_dataset( path, sample_size=sample_size )
+
         return { 'train': train_dataset, 'test': test_dataset }
-    
-    def _get_dataset( self, path: str, sample_size: float=1.0, extract_gpt_message: bool=False ) -> Dataset:
+
+    def _get_dataset( self, path: str, sample_size: float=1.0 ) -> Dataset:
         """
         Load and process dataset from JSONL file.
-        
+
         Requires:
             - path is valid JSONL file
             - sample_size between 0.0 and 1.0
-            - If extract_gpt_message, entries have "gpt_message"
-            
+
         Ensures:
             - Loads and parses JSON data
             - Samples if sample_size < 1.0
-            - Extracts gpt_message if requested
             - Returns Dataset object
-            
+
         Raises:
             - FileNotFoundError if file missing
             - JSONDecodeError if invalid JSON
-            - KeyError if gpt_message missing
         """
         rows = du.get_file_as_list( path )
         # retain a sample of the data set expressed as a percentage
         row_count = len( rows )
         if sample_size < 1.0:
             rows = rows[ : int( row_count * sample_size ) ]
-        if extract_gpt_message:
-            rows = [ json.loads( line )[ "gpt_message" ] for line in rows ]
-        else:
-            rows = [ json.loads( line ) for line in rows ]
-        
+        rows = [ json.loads( line ) for line in rows ]
+
         print( f"Loaded {len( rows )} of {row_count} training rows" )
-        
+
         return Dataset.from_list( rows )
     
     def _format_prompt( self, row: dict ) -> str:

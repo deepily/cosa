@@ -211,8 +211,8 @@ class NotificationRequest(BaseModel):
 
     sender_id: Optional[str] = Field(
         default=None,
-        pattern=r'^[a-z]+\.[a-z]+@[a-z]+\.deepily\.ai(#([a-f0-9]{8}|[a-z]+(-[a-z]+)*|[a-z]+-[a-f0-9]{8}))?$',
-        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, deep.research@lupin.deepily.ai#dr-a0ebba60). Supports hex suffix, hyphenated topic, or job ID (prefix-hex)."
+        pattern=r'^[a-z]+(\.[a-z]+)+@[a-z]+\.deepily\.ai(#([a-f0-9]{8}|[a-z]+(-[a-z]+)*|[a-z]+-[a-f0-9]{8}))?$',
+        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, claude.code.job@lupin.deepily.ai#cc-a0ebba60). Supports 2+ word agent names, hex suffix, hyphenated topic, or job ID (prefix-hex)."
     )
 
     response_options: Optional[dict] = Field(
@@ -234,8 +234,8 @@ class NotificationRequest(BaseModel):
 
     job_id: Optional[str] = Field(
         default=None,
-        pattern=r'^([a-z]+-[a-f0-9]{8}|[a-f0-9]{64})$',
-        description="Agentic job ID for routing notifications to job cards. Accepts short format (e.g., 'dr-a1b2c3d4') or SHA256 hash (64 hex chars)."
+        pattern=r'^([a-z]+-[a-f0-9]{8}|[a-f0-9]{64}(::[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})?)$',
+        description="Agentic job ID for routing notifications to job cards. Accepts short format (e.g., 'dr-a1b2c3d4'), SHA256 hash (64 hex chars), or compound hash (64 hex chars::UUID)."
     )
 
     suppress_ding: bool = Field(
@@ -601,8 +601,8 @@ class AsyncNotificationRequest(BaseModel):
 
     sender_id: Optional[str] = Field(
         default=None,
-        pattern=r'^[a-z]+\.[a-z]+@[a-z]+\.deepily\.ai(#([a-f0-9]{8}|[a-z]+(-[a-z]+)*|[a-z]+-[a-f0-9]{8}))?$',
-        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, deep.research@lupin.deepily.ai#dr-a0ebba60). Supports hex suffix, hyphenated topic, or job ID (prefix-hex)."
+        pattern=r'^[a-z]+(\.[a-z]+)+@[a-z]+\.deepily\.ai(#([a-f0-9]{8}|[a-z]+(-[a-z]+)*|[a-z]+-[a-f0-9]{8}))?$',
+        description="Sender ID (e.g., claude.code@lupin.deepily.ai#a1b2c3d4, claude.code.job@lupin.deepily.ai#cc-a0ebba60). Supports 2+ word agent names, hex suffix, hyphenated topic, or job ID (prefix-hex)."
     )
 
     abstract: Optional[str] = Field(
@@ -619,8 +619,8 @@ class AsyncNotificationRequest(BaseModel):
 
     job_id: Optional[str] = Field(
         default=None,
-        pattern=r'^([a-z]+-[a-f0-9]{8}|[a-f0-9]{64})$',
-        description="Agentic job ID for routing notifications to job cards. Accepts short format (e.g., 'dr-a1b2c3d4') or SHA256 hash (64 hex chars)."
+        pattern=r'^([a-z]+-[a-f0-9]{8}|[a-f0-9]{64}(::[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})?)$',
+        description="Agentic job ID for routing notifications to job cards. Accepts short format (e.g., 'dr-a1b2c3d4'), SHA256 hash (64 hex chars), or compound hash (64 hex chars::UUID)."
     )
 
     suppress_ding: bool = Field(
@@ -863,6 +863,10 @@ def quick_smoke_test():
         "61d021320bed364e82d50af9128ddf8e1a63d8680d76ec06b1b03e27d8dee435",  # SHA256 hash (queue job format)
         "0" * 64,           # All zeros SHA256 (edge case)
         "f" * 64,           # All f's SHA256 (edge case)
+        # Compound hash format (SHA256::UUID) - Session 108 user-scoped job IDs
+        "2cd3847c0e234a8077b7ed28f9a5c3e1b4d6a7890abcdef0123456789ab4b7c4::0cf47e2d-d5a1-4cd4-addf-79810fd32b15",
+        "61d021320bed364e82d50af9128ddf8e1a63d8680d76ec06b1b03e27d8dee435::a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
+        "0" * 64 + "::00000000-0000-0000-0000-000000000000",  # Edge case: all zeros compound
     ]
     all_valid_passed = True
     for job_id in valid_job_ids:
@@ -900,6 +904,11 @@ def quick_smoke_test():
         "a" * 65,           # SHA256 too long (65 chars)
         "A" * 64,           # SHA256 uppercase (invalid)
         "g" * 64,           # SHA256 non-hex characters
+        # Invalid compound hash formats
+        "a" * 64 + ":a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",   # Single colon (should be ::)
+        "a" * 64 + "::a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",      # UUID without hyphens
+        "a" * 64 + "::a1b2c3d4-e5f6-a7b8-c9d0",                # Truncated UUID
+        "a" * 63 + "::a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",  # SHA256 one char short in compound
     ]
     all_invalid_rejected = True
     for job_id in invalid_job_ids:
@@ -970,6 +979,8 @@ def quick_smoke_test():
         "podcast.gen@cosa.deepily.ai#cats-vs-dogs",
         "deep.research@lupin.deepily.ai#dr-a0ebba60",  # Job ID format (prefix-hex)
         "podcast.gen@lupin.deepily.ai#pod-12345678",   # Another job ID format
+        "claude.code.job@lupin.deepily.ai",            # 3-word agent name (no session)
+        "claude.code.job@lupin.deepily.ai#cc-a1b2c3d4",  # 3-word agent name with job ID
     ]
     all_sender_valid = True
     for sender_id in valid_sender_ids:

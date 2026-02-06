@@ -7,9 +7,10 @@ import openai
 
 import cosa.utils.util_stopwatch as sw
 import cosa.utils.util as du
-import cosa.utils.util_xml as du_xml
 
 from cosa.agents.llm_client_factory import LlmClientFactory
+from cosa.agents.io_models.xml_models import CommandResponse
+from cosa.agents.io_models.utils.util_xml_pydantic import XMLParsingError
 
 from cosa.config.configuration_manager import ConfigurationManager
 
@@ -1183,10 +1184,22 @@ class MultiModalMunger:
         response = llm.run( prompt )
         
         if self.debug: print( f"LLM response: [{response}]" )
-        # Parse results
-        command_dict[ "command" ] =   du_xml.get_value_by_xml_tag_name( response, "command" )
-        command_dict[ "args"    ] = [ du_xml.get_value_by_xml_tag_name( response, "args" ) ]
-        
+
+        # Parse results using Pydantic CommandResponse model
+        try:
+            parsed = CommandResponse.from_xml( response )
+            command_dict[ "command" ] = parsed.command
+            command_dict[ "args"    ] = [ parsed.args or "" ]
+            if self.debug: print( f"Pydantic parsing extracted: command='{parsed.command}', args='{parsed.args}'" )
+        except XMLParsingError as e:
+            if self.debug: print( f"XML parsing failed: {e}" )
+            command_dict[ "command" ] = "unknown"
+            command_dict[ "args"    ] = [ "" ]
+        except Exception as e:
+            if self.debug: print( f"Unexpected error during XML parsing: {e}" )
+            command_dict[ "command" ] = "unknown"
+            command_dict[ "args"    ] = [ "" ]
+
         return command_dict
     
     def extract_args( self, raw_text: str, model: str="NO_MODEL_SPECIFIED" ) -> list[str]:

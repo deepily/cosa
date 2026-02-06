@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from cosa.rest.auth import get_current_user
+from cosa.rest.queue_extensions import user_job_tracker
 from cosa.agents.deep_research_to_podcast.job import DeepResearchToPodcastJob
 import cosa.utils.util as cu
 
@@ -145,16 +146,21 @@ async def submit_research_to_podcast(
         debug            = debug
     )
 
-    # Add to queue
-    todo_queue.push_job( job, user_id, session_id )
+    # Associate BEFORE push to prevent race condition
+    # The consumer thread may grab the job immediately after push(), so user mapping must exist first
+    user_job_tracker.associate_job_with_user( job.id_hash, user_id )
+    user_job_tracker.associate_job_with_session( job.id_hash, session_id )
 
-    # Get queue position
-    position = todo_queue.get_position( job.id_hash )
+    # Push to todo queue
+    todo_queue.push( job )
+
+    # Get queue position (approximate - queue length after push)
+    queue_position = todo_queue.size()
 
     return ResearchToPodcastSubmitResponse(
         job_id         = job.id_hash,
-        queue_position = position,
-        message        = f"Research→Podcast job '{query[ :40 ]}...' added to queue at position {position}"
+        queue_position = queue_position,
+        message        = f"Research→Podcast job '{query[ :40 ]}...' added to queue at position {queue_position}"
     )
 
 

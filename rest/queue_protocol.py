@@ -60,6 +60,13 @@ class QueueableJob( Protocol ):
     """Command used to route this job to the appropriate handler."""
 
     # =========================================================================
+    # User Context (Session 110+)
+    # =========================================================================
+
+    user_email: str
+    """User email address for TTS notification routing."""
+
+    # =========================================================================
     # Timestamps
     # =========================================================================
 
@@ -68,6 +75,12 @@ class QueueableJob( Protocol ):
 
     created_date: str
     """When the job was created (unified - may equal run_date)."""
+
+    started_at: str
+    """When the job started running (ISO format timestamp, may be None)."""
+
+    completed_at: str
+    """When the job completed (ISO format timestamp, may be None)."""
 
     # =========================================================================
     # Question/Answer (Unified Names)
@@ -100,17 +113,21 @@ class QueueableJob( Protocol ):
     """
 
     # =========================================================================
-    # Required Methods
+    # Status Tracking (Session 111)
     # =========================================================================
 
-    def get_html( self ) -> str:
-        """
-        Generate HTML representation for queue visualization.
+    is_cache_hit: bool
+    """Whether this job was served from cache (for Time Saved Dashboard)."""
 
-        Returns:
-            str: HTML string (typically an <li> element)
-        """
-        ...
+    status: str
+    """Current job status: 'pending', 'running', 'completed', or 'failed'."""
+
+    error: str
+    """Error message if job failed (None if successful)."""
+
+    # =========================================================================
+    # Required Methods
+    # =========================================================================
 
     def do_all( self ) -> str:
         """
@@ -179,21 +196,24 @@ def quick_smoke_test():
         print( "Testing protocol implementation check..." )
 
         class MockJob:
-            id_hash              = "test-123"
-            push_counter         = 0
-            user_id              = "user123"
-            session_id           = "session456"
-            routing_command      = "test"
-            run_date             = "2025-01-22"
-            created_date         = "2025-01-22"
-            question             = "test question"
-            last_question_asked  = "test question"
-            answer               = "test answer"
+            id_hash               = "test-123"
+            push_counter          = 0
+            user_id               = "user123"
+            user_email            = "test@test.com"
+            session_id            = "session456"
+            routing_command       = "test"
+            run_date              = "2025-01-22"
+            created_date          = "2025-01-22"
+            started_at            = None
+            completed_at          = None
+            question              = "test question"
+            last_question_asked   = "test question"
+            answer                = "test answer"
             answer_conversational = "Test answer"
-            job_type             = "MockJob"
-
-            def get_html( self ):
-                return "<li>test</li>"
+            job_type              = "MockJob"
+            is_cache_hit          = False
+            status                = "pending"
+            error                 = None
 
             def do_all( self ):
                 return "done"

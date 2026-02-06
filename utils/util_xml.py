@@ -1,25 +1,72 @@
+"""
+DEPRECATED: util_xml.py - Legacy XML parsing utilities
+
+⚠️  WARNING: This module is DEPRECATED as of Session 116 (2026-02-02).
+
+All XML parsing should use Pydantic models from:
+    cosa.agents.io_models.xml_models
+
+Migration path:
+    OLD: dux.get_value_by_xml_tag_name( response, "gist" )
+    NEW: SimpleResponse.from_xml( response ).get_content()
+
+    OLD: dux.get_value_by_xml_tag_name( response, "command" )
+    NEW: CommandResponse.from_xml( response ).command
+
+Available Pydantic models:
+    - SimpleResponse: For <gist>, <summary>, <answer> tags
+    - CommandResponse: For <command>, <args> tags
+    - YesNoResponse: For yes/no confirmation responses
+    - CodeResponse: For code generation responses
+    - And many more in xml_models.py
+
+This module will be REMOVED in a future release.
+"""
+
 import re
+import warnings
 from typing import Optional, Union
 
 import cosa.utils.util as du
 
+# Emit deprecation warning when this module is imported
+warnings.warn(
+    "⚠️  util_xml.py is DEPRECATED! Use cosa.agents.io_models.xml_models instead. "
+    "This module will be removed in a future version.",
+    DeprecationWarning,
+    stacklevel=2
+)
+
 def get_value_by_xml_tag_name( xml_string: str, name: str, default_value: Optional[str]=None ) -> Union[str, None]:
     """
+    DEPRECATED: Use Pydantic XML models instead.
+
     Extract the value enclosed by XML tag open/close brackets.
-    
+
+    Migration:
+        from cosa.agents.io_models.xml_models import SimpleResponse
+        response = SimpleResponse.from_xml( xml_string )
+        value = response.get_content()
+
     Requires:
         - xml_string is a string containing XML content
         - name is the tag name to search for
         - default_value is None or a string to return if tag not found
-        
+
     Ensures:
         - Returns the value between <name> and </name> tags
         - Returns default_value if tag is not found
         - Returns error message if tag not found and default_value is None
-        
+
     Example:
         get_value_by_xml_tag_name('<foo>bar</foo>', 'foo') returns 'bar'
     """
+    warnings.warn(
+        f"get_value_by_xml_tag_name() is deprecated. Use Pydantic XML models from "
+        f"cosa.agents.io_models.xml_models instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     if f"<{name}>" not in xml_string or f"</{name}>" not in xml_string:
         if default_value is None:
             return f"Error: `{name}` not found in xml_string"
@@ -31,21 +78,28 @@ def get_value_by_xml_tag_name( xml_string: str, name: str, default_value: Option
     
 def get_xml_tag_and_value_by_name( xml_string: str, name: str, default_value: Optional[str]=None ) -> str:
     """
+    DEPRECATED: Use Pydantic XML models instead.
+
     Extract and return the full XML tag with its value.
-    
+
     Requires:
         - xml_string is a string containing XML content
         - name is the tag name to search for
         - default_value is None or a string to use if tag not found
-        
+
     Ensures:
         - Returns the complete tag with value: <name>value</name>
         - Uses get_value_by_xml_tag_name to extract the value
         - Wraps the value in proper XML tags
-        
+
     Example:
         get_xml_tag_and_value_by_name('<foo>bar</foo>', 'foo') returns '<foo>bar</foo>'
     """
+    warnings.warn(
+        f"get_xml_tag_and_value_by_name() is deprecated. Use Pydantic XML models.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     
     value = get_value_by_xml_tag_name( xml_string, name, default_value=default_value )
     name_and_value = f"<{name}>{value}</{name}>"
@@ -54,19 +108,26 @@ def get_xml_tag_and_value_by_name( xml_string: str, name: str, default_value: Op
 
 def get_nested_list( xml_string: str, tag_name: str="code", debug: bool=False, verbose: bool=False ) -> list[str]:
     """
+    DEPRECATED: Use Pydantic XML models with list fields instead.
+
     Extract a list of values from nested line tags within a parent tag.
-    
+
     Requires:
         - xml_string is a string containing XML with nested <line> tags
         - tag_name is the parent tag name (default: "code")
         - debug and verbose are boolean flags for output control
-        
+
     Ensures:
         - Returns list of strings extracted from <line> tags
         - Removes XML escapes from extracted content
         - Handles multiline content within the parent tag
         - Returns empty list if no matching tags found
     """
+    warnings.warn(
+        f"get_nested_list() is deprecated. Use Pydantic XML models with list fields.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     # Matches all text between the opening and closing line tags, including the white space after the opening line tag
     pattern = re.compile( r"<line>(.*?)</line>" )
     lines = get_value_by_xml_tag_name( xml_string, tag_name )

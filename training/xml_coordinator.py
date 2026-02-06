@@ -6,7 +6,7 @@ from typing import Optional, Any
 
 import cosa.utils.util as du
 import cosa.utils.util_xml as dux
-from cosa.agents import LlmClientFactory
+from cosa.agents.llm_client_factory import LlmClientFactory
 from cosa.training.xml_prompt_generator import XmlPromptGenerator
 from cosa.training.xml_response_validator import XmlResponseValidator
 
@@ -229,27 +229,25 @@ class XmlCoordinator:
     def build_compound_vox_cmd_training_prompts( self, sample_size_per_command: int=2000 ) -> pd.DataFrame:
         """
         Builds training prompts for compound voice commands.
-        
+
         Requires:
             - sample_size_per_command is positive integer
-            
+
         Ensures:
             - Generates prompts for all compound commands
             - Returns DataFrame with prompts
             - DataFrame contains expected columns
         """
-        instructions, inputs, outputs, prompts, gpt_messages, commands = self._get_6_empty_lists()
-        
-        gpt_instruction = self.prompt_generator.vox_cmd_instruction_template_gpt.format( command_choices=self.prompt_generator.vox_cmd_commands )
-        
+        instructions, inputs, outputs, prompts, commands = self._get_5_empty_lists()
+
         # For each browser command, load the corresponding file and generate prompts
         for compound_command in self.prompt_generator.vox_cmd_compound_commands.keys():
-            
+
             du.print_banner( f"Building prompts for compound VOX command [{compound_command}]", prepend_nl=True, end="\n" )
             counter = 1
             # The first 100 lines are properly spelled
             raw_lines = du.get_file_as_list( self.path_prefix + self.prompt_generator.vox_cmd_compound_commands[ compound_command ], clean=True )[ 0:100 ]
-            
+
             # Determine which kind of compound synthetically created lines we need to build prompts for
             if compound_command.startswith( "search " ):
                 arguments   = self.prompt_generator.get_search_terms( len( raw_lines ) )
@@ -259,108 +257,100 @@ class XmlCoordinator:
                 placeholder = "DOMAIN_NAME"
             else:
                 raise Exception( f"Unknown voice command [{compound_command}]" )
-            
+
             for raw_line in raw_lines:
-                
+
                 for args in arguments:
-                    
+
                     voice_command = raw_line.replace( placeholder, args )
-                    
+
                     instruction = self.prompt_generator.vox_cmd_instruction_template.format( command_choices=self.prompt_generator.vox_cmd_commands )
                     human_says  = self.prompt_generator.common_human_says_template.format( voice_command=voice_command )
                     input_text  = self.prompt_generator.common_input_template.format( human_says=human_says, response_format=self.prompt_generator.common_response_format )
                     output      = self.prompt_generator.common_output_template.format( command=compound_command, args=args )
                     prompt      = self.prompt_generator._get_prompt_instruction_format( instruction, input_text )
-                    
+
                     instructions.append( instruction )
                     inputs.append( input_text )
                     outputs.append( output )
                     prompts.append( prompt )
                     commands.append( compound_command )
-                    
-                    gpt_messages.append( self._get_gpt_messages_dict( gpt_instruction, voice_command, compound_command, args ) )
-                    
+
                     self._do_conditional_print( counter, voice_command )
                     counter += 1
-            
+
             print()
-        
-        compound_qna_df = pd.DataFrame( {"command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts, "gpt_message": gpt_messages} )
+
+        compound_qna_df = pd.DataFrame( {"command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts} )
         compound_qna_df = self._prune_duplicates_and_sample( compound_qna_df, sample_size=( sample_size_per_command * len( self.prompt_generator.vox_cmd_compound_commands ) ), sample_size_per_command=sample_size_per_command )
-        
+
         return compound_qna_df
     
     def build_simple_vox_cmd_training_prompts( self, sample_size_per_command: int=400 ) -> pd.DataFrame:
         """
         Builds training prompts for simple voice commands.
-        
+
         Requires:
             - sample_size_per_command is positive integer
-            
+
         Ensures:
             - Generates prompts for all simple commands
             - Returns DataFrame with prompts
             - DataFrame contains expected columns
         """
-        instructions, inputs, outputs, prompts, gpt_messages, commands = self._get_6_empty_lists()
-        
-        gpt_instruction = self.prompt_generator.vox_cmd_instruction_template_gpt.format( command_choices=self.prompt_generator.vox_cmd_commands )
-        
+        instructions, inputs, outputs, prompts, commands = self._get_5_empty_lists()
+
         for simple_command in self.prompt_generator.vox_cmd_simple_commands.keys():
-            
+
             du.print_banner( f"Building prompts for simple VOX command [{simple_command}]", prepend_nl=True, end="\n" )
             counter = 1
-            
+
             raw_lines = du.get_file_as_list( self.path_prefix + self.prompt_generator.vox_cmd_simple_commands[ simple_command ], clean=True )
-            
+
             for raw_line in raw_lines:
-                
+
                 instruction = self.prompt_generator.vox_cmd_instruction_template.format( command_choices=self.prompt_generator.vox_cmd_commands )
                 human_says  = self.prompt_generator.common_human_says_template.format( voice_command=raw_line )
                 input_text  = self.prompt_generator.common_input_template.format( human_says=human_says, response_format=self.prompt_generator.common_response_format )
                 output      = self.prompt_generator.common_output_template.format( command=simple_command, args="" )
                 prompt      = self.prompt_generator._get_prompt_instruction_format( instruction, input_text )
-                
+
                 instructions.append( instruction )
                 inputs.append( input_text )
                 outputs.append( output )
                 prompts.append( prompt )
                 commands.append( simple_command )
-                
-                gpt_messages.append( self._get_gpt_messages_dict( gpt_instruction, raw_line, simple_command, "" ) )
-                
+
                 self._do_conditional_print( counter, raw_line )
                 counter += 1
-            
-        simple_command_qna_df = pd.DataFrame( {"command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts, "gpt_message": gpt_messages} )
+
+        simple_command_qna_df = pd.DataFrame( {"command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts} )
         simple_command_qna_df = self._prune_duplicates_and_sample( simple_command_qna_df, sample_size=( sample_size_per_command * len( self.prompt_generator.vox_cmd_simple_commands ) ), sample_size_per_command=sample_size_per_command )
-        
+
         return simple_command_qna_df
     
     def build_compound_agent_router_training_prompts( self, sample_size_per_command: int=2000 ) -> pd.DataFrame:
         """
         Builds training prompts for compound agent router commands.
-        
+
         Requires:
             - sample_size_per_command is positive integer
-            
+
         Ensures:
             - Generates prompts for all compound router commands
             - Returns DataFrame with prompts
             - DataFrame contains expected columns
         """
-        instructions, inputs, outputs, prompts, gpt_messages, commands = self._get_6_empty_lists()
-    
-        gpt_instruction = self.prompt_generator.agent_router_instruction_template_gpt.format( command_choices=self.prompt_generator.agent_router_commands )
-        
+        instructions, inputs, outputs, prompts, commands = self._get_5_empty_lists()
+
         # For each browser command, load the corresponding file and generate prompts
         for compound_command in self.prompt_generator.agent_router_compound_commands.keys():
-            
+
             du.print_banner( f"Building prompts for compound AGENT ROUTER command [{compound_command}]", prepend_nl=True, end="\n" )
             counter = 1
-            
+
             raw_lines = du.get_file_as_list( self.path_prefix + self.prompt_generator.agent_router_compound_commands[ compound_command ], clean=True, randomize=True )[ 0:100 ]
-            
+
             if compound_command in [ "agent router go to weather", "agent router go to date and time" ]:
                 arguments   = self.prompt_generator.get_cities_and_countries( len( raw_lines ) )
                 placeholder = "GEOGRAPHIC_LOCATION"
@@ -372,11 +362,11 @@ class XmlCoordinator:
                 placeholder = ""
             else:
                 raise Exception( f"Unknown voice command [{compound_command}]" )
-            
+
             for raw_line in raw_lines:
-                    
+
                 for args in arguments:
-                    
+
                     if compound_command == "agent router go to calendar":
                         voice_command = raw_line.replace( "PLACE", "" )
                         for key in args.keys():
@@ -385,50 +375,46 @@ class XmlCoordinator:
                         args = ""
                     else:
                         voice_command = raw_line.replace( placeholder, args )
-                        
+
                     _, voice_command = self.prompt_generator.insert_interjection( voice_command, self.prompt_generator.interjections )
                     _, voice_command = self.prompt_generator.prepend_salutation( voice_command, self.prompt_generator.salutations )
-                    
+
                     instruction   = self.prompt_generator.agent_router_instruction_template.format( command_choices=self.prompt_generator.agent_router_commands )
                     human_says    = self.prompt_generator.common_human_says_template.format( voice_command=voice_command )
                     input_text    = self.prompt_generator.common_input_template.format( human_says=human_says, response_format=self.prompt_generator.common_response_format )
                     output        = self.prompt_generator.common_output_template.format( command=compound_command, args=args )
                     prompt        = self.prompt_generator._get_prompt_instruction_format( instruction, input_text )
-                    
+
                     instructions.append( instruction )
                     inputs.append( input_text )
                     outputs.append( output )
                     prompts.append( prompt )
                     commands.append( compound_command )
-                    
-                    gpt_messages.append( self._get_gpt_messages_dict( gpt_instruction, voice_command, compound_command, args ) )
-                    
+
                     self._do_conditional_print( counter, voice_command )
                     counter += 1
-            
+
             print()
-        
-        compound_agent_router_qna_df = pd.DataFrame( {"command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts, "gpt_message": gpt_messages} )
+
+        compound_agent_router_qna_df = pd.DataFrame( {"command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts} )
         compound_agent_router_qna_df = self._prune_duplicates_and_sample( compound_agent_router_qna_df, sample_size=( sample_size_per_command * len( self.prompt_generator.vox_cmd_compound_commands ) ), sample_size_per_command=sample_size_per_command )
-        
+
         return compound_agent_router_qna_df
     
     def build_compound_function_mapping_training_prompts( self, sample_size_per_command: int=2000, analyze_bigrams: bool=False, max_questions: int=2 ) -> Optional[pd.DataFrame]:
         """
         Builds training prompts for function mapping.
-        
+
         Requires:
             - sample_size_per_command is positive integer
             - max_questions is positive integer
-            
+
         Ensures:
             - Processes function mapping commands
             - Generates QnR pairs for .txt files
             - Returns None in current implementation
         """
-        instructions, inputs, outputs, prompts, gpt_messages, commands = self._get_6_empty_lists()
-    
-        gpt_instruction = self.prompt_generator.agent_router_instruction_template_gpt.format( command_choices=self.prompt_generator.agent_router_commands )
+        instructions, inputs, outputs, prompts, commands = self._get_5_empty_lists()
         
         # For each function mapping entry, load the corresponding file and generate prompts
         for routing_key in self.prompt_generator.agent_function_mapping_compound_commands.keys():
@@ -605,61 +591,181 @@ class XmlCoordinator:
     def build_simple_agent_router_training_prompts( self, sample_size_per_command: int=400 ) -> pd.DataFrame:
         """
         Builds training prompts for simple agent router commands.
-        
+
         Requires:
             - sample_size_per_command is positive integer
-            
+
         Ensures:
             - Generates prompts for all simple router commands
             - Returns DataFrame with prompts
             - DataFrame contains expected columns
         """
-        instructions, inputs, outputs, prompts, gpt_messages, commands = self._get_6_empty_lists()
-        
-        gpt_instruction = self.prompt_generator.agent_router_instruction_template_gpt.format( command_choices=self.prompt_generator.agent_router_commands )
-        
+        instructions, inputs, outputs, prompts, commands = self._get_5_empty_lists()
+
         for simple_command in self.prompt_generator.agent_router_simple_commands.keys():
-            
+
             du.print_banner( f"Building prompts for simple AGENT ROUTER command [{simple_command}]", prepend_nl=True, end="\n" )
             counter = 1
-            
+
             raw_lines = du.get_file_as_list( self.path_prefix + self.prompt_generator.agent_router_simple_commands[ simple_command ], clean=True )
-            
+
             for raw_line in raw_lines:
-                
+
                 _, raw_line = self.prompt_generator.insert_interjection( raw_line, self.prompt_generator.interjections )
                 _, raw_line = self.prompt_generator.prepend_salutation( raw_line, self.prompt_generator.salutations )
-                
+
                 instruction = self.prompt_generator.vox_cmd_instruction_template.format( command_choices=self.prompt_generator.agent_router_commands )
                 human_says  = self.prompt_generator.common_human_says_template.format( voice_command=raw_line )
                 input_text  = self.prompt_generator.common_input_template.format( human_says=human_says, response_format=self.prompt_generator.common_response_format )
                 output      = self.prompt_generator.common_output_template.format( command=simple_command, args="" )
                 prompt      = self.prompt_generator._get_prompt_instruction_format( instruction, input_text )
-                
+
                 instructions.append( instruction )
                 inputs.append( input_text )
                 outputs.append( output )
                 prompts.append( prompt )
                 commands.append( simple_command )
-                
-                gpt_messages.append( self._get_gpt_messages_dict( gpt_instruction, raw_line, simple_command, "" ) )
-                
+
                 self._do_conditional_print( counter, raw_line )
                 counter += 1
-            
-        simple_agent_router_qna_df = pd.DataFrame( {"command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts, "gpt_message": gpt_messages} )
+
+        simple_agent_router_qna_df = pd.DataFrame( {"command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts} )
         simple_agent_router_qna_df = self._prune_duplicates_and_sample( simple_agent_router_qna_df, sample_size=( sample_size_per_command * len( self.prompt_generator.vox_cmd_simple_commands ) ), sample_size_per_command=sample_size_per_command )
-        
+
         return simple_agent_router_qna_df
-    
-    def build_all_training_prompts( self, sample_size_per_compound_command: int=2000, sample_size_per_simple_command: int=400 ) -> pd.DataFrame:
+
+    def build_agentic_job_training_prompts( self, sample_size_per_command: int=100 ) -> pd.DataFrame:
+        """
+        Builds training prompts for agentic job commands (deep research, podcast generator, research to podcast).
+
+        Requires:
+            - sample_size_per_command is positive integer
+
+        Ensures:
+            - Generates prompts for 3 agentic job commands
+            - Returns DataFrame with prompts
+            - DataFrame contains expected columns (command, instruction, input, output, prompt)
+        """
+        instructions, inputs, outputs, prompts, commands = self._get_5_empty_lists()
+
+        # Define the agentic job commands and their characteristics
+        agentic_commands = {
+            "agent router go to deep research": {
+                "template_patterns": [
+                    "do some deep research on RESEARCH_TOPIC",
+                    "please research RESEARCH_TOPIC for me",
+                    "can you do deep research on RESEARCH_TOPIC",
+                    "I need deep research about RESEARCH_TOPIC",
+                    "start a deep research investigation on RESEARCH_TOPIC",
+                    "run deep research on RESEARCH_TOPIC",
+                    "help me research RESEARCH_TOPIC in depth",
+                    "do an in-depth research study on RESEARCH_TOPIC",
+                    "investigate RESEARCH_TOPIC thoroughly",
+                    "perform deep research analysis on RESEARCH_TOPIC",
+                ],
+                "placeholders": {"RESEARCH_TOPIC": "research_topics"},
+                "args_key": "topic"
+            },
+            "agent router go to podcast generator": {
+                "template_patterns": [
+                    "create a podcast about RESEARCH_TOPIC",
+                    "generate a podcast on RESEARCH_TOPIC",
+                    "make a podcast discussing RESEARCH_TOPIC",
+                    "please create a podcast episode about RESEARCH_TOPIC",
+                    "produce a podcast covering RESEARCH_TOPIC",
+                    "I want a podcast about RESEARCH_TOPIC",
+                    "build a podcast on RESEARCH_TOPIC",
+                    "can you make a podcast about RESEARCH_TOPIC",
+                    "generate a podcast episode on RESEARCH_TOPIC",
+                    "create an audio podcast about RESEARCH_TOPIC",
+                ],
+                "placeholders": {"RESEARCH_TOPIC": "research_topics"},
+                "args_key": "topic"
+            },
+            "agent router go to research to podcast": {
+                "template_patterns": [
+                    "turn this document into a podcast",
+                    "convert the research to a podcast",
+                    "make a podcast from the deep research",
+                    "create a podcast from document at DOCUMENT_PATH",
+                    "turn DOCUMENT_PATH into a podcast",
+                    "generate a podcast from the research at DOCUMENT_PATH",
+                    "transform the research document into a podcast episode",
+                    "convert my research into audio format",
+                    "make the research results into a podcast",
+                    "create an audio version of the research",
+                ],
+                "placeholders": {"DOCUMENT_PATH": "document_paths"},
+                "args_key": "document_path"
+            }
+        }
+
+        # Use the shared agent router instruction template with ALL agent router commands
+        # This integrates agentic jobs into the unified training pipeline
+        for command_name, config in agentic_commands.items():
+
+            du.print_banner( f"Building prompts for AGENTIC JOB command [{command_name}]", prepend_nl=True, end="\n" )
+            counter = 1
+
+            # Get placeholder values based on which placeholders are used
+            placeholder_values = {}
+            for placeholder, getter_name in config[ "placeholders" ].items():
+                if getter_name == "research_topics":
+                    placeholder_values[ placeholder ] = self.prompt_generator.get_research_topics( requested_length=None )
+                elif getter_name == "document_paths":
+                    placeholder_values[ placeholder ] = self.prompt_generator.get_document_paths( requested_length=None )
+
+            # Generate prompts from templates
+            for template in config[ "template_patterns" ]:
+
+                # For each placeholder value, create a training example
+                for placeholder, values in placeholder_values.items():
+                    for value in values:
+
+                        voice_command = template.replace( placeholder, value )
+
+                        # Only populate args if placeholder was actually substituted
+                        args_key   = config.get( "args_key", "" )
+                        has_placeholder_in_template = placeholder in template
+                        args_value = f'{args_key}="{value}"' if args_key and has_placeholder_in_template else ""
+
+                        # Add natural language variation
+                        _, voice_command = self.prompt_generator.insert_interjection( voice_command, self.prompt_generator.interjections )
+                        _, voice_command = self.prompt_generator.prepend_salutation( voice_command, self.prompt_generator.salutations )
+
+                        # Use shared agent_router_instruction_template with ALL agent router commands
+                        instruction = self.prompt_generator.agent_router_instruction_template.format( command_choices=self.prompt_generator.agent_router_commands )
+                        human_says  = self.prompt_generator.common_human_says_template.format( voice_command=voice_command )
+                        input_text  = self.prompt_generator.common_input_template.format( human_says=human_says, response_format=self.prompt_generator.common_response_format )
+                        output      = self.prompt_generator.common_output_template.format( command=command_name, args=args_value )
+                        prompt      = self.prompt_generator._get_prompt_instruction_format( instruction, input_text )
+
+                        instructions.append( instruction )
+                        inputs.append( input_text )
+                        outputs.append( output )
+                        prompts.append( prompt )
+                        commands.append( command_name )
+
+                        self._do_conditional_print( counter, voice_command )
+                        counter += 1
+
+            print()
+
+        agentic_job_qna_df = pd.DataFrame( {"command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts} )
+        agentic_job_qna_df = self._prune_duplicates_and_sample( agentic_job_qna_df, sample_size=( sample_size_per_command * len( agentic_commands ) ), sample_size_per_command=sample_size_per_command )
+
+        return agentic_job_qna_df
+
+    def build_all_training_prompts( self, sample_size_per_compound_command: int=2000, sample_size_per_simple_command: int=400, sample_size_per_agentic_command: int=400, include_agentic_jobs: bool=True ) -> pd.DataFrame:
         """
         Builds all training prompts by combining all command types.
-        
+
         Requires:
             - sample_size_per_compound_command is positive integer
             - sample_size_per_simple_command is positive integer
-            
+            - sample_size_per_agentic_command is positive integer
+            - include_agentic_jobs is boolean
+
         Ensures:
             - Combines all command types
             - Calculates statistics
@@ -667,12 +773,20 @@ class XmlCoordinator:
         """
         compound_vox_cmd_qna_df       = self.build_compound_vox_cmd_training_prompts( sample_size_per_command=sample_size_per_compound_command )
         simple_vox_cmd_qna_df         = self.build_simple_vox_cmd_training_prompts( sample_size_per_command=sample_size_per_simple_command )
-        
+
         compound_router_qna_df        = self.build_compound_agent_router_training_prompts( sample_size_per_command=sample_size_per_compound_command )
         simple_router_qna_df          = self.build_simple_agent_router_training_prompts( sample_size_per_command=sample_size_per_simple_command )
-        
-        # Stack both dataframes vertically
-        all_qna_df = pd.concat( [ compound_vox_cmd_qna_df, simple_vox_cmd_qna_df, compound_router_qna_df, simple_router_qna_df ], ignore_index=True )
+
+        # Build list of dataframes to concatenate
+        dataframes_to_concat = [ compound_vox_cmd_qna_df, simple_vox_cmd_qna_df, compound_router_qna_df, simple_router_qna_df ]
+
+        # Optionally include agentic job training prompts
+        if include_agentic_jobs:
+            agentic_job_qna_df = self.build_agentic_job_training_prompts( sample_size_per_command=sample_size_per_agentic_command )
+            dataframes_to_concat.append( agentic_job_qna_df )
+
+        # Stack all dataframes vertically
+        all_qna_df = pd.concat( dataframes_to_concat, ignore_index=True )
         
         # Group by command and count the number of rows per command
         command_counts = all_qna_df.groupby( "command" ).count().reset_index()[ [ "command", "input" ] ]
@@ -843,76 +957,123 @@ class XmlCoordinator:
     def get_train_test_validate_split( self, df: pd.DataFrame, sample_size: int=1000, test_size: float=0.2, test_validate_size: float=0.5, stratify: str="command" ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
         Splits a DataFrame into training, testing, and validation sets.
-        
+
         Requires:
             - df contains expected columns
             - sample_size is positive integer
             - test_size is between 0.0 and 1.0
             - test_validate_size is between 0.0 and 1.0
             - stratify column exists in df
-            
+
         Ensures:
             - Creates stratified splits
             - Returns three DataFrames
             - Total samples match sample_size
         """
         from sklearn.model_selection import train_test_split
-        
-        sampled_df = df[ [ "command", "instruction", "input", "output", "prompt", "gpt_message" ] ].sample( sample_size, random_state=42 ).copy()
-        
+
+        sampled_df = df[ [ "command", "instruction", "input", "output", "prompt" ] ].sample( sample_size, random_state=42 ).copy()
+
         # Split the dataframe into train and (test+validate)
         train_df, test_validate_df = train_test_split( sampled_df, test_size=test_size, random_state=42, stratify=sampled_df[ stratify ] )
-        
+
         # Then split (test+validate) into test and validate
         test_df, validate_df = train_test_split( test_validate_df, test_size=test_validate_size, random_state=42, stratify=test_validate_df[ stratify ] )
-        
+
         return train_df, test_df, validate_df
     
     def write_ttv_split_to_jsonl( self, train_df: pd.DataFrame, test_df: pd.DataFrame, validate_df: pd.DataFrame ) -> None:
         """
         Writes train/test/validate splits to JSONL files.
-        
+
         Requires:
             - All DataFrames contain expected columns
             - Write permissions for output directory
-            
+
         Ensures:
             - Creates JSONL files for each split
-            - Creates GPT-specific files
             - Sets appropriate file permissions
         """
         import os
-        
-        du.print_banner( "Writing train, test, validate splits to jsonl...", prepend_nl=True)
+
+        du.print_banner( "Writing train, test, validate splits to jsonl...", prepend_nl=True )
         print( f"   train_df.shape: {train_df.shape[ 0 ]:,} x {train_df.shape[ 1 ]}" )
         print( f"    test_df.shape: {test_df.shape[ 0 ]:,} x {test_df.shape[ 1 ]}" )
         print( f"validate_df.shape: {validate_df.shape[ 0 ]:,} x {validate_df.shape[ 1 ]}" )
-        
+
         path = self.path_prefix + "/src/ephemera/prompts/data/voice-commands-xml-train.jsonl"
         train_df.to_json( path, orient="records", lines=True )
         os.chmod( path, 0o666 )
-        
+
         path = self.path_prefix + "/src/ephemera/prompts/data/voice-commands-xml-test.jsonl"
         test_df.to_json( path, orient="records", lines=True )
         os.chmod( path, 0o666 )
-        
+
         path = self.path_prefix + "/src/ephemera/prompts/data/voice-commands-xml-validate.jsonl"
         validate_df.to_json( path, orient="records", lines=True )
         os.chmod( path, 0o666 )
-        
-        # GPT Training set
-        path = self.path_prefix + "/src/ephemera/prompts/data/voice-commands-xml-train-gpt.jsonl"
-        train_df.gpt_message.to_json( path, orient="records", lines=True )
+
+    def write_agentic_job_ttv_split_to_jsonl( self, train_df: pd.DataFrame, test_df: pd.DataFrame, validate_df: pd.DataFrame ) -> None:
+        """
+        Writes agentic job train/test/validate splits to JSONL files.
+
+        Requires:
+            - All DataFrames contain expected columns (command, instruction, input, output, prompt)
+            - Write permissions for output directory
+
+        Ensures:
+            - Creates JSONL files for each split with agentic-job prefix
+            - Sets appropriate file permissions
+        """
+        import os
+
+        du.print_banner( "Writing agentic job train, test, validate splits to jsonl...", prepend_nl=True )
+        print( f"   train_df.shape: {train_df.shape[ 0 ]:,} x {train_df.shape[ 1 ]}" )
+        print( f"    test_df.shape: {test_df.shape[ 0 ]:,} x {test_df.shape[ 1 ]}" )
+        print( f"validate_df.shape: {validate_df.shape[ 0 ]:,} x {validate_df.shape[ 1 ]}" )
+
+        path = self.path_prefix + "/src/ephemera/prompts/data/agentic-job-xml-train.jsonl"
+        train_df.to_json( path, orient="records", lines=True )
         os.chmod( path, 0o666 )
-        
-        path = self.path_prefix + "/src/ephemera/prompts/data/voice-commands-xml-test-gpt.jsonl"
-        test_df.gpt_message.to_json( path, orient="records", lines=True )
+
+        path = self.path_prefix + "/src/ephemera/prompts/data/agentic-job-xml-test.jsonl"
+        test_df.to_json( path, orient="records", lines=True )
         os.chmod( path, 0o666 )
-        
-        path = self.path_prefix + "/src/ephemera/prompts/data/voice-commands-xml-validate-gpt.jsonl"
-        validate_df.gpt_message.to_json( path, orient="records", lines=True )
+
+        path = self.path_prefix + "/src/ephemera/prompts/data/agentic-job-xml-validate.jsonl"
+        validate_df.to_json( path, orient="records", lines=True )
         os.chmod( path, 0o666 )
-    
+
+    def get_agentic_job_train_test_validate_split( self, df: pd.DataFrame, sample_size: int=300, test_size: float=0.2, test_validate_size: float=0.5, stratify: str="command" ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """
+        Splits an agentic job DataFrame into training, testing, and validation sets.
+
+        Requires:
+            - df contains expected columns
+            - sample_size is positive integer
+            - test_size is between 0.0 and 1.0
+            - test_validate_size is between 0.0 and 1.0
+            - stratify column exists in df
+
+        Ensures:
+            - Creates stratified splits (80/10/10)
+            - Returns three DataFrames
+            - Total samples match sample_size
+        """
+        from sklearn.model_selection import train_test_split
+
+        # Use available rows if sample_size exceeds DataFrame size
+        actual_sample_size = min( sample_size, df.shape[ 0 ] )
+        sampled_df = df[ [ "command", "instruction", "input", "output", "prompt" ] ].sample( actual_sample_size, random_state=42 ).copy()
+
+        # Split the dataframe into train and (test+validate)
+        train_df, test_validate_df = train_test_split( sampled_df, test_size=test_size, random_state=42, stratify=sampled_df[ stratify ] )
+
+        # Then split (test+validate) into test and validate
+        test_df, validate_df = train_test_split( test_validate_df, test_size=test_validate_size, random_state=42, stratify=test_validate_df[ stratify ] )
+
+        return train_df, test_df, validate_df
+
     def compare_validation_results( self, before_df: pd.DataFrame, after_df: pd.DataFrame, title: str="Validation Comparison" ) -> pd.DataFrame:
         """
         Compares validation results between two dataframes.
@@ -928,40 +1089,19 @@ class XmlCoordinator:
         return self.response_validator.compare_validation_results( before_df, after_df, title=title )
     
     # Helper methods
-    def _get_6_empty_lists( self ) -> tuple[list, list, list, list, list, list]:
+    def _get_5_empty_lists( self ) -> tuple[list, list, list, list, list]:
         """
-        Returns 6 empty lists for storing prompt generation data.
-        
+        Returns 5 empty lists for storing prompt generation data.
+
         Requires:
             - None
-            
+
         Ensures:
-            - Returns tuple of 6 empty lists
-            - Lists are for specific data types
+            - Returns tuple of 5 empty lists
+            - Lists are for: instructions, inputs, outputs, prompts, commands
         """
-        return [], [], [], [], [], []
+        return [], [], [], [], []
     
-    def _get_gpt_messages_dict( self, gpt_instruction: str, voice_command: str, compound_command: str, args: str ) -> dict:
-        """
-        Creates a GPT messages dictionary.
-        
-        Requires:
-            - gpt_instruction is a non-empty string
-            - voice_command is a non-empty string
-            - compound_command is a non-empty string
-            - args is a string
-            
-        Ensures:
-            - Returns properly formatted dict
-            - Contains messages list with roles
-        """
-        return {
-            "messages": [
-                {"role": "system", "content": gpt_instruction},
-                {"role": "user", "content": voice_command},
-                {"role": "assistant", "content": self.prompt_generator.common_output_template.format( command=compound_command, args=args )}
-            ]
-        }
     
     def _do_conditional_print( self, counter: int, voice_command: str, interval: int=10 ) -> None:
         """
@@ -1149,8 +1289,8 @@ def quick_smoke_test():
             print( "✗ Call counter reset failed" )
         
         # Test helper methods
-        empty_lists = coordinator._get_6_empty_lists()
-        if len( empty_lists ) == 6 and all( isinstance( lst, list ) and len( lst ) == 0 for lst in empty_lists ):
+        empty_lists = coordinator._get_5_empty_lists()
+        if len( empty_lists ) == 5 and all( isinstance( lst, list ) and len( lst ) == 0 for lst in empty_lists ):
             print( "✓ Helper methods working" )
         else:
             print( "✗ Helper methods failed" )

@@ -3,6 +3,7 @@ from cosa.agents.receptionist_agent import ReceptionistAgent
 from cosa.agents.weather_agent import WeatherAgent
 from cosa.rest.fifo_queue import FifoQueue
 from cosa.rest.queue_util import emit_job_state_transition
+from cosa.rest.queue_protocol import is_queueable_job
 from cosa.agents.agent_base import AgentBase
 from cosa.agents.agentic_job_base import AgenticJobBase
 from cosa.memory.input_and_output_table import InputAndOutputTable
@@ -141,9 +142,8 @@ class RunningFifoQueue( FifoQueue ):
 
             # JOB-TRACE: Log each job processing for duplicate investigation
             import time
-            question_trace = getattr( running_job, 'last_question_asked', 'unknown' )
             timestamp_trace = time.strftime( "%Y-%m-%d %H:%M:%S" )
-            print( f"[JOB-TRACE] {timestamp_trace} Processing: {du.truncate_string( question_trace, 50 )}..." )
+            print( f"[JOB-TRACE] {timestamp_trace} Processing: {du.truncate_string( running_job.last_question_asked, 50 )}..." )
 
             # Limit the length of the question string
             truncated_question = du.truncate_string( running_job.last_question_asked, max_len=64 )
@@ -264,11 +264,12 @@ class RunningFifoQueue( FifoQueue ):
                 self._notify( running_job.answer_conversational, job=running_job )
 
                 # Emit job state transition (run -> done) with completion metadata
-                job_id  = getattr( running_job, 'id_hash', None )
-                user_id = self.user_job_tracker.get_user_for_job( job_id ) if job_id else None
+                # Phase 2: Direct attribute access - Protocol guarantees these exist
+                job_id  = running_job.id_hash
+                user_id = self.user_job_tracker.get_user_for_job( job_id )
                 # Calculate completed_at timestamp for duration calculation
                 completed_at = datetime.now().isoformat()
-                started_at   = getattr( running_job, 'started_at', None )
+                started_at   = running_job.started_at
 
                 # Calculate duration_seconds if both timestamps exist
                 duration_seconds = None
@@ -281,19 +282,19 @@ class RunningFifoQueue( FifoQueue ):
                         pass
 
                 metadata = {
-                    'response_text'   : getattr( running_job, 'answer_conversational', '' ),
-                    'abstract'        : running_job.artifacts.get( 'abstract' ) if hasattr( running_job, 'artifacts' ) else None,
-                    'report_link'     : running_job.artifacts.get( 'report_path' ) if hasattr( running_job, 'artifacts' ) else None,
-                    'cost_summary'    : running_job.artifacts.get( 'cost_summary' ) if hasattr( running_job, 'artifacts' ) else None,
+                    'response_text'   : running_job.answer_conversational,
+                    'abstract'        : running_job.artifacts.get( 'abstract' ),
+                    'report_link'     : running_job.artifacts.get( 'report_path' ),
+                    'cost_summary'    : running_job.artifacts.get( 'cost_summary' ),
                     'error'           : None,
                     # Phase 6.2: Card-rendering fields for client-side card creation
-                    'question_text'   : getattr( running_job, 'last_question_asked', getattr( running_job, 'question', 'Unknown' ) ),
-                    'agent_type'      : getattr( running_job, 'JOB_TYPE', 'Unknown' ),
-                    'timestamp'       : getattr( running_job, 'created_date', None ),
+                    'question_text'   : running_job.last_question_asked,
+                    'agent_type'      : running_job.job_type,
+                    'timestamp'       : running_job.created_date,
                     # Session 107: Fix field parity between WebSocket and server-fetched cards
                     'status'          : 'completed',
-                    'has_interactions': bool( getattr( running_job, 'session_id', None ) ),
-                    'is_cache_hit'    : getattr( running_job, 'is_cache_hit', False ),
+                    'has_interactions': bool( running_job.session_id ),
+                    'is_cache_hit'    : running_job.is_cache_hit,
                     'started_at'      : started_at,
                     'completed_at'    : completed_at,
                     'duration_seconds': duration_seconds
@@ -328,12 +329,13 @@ class RunningFifoQueue( FifoQueue ):
                 )
 
                 # Emit job state transition (run -> dead) with error metadata
-                job_id  = getattr( running_job, 'id_hash', None )
-                user_id = self.user_job_tracker.get_user_for_job( job_id ) if job_id else None
+                # Phase 2: Direct attribute access - Protocol guarantees these exist
+                job_id  = running_job.id_hash
+                user_id = self.user_job_tracker.get_user_for_job( job_id )
 
                 # Calculate timestamps for error case
                 completed_at = datetime.now().isoformat()
-                started_at   = getattr( running_job, 'started_at', None )
+                started_at   = running_job.started_at
                 duration_seconds = None
                 if started_at:
                     try:
@@ -346,12 +348,12 @@ class RunningFifoQueue( FifoQueue ):
                 metadata = {
                     'error'           : error_msg,
                     # Phase 6.2: Card-rendering fields for client-side card creation
-                    'question_text'   : getattr( running_job, 'last_question_asked', getattr( running_job, 'question', 'Unknown' ) ),
-                    'agent_type'      : getattr( running_job, 'JOB_TYPE', 'Unknown' ),
-                    'timestamp'       : getattr( running_job, 'created_date', None ),
+                    'question_text'   : running_job.last_question_asked,
+                    'agent_type'      : running_job.job_type,
+                    'timestamp'       : running_job.created_date,
                     # Session 107: Fix field parity between WebSocket and server-fetched cards
                     'status'          : 'failed',
-                    'has_interactions': bool( getattr( running_job, 'session_id', None ) ),
+                    'has_interactions': bool( running_job.session_id ),
                     'is_cache_hit'    : False,
                     'started_at'      : started_at,
                     'completed_at'    : completed_at,
@@ -382,12 +384,13 @@ class RunningFifoQueue( FifoQueue ):
             )
 
             # Emit job state transition (run -> dead) with error metadata
-            job_id  = getattr( running_job, 'id_hash', None )
-            user_id = self.user_job_tracker.get_user_for_job( job_id ) if job_id else None
+            # Phase 2: Direct attribute access - Protocol guarantees these exist
+            job_id  = running_job.id_hash
+            user_id = self.user_job_tracker.get_user_for_job( job_id )
 
             # Calculate timestamps for crash case
             completed_at = datetime.now().isoformat()
-            started_at   = getattr( running_job, 'started_at', None )
+            started_at   = running_job.started_at
             duration_seconds = None
             if started_at:
                 try:
@@ -400,12 +403,12 @@ class RunningFifoQueue( FifoQueue ):
             metadata = {
                 'error'           : str( e ),
                 # Phase 6.2: Card-rendering fields for client-side card creation
-                'question_text'   : getattr( running_job, 'last_question_asked', getattr( running_job, 'question', 'Unknown' ) ),
-                'agent_type'      : getattr( running_job, 'JOB_TYPE', 'Unknown' ),
-                'timestamp'       : getattr( running_job, 'created_date', None ),
+                'question_text'   : running_job.last_question_asked,
+                'agent_type'      : running_job.job_type,
+                'timestamp'       : running_job.created_date,
                 # Session 107: Fix field parity between WebSocket and server-fetched cards
                 'status'          : 'failed',
-                'has_interactions': bool( getattr( running_job, 'session_id', None ) ),
+                'has_interactions': bool( running_job.session_id ),
                 'is_cache_hit'    : False,
                 'started_at'      : started_at,
                 'completed_at'    : completed_at,
@@ -473,6 +476,7 @@ class RunningFifoQueue( FifoQueue ):
 
                 # recast the agent object as a solution snapshot object and add it to the snapshot manager
                 running_job = SolutionSnapshot.create( running_job )
+
                 # KLUDGE! I shouldn't have to do this!
                 print( f"KLUDGE! Setting running_job.answer_conversational to [{formatted_output}]...")
                 running_job.answer_conversational = formatted_output
@@ -503,12 +507,13 @@ class RunningFifoQueue( FifoQueue ):
 
             # Emit job state transition (run -> done) with completion metadata
             if serialize_snapshot:
-                job_id  = getattr( running_job, 'id_hash', None )
-                user_id = self.user_job_tracker.get_user_for_job( job_id ) if job_id else None
+                # Phase 2: Direct attribute access - Protocol guarantees these exist
+                job_id  = running_job.id_hash
+                user_id = self.user_job_tracker.get_user_for_job( job_id )
 
                 # Calculate completed_at timestamp for duration calculation
                 completed_at = datetime.now().isoformat()
-                started_at   = getattr( running_job, 'started_at', None )
+                started_at   = running_job.started_at
 
                 # Calculate duration_seconds if both timestamps exist
                 duration_seconds = None
@@ -521,19 +526,19 @@ class RunningFifoQueue( FifoQueue ):
                         pass
 
                 metadata = {
-                    'response_text'   : getattr( running_job, 'answer_conversational', '' ),
+                    'response_text'   : running_job.answer_conversational,
                     'abstract'        : None,
                     'report_link'     : None,
                     'cost_summary'    : None,
                     'error'           : None,
                     # Phase 6.2: Card-rendering fields for client-side card creation
-                    'question_text'   : getattr( running_job, 'last_question_asked', getattr( running_job, 'question', 'Unknown' ) ),
-                    'agent_type'      : getattr( running_job, 'agent_class_name', 'Unknown' ),
-                    'timestamp'       : getattr( running_job, 'created_date', None ),
+                    'question_text'   : running_job.last_question_asked,
+                    'agent_type'      : running_job.job_type,
+                    'timestamp'       : running_job.created_date,
                     # Session 107: Fix field parity between WebSocket and server-fetched cards
                     'status'          : 'completed',
-                    'has_interactions': bool( getattr( running_job, 'session_id', None ) ),
-                    'is_cache_hit'    : getattr( running_job, 'is_cache_hit', False ),
+                    'has_interactions': bool( running_job.session_id ),
+                    'is_cache_hit'    : running_job.is_cache_hit,
                     'started_at'      : started_at,
                     'completed_at'    : completed_at,
                     'duration_seconds': duration_seconds
@@ -541,7 +546,8 @@ class RunningFifoQueue( FifoQueue ):
                 emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'done', user_id, metadata )
 
             self.pop()  # Auto-emits 'run_update'
-            if serialize_snapshot: self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
+            if serialize_snapshot:
+                self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
 
             # Write the job to the database for posterity's sake
             self.io_tbl.insert_io_row( input_type=running_job.routing_command, input=running_job.last_question_asked, output_raw=running_job.answer, output_final=running_job.answer_conversational )
@@ -583,12 +589,13 @@ class RunningFifoQueue( FifoQueue ):
         self._notify( running_job.answer_conversational, job=running_job )
 
         # Emit job state transition (run -> done) with completion metadata
-        job_id  = getattr( running_job, 'id_hash', None )
-        user_id = self.user_job_tracker.get_user_for_job( job_id ) if job_id else None
+        # Phase 2: Direct attribute access - Protocol guarantees these exist
+        job_id  = running_job.id_hash
+        user_id = self.user_job_tracker.get_user_for_job( job_id )
 
         # Calculate completed_at timestamp for duration calculation
         completed_at = datetime.now().isoformat()
-        started_at   = getattr( running_job, 'started_at', None )
+        started_at   = running_job.started_at
 
         # Calculate duration_seconds if both timestamps exist
         duration_seconds = None
@@ -601,18 +608,18 @@ class RunningFifoQueue( FifoQueue ):
                 pass
 
         metadata = {
-            'response_text'   : getattr( running_job, 'answer_conversational', '' ),
+            'response_text'   : running_job.answer_conversational,
             'abstract'        : None,
             'report_link'     : None,
             'cost_summary'    : None,
             'error'           : None,
             # Phase 6.2: Card-rendering fields for client-side card creation
-            'question_text'   : getattr( running_job, 'last_question_asked', getattr( running_job, 'question', 'Unknown' ) ),
-            'agent_type'      : getattr( running_job, 'routing_command', 'Snapshot' ),
-            'timestamp'       : getattr( running_job, 'created_date', None ),
+            'question_text'   : running_job.last_question_asked,
+            'agent_type'      : running_job.job_type,
+            'timestamp'       : running_job.created_date,
             # Session 107: Fix field parity between WebSocket and server-fetched cards
             'status'          : 'completed',
-            'has_interactions': bool( getattr( running_job, 'session_id', None ) ),
+            'has_interactions': bool( running_job.session_id ),
             'is_cache_hit'    : False,
             'started_at'      : started_at,
             'completed_at'    : completed_at,
@@ -679,6 +686,18 @@ class RunningFifoQueue( FifoQueue ):
         msg = f"Using CACHED result for [{truncated_question}]..."
         du.print_banner( msg=msg, prepend_nl=True )
 
+        # Re-execute cached code to get fresh output (fixes stale time queries)
+        if self.debug: print( f"[CACHE] Re-executing cached code for fresh result..." )
+        code_response = cached_snapshot.run_code( debug=self.debug, verbose=self.verbose )
+
+        if code_response.get( "return_code" ) == 0:
+            # Format fresh output
+            cached_snapshot.run_formatter()
+            if self.debug: print( f"[CACHE] ✓ Code re-executed successfully" )
+        else:
+            # Code failed - use cached answer as fallback
+            if self.debug: print( f"[CACHE] ⚠ Re-execution failed, using cached answer" )
+
         # Calculate time saved (first_run_ms - current cache retrieval time)
         run_timer.stop()
         cache_retrieval_ms = run_timer.get_elapsed_millis()
@@ -686,8 +705,9 @@ class RunningFifoQueue( FifoQueue ):
         time_saved_ms      = max( 0, first_run_ms - cache_retrieval_ms )
 
         # Get current user context from original job
-        current_user_id    = getattr( original_job, 'user_id', '' )
-        current_session_id = getattr( original_job, 'session_id', '' )
+        # Phase 2: Direct attribute access - Protocol guarantees these exist
+        current_user_id    = original_job.user_id
+        current_session_id = original_job.session_id
 
         # Record replay on canonical snapshot (updates LanceDB record for analytics)
         cached_snapshot.record_replay(
@@ -718,12 +738,13 @@ class RunningFifoQueue( FifoQueue ):
         self._notify( cached_snapshot.answer_conversational, job=done_queue_entry )
 
         # Emit job state transition (run -> done) with completion metadata (cache hit)
+        # Phase 2: Direct attribute access - Protocol guarantees these exist
         job_id  = done_queue_entry.id_hash
-        user_id = self.user_job_tracker.get_user_for_job( job_id ) if job_id else None
+        user_id = self.user_job_tracker.get_user_for_job( job_id )
 
         # Calculate completed_at timestamp for duration calculation (cache retrieval time)
         completed_at = datetime.now().isoformat()
-        started_at   = getattr( original_job, 'started_at', None )
+        started_at   = original_job.started_at
 
         # Calculate duration_seconds if both timestamps exist (will be very short for cache hits)
         duration_seconds = None
@@ -736,19 +757,19 @@ class RunningFifoQueue( FifoQueue ):
                 pass
 
         metadata = {
-            'response_text'   : getattr( cached_snapshot, 'answer_conversational', '' ),
+            'response_text'   : cached_snapshot.answer_conversational,
             'abstract'        : None,
             'report_link'     : None,
             'cost_summary'    : None,
             'error'           : None,
             # Phase 6.2: Card-rendering fields for client-side card creation
-            'question_text'   : getattr( cached_snapshot, 'last_question_asked', getattr( cached_snapshot, 'question', 'Unknown' ) ),
-            'agent_type'      : getattr( cached_snapshot, 'routing_command', 'Cached' ),
-            'timestamp'       : getattr( cached_snapshot, 'created_date', None ),
+            'question_text'   : cached_snapshot.last_question_asked,
+            'agent_type'      : cached_snapshot.job_type,
+            'timestamp'       : cached_snapshot.created_date,
             'is_cache_hit'    : True,
             # Session 107: Fix field parity between WebSocket and server-fetched cards
             'status'          : 'completed',
-            'has_interactions': bool( getattr( original_job, 'session_id', None ) ),
+            'has_interactions': bool( original_job.session_id ),
             'started_at'      : started_at,
             'completed_at'    : completed_at,
             'duration_seconds': duration_seconds

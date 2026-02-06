@@ -1,7 +1,6 @@
 from typing import Any
 
 import cosa.utils.util as du
-import cosa.utils.util_xml as dux
 
 from cosa.agents.agent_base import AgentBase
 from cosa.agents.llm_client_factory import LlmClientFactory
@@ -84,26 +83,19 @@ class BugInjector( AgentBase ):
         llm = factory.get_client( self.model_name, debug=self.debug, verbose=self.verbose )
         response = llm.run( self.prompt )
         
-        # Use factory-based XML parsing with fallback to baseline
-        try:
-            xml_factory = XmlParserFactory( self.config_mgr )
-            parsed_response = xml_factory.parse_agent_response(
-                response,
-                self.routing_command,
-                [ "line-number", "bug" ],
-                debug=self.debug,
-                verbose=self.verbose
-            )
-            line_number = int( parsed_response.get( "line_number", -1 ) )  # Pydantic uses line_number
-            bug = parsed_response.get( "bug", "" )
-            
-            if self.debug: print( f"  Parsed via factory: line_number={line_number}, bug='{bug}'" )
-            
-        except Exception as e:
-            if self.debug: print( f"  Factory parsing failed, falling back to baseline: {e}" )
-            # Fallback to baseline parsing for compatibility
-            line_number = int( dux.get_value_by_xml_tag_name( response, "line-number", default_value="-1" ) )
-            bug         = dux.get_value_by_xml_tag_name( response, "bug", default_value="" )
+        # Use factory-based XML parsing with Pydantic - no fallback
+        xml_factory = XmlParserFactory( self.config_mgr )
+        parsed_response = xml_factory.parse_agent_response(
+            response,
+            self.routing_command,
+            [ "line-number", "bug" ],
+            debug=self.debug,
+            verbose=self.verbose
+        )
+        line_number = int( parsed_response.get( "line_number", -1 ) )  # Pydantic uses line_number
+        bug = parsed_response.get( "bug", "" )
+
+        if self.debug: print( f"  Parsed via Pydantic factory: line_number={line_number}, bug='{bug}'" )
         
         if line_number == -1:
             du.print_banner( f"Invalid response from [{self.model_name}]", expletive=True )

@@ -7,7 +7,6 @@ import pandas as pd
 
 import cosa.utils.util as du
 import cosa.utils.util_pandas        as dup
-import cosa.utils.util_xml as dux
 import cosa.memory.solution_snapshot as ss
 
 from cosa.agents.raw_output_formatter import RawOutputFormatter
@@ -72,7 +71,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         """
         pass
     
-    def __init__( self, df_path_key: Optional[str]=None, question: str="", question_gist: str="", last_question_asked: str="", push_counter: int=-1, routing_command: Optional[str]=None, user_id: str="ricardo_felipe_ruiz_6bdc", session_id: str="", debug: bool=False, verbose: bool=False, auto_debug: bool=False, inject_bugs: bool=False ) -> None:
+    def __init__( self, df_path_key: Optional[str]=None, question: str="", question_gist: str="", last_question_asked: str="", push_counter: int=-1, routing_command: Optional[str]=None, user_id: str="ricardo_felipe_ruiz_6bdc", user_email: str="", session_id: str="", debug: bool=False, verbose: bool=False, auto_debug: bool=False, inject_bugs: bool=False ) -> None:
         """
         Initialize a base agent with configuration and state.
         
@@ -90,7 +89,8 @@ class AgentBase( RunnableCode, abc.ABC ):
             - All instance variables are initialized
             - last_question_asked is set to question if empty
             - user_id is stored for event routing and ownership tracking
-            
+            - user_email is stored for TTS notification routing
+
         Raises:
             - KeyError if routing_command configuration keys are missing
             - FileNotFoundError if template or DataFrame file not found
@@ -108,6 +108,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.df_path_key           = df_path_key
         self.routing_command       = routing_command
         self.user_id               = user_id
+        self.user_email            = user_email  # Email for TTS notification routing
         self.session_id            = session_id  # WebSocket session ID for job-notification correlation
         
         # Added to allow behavioral compatibility with solution snapshot object
@@ -138,7 +139,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.xml_parser_factory    = XmlParserFactory( config_mgr=self.config_mgr )
         
         self.df                    = None
-        self.do_not_serialize      = { "df", "config_mgr", "xml_parser_factory", "two_word_id", "execution_state", "websocket_id", "user_id", "session_id" }
+        self.do_not_serialize      = { "df", "config_mgr", "xml_parser_factory", "two_word_id", "execution_state", "websocket_id", "user_id", "user_email", "session_id" }
 
         self.model_name            = self.config_mgr.get( f"llm spec key for {routing_command}" )
         template_path              = self.config_mgr.get( f"prompt template for {routing_command}" )
@@ -159,27 +160,19 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.prompt                = None
         
         if self.df_path_key is not None:
-            
+
             self.df = pd.read_csv( du.get_project_root() + self.config_mgr.get( self.df_path_key ) )
             self.df = dup.cast_to_datetime( self.df )
-            
+
+        # QueueableJob protocol compliance - status tracking attributes
+        self.answer       = ""
+        self.error        = ""  # Must be str, not None (protocol requirement)
+        self.status       = "pending"
+        self.is_cache_hit = False
+        self.started_at   = ""
+        self.completed_at = ""
+
         self.execution_state = AgentBase.STATE_WAITING_TO_RUN
-    
-    def get_html( self ) -> str:
-        """
-        Generate HTML representation of this agent instance.
-        
-        Requires:
-            - id_hash, run_date, and last_question_asked are initialized
-            
-        Ensures:
-            - Returns a formatted HTML <li> element with agent info
-            - HTML includes unique id, timestamp, and question
-            
-        Raises:
-            - None
-        """
-        return f"<li id='{self.id_hash}'>{self.run_date} Q: {self.last_question_asked}</li>"
     
     @abc.abstractmethod
     def restore_from_serialized_state( file_path: str ) -> 'AgentBase':
@@ -264,44 +257,20 @@ class AgentBase( RunnableCode, abc.ABC ):
         if self.debug and self.verbose: 
             print( f"_update_response_dictionary called with strategy factory..." )
         
-        # Use the factory to parse the XML response with appropriate strategy
-        try:
-            prompt_response_dict = self.xml_parser_factory.parse_agent_response(
-                xml_response=response,
-                agent_routing_command=self.routing_command,
-                xml_tag_names=self.xml_response_tag_names,
-                debug=self.debug,
-                verbose=self.verbose
-            )
-            
-            if self.debug and self.verbose:
-                print( f"Successfully parsed {len( prompt_response_dict )} fields using factory" )
-                
-            return prompt_response_dict
-            
-        except Exception as e:
-            if self.debug:
-                print( f"XML parsing failed: {e}" )
-            
-            # Fallback to legacy baseline parsing for maximum compatibility
-            if self.debug:
-                print( "Falling back to legacy baseline XML parsing..." )
-                
-            prompt_response_dict = { }
-            
-            for xml_tag in self.xml_response_tag_names:
-                
-                if self.debug and self.verbose: 
-                    print( f"Looking for xml_tag [{xml_tag}] (fallback mode)" )
-                
-                if xml_tag in [ "code", "examples" ]:
-                    # Legacy nested list parsing for code/examples
-                    xml_string = f"<{xml_tag}>" + dux.get_value_by_xml_tag_name( response, xml_tag ) + f"</{xml_tag}>"
-                    prompt_response_dict[ xml_tag ] = dux.get_nested_list( xml_string, tag_name=xml_tag, debug=self.debug, verbose=self.verbose )
-                else:
-                    prompt_response_dict[ xml_tag ] = dux.get_value_by_xml_tag_name( response, xml_tag )
-            
-            return prompt_response_dict
+        # Use the factory to parse the XML response with Pydantic strategy
+        # No fallback - Pydantic parsing is the ONLY path forward
+        prompt_response_dict = self.xml_parser_factory.parse_agent_response(
+            xml_response=response,
+            agent_routing_command=self.routing_command,
+            xml_tag_names=self.xml_response_tag_names,
+            debug=self.debug,
+            verbose=self.verbose
+        )
+
+        if self.debug and self.verbose:
+            print( f"Successfully parsed {len( prompt_response_dict )} fields using Pydantic factory" )
+
+        return prompt_response_dict
     
     def run_prompt( self, include_raw_response: bool=False ) -> dict[str, Any]:
         """

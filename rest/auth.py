@@ -90,10 +90,14 @@ async def verify_token(token: str) -> Dict:
         - HTTPException with 401 status if token invalid
         - HTTPException with 401 status if auth mode not supported
     """
+    import os
     from cosa.config.configuration_manager import ConfigurationManager
 
-    config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-    auth_mode = config_mgr.get( "auth mode", default="mock" )
+    # Allow AUTH_MODE environment variable to override config (for testing)
+    auth_mode = os.environ.get( "AUTH_MODE" )
+    if auth_mode is None:
+        config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+        auth_mode = config_mgr.get( "auth mode", default="mock" )
 
     if auth_mode == "jwt":
         # JWT mode: Validate real JWT tokens
