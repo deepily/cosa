@@ -11,6 +11,8 @@ from cosa.agents.weather_agent import WeatherAgent
 from cosa.agents.todo_list_agent import TodoListAgent
 from cosa.agents.calendaring_agent import CalendaringAgent
 from cosa.agents.math_agent import MathAgent
+from cosa.crud_for_dataframes.todo_crud_agent import TodoCrudAgent
+from cosa.crud_for_dataframes.calendar_crud_agent import CalendarCrudAgent
 from cosa.agents.llm_client_factory import LlmClientFactory
 from cosa.memory.gister import Gister
 from cosa.memory.gist_normalizer import GistNormalizer
@@ -613,8 +615,12 @@ class TodoFifoQueue( FifoQueue ):
                 msg = search.get_results( scope="summary" )
             
             elif command == "agent router go to calendar":
-                agent = CalendaringAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
-                msg = starting_a_new_job.format( agent_type="calendaring" )
+                if self._crud_agents_enabled():
+                    agent = CalendarCrudAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                    msg = starting_a_new_job.format( agent_type="calendar (CRUD)" )
+                else:
+                    agent = CalendaringAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                    msg = starting_a_new_job.format( agent_type="calendaring" )
                 ding_for_new_job = True
             elif command == "agent router go to math":
                 if question.lower().strip().startswith( "refactor " ):
@@ -627,8 +633,12 @@ class TodoFifoQueue( FifoQueue ):
                     msg = starting_a_new_job.format( agent_type="math" )
                 ding_for_new_job = True
             elif command == "agent router go to todo list":
-                agent = TodoListAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
-                msg = starting_a_new_job.format( agent_type="todo list" )
+                if self._crud_agents_enabled():
+                    agent = TodoCrudAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                    msg = starting_a_new_job.format( agent_type="todo (CRUD)" )
+                else:
+                    agent = TodoListAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                    msg = starting_a_new_job.format( agent_type="todo list" )
                 ding_for_new_job = True
             elif command == "agent router go to date and time":
                 agent = DateAndTimeAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
@@ -645,9 +655,16 @@ class TodoFifoQueue( FifoQueue ):
                 msg = f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}".strip()
                 # ding_for_new_job = False
             elif command in AGENTIC_AGENTS:
-                msg = self._handle_agentic_command(
-                    command, args, user_id, user_email, websocket_id, salutation_plus_question
+                # Disambiguation confirmation for confusable agentic commands
+                confirmed_command = self._confirm_agentic_routing(
+                    command, args, user_id, user_email, salutation_plus_question
                 )
+                if confirmed_command is None:
+                    msg = "Command cancelled by user."
+                else:
+                    msg = self._handle_agentic_command(
+                        confirmed_command, args, user_id, user_email, websocket_id, salutation_plus_question
+                    )
             else:
                 msg = du.print_banner( f"TO DO: Implement else case command {command}" )
                 print( msg )
@@ -847,6 +864,102 @@ class TodoFifoQueue( FifoQueue ):
             command, args = "unknown", ""
 
         return command, args
+
+    def _crud_agents_enabled( self ):
+        """
+        Check if CRUD DataFrame agents are enabled via feature flag.
+
+        Requires:
+            - self.config_mgr is a valid ConfigurationManager
+
+        Ensures:
+            - Returns True if 'crud for dataframes agents enabled' is 'true'
+            - Returns True by default (flag missing = enabled)
+        """
+        return self.config_mgr.get( "crud for dataframes agents enabled", default="true" ).strip().lower() == "true"
+
+    # Product name mapping for agentic command disambiguation
+    PRODUCT_NAMES = {
+        "agent router go to deep research"      : "Deep Dive (investigate a topic)",
+        "agent router go to podcast generator"   : "PodMaker (create a podcast from a topic)",
+        "agent router go to research to podcast" : "Doc-to-Pod (convert existing research to podcast)",
+    }
+
+    def _confirm_agentic_routing( self, command, args, user_id, user_email, original_question ):
+        """
+        Confirm agentic command routing with user via voice prompt.
+        Shows what was detected and offers alternatives from the same confusable group.
+
+        Requires:
+            - command is a valid AGENTIC_AGENTS key
+            - user_email is set for notification routing
+
+        Ensures:
+            - Returns confirmed command string, or None if cancelled
+            - User sees product name, not internal command string
+            - On timeout, returns original detected command (safe default)
+        """
+        detected_name = self.PRODUCT_NAMES.get( command, command )
+
+        # Build multiple choice options: detected option always first, then alternatives, then cancel
+        options = []
+        options.append( { "label": detected_name, "description": "This is what I detected" } )
+        for cmd, name in self.PRODUCT_NAMES.items():
+            if cmd != command:
+                options.append( { "label": name, "description": "Switch to this instead" } )
+        options.append( { "label": "Cancel", "description": "Nevermind, cancel this command" } )
+
+        request = NotificationRequest(
+            message         = f"I think you want {detected_name}. Is that right?",
+            response_type   = ResponseType.MULTIPLE_CHOICE,
+            target_user     = user_email,
+            timeout_seconds = 30,
+            sender_id       = "agentic.router@lupin.deepily.ai",
+            priority        = "high",
+            title           = "Confirm Command",
+            suppress_ding   = True,
+            response_options = {
+                "questions": [ {
+                    "question"     : f"I think you want {detected_name}. Is that right?",
+                    "header"       : "Command",
+                    "multi_select" : False,
+                    "options"      : options
+                } ]
+            }
+        )
+
+        response = notify_user_sync( request, debug=self.debug )
+
+        if response.is_timeout or response.is_error:
+            if self.debug: print( f"Confirmation timeout/error — proceeding with detected command [{command}]" )
+            return command  # Default: proceed with detected command on timeout
+
+        # Parse response — handle both raw string and JSON formats
+        selected = response.response_value
+        if self.debug: print( f"User selected (raw): [{selected}]" )
+
+        # MULTIPLE_CHOICE may return JSON: {"answers": {"Command": "Deep Dive ..."}}
+        if selected and selected.startswith( "{" ):
+            import json
+            try:
+                parsed   = json.loads( selected )
+                answers  = parsed.get( "answers", {} )
+                selected = answers.get( "Command", answers.get( "0", selected ) )
+            except ( json.JSONDecodeError, AttributeError ):
+                pass  # Use raw value as-is
+
+        if self.debug: print( f"User selected (parsed): [{selected}]" )
+
+        if selected is None or selected == "Cancel":
+            return None
+
+        # Reverse lookup: product name → command
+        for cmd, name in self.PRODUCT_NAMES.items():
+            if name == selected:
+                return cmd
+
+        # Fallback: proceed with original
+        return command
 
     def _handle_agentic_command( self, command, raw_args, user_id, user_email, session_id, original_question ):
         """

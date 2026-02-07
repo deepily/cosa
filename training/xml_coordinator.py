@@ -652,54 +652,22 @@ class XmlCoordinator:
         instructions, inputs, outputs, prompts, commands = self._get_5_empty_lists()
 
         # Define the agentic job commands and their characteristics
+        # Templates are loaded from external files (65+ templates each) instead of hardcoded lists
         agentic_commands = {
-            "agent router go to deep research": {
-                "template_patterns": [
-                    "do some deep research on RESEARCH_TOPIC",
-                    "please research RESEARCH_TOPIC for me",
-                    "can you do deep research on RESEARCH_TOPIC",
-                    "I need deep research about RESEARCH_TOPIC",
-                    "start a deep research investigation on RESEARCH_TOPIC",
-                    "run deep research on RESEARCH_TOPIC",
-                    "help me research RESEARCH_TOPIC in depth",
-                    "do an in-depth research study on RESEARCH_TOPIC",
-                    "investigate RESEARCH_TOPIC thoroughly",
-                    "perform deep research analysis on RESEARCH_TOPIC",
-                ],
-                "placeholders": {"RESEARCH_TOPIC": "research_topics"},
-                "args_key": "topic"
+            "agent router go to deep research" : {
+                "template_file" : "/src/ephemera/prompts/data/synthetic-data-agent-routing-deep-research.txt",
+                "placeholders"  : {"RESEARCH_TOPIC": "research_topics"},
+                "args_key"      : "topic"
             },
-            "agent router go to podcast generator": {
-                "template_patterns": [
-                    "create a podcast about RESEARCH_TOPIC",
-                    "generate a podcast on RESEARCH_TOPIC",
-                    "make a podcast discussing RESEARCH_TOPIC",
-                    "please create a podcast episode about RESEARCH_TOPIC",
-                    "produce a podcast covering RESEARCH_TOPIC",
-                    "I want a podcast about RESEARCH_TOPIC",
-                    "build a podcast on RESEARCH_TOPIC",
-                    "can you make a podcast about RESEARCH_TOPIC",
-                    "generate a podcast episode on RESEARCH_TOPIC",
-                    "create an audio podcast about RESEARCH_TOPIC",
-                ],
-                "placeholders": {"RESEARCH_TOPIC": "research_topics"},
-                "args_key": "topic"
+            "agent router go to podcast generator" : {
+                "template_file" : "/src/ephemera/prompts/data/synthetic-data-agent-routing-podcast-generator.txt",
+                "placeholders"  : {"RESEARCH_TOPIC": "research_topics"},
+                "args_key"      : "topic"
             },
-            "agent router go to research to podcast": {
-                "template_patterns": [
-                    "turn this document into a podcast",
-                    "convert the research to a podcast",
-                    "make a podcast from the deep research",
-                    "create a podcast from document at DOCUMENT_PATH",
-                    "turn DOCUMENT_PATH into a podcast",
-                    "generate a podcast from the research at DOCUMENT_PATH",
-                    "transform the research document into a podcast episode",
-                    "convert my research into audio format",
-                    "make the research results into a podcast",
-                    "create an audio version of the research",
-                ],
-                "placeholders": {"DOCUMENT_PATH": "document_paths"},
-                "args_key": "document_path"
+            "agent router go to research to podcast" : {
+                "template_file" : "/src/ephemera/prompts/data/synthetic-data-agent-routing-research-to-podcast.txt",
+                "placeholders"  : {"DOCUMENT_PATH": "document_paths"},
+                "args_key"      : "document_path"
             }
         }
 
@@ -718,8 +686,15 @@ class XmlCoordinator:
                 elif getter_name == "document_paths":
                     placeholder_values[ placeholder ] = self.prompt_generator.get_document_paths( requested_length=None )
 
+            # Load templates from external file
+            template_path    = self.path_prefix + config[ "template_file" ]
+            template_patterns = du.get_file_as_list( template_path, clean=True )
+            # Filter out empty lines
+            template_patterns = [ t for t in template_patterns if t ]
+            if self.debug: print( f"  Loaded [{len( template_patterns )}] templates from [{config[ 'template_file' ]}]" )
+
             # Generate prompts from templates
-            for template in config[ "template_patterns" ]:
+            for template in template_patterns:
 
                 # For each placeholder value, create a training example
                 for placeholder, values in placeholder_values.items():

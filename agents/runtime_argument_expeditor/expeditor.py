@@ -27,6 +27,7 @@ from cosa.agents.io_models.utils.prompt_template_processor import PromptTemplate
 from cosa.cli.notify_user_sync import notify_user_sync
 from cosa.cli.notification_models import (
     NotificationRequest,
+    NotificationPriority,
     ResponseType
 )
 
@@ -319,11 +320,12 @@ class RuntimeArgumentExpeditor:
         request = NotificationRequest(
             message         = question,
             response_type   = ResponseType.OPEN_ENDED,
+            priority        = NotificationPriority.HIGH,
             target_user     = user_email,
             timeout_seconds = 60,
             sender_id       = self.SENDER_ID,
             title           = f"Missing: {arg_name}",
-            suppress_ding   = True
+            suppress_ding   = False
         )
 
         response = notify_user_sync( request=request, debug=self.debug )

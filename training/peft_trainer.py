@@ -197,9 +197,6 @@ def release_gpus( models: Iterable[Any], nuclear_kill_button: bool=False ) -> No
         except Exception as e:
             print( f"Unexpected error during GPU reset: {e}" )
 
-    du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
-    print_gpu_memory()
-
 class PeftTrainer:
     """
     Trainer for fine-tuning models using PEFT (Parameter-Efficient Fine-Tuning).
@@ -593,7 +590,15 @@ class PeftTrainer:
         
         df = pd.read_json(
             f"{self.test_train_dir}/voice-commands-xml-validate.jsonl", lines=True
-        ).sample( validation_sample_size, random_state=42 )
+        )
+        # Stratified sampling: equal representation per command for balanced validation
+        num_commands       = df[ "command" ].nunique()
+        samples_per_command = max( 1, validation_sample_size // num_commands )
+        df = df.groupby( "command" ).apply(
+            lambda x: x.sample( min( len( x ), samples_per_command ), random_state=42 ),
+            include_groups=False
+        ).droplevel( 1 ).reset_index()
+        print( f"Stratified validation: {samples_per_command} samples/command, {len( df )} total from {num_commands} commands" )
         
         # update the prompt field
         # KLUDGE: this is a workaround for the fact that the prompt field is not being created when the validation df is created
@@ -1596,6 +1601,8 @@ class PeftTrainer:
                     torch.cuda.empty_cache()
                     gc.collect()
                     time.sleep( 5 )
+                du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
+                print_gpu_memory()
         else:
             print( f"Skipping pre-training validation for {args.model_name}" )
 
@@ -1624,12 +1631,16 @@ class PeftTrainer:
             output_dir=args.lora_dir
         )
         release_gpus( [ self.model, self.tokenizer ] )
-        
+        du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
+        print_gpu_memory()
+
         # Load and merge the adapter
         self.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
         merged_adapter_dir = self.save_merged_adapter( lora_dir=args.lora_dir )
         release_gpus( [ self.model, self.tokenizer ] )
-        
+        du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
+        print_gpu_memory()
+
         if post_training_stats:
             vllm_server_process = None
             try:
@@ -1653,6 +1664,8 @@ class PeftTrainer:
                     torch.cuda.empty_cache()
                     gc.collect()
                     time.sleep( 5 )
+                du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
+                print_gpu_memory()
         else:
             print( f"Skipping post-training validation for {args.model_name}" )
 
@@ -1682,6 +1695,8 @@ class PeftTrainer:
                     torch.cuda.empty_cache()
                     gc.collect()
                     time.sleep( 5 )
+                du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
+                print_gpu_memory()
         else:
             print( f"Skipping post-quantization validation for {args.model_name}" )
 
@@ -1784,7 +1799,9 @@ class PeftTrainer:
         # self.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
         # merged_adapter_dir = self.save_merged_adapter( lora_dir=args.lora_dir )
         release_gpus( [ self.model, self.tokenizer ] )
-        
+        du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
+        print_gpu_memory()
+
         # merged_adapter_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-29-at-12-04"
         merged_adapter_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Mistral-7B-Instruct-v0.2.lora/merged-on-2025-05-01-at-02-10"
         # 
@@ -1816,7 +1833,9 @@ class PeftTrainer:
         
         # release GPU before doing anything else
         release_gpus( [ self.model, self.tokenizer ] )
-        
+        du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
+        print_gpu_memory()
+
         # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-08-at-21-26/autoround-4-bits-sym.gptq/2025-04-08-at-21-47"
         if post_quantization_stats:
             
@@ -1846,6 +1865,8 @@ class PeftTrainer:
                     torch.cuda.empty_cache()
                     gc.collect()
                     time.sleep( 5 )
+                du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
+                print_gpu_memory()
         else:
             print( f"Skipping post-quantization validation for {args.model_name}" )
 

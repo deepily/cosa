@@ -1,6 +1,7 @@
 # from cosa.agents.math_refactoring_agent import MathRefactoringAgent
 from cosa.agents.receptionist_agent import ReceptionistAgent
 from cosa.agents.weather_agent import WeatherAgent
+from cosa.crud_for_dataframes.agent import CrudForDataFramesAgent
 from cosa.rest.fifo_queue import FifoQueue
 from cosa.rest.queue_util import emit_job_state_transition
 from cosa.rest.queue_protocol import is_queueable_job
@@ -157,28 +158,33 @@ class RunningFifoQueue( FifoQueue ):
                 running_job = self._handle_agentic_job( running_job, truncated_question, run_timer )
 
             elif isinstance( running_job, AgentBase ):
-                # NEW: Check cache BEFORE agent execution
-                question = running_job.last_question_asked
-
-                if self.debug: print( f"[CACHE] Checking cache for question: {question}" )
-
-                # Search for existing snapshot
-                cached_snapshots = self.snapshot_mgr.get_snapshots_by_question( question )
-
-                if cached_snapshots and len( cached_snapshots ) > 0:
-                    # CACHE HIT - Use the cached result
-                    score, cached_snapshot = cached_snapshots[0]  # Unpack (score, snapshot) tuple
-
-                    if self.debug: print( f"[CACHE] 🎯 CACHE HIT: Found cached solution from {cached_snapshot.run_date} (score: {score:.1f}%)" )
-
-                    # Convert cached snapshot to proper format and use it
-                    # Pass original running_job to get current user context for done queue
-                    running_job = self._format_cached_result( cached_snapshot, running_job, truncated_question, run_timer )
-                else:
-                    # CACHE MISS - Continue with normal agent execution
-                    if self.debug: print( f"[CACHE] ❌ CACHE MISS: Running agent for new question" )
-
+                if isinstance( running_job, CrudForDataFramesAgent ):
+                    # CRUD agents: skip cache — data is mutable, snapshots go stale
+                    if self.debug: print( "[CACHE] Skipping cache for CRUD agent (mutable data)" )
                     running_job = self._handle_base_agent( running_job, truncated_question, run_timer )
+                else:
+                    # NEW: Check cache BEFORE agent execution
+                    question = running_job.last_question_asked
+
+                    if self.debug: print( f"[CACHE] Checking cache for question: {question}" )
+
+                    # Search for existing snapshot
+                    cached_snapshots = self.snapshot_mgr.get_snapshots_by_question( question )
+
+                    if cached_snapshots and len( cached_snapshots ) > 0:
+                        # CACHE HIT - Use the cached result
+                        score, cached_snapshot = cached_snapshots[0]  # Unpack (score, snapshot) tuple
+
+                        if self.debug: print( f"[CACHE] 🎯 CACHE HIT: Found cached solution from {cached_snapshot.run_date} (score: {score:.1f}%)" )
+
+                        # Convert cached snapshot to proper format and use it
+                        # Pass original running_job to get current user context for done queue
+                        running_job = self._format_cached_result( cached_snapshot, running_job, truncated_question, run_timer )
+                    else:
+                        # CACHE MISS - Continue with normal agent execution
+                        if self.debug: print( f"[CACHE] ❌ CACHE MISS: Running agent for new question" )
+
+                        running_job = self._handle_base_agent( running_job, truncated_question, run_timer )
             else:
                 running_job = self._handle_solution_snapshot( running_job, truncated_question, run_timer )
                 
@@ -469,8 +475,8 @@ class RunningFifoQueue( FifoQueue ):
             # TODO: this needs to not be so ad hoc as it appears right now!
             serialize_snapshot = (
                 not isinstance( running_job, ReceptionistAgent ) and
-                not isinstance( running_job, WeatherAgent ) # and
-                # not isinstance( running_job, MathRefactoringAgent )
+                not isinstance( running_job, WeatherAgent ) and
+                not isinstance( running_job, CrudForDataFramesAgent )
             )
             if serialize_snapshot:
 

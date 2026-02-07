@@ -9,6 +9,8 @@ Provides endpoints for:
 Generated on: 2026-01-20
 """
 
+import asyncio
+
 from typing import Optional, Tuple
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
@@ -259,7 +261,8 @@ async def _handle_expeditor_test( voice_command, current_user, todo_queue ):
         verbose    = False
     )
 
-    args_dict = expeditor.expedite(
+    args_dict = await asyncio.to_thread(
+        expeditor.expedite,
         command           = matched_command,
         raw_args          = "",
         user_email        = user_email or "test@test.com",
