@@ -1,5 +1,37 @@
 # COSA Development History
 
+> **✅ SESSIONS 136-146 COMMIT**: DataFrame CRUD System + PEFT Training + Async Fix (2026.02.06)
+> **Owner**: claude.code@cosa.deepily.ai#5d7d4301
+> **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Committed accumulated work from Lupin sessions 136-146** (16 files, +2,746/-80 lines):
+>
+> **New `crud_for_dataframes/` package (10 files)**:
+> - Phase 1 storage layer: schemas, xml_models, storage, crud_operations (Session 137)
+> - Phase 2 agent layer: agent, todo_crud_agent, calendar_crud_agent, dispatcher, intent_extractor (Session 143)
+>
+> **Queue integration (Phase 3, Session 143)**:
+> - Feature-flag routing swap: TodoCrudAgent/CalendarCrudAgent replace legacy agents in todo_fifo_queue.py
+> - Cache skip + serialization exclusion for mutable CRUD data in running_fifo_queue.py
+> - Voice confirmation for destructive operations (delete, update) via notify_user_sync
+> - Agentic command disambiguation with product names (Deep Dive, PodMaker, Doc-to-Pod)
+>
+> **PEFT training improvements (Sessions 131, 136, 142, 146)**:
+> - Stratified validation sampling (equal per command instead of random) in peft_trainer.py
+> - File-loaded templates replacing 10 hardcoded patterns with 65+ per command in xml_coordinator.py
+> - Fixed DataFrameGroupBy.apply DeprecationWarning (include_groups=False)
+> - GPU memory release logging moved to after actual release
+>
+> **Bug fixes (Sessions 142, 144)**:
+> - Fixed async event loop deadlock in expeditor test mode (asyncio.to_thread in mock_job.py)
+> - Fixed expeditor voice prompt priority (HIGH) and suppress_ding (False) in expeditor.py
+>
+> **Commit**: 3adb85e
+>
+> ---
+
 > **✅ SESSION 135 COMPLETE**: Branch Transition v0.1.3 → v0.1.4 (2026.02.05)
 > **Owner**: claude.code@cosa.deepily.ai#6aeca163
 > **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
