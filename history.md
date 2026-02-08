@@ -1,5 +1,40 @@
 # COSA Development History
 
+> **✅ SESSIONS 147-154 COMMIT**: Audience Normalization + Expeditor Enhancements + PEFT Dashboard + Principled Augmentation (2026.02.07)
+> **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Committed accumulated work from Lupin sessions 147-154** (30 files, +1,101/-214 lines):
+>
+> **Audience normalization across all agents (Session 149)**:
+> - Renamed `target_audience` → `audience`, default `"expert"` → `"academic"` across all 3 pipelines
+> - Wired `audience`/`audience_context` through job → factory → REST router → agent registry → prompts
+> - Added `AUDIENCE_DIALOGUE_GUIDELINES` dict to podcast `script_generation.py`
+> - Updated `PodcastConfig`, CLI args, REST models, and agent_base.py
+>
+> **Runtime Argument Expeditor enhancements (Sessions 151, 154)**:
+> - Confirmation loop: `_confirm_and_iterate()` + `_parse_modification()` in expeditor.py
+> - `ArgConfirmationResponse` BaseXMLModel with `is_approval()`/`is_cancel()`/`is_modify()` helpers
+> - User-visible args whitelist: agents publish `USER_VISIBLE_ARGS`, expeditor consumes via `get_user_visible_args()`
+> - Changed confirmation from blacklist (hide system_provided) to whitelist (show only user-visible)
+> - Added `--user-visible-args` flag to all 3 agent CLIs
+>
+> **PEFT training improvements (Sessions 148, 152)**:
+> - Results dashboard: 4 comparison tables (overall, per-command, quantization, timing) in peft_trainer.py
+> - Augmentation factor loop: `augmentation_config` parameter per command in xml_coordinator.py
+> - `skip_empty`/`skip_comments` for `get_file_as_list()` in util.py
+> - Automatic routing mode handler in todo_fifo_queue.py
+>
+> **CRUD pipeline alignment (Session 148 CP3)**:
+> - Replaced ad-hoc placeholder with `{{PYDANTIC_XML_EXAMPLE}}` marker in prompt_template_processor
+> - Registered `CRUDIntent` in `MODEL_MAPPING`
+> - Generic placeholders for unbiased LLM XML structure
+>
+> **Commit**: bebdac7
+>
+> ---
+
 > **✅ SESSIONS 136-146 COMMIT**: DataFrame CRUD System + PEFT Training + Async Fix (2026.02.06)
 > **Owner**: claude.code@cosa.deepily.ai#5d7d4301
 > **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
