@@ -37,6 +37,7 @@ class XmlCoordinator:
         
         # Counters and state
         self._call_counter        = 0
+        self.last_ms_per_item     = 0.0
         
         # For backward compatibility - provide direct access to key properties
         if init_prompt_templates:
@@ -246,7 +247,7 @@ class XmlCoordinator:
             du.print_banner( f"Building prompts for compound VOX command [{compound_command}]", prepend_nl=True, end="\n" )
             counter = 1
             # The first 100 lines are properly spelled
-            raw_lines = du.get_file_as_list( self.path_prefix + self.prompt_generator.vox_cmd_compound_commands[ compound_command ], clean=True )[ 0:100 ]
+            raw_lines = du.get_file_as_list( self.path_prefix + self.prompt_generator.vox_cmd_compound_commands[ compound_command ], clean=True, skip_empty=True, skip_comments=True )[ 0:100 ]
 
             # Determine which kind of compound synthetically created lines we need to build prompts for
             if compound_command.startswith( "search " ):
@@ -305,7 +306,7 @@ class XmlCoordinator:
             du.print_banner( f"Building prompts for simple VOX command [{simple_command}]", prepend_nl=True, end="\n" )
             counter = 1
 
-            raw_lines = du.get_file_as_list( self.path_prefix + self.prompt_generator.vox_cmd_simple_commands[ simple_command ], clean=True )
+            raw_lines = du.get_file_as_list( self.path_prefix + self.prompt_generator.vox_cmd_simple_commands[ simple_command ], clean=True, skip_empty=True, skip_comments=True )
 
             for raw_line in raw_lines:
 
@@ -352,7 +353,7 @@ class XmlCoordinator:
             du.print_banner( f"Building prompts for compound AGENT ROUTER command [{compound_command}]", prepend_nl=True, end="\n" )
             counter = 1
 
-            raw_lines = du.get_file_as_list( self.path_prefix + self.prompt_generator.agent_router_compound_commands[ compound_command ], clean=True, randomize=True )[ 0:100 ]
+            raw_lines = du.get_file_as_list( self.path_prefix + self.prompt_generator.agent_router_compound_commands[ compound_command ], clean=True, skip_empty=True, skip_comments=True, randomize=True )[ 0:100 ]
 
             if compound_command in [ "agent router go to weather", "agent router go to date and time" ]:
                 arguments   = self.prompt_generator.get_cities_and_countries( len( raw_lines ) )
@@ -429,7 +430,7 @@ class XmlCoordinator:
             if path.endswith( ".txt" ):
                 
                 print( f"Loading RAW question data from [{path}]..." )
-                raw_lines = du.get_file_as_list( path, clean=True, randomize=True )
+                raw_lines = du.get_file_as_list( path, clean=True, skip_empty=True, skip_comments=True, randomize=True )
                 if analyze_bigrams: self._analyze_bigrams( raw_lines, "DEFAULT_LOCATION" )
                 
                 locations = self.prompt_generator.get_cities_and_countries( requested_length=None )
@@ -591,46 +592,58 @@ class XmlCoordinator:
         
         return responses
     
-    def build_simple_agent_router_training_prompts( self, sample_size_per_command: int=400 ) -> pd.DataFrame:
+    def build_simple_agent_router_training_prompts( self, sample_size_per_command: int=400, augmentation_config: dict=None ) -> pd.DataFrame:
         """
         Builds training prompts for simple agent router commands.
 
         Requires:
             - sample_size_per_command is positive integer
+            - augmentation_config is None or dict mapping command names to {"factor": int}
 
         Ensures:
             - Generates prompts for all simple router commands
+            - Each factor pass applies fresh random interjection/salutation selections
             - Returns DataFrame with prompts
             - DataFrame contains expected columns
         """
         instructions, inputs, outputs, prompts, commands = self._get_5_empty_lists()
 
+        if augmentation_config is None:
+            augmentation_config = {}
+
+        default_factor = 1
+
         for simple_command in self.prompt_generator.agent_router_simple_commands.keys():
 
-            du.print_banner( f"Building prompts for simple AGENT ROUTER command [{simple_command}]", prepend_nl=True, end="\n" )
+            factor = augmentation_config.get( simple_command, {} ).get( "factor", default_factor )
+
+            du.print_banner( f"Building prompts for simple AGENT ROUTER command [{simple_command}] (augmentation factor: {factor}x)", prepend_nl=True, end="\n" )
             counter = 1
 
-            raw_lines = du.get_file_as_list( self.path_prefix + self.prompt_generator.agent_router_simple_commands[ simple_command ], clean=True )
+            raw_lines = du.get_file_as_list( self.path_prefix + self.prompt_generator.agent_router_simple_commands[ simple_command ], clean=True, skip_empty=True, skip_comments=True )
 
             for raw_line in raw_lines:
 
-                _, raw_line = self.prompt_generator.insert_interjection( raw_line, self.prompt_generator.interjections )
-                _, raw_line = self.prompt_generator.prepend_salutation( raw_line, self.prompt_generator.salutations )
+                for aug_idx in range( factor ):
 
-                instruction = self.prompt_generator.vox_cmd_instruction_template.format( command_choices=self.prompt_generator.agent_router_commands )
-                human_says  = self.prompt_generator.common_human_says_template.format( voice_command=raw_line )
-                input_text  = self.prompt_generator.common_input_template.format( human_says=human_says, response_format=self.prompt_generator.common_response_format )
-                output      = self.prompt_generator.common_output_template.format( command=simple_command, args="" )
-                prompt      = self.prompt_generator._get_prompt_instruction_format( instruction, input_text )
+                    augmented_line = raw_line
+                    _, augmented_line = self.prompt_generator.insert_interjection( augmented_line, self.prompt_generator.interjections )
+                    _, augmented_line = self.prompt_generator.prepend_salutation( augmented_line, self.prompt_generator.salutations )
 
-                instructions.append( instruction )
-                inputs.append( input_text )
-                outputs.append( output )
-                prompts.append( prompt )
-                commands.append( simple_command )
+                    instruction = self.prompt_generator.vox_cmd_instruction_template.format( command_choices=self.prompt_generator.agent_router_commands )
+                    human_says  = self.prompt_generator.common_human_says_template.format( voice_command=augmented_line )
+                    input_text  = self.prompt_generator.common_input_template.format( human_says=human_says, response_format=self.prompt_generator.common_response_format )
+                    output      = self.prompt_generator.common_output_template.format( command=simple_command, args="" )
+                    prompt      = self.prompt_generator._get_prompt_instruction_format( instruction, input_text )
 
-                self._do_conditional_print( counter, raw_line )
-                counter += 1
+                    instructions.append( instruction )
+                    inputs.append( input_text )
+                    outputs.append( output )
+                    prompts.append( prompt )
+                    commands.append( simple_command )
+
+                    self._do_conditional_print( counter, augmented_line )
+                    counter += 1
 
         simple_agent_router_qna_df = pd.DataFrame( {"command": commands, "instruction": instructions, "input": inputs, "output": outputs, "prompt": prompts} )
         simple_agent_router_qna_df = self._prune_duplicates_and_sample( simple_agent_router_qna_df, sample_size=( sample_size_per_command * len( self.prompt_generator.agent_router_simple_commands ) ), sample_size_per_command=sample_size_per_command )
@@ -688,9 +701,7 @@ class XmlCoordinator:
 
             # Load templates from external file
             template_path    = self.path_prefix + config[ "template_file" ]
-            template_patterns = du.get_file_as_list( template_path, clean=True )
-            # Filter out empty lines
-            template_patterns = [ t for t in template_patterns if t ]
+            template_patterns = du.get_file_as_list( template_path, clean=True, skip_empty=True, skip_comments=True )
             if self.debug: print( f"  Loaded [{len( template_patterns )}] templates from [{config[ 'template_file' ]}]" )
 
             # Generate prompts from templates
@@ -751,7 +762,14 @@ class XmlCoordinator:
         simple_vox_cmd_qna_df         = self.build_simple_vox_cmd_training_prompts( sample_size_per_command=sample_size_per_command )
 
         compound_router_qna_df        = self.build_compound_agent_router_training_prompts( sample_size_per_command=sample_size_per_command )
-        simple_router_qna_df          = self.build_simple_agent_router_training_prompts( sample_size_per_command=sample_size_per_command )
+
+        augmentation_config = {
+            "agent router go to automatic routing mode" : { "factor": 9 },
+            "agent router go to math"                   : { "factor": 3 },
+            "agent router go to todo list"              : { "factor": 3 },
+            "none"                                      : { "factor": 3 },
+        }
+        simple_router_qna_df          = self.build_simple_agent_router_training_prompts( sample_size_per_command=sample_size_per_command, augmentation_config=augmentation_config )
 
         # Build list of dataframes to concatenate
         dataframes_to_concat = [ compound_vox_cmd_qna_df, simple_vox_cmd_qna_df, compound_router_qna_df, simple_router_qna_df ]
@@ -914,8 +932,9 @@ class XmlCoordinator:
         
         timer.print( msg="Done!", use_millis=False, prepend_nl=True, end="\n" )
         ms_per_item = timer.get_delta_ms() / ( rows * 1.0 )
+        self.last_ms_per_item = ms_per_item
         print( f"[{round( ms_per_item, 1 ):,}] ms per item" )
-        
+
         return df
     
     def validate_responses( self, df: pd.DataFrame ) -> pd.DataFrame:

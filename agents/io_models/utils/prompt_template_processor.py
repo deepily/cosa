@@ -17,7 +17,8 @@ from cosa.agents.io_models.xml_models import (
     VoxCommandResponse, AgentRouterResponse, GistResponse, ConfirmationResponse,
     FuzzyFileMatchResponse
 )
-from cosa.agents.runtime_argument_expeditor.xml_models import ExpeditorResponse
+from cosa.agents.runtime_argument_expeditor.xml_models import ExpeditorResponse, ArgConfirmationResponse
+from cosa.crud_for_dataframes.xml_models import CRUDIntent
 
 
 class PromptTemplateProcessor:
@@ -45,7 +46,9 @@ class PromptTemplateProcessor:
         'gist generation': GistResponse,
         'confirmation dialog': ConfirmationResponse,
         'fuzzy file matching'          : FuzzyFileMatchResponse,
-        'runtime argument expeditor'   : ExpeditorResponse,
+        'runtime argument expeditor'              : ExpeditorResponse,
+        'argument confirmation'                   : ArgConfirmationResponse,
+        'agent router go to crud for dataframes'  : CRUDIntent,
     }
     
     def __init__( self, debug: bool = False, verbose: bool = False ):
@@ -141,13 +144,19 @@ class PromptTemplateProcessor:
                 print( "  - Testing XML generation using model example methods..." )
             agents_to_test = list( cls.MODEL_MAPPING.keys() )
             
+            # Agents that use a non-standard root tag
+            custom_root_tags = {
+                'agent router go to crud for dataframes': 'intent',
+            }
+
             for agent in agents_to_test:
                 xml = processor.get_example_for_agent( agent )
                 if xml:
-                    assert '<response>' in xml, f"Missing response tag for {agent}"
-                    assert '</response>' in xml, f"Missing closing response tag for {agent}"
+                    root_tag = custom_root_tags.get( agent, 'response' )
+                    assert f'<{root_tag}>' in xml, f"Missing <{root_tag}> tag for {agent}"
+                    assert f'</{root_tag}>' in xml, f"Missing </{root_tag}> tag for {agent}"
                     if debug:
-                        print( f"    ✓ {agent}: {len(xml)} chars" )
+                        print( f"    ✓ {agent}: {len(xml)} chars (root: <{root_tag}>)" )
                 else:
                     if debug:
                         print( f"    ✗ {agent}: No XML generated" )

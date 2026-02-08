@@ -43,6 +43,8 @@ class DeepResearchSubmitRequest( BaseModel ):
     websocket_id: Optional[ str ] = Field( None, description="WebSocket session ID for notifications" )
     lead_model: Optional[ str ] = Field( None, description="Model for lead agent (None = use default)" )
     dry_run: bool = Field( False, description="Simulate execution without API calls" )
+    audience: Optional[ str ] = Field( None, description="Target audience level: beginner, general, expert, academic" )
+    audience_context: Optional[ str ] = Field( None, description="Custom audience description" )
 
 
 class DeepResearchSubmitResponse( BaseModel ):
@@ -135,6 +137,10 @@ async def submit_research(
             args_dict[ "budget" ] = str( request_body.budget )
         if request_body.dry_run:
             args_dict[ "dry_run" ] = True
+        if request_body.audience:
+            args_dict[ "audience" ] = request_body.audience
+        if request_body.audience_context:
+            args_dict[ "audience_context" ] = request_body.audience_context
 
         job = create_agentic_job(
             command    = "agent router go to deep research",

@@ -8,6 +8,7 @@ argument name mappings (LORA -> CLI), and fallback questions for missing args.
 Also provides CLI --help capture with per-process-lifetime caching.
 """
 
+import json
 import sys
 import subprocess
 from typing import Optional
@@ -24,14 +25,17 @@ AGENTIC_AGENTS = {
         "required_user_args" : [ "query" ],
         "system_provided"    : [ "user_email", "session_id", "user_id", "no_confirm" ],
         "arg_mapping"        : {
-            "topic"  : "query",
-            "query"  : "query",
-            "budget" : "budget",
+            "topic"            : "query",
+            "query"            : "query",
+            "budget"           : "budget",
+            "audience"         : "audience",
+            "audience_context" : "audience_context",
         },
         "fallback_questions" : {
-            "query"    : "What topic would you like me to research?",
-            "budget"   : "Would you like to set a budget limit in dollars? Say a dollar amount, or 'no limit'.",
-            "audience" : "Who is the target audience? Options: beginner, general, expert, or academic.",
+            "query"            : "What topic would you like me to research?",
+            "budget"           : "Would you like to set a budget limit in dollars? Say a dollar amount, or 'no limit'.",
+            "audience"         : "Who is the target audience? Options: beginner, intermediate, expert, or academic.",
+            "audience_context" : "Any additional context about the audience? Say 'none' to skip.",
         },
     },
     "agent router go to podcast generator" : {
@@ -40,13 +44,17 @@ AGENTIC_AGENTS = {
         "required_user_args" : [ "research" ],
         "system_provided"    : [ "user_id", "user_email", "session_id" ],
         "arg_mapping"        : {
-            "research"      : "research",
-            "document_path" : "research",
-            "topic"         : "research",
+            "research"         : "research",
+            "document_path"    : "research",
+            "topic"            : "research",
+            "audience"         : "audience",
+            "audience_context" : "audience_context",
         },
         "fallback_questions" : {
-            "research"  : "Which research document should I use for the podcast? Describe it or say the filename.",
-            "languages" : "What languages for the podcast? Say 'English' or 'English and Spanish', etc.",
+            "research"         : "Which research document should I use for the podcast? Describe it or say the filename.",
+            "languages"        : "What languages for the podcast? Say 'English' or 'English and Spanish', etc.",
+            "audience"         : "Who is the target audience? Options: beginner, intermediate, expert, or academic.",
+            "audience_context" : "Any additional context about the audience? Say 'none' to skip.",
         },
         "special_handlers"   : {
             "research" : "fuzzy_file_match",
@@ -58,14 +66,18 @@ AGENTIC_AGENTS = {
         "required_user_args" : [ "query" ],
         "system_provided"    : [ "user_email", "session_id", "user_id", "no_confirm" ],
         "arg_mapping"        : {
-            "topic"  : "query",
-            "query"  : "query",
-            "budget" : "budget",
+            "topic"            : "query",
+            "query"            : "query",
+            "budget"           : "budget",
+            "audience"         : "audience",
+            "audience_context" : "audience_context",
         },
         "fallback_questions" : {
-            "query"     : "What topic would you like me to research and turn into a podcast?",
-            "budget"    : "Would you like to set a budget limit for the research phase?",
-            "languages" : "What languages for the podcast? Say 'English' or 'English and Spanish', etc.",
+            "query"            : "What topic would you like me to research and turn into a podcast?",
+            "budget"           : "Would you like to set a budget limit for the research phase?",
+            "audience"         : "Who is the target audience? Options: beginner, intermediate, expert, or academic.",
+            "audience_context" : "Any additional context about the audience? Say 'none' to skip.",
+            "languages"        : "What languages for the podcast? Say 'English' or 'English and Spanish', etc.",
         },
     },
 }
@@ -120,6 +132,57 @@ def get_cli_help( command_key ):
         print( f"Warning: Failed to capture --help for {cli_module}: {e}" )
         _help_cache[ command_key ] = None
         return None
+
+
+# ============================================================================
+# User-Visible Args Capture (process-lifetime cache)
+# ============================================================================
+
+_user_visible_cache = {}
+
+
+def get_user_visible_args( command_key ):
+    """
+    Get list of user-visible args for an agent by calling its CLI with --user-visible-args.
+
+    Requires:
+        - command_key exists in AGENTIC_AGENTS
+
+    Ensures:
+        - Returns list of arg name strings, or None on failure
+        - Results are cached for process lifetime
+
+    Args:
+        command_key: Key from AGENTIC_AGENTS (e.g., "agent router go to deep research")
+
+    Returns:
+        list or None: List of user-visible arg names, or None on failure
+    """
+    if command_key in _user_visible_cache:
+        return _user_visible_cache[ command_key ]
+
+    entry = AGENTIC_AGENTS.get( command_key )
+    if not entry:
+        return None
+
+    cli_module = entry[ "cli_module" ]
+
+    try:
+        result = subprocess.run(
+            [ sys.executable, "-m", cli_module, "--user-visible-args" ],
+            capture_output = True,
+            text           = True,
+            timeout        = 10
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            args_list = json.loads( result.stdout.strip() )
+            _user_visible_cache[ command_key ] = args_list
+            return args_list
+
+    except ( subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError ):
+        pass
+
+    return None
 
 
 # ============================================================================

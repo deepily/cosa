@@ -15,6 +15,70 @@ from ..config import HostPersonality, LANGUAGE_NAMES
 
 
 # =============================================================================
+# Audience-Specific Dialogue Guidelines
+# =============================================================================
+
+AUDIENCE_DIALOGUE_GUIDELINES = {
+    "beginner": """
+## Target Audience: Beginner
+
+### Dialogue Guidelines for Beginner Audience
+
+For BEGINNER listeners:
+- Define ALL technical terms when first introduced in dialogue
+- Use everyday analogies and comparisons to familiar concepts
+- Curious host should ask the "obvious" questions listeners would have
+- Expert host should explain step-by-step, never assuming prior knowledge
+- Include "why this matters" moments in the conversation
+- Keep sentence structures simple and direct
+- Summarize key points periodically throughout the episode
+""",
+
+    "general": """
+## Target Audience: General
+
+### Dialogue Guidelines for General Audience
+
+For GENERAL listeners:
+- Define specialized terms but assume general tech/science literacy
+- Balance accessibility with depth — don't over-explain basics
+- Curious host should ask practical "so what?" questions
+- Expert host should use real-world examples and clear explanations
+- Include trade-offs and nuance without going too deep
+- Keep the conversation relatable and grounded in practical implications
+""",
+
+    "expert": """
+## Target Audience: Expert
+
+### Dialogue Guidelines for Expert Audience
+
+For EXPERT listeners:
+- Skip introductory explanations — assume strong domain knowledge
+- Focus on: novel insights, trade-offs, edge cases, contrarian viewpoints
+- Curious host should ask about implementation details and gotchas
+- Expert host should compare approaches and highlight what's different/better
+- Include production-level concerns and real-world failure modes
+- Use precise technical language without over-explaining standard terminology
+""",
+
+    "academic": """
+## Target Audience: Academic/Researcher
+
+### Dialogue Guidelines for Academic Audience
+
+For ACADEMIC listeners:
+- Use precise academic terminology and methodology language
+- Focus on: research gaps, conflicting findings, experimental design
+- Curious host should ask about statistical significance and methodology
+- Expert host should cite specific papers and research findings
+- Include limitations, replication status, and open research questions
+- Discuss theoretical foundations and their implications for future work
+"""
+}
+
+
+# =============================================================================
 # System Prompts
 # =============================================================================
 
@@ -97,7 +161,12 @@ Return a JSON object with this structure:
 # Prompt Templates
 # =============================================================================
 
-def get_content_analysis_prompt( research_content: str, max_topics: int = 5 ) -> str:
+def get_content_analysis_prompt(
+    research_content: str,
+    max_topics: int = 5,
+    audience: Optional[ str ] = None,
+    audience_context: Optional[ str ] = None
+) -> str:
     """
     Generate prompt for content analysis phase.
 
@@ -107,10 +176,13 @@ def get_content_analysis_prompt( research_content: str, max_topics: int = 5 ) ->
 
     Ensures:
         - Returns prompt requesting structured JSON analysis
+        - Includes audience-specific analysis guidance if provided
 
     Args:
         research_content: The full text of the research document
         max_topics: Maximum number of subtopics to extract
+        audience: Target audience level (beginner/general/expert/academic)
+        audience_context: Custom audience description
 
     Returns:
         str: Complete prompt for content analysis
@@ -118,10 +190,18 @@ def get_content_analysis_prompt( research_content: str, max_topics: int = 5 ) ->
     # Truncate if very long to stay within context limits
     content_preview = research_content[ :50000 ] if len( research_content ) > 50000 else research_content
 
+    audience_instruction = ""
+    if audience:
+        audience_guidelines = AUDIENCE_DIALOGUE_GUIDELINES.get( audience, "" )
+        if audience_guidelines:
+            audience_instruction += f"\n{audience_guidelines}\n"
+    if audience_context:
+        audience_instruction += f"\n**Additional Audience Context**: {audience_context}\n"
+
     return f"""Analyze this research document for podcast conversion.
 
 Extract up to {max_topics} key subtopics and the most engaging discussion points.
-
+{audience_instruction}
 RESEARCH DOCUMENT:
 ---
 {content_preview}
@@ -139,6 +219,8 @@ def get_script_generation_prompt(
     min_exchanges           : int = 8,
     max_exchanges           : int = 20,
     target_language         : str = "en",
+    audience                : Optional[ str ] = None,
+    audience_context        : Optional[ str ] = None,
 ) -> str:
     """
     Generate prompt for script generation phase.
@@ -152,6 +234,7 @@ def get_script_generation_prompt(
     Ensures:
         - Returns prompt with full context for dialogue generation
         - For non-English languages, includes instruction for native generation
+        - Includes audience-specific dialogue guidelines if provided
 
     Args:
         content_analysis: Dictionary from analysis phase
@@ -162,6 +245,8 @@ def get_script_generation_prompt(
         min_exchanges: Minimum number of dialogue exchanges
         max_exchanges: Maximum number of dialogue exchanges
         target_language: ISO language code (e.g., "en", "es-MX")
+        audience: Target audience level (beginner/general/expert/academic)
+        audience_context: Custom audience description
 
     Returns:
         str: Complete prompt for script generation
@@ -191,13 +276,22 @@ Generate this podcast script in {language_name}.
 
 """
 
+    # Build audience instruction block
+    audience_instruction = ""
+    if audience:
+        audience_guidelines = AUDIENCE_DIALOGUE_GUIDELINES.get( audience, "" )
+        if audience_guidelines:
+            audience_instruction += f"\n{audience_guidelines}\n"
+    if audience_context:
+        audience_instruction += f"\n**Additional Audience Context**: {audience_context}\n"
+
     return f"""Create a podcast script based on the following analysis and source material.
 {language_instruction}
 TARGET SPECIFICATIONS:
 - Duration: approximately {target_duration_minutes} minutes
 - Exchanges: {min_exchanges}-{max_exchanges} dialogue turns
 - Format: Natural conversation between two hosts
-
+{audience_instruction}
 HOST A (CURIOUS ROLE):
 {host_a_desc}
 
@@ -219,6 +313,7 @@ INSTRUCTIONS:
 4. Use suggested analogies where appropriate
 5. Build complexity progressively
 6. End with a memorable conclusion that summarizes key insights
+7. Follow the audience-specific dialogue guidelines above for tone and depth
 
 Generate the complete script as JSON."""
 

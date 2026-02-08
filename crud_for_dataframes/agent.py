@@ -64,7 +64,7 @@ class CrudForDataFramesAgent( AgentBase ):
 
         Ensures:
             - self.storage is initialized for per-user parquet I/O
-            - self.prompt is built with CRUDIntent XML example + available lists
+            - self.prompt is built with available lists (XML injected by PromptTemplateProcessor)
             - self.crud_intent is None (set in run_prompt)
         """
         super().__init__(
@@ -90,14 +90,12 @@ class CrudForDataFramesAgent( AgentBase ):
             debug      = debug
         )
 
-        # Build prompt with dynamic CRUDIntent XML example + user's list context
+        # Build prompt — XML example already injected by PromptTemplateProcessor in super().__init__()
         available_lists = self.storage.get_all_lists_metadata()
-        intent_example  = CRUDIntent.get_example_for_template().to_xml( root_tag="intent" )
 
         self.prompt = self.prompt_template.format(
             query           = self.last_question_asked,
             available_lists = self._format_lists_for_prompt( available_lists ),
-            intent_example  = intent_example
         )
 
         # CRUDIntent parsed from LLM response (set in run_prompt)
@@ -126,11 +124,11 @@ class CrudForDataFramesAgent( AgentBase ):
         factory = LlmClientFactory()
         llm     = factory.get_client( self.model_name, debug=self.debug, verbose=self.verbose )
 
-        if self.debug and self.verbose: print( f"CrudForDataFramesAgent.run_prompt: Prompt length={len( self.prompt )}" )
+        if self.debug: print( f"CrudForDataFramesAgent.run_prompt: model={self.model_name}, prompt length={len( self.prompt )}" )
 
         raw_response = llm.run( self.prompt )
 
-        if self.debug and self.verbose: print( f"CrudForDataFramesAgent.run_prompt: Response length={len( raw_response )}" )
+        if self.debug: print( f"CrudForDataFramesAgent.run_prompt: raw response length={len( raw_response ) if raw_response else 0}, preview='{( raw_response or '' )[ :200 ]}'" )
 
         # Extract <intent> XML and parse into CRUDIntent
         xml_text        = extract_intent_xml( raw_response )

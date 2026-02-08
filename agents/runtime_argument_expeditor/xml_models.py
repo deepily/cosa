@@ -196,9 +196,146 @@ class ExpeditorResponse( BaseXMLModel ):
             return False
 
 
+class ArgConfirmationResponse( BaseXMLModel ):
+    """
+    Parses user intent during argument confirmation loop.
+
+    Handles XML responses for modification intent:
+    <response>
+        <action>modify</action>
+        <arg_name>budget</arg_name>
+        <new_value>50</new_value>
+    </response>
+
+    Fields:
+        action: User intent — 'approve', 'modify', or 'cancel'
+        arg_name: Argument to modify (empty if approve/cancel)
+        new_value: New value for the argument (empty if approve/cancel)
+    """
+
+    action    : str = Field( ..., description="User intent: 'approve', 'modify', or 'cancel'" )
+    arg_name  : str = Field( ..., description="Argument to modify (empty if approve/cancel)" )
+    new_value : str = Field( ..., description="New value for the argument (empty if approve/cancel)" )
+
+    def is_approval( self ):
+        """
+        Check if the user approved the arguments.
+
+        Requires:
+            - self.action is a string
+
+        Ensures:
+            - Returns True if action indicates approval
+            - Returns False otherwise
+        """
+        return self.action.strip().lower() in ( "approve", "yes", "ok" )
+
+    def is_cancel( self ):
+        """
+        Check if the user wants to cancel.
+
+        Requires:
+            - self.action is a string
+
+        Ensures:
+            - Returns True if action indicates cancellation
+            - Returns False otherwise
+        """
+        return self.action.strip().lower() in ( "cancel", "stop", "quit" )
+
+    def is_modify( self ):
+        """
+        Check if the user wants to modify an argument.
+
+        Requires:
+            - self.action is a string
+
+        Ensures:
+            - Returns True if action is 'modify'
+            - Returns False otherwise
+        """
+        return self.action.strip().lower() == "modify"
+
+    @classmethod
+    def get_example_for_template( cls ):
+        """
+        Get example instance for prompt templates.
+
+        Requires:
+            - None
+
+        Ensures:
+            - Returns ArgConfirmationResponse with sample modify data
+        """
+        return cls( action="modify", arg_name="budget", new_value="50" )
+
+    @classmethod
+    def quick_smoke_test( cls, debug=False ):
+        """
+        Quick smoke test for ArgConfirmationResponse.
+
+        Args:
+            debug: Enable debug output
+
+        Returns:
+            True if all tests pass
+        """
+        if debug: print( f"Testing {cls.__name__}..." )
+
+        try:
+            # Test base functionality
+            if not super().quick_smoke_test( debug=False ):
+                return False
+
+            # Test creation with all fields
+            response = cls( action="modify", arg_name="budget", new_value="50" )
+            assert response.action == "modify"
+            assert response.arg_name == "budget"
+            assert response.new_value == "50"
+
+            # Test is_approval
+            approve = cls( action="approve", arg_name="", new_value="" )
+            assert approve.is_approval()
+            assert not approve.is_cancel()
+            assert not approve.is_modify()
+
+            # Test is_cancel
+            cancel = cls( action="cancel", arg_name="", new_value="" )
+            assert cancel.is_cancel()
+            assert not cancel.is_approval()
+            assert not cancel.is_modify()
+
+            # Test is_modify
+            assert response.is_modify()
+            assert not response.is_approval()
+            assert not response.is_cancel()
+
+            # Test XML round-trip
+            xml_str = response.to_xml()
+            assert "<action>modify</action>" in xml_str
+            parsed = cls.from_xml( xml_str )
+            assert parsed.action == response.action
+            assert parsed.arg_name == response.arg_name
+            assert parsed.new_value == response.new_value
+
+            # Test template example
+            example = cls.get_example_for_template()
+            assert example.action == "modify"
+            assert example.arg_name == "budget"
+
+            if debug: print( f"✓ {cls.__name__} smoke test PASSED" )
+            return True
+
+        except Exception as e:
+            if debug: print( f"✗ {cls.__name__} smoke test FAILED: {e}" )
+            return False
+
+
 def quick_smoke_test():
     """Module-level smoke test following CoSA convention."""
-    return ExpeditorResponse.quick_smoke_test( debug=True )
+    result1 = ExpeditorResponse.quick_smoke_test( debug=True )
+    result2 = ArgConfirmationResponse.quick_smoke_test( debug=True )
+    return result1 and result2
 
 
 if __name__ == "__main__":

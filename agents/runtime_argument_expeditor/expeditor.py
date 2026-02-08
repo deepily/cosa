@@ -19,9 +19,10 @@ import cosa.utils.util as cu
 
 from cosa.agents.runtime_argument_expeditor.agent_registry import (
     AGENTIC_AGENTS,
-    get_cli_help
+    get_cli_help,
+    get_user_visible_args
 )
-from cosa.agents.runtime_argument_expeditor.xml_models import ExpeditorResponse
+from cosa.agents.runtime_argument_expeditor.xml_models import ExpeditorResponse, ArgConfirmationResponse
 from cosa.agents.llm_client_factory import LlmClientFactory
 from cosa.agents.io_models.utils.prompt_template_processor import PromptTemplateProcessor
 from cosa.cli.notify_user_sync import notify_user_sync
@@ -67,12 +68,13 @@ class RuntimeArgumentExpeditor:
             debug: Enable debug output
             verbose: Enable verbose output
         """
-        self.config_mgr         = config_mgr
-        self.debug              = debug
-        self.verbose            = verbose
-        self.llm_spec_key       = config_mgr.get( "llm spec key for runtime argument expeditor" )
-        self.prompt_template_path = config_mgr.get( "prompt template for runtime argument expeditor" )
-        self.llm_factory        = LlmClientFactory( debug=debug, verbose=verbose )
+        self.config_mgr               = config_mgr
+        self.debug                    = debug
+        self.verbose                  = verbose
+        self.llm_spec_key             = config_mgr.get( "llm spec key for runtime argument expeditor" )
+        self.prompt_template_path     = config_mgr.get( "prompt template for runtime argument expeditor" )
+        self.confirmation_prompt_path = config_mgr.get( "prompt template for argument confirmation" )
+        self.llm_factory              = LlmClientFactory( debug=debug, verbose=verbose )
 
     def expedite( self, command, raw_args, user_email, session_id, user_id, original_question ):
         """
@@ -181,53 +183,220 @@ class RuntimeArgumentExpeditor:
 
         if parsed.is_complete():
             if self.debug: print( f"[Expeditor] All required args present: {final_args}" )
-            return self._inject_system_args(
-                final_args, agent_entry, user_email, session_id, user_id
-            )
+        else:
+            # Step 7: Ask for missing args
+            missing = parsed.get_missing_list()
+            if self.debug: print( f"[Expeditor] Missing args: {missing}" )
 
-        # Step 7: Ask for missing args
-        missing = parsed.get_missing_list()
-        if self.debug: print( f"[Expeditor] Missing args: {missing}" )
+            # Get user-visible whitelist to gate which args we ask about
+            user_visible = get_user_visible_args( command )
 
-        special_handlers = agent_entry.get( "special_handlers", {} )
-        fallback_questions = agent_entry[ "fallback_questions" ]
+            special_handlers = agent_entry.get( "special_handlers", {} )
+            fallback_questions = agent_entry[ "fallback_questions" ]
 
-        for arg_name in missing:
-            # Skip if already collected
-            if arg_name in final_args:
-                continue
+            for arg_name in missing:
+                # Skip if already collected
+                if arg_name in final_args:
+                    continue
 
-            handler = special_handlers.get( arg_name )
+                # Only ask about user-visible args (safety net)
+                if user_visible and arg_name not in user_visible:
+                    if self.debug: print( f"  Skipping non-user-visible arg: {arg_name}" )
+                    continue
 
-            if handler == "fuzzy_file_match":
-                value = self._handle_fuzzy_file_match( user_email )
-            elif arg_name in fallback_questions:
-                value = self._ask_for_arg(
-                    arg_name, fallback_questions[ arg_name ], user_email
-                )
-            else:
-                # Generic fallback
-                value = self._ask_for_arg(
-                    arg_name,
-                    f"Please provide the '{arg_name}' argument.",
-                    user_email
-                )
+                handler = special_handlers.get( arg_name )
 
-            if value is None:
-                print( f"[Expeditor] User cancelled at arg '{arg_name}'" )
-                return None
+                if handler == "fuzzy_file_match":
+                    value = self._handle_fuzzy_file_match( user_email )
+                elif arg_name in fallback_questions:
+                    value = self._ask_for_arg(
+                        arg_name, fallback_questions[ arg_name ], user_email
+                    )
+                else:
+                    # Generic fallback
+                    value = self._ask_for_arg(
+                        arg_name,
+                        f"Please provide the '{arg_name}' argument.",
+                        user_email
+                    )
 
-            # Handle special "no limit" / "none" answers for optional args
-            if arg_name in ( "budget", "languages" ) and value.lower().strip() in ( "no limit", "none", "skip", "no" ):
-                continue
+                if value is None:
+                    print( f"[Expeditor] User cancelled at arg '{arg_name}'" )
+                    return None
 
-            final_args[ arg_name ] = value
+                # Handle special "no limit" / "none" answers for optional args
+                if arg_name in ( "budget", "languages" ) and value.lower().strip() in ( "no limit", "none", "skip", "no" ):
+                    continue
+
+                final_args[ arg_name ] = value
 
         if self.debug: print( f"[Expeditor] Final args: {final_args}" )
 
+        # Step 8: Confirmation loop — user reviews args before submission
+        confirmed_args = self._confirm_and_iterate( final_args, agent_entry, command, user_email )
+        if confirmed_args is None:
+            print( "[Expeditor] User cancelled during confirmation" )
+            return None
+
         return self._inject_system_args(
-            final_args, agent_entry, user_email, session_id, user_id
+            confirmed_args, agent_entry, user_email, session_id, user_id
         )
+
+    def _confirm_and_iterate( self, args_dict, agent_entry, command_key, user_email ):
+        """
+        Present argument summary and iterate until user approves, modifies, or cancels.
+
+        Requires:
+            - args_dict contains all collected user-facing args
+            - agent_entry is the registry entry for this agent
+            - command_key is the agent's key in AGENTIC_AGENTS
+
+        Ensures:
+            - Returns approved args_dict, or None if cancelled
+            - User has seen and approved all arguments before submission
+            - Only user-visible args are shown (whitelist from CLI)
+            - Maximum 5 iterations to prevent infinite loops
+
+        Args:
+            args_dict: Collected argument dictionary
+            agent_entry: Registry entry for the target agent
+            command_key: Key in AGENTIC_AGENTS for user-visible-args lookup
+            user_email: Target user for voice prompts
+
+        Returns:
+            dict or None: Approved args_dict or None on cancel
+        """
+        max_iterations = 5
+
+        # Whitelist: only show user-visible args in confirmation summary
+        user_visible = get_user_visible_args( command_key )
+        # Fallback: if agent doesn't publish, use fallback_questions keys
+        if user_visible is None:
+            user_visible = list( agent_entry.get( "fallback_questions", {} ).keys() )
+
+        for iteration in range( max_iterations ):
+            # Build summary of user-visible args only
+            summary_lines = []
+            for k, v in args_dict.items():
+                if k in user_visible:
+                    summary_lines.append( f"  • {k}: {v}" )
+
+            summary    = "\n".join( summary_lines )
+            agent_name = agent_entry[ "cli_module" ].split( "." )[ -1 ].replace( "_", " " )
+
+            message = (
+                f"Here's what I have for your {agent_name} job:\n"
+                f"{summary}\n\n"
+                f"Does this look right? Say 'yes' to proceed, "
+                f"'cancel' to abort, or tell me what to change."
+            )
+
+            response = self._ask_for_arg( "confirmation", message, user_email )
+
+            if response is None:
+                return None
+
+            # Quick keyword check before LLM parse
+            lower = response.lower().strip()
+            if lower in ( "yes", "yeah", "yep", "ok", "okay", "go", "go ahead",
+                           "looks good", "that's fine", "approved", "proceed" ):
+                return args_dict
+
+            if lower in ( "cancel", "nevermind", "never mind", "stop", "quit" ):
+                return None
+
+            # Send to LLM to parse modification intent
+            modification = self._parse_modification( response, args_dict, agent_entry )
+
+            if modification is None:
+                # LLM parse failed — treat as approval to avoid blocking
+                if self.debug: print( "[Expeditor] Confirmation parse failed, treating as approval" )
+                return args_dict
+
+            if modification.is_approval():
+                return args_dict
+
+            if modification.is_cancel():
+                return None
+
+            if modification.is_modify() and modification.arg_name and modification.new_value:
+                args_dict[ modification.arg_name ] = modification.new_value
+                if self.debug: print( f"  Modified: {modification.arg_name} = {modification.new_value}" )
+                # Loop continues — re-present updated summary
+
+        # Safety valve: too many iterations
+        if self.debug: print( "[Expeditor] Max confirmation iterations reached, proceeding" )
+        return args_dict
+
+    def _parse_modification( self, user_response, args_dict, agent_entry ):
+        """
+        Use LLM to parse a user's modification intent from their voice response.
+
+        Requires:
+            - user_response is a non-empty string
+            - args_dict contains current arguments
+            - agent_entry contains the agent registry entry
+
+        Ensures:
+            - Returns ArgConfirmationResponse on successful parse
+            - Returns None on parse failure
+
+        Args:
+            user_response: The user's voice response text
+            args_dict: Current argument dictionary
+            agent_entry: Registry entry for context
+
+        Returns:
+            ArgConfirmationResponse or None
+        """
+        try:
+            template_raw = cu.get_file_as_string(
+                cu.get_project_root() + self.confirmation_prompt_path
+            )
+
+            processor = PromptTemplateProcessor( debug=self.debug )
+            template_processed = processor.process_template(
+                template_raw, "argument confirmation"
+            )
+
+            # Build current args summary and arg names list
+            system_args = set( agent_entry.get( "system_provided", [] ) )
+            current_args_str = ", ".join(
+                f"{k}={v}" for k, v in args_dict.items()
+                if k not in system_args and k != "dry_run" and k != "no_confirm"
+            )
+            arg_names_str = ", ".join(
+                k for k in args_dict.keys()
+                if k not in system_args and k != "dry_run" and k != "no_confirm"
+            )
+
+            # Also include fallback question keys as valid arg names
+            fallback_keys = ", ".join( agent_entry.get( "fallback_questions", {} ).keys() )
+            if fallback_keys:
+                arg_names_str = arg_names_str + ", " + fallback_keys if arg_names_str else fallback_keys
+
+            prompt = template_processed.format(
+                user_response = user_response,
+                current_args  = current_args_str,
+                arg_names     = arg_names_str
+            )
+
+            if self.debug and self.verbose:
+                print( f"[Expeditor] Confirmation prompt ({len( prompt )} chars):\n{prompt[ :300 ]}..." )
+
+            llm_client = self.llm_factory.get_client(
+                self.llm_spec_key, debug=self.debug, verbose=self.verbose
+            )
+            response = llm_client.run( prompt )
+
+            if self.debug: print( f"[Expeditor] Confirmation LLM response: {response[ :200 ]}" )
+
+            parsed = ArgConfirmationResponse.from_xml( response )
+            return parsed
+
+        except Exception as e:
+            print( f"[Expeditor] Failed to parse confirmation response: {e}" )
+            return None
 
     def _inject_system_args( self, args_dict, agent_entry, user_email, session_id, user_id ):
         """

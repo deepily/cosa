@@ -59,7 +59,7 @@ class DeepResearchToPodcastAgent:
         budget: Optional[ float ] = None,
         lead_model: Optional[ str ] = None,
         no_confirm: bool = False,
-        target_audience: Optional[ str ] = None,
+        audience: Optional[ str ] = None,
         audience_context: Optional[ str ] = None,
         # Podcast Generator options
         target_languages: Optional[ List[ str ] ] = None,
@@ -80,7 +80,7 @@ class DeepResearchToPodcastAgent:
             budget: Maximum budget in USD for DR (None = unlimited)
             lead_model: Model for DR lead agent (None = use default)
             no_confirm: Skip confirmation prompts in DR
-            target_audience: Expertise level (beginner/general/expert/academic)
+            audience: Expertise level (beginner/general/expert/academic)
             audience_context: Custom audience description
 
             # Podcast Generator options
@@ -99,8 +99,8 @@ class DeepResearchToPodcastAgent:
         self.budget           = budget
         self.lead_model       = lead_model
         self.no_confirm       = no_confirm
-        self.target_audience  = target_audience
-        self.audience_context = audience_context
+        self.audience          = audience
+        self.audience_context  = audience_context
 
         # Podcast Generator options
         self.target_languages = target_languages or [ "en" ]
@@ -283,9 +283,9 @@ class DeepResearchToPodcastAgent:
                 "deep research subagent model",
                 default="claude-sonnet-4-20250514"
             ),
-            target_audience = self.target_audience or config_mgr.get(
-                "deep research target audience",
-                default="expert"
+            audience = self.audience or config_mgr.get(
+                "deep research audience",
+                default="academic"
             ),
             audience_context = self.audience_context or config_mgr.get(
                 "deep research audience context",

@@ -46,6 +46,10 @@ import sys
 
 import cosa.utils.util as cu
 
+# User-visible args: the canonical list of args that end users should see
+# and interact with. Engineering params (models, debug, etc.) are excluded.
+USER_VISIBLE_ARGS = [ "query", "budget", "languages", "audience", "audience_context" ]
+
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -132,7 +136,7 @@ Mode Options:
         type    = str,
         choices = [ "beginner", "general", "expert", "academic" ],
         default = None,
-        help    = "Target audience level (default: expert from config)"
+        help    = "Target audience level (default: academic from config)"
     )
 
     parser.add_argument(
@@ -181,6 +185,13 @@ Mode Options:
         "--verbose", "-v",
         action  = "store_true",
         help    = "Enable verbose output"
+    )
+
+    parser.add_argument(
+        "--user-visible-args",
+        action  = "store_true",
+        default = False,
+        help    = "Print user-visible argument names as JSON and exit"
     )
 
     return parser.parse_args()
@@ -283,7 +294,7 @@ async def run_pipeline( args: argparse.Namespace ) -> int:
         budget           = args.budget,
         lead_model       = args.lead_model,
         no_confirm       = args.no_confirm,
-        target_audience  = args.audience,
+        audience         = args.audience,
         audience_context = args.audience_context,
         target_languages = target_languages,
         max_segments     = args.max_segments,
@@ -347,6 +358,12 @@ async def run_pipeline( args: argparse.Namespace ) -> int:
 
 def main():
     """Main entry point."""
+    # Handle --user-visible-args early (before argparse enforces required args)
+    if "--user-visible-args" in sys.argv:
+        import json
+        print( json.dumps( USER_VISIBLE_ARGS ) )
+        sys.exit( 0 )
+
     args = parse_args()
 
     # Handle dry run

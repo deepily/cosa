@@ -354,9 +354,9 @@ class ContentAnalysis( BaseModel ):
         default_factory = list,
         description     = "Analogies to make concepts accessible"
     )
-    target_audience      : str = Field(
+    inferred_audience    : str = Field(
         default     = "general audience",
-        description = "Intended audience level"
+        description = "Audience level inferred by LLM from content analysis (maps from JSON key 'target_audience')"
     )
     complexity_level     : Literal[ "beginner", "intermediate", "advanced" ] = Field(
         default = "intermediate"

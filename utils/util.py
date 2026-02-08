@@ -319,22 +319,24 @@ def get_source_code_with_line_numbers(source_code: list[str], join_str: str = ""
     return source_code
 
 
-def get_file_as_list(path: str, lower_case: bool = False, clean: bool = False, randomize: bool = False, seed: int = 42,
-                     strip_newlines: bool = False) -> list[str]:
+def get_file_as_list( path: str, lower_case: bool = False, clean: bool = False, randomize: bool = False, seed: int = 42,
+                      strip_newlines: bool = False, skip_empty: bool = False, skip_comments: bool = False ) -> list[str]:
     """Load a plain text file as a list of lines.
-    
+
     Requires:
         - path is a valid file path
-        
+
     Ensures:
         - Returns list of lines from file
         - Applies transformations based on parameters
         - Lines are lowercased if lower_case=True
         - Lines are stripped if clean=True
+        - Empty lines are removed if skip_empty=True
+        - Lines starting with '#' are removed if skip_comments=True
         - List is shuffled if randomize=True
     """
 
-    with open(path, "r", encoding="utf-8") as file:
+    with open( path, "r", encoding="utf-8" ) as file:
         lines = file.readlines()
 
     if lower_case:
@@ -344,11 +346,17 @@ def get_file_as_list(path: str, lower_case: bool = False, clean: bool = False, r
         lines = [line.strip() for line in lines]
 
     if strip_newlines:
-        lines = [line.strip("\n") for line in lines]
+        lines = [line.strip( "\n" ) for line in lines]
+
+    if skip_empty:
+        lines = [line for line in lines if line.strip()]
+
+    if skip_comments:
+        lines = [line for line in lines if not line.strip().startswith( "#" )]
 
     if randomize:
-        random.seed(seed)
-        random.shuffle(lines)
+        random.seed( seed )
+        random.shuffle( lines )
 
     return lines
 

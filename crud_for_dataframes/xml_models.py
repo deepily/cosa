@@ -208,33 +208,49 @@ class CRUDIntent( BaseXMLModel ):
         except ( json.JSONDecodeError, TypeError ):
             return {}
 
+    def to_xml( self, root_tag="intent", pretty=True ):
+        """
+        Serialize CRUDIntent to XML with <intent> as default root tag.
+
+        Overrides BaseXMLModel default of "response" since CRUD intent
+        extraction uses <intent> as its XML root element.
+
+        Requires:
+            - root_tag is a non-empty string
+
+        Ensures:
+            - Returns XML string with specified root tag (default: "intent")
+        """
+        return super().to_xml( root_tag=root_tag, pretty=pretty )
+
     @classmethod
     def get_example_for_template( cls ):
         """
-        Get example instance for prompt templates.
+        Get example instance with generic placeholder values for prompt templates.
 
-        Returns a CRUDIntent example matching the expected XML structure
-        for the intent-extraction prompt template.
+        Returns a CRUDIntent with "serving suggestion" placeholders so the LLM
+        sees the XML structure without interpreting concrete data as the answer.
 
         Requires:
             - None
 
         Ensures:
-            - Returns CRUDIntent with sample add-to-todo data
+            - Returns CRUDIntent with generic placeholder values
+            - Placeholders are descriptive but clearly not real data
         """
         return cls(
-            operation             = "add",
-            target_list           = "groceries",
-            schema_type           = "todo",
-            confidence            = "0.95",
-            requires_confirmation = "false",
-            item_id               = "",
-            match_fields          = "{}",
-            fields                = '{"todo_item": "buy milk", "priority": "high"}',
-            filters               = "{}",
-            sort_by               = "",
-            limit                 = "",
-            raw_query             = "add buy milk to my groceries list with high priority"
+            operation             = "[operation name]",
+            target_list           = "[target list name]",
+            schema_type           = "[schema type: todo, calendar, or generic]",
+            confidence            = "[confidence score between 0.0 and 1.0]",
+            requires_confirmation = "[true or false]",
+            item_id               = "[item UUID if applicable]",
+            match_fields          = "[JSON object of fields to match]",
+            fields                = '[JSON object of field values to set]',
+            filters               = '[JSON object of filter conditions]',
+            sort_by               = "[column name to sort by]",
+            limit                 = "[max number of results]",
+            raw_query             = "[original user query exactly as spoken]"
         )
 
     @classmethod
@@ -255,14 +271,14 @@ class CRUDIntent( BaseXMLModel ):
             if not super().quick_smoke_test( debug=False ):
                 return False
 
-            # Test creation with all fields
+            # Test creation with all fields (generic placeholders)
             intent = cls.get_example_for_template()
-            assert intent.operation == "add"
-            assert intent.target_list == "groceries"
-            if debug: print( "  ✓ Creation with all fields" )
+            assert intent.operation == "[operation name]"
+            assert intent.target_list == "[target list name]"
+            if debug: print( "  ✓ Creation with all fields (generic placeholders)" )
 
-            # Test confidence parsing
-            assert intent.get_confidence_float() == 0.95
+            # Test confidence parsing (placeholder is non-numeric, returns 0.0)
+            assert intent.get_confidence_float() == 0.0
             bad_conf = cls( operation="query", confidence="not_a_number" )
             assert bad_conf.get_confidence_float() == 0.0
             if debug: print( "  ✓ Confidence parsing" )
@@ -278,11 +294,16 @@ class CRUDIntent( BaseXMLModel ):
             assert delete_intent.needs_confirmation()  # delete is always destructive
             if debug: print( "  ✓ Confirmation logic" )
 
-            # Test JSON field parsing
-            fields_dict = intent.get_fields_dict()
+            # Test JSON field parsing (placeholder returns empty dict)
+            assert intent.get_fields_dict() == {}
+            if debug: print( "  ✓ JSON field parsing (placeholder)" )
+
+            # Test JSON field parsing with real data
+            real_intent = cls( operation="add", fields='{"todo_item": "buy milk", "priority": "high"}' )
+            fields_dict = real_intent.get_fields_dict()
             assert fields_dict[ "todo_item" ] == "buy milk"
             assert fields_dict[ "priority" ] == "high"
-            if debug: print( "  ✓ JSON field parsing" )
+            if debug: print( "  ✓ JSON field parsing (real data)" )
 
             # Test empty JSON field parsing
             assert intent.get_match_dict() == {}
@@ -295,9 +316,9 @@ class CRUDIntent( BaseXMLModel ):
             assert limited.get_limit_int() == 10
             if debug: print( "  ✓ Limit parsing" )
 
-            # Test XML round-trip
-            xml_str = intent.to_xml( root_tag="intent" )
-            assert "<operation>add</operation>" in xml_str
+            # Test XML round-trip (to_xml defaults to root_tag="intent")
+            xml_str = intent.to_xml()
+            assert "<operation>[operation name]</operation>" in xml_str
             parsed = cls.from_xml( xml_str, root_tag="intent" )
             assert parsed.operation == intent.operation
             assert parsed.target_list == intent.target_list

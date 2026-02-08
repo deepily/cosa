@@ -648,6 +648,15 @@ class TodoFifoQueue( FifoQueue ):
                 agent = WeatherAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="weather" )
                 # ding_for_new_job = False
+            elif command == "agent router go to automatic routing mode":
+                previous_mode = self.clear_user_mode( user_id )
+                if previous_mode:
+                    msg = f"Switching back to automatic routing mode. Was in {previous_mode} mode."
+                else:
+                    msg = "Automatic routing is already active."
+                print( f"[AUTO-ROUTE] User {user_id} returning to automatic routing (was: {previous_mode})" )
+                self._notify( msg, target_user=user_email )
+                return msg
             elif command == "agent router go to receptionist" or command == "none":
                 print( f"Routing '{command}' to receptionist..." )
                 agent = ReceptionistAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )

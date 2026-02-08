@@ -47,6 +47,8 @@ class PodcastSubmitRequest( BaseModel ):
     target_languages  : Optional[ List[ str ] ] = None
     max_segments      : Optional[ int ]         = None
     dry_run           : bool                    = False
+    audience          : Optional[ str ]         = None
+    audience_context  : Optional[ str ]         = None
 
 
 class PodcastSubmitResponse( BaseModel ):
@@ -349,6 +351,10 @@ async def submit_podcast_job(
             args_dict[ "languages" ] = ",".join( request.target_languages )
         if request.dry_run:
             args_dict[ "dry_run" ] = True
+        if request.audience:
+            args_dict[ "audience" ] = request.audience
+        if request.audience_context:
+            args_dict[ "audience_context" ] = request.audience_context
 
         job = create_agentic_job(
             command    = "agent router go to podcast generator",
@@ -431,6 +437,10 @@ async def submit_podcast_job(
             args_dict[ "languages" ] = ",".join( request.target_languages )
         if request.dry_run:
             args_dict[ "dry_run" ] = True
+        if request.audience:
+            args_dict[ "audience" ] = request.audience
+        if request.audience_context:
+            args_dict[ "audience_context" ] = request.audience_context
 
         job = create_agentic_job(
             command    = "agent router go to podcast generator",

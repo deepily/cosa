@@ -622,8 +622,18 @@ class PeftTrainer:
         df = xml_coordinator.validate_responses( df )
         # print validation stats using the coordinator
         xml_coordinator.print_validation_stats( df, title=f"Validation stats for model {self.model_name}" )
-        
-        return df
+
+        # Build results dict for consolidated dashboard
+        stage_name  = banner_prefix.strip().rstrip( ":" ) if banner_prefix else "Unknown"
+        stats_dict  = xml_coordinator.response_validator.get_validation_stats( df )
+        ms_per_item = xml_coordinator.last_ms_per_item
+
+        return {
+            "df"          : df,
+            "stats"       : stats_dict,
+            "ms_per_item" : ms_per_item,
+            "stage"       : stage_name
+        }
     
     def load_and_merge_adapter( self, checkpoint_dir: Optional[str]=None, device_map: dict={ "": 0 } ) -> None:
         """
@@ -1025,6 +1035,177 @@ class PeftTrainer:
             print( f"\n  Min: {min_count}  Max: {max_count}  Mean: {mean_count:.1f}  Ratio: {ratio:.1f}x" )
 
         print( f"\n{separator}" )
+
+    def _print_training_summary( self ) -> None:
+        """
+        Print consolidated training results dashboard comparing all validation stages.
+
+        Requires:
+            - self.validation_results is a non-empty list of dicts from run_validation()
+            - Each dict has keys: "stats", "ms_per_item", "stage", "df"
+            - self.stage_timings is a dict mapping stage names to elapsed milliseconds
+
+        Ensures:
+            - Prints Table 1: Overall metrics comparison across stages
+            - Prints Table 2: Per-command accuracy with deltas (if 2+ stages)
+            - Prints Table 3: Quantization impact summary (if post-training + post-quantization both present)
+            - Prints Table 4: Pipeline stage timing breakdown
+        """
+        sep = "=" * 90
+        print( f"\n{sep}" )
+        print( f" TRAINING RESULTS DASHBOARD" )
+        print( f"{sep}\n" )
+
+        # ── Table 1: Overall Metrics Comparison ──
+        print( "  Table 1: Overall Metrics Comparison" )
+        print( "  " + "-" * 86 )
+        header = f"  {'Stage':<22} | {'Exact Match':>12} | {'Command':>9} | {'Args':>9} | {'ms/item':>9} | {'Speedup':>8}"
+        print( header )
+        print( "  " + "-" * 86 )
+
+        baseline_ms = None
+        for r in self.validation_results:
+            s           = r[ "stats" ]
+            exact       = s[ "response_exact_percent" ]
+            cmd         = s[ "command_correct_percent" ]
+            args_pct    = s[ "args_correct_percent" ]
+            ms          = r[ "ms_per_item" ]
+            stage       = r[ "stage" ]
+
+            if baseline_ms is None:
+                baseline_ms = ms
+                speedup_str = "-".rjust( 8 )
+            else:
+                speedup     = baseline_ms / ms if ms > 0 else 0
+                speedup_str = f"{speedup:.2f}x".rjust( 8 )
+
+            print( f"  {stage:<22} | {exact:>11.1f}% | {cmd:>8.1f}% | {args_pct:>8.1f}% | {ms:>9.1f} | {speedup_str}" )
+
+        print( "  " + "-" * 86 )
+        print()
+
+        # ── Table 2: Per-Command Accuracy with Deltas ──
+        if len( self.validation_results ) >= 2:
+            # Compare last two stages (typically post-training vs post-quantization)
+            prev_result    = self.validation_results[ -2 ]
+            current_result = self.validation_results[ -1 ]
+            prev_per_cmd    = prev_result[ "stats" ].get( "per_command", {} )
+            current_per_cmd = current_result[ "stats" ].get( "per_command", {} )
+            prev_label      = prev_result[ "stage" ]
+            current_label   = current_result[ "stage" ]
+
+            all_commands = sorted( set( prev_per_cmd.keys() ) | set( current_per_cmd.keys() ) )
+
+            if all_commands:
+                print( f"  Table 2: Per-Command Accuracy ({prev_label} vs {current_label})" )
+                print( "  " + "-" * 86 )
+                print( f"  {'Command':<50} | {prev_label:>12} | {current_label:>12} | {'Delta':>7}" )
+                print( "  " + "-" * 86 )
+
+                # Sort by delta ascending (worst degradation first)
+                command_deltas = []
+                for cmd in all_commands:
+                    prev_val    = prev_per_cmd.get( cmd, 0.0 )
+                    current_val = current_per_cmd.get( cmd, 0.0 )
+                    delta       = current_val - prev_val
+                    command_deltas.append( ( cmd, prev_val, current_val, delta ) )
+
+                command_deltas.sort( key=lambda x: x[ 3 ] )
+
+                degraded_count = 0
+                worst_cmd      = None
+                worst_delta    = 0.0
+                for cmd, prev_val, current_val, delta in command_deltas:
+                    delta_str = f"{delta:+.1f}"
+                    print( f"  {cmd:<50} | {prev_val:>11.2f}% | {current_val:>11.2f}% | {delta_str:>7}" )
+                    if delta < -0.5:
+                        degraded_count += 1
+                        if delta < worst_delta:
+                            worst_delta = delta
+                            worst_cmd   = cmd
+
+                print( "  " + "-" * 86 )
+                print()
+
+                # ── Table 3: Quantization Impact Summary ──
+                if "POST-training" in prev_label or "POST-quantization" in current_label:
+                    prev_exact    = prev_result[ "stats" ][ "response_exact_percent" ]
+                    current_exact = current_result[ "stats" ][ "response_exact_percent" ]
+                    prev_ms       = prev_result[ "ms_per_item" ]
+                    current_ms    = current_result[ "ms_per_item" ]
+                    speedup       = prev_ms / current_ms if current_ms > 0 else 0
+
+                    print( f"  Table 3: Quantization Impact Summary" )
+                    print( "  " + "-" * 60 )
+                    print( f"  Quantization Speedup : {speedup:.2f}x ({prev_ms:.1f}ms -> {current_ms:.1f}ms)" )
+                    print( f"  Accuracy Cost        : {current_exact - prev_exact:+.1f}pp ({prev_exact:.1f}% -> {current_exact:.1f}%)" )
+                    print( f"  Commands Degraded    : {degraded_count} of {len( all_commands )}" )
+                    if worst_cmd:
+                        print( f"  Worst Degradation    : {worst_cmd} ({worst_delta:+.1f}pp)" )
+                    print( "  " + "-" * 60 )
+                    print()
+
+        # ── Table 4: Pipeline Stage Timing ──
+        if self.stage_timings:
+            print( f"  Table 4: Pipeline Stage Timing" )
+            print( "  " + "-" * 60 )
+            print( f"  {'Stage':<35} | {'Duration':>12} | {'% of Total':>10}" )
+            print( "  " + "-" * 60 )
+
+            total_ms = self.stage_timings.get( "total_pipeline", sum( self.stage_timings.values() ) )
+
+            # Display order for stages
+            stage_display_order = [
+                ( "pre_training_validation",      "Pre-training validation" ),
+                ( "fine_tuning",                  "Fine-tuning" ),
+                ( "adapter_merge",                "Adapter merge" ),
+                ( "post_training_validation",     "Post-training validation" ),
+                ( "quantization",                 "Quantization" ),
+                ( "post_quantization_validation", "Post-quantization validation" ),
+            ]
+
+            displayed_ms = 0
+            for key, label in stage_display_order:
+                if key in self.stage_timings:
+                    ms  = self.stage_timings[ key ]
+                    pct = ( ms / total_ms * 100 ) if total_ms > 0 else 0
+                    displayed_ms += ms
+                    print( f"  {label:<35} | {self._format_duration_ms( ms ):>12} | {pct:>9.1f}%" )
+
+            # Show unaccounted time (GPU release, overhead, etc.)
+            if total_ms > 0 and displayed_ms < total_ms:
+                overhead_ms = total_ms - displayed_ms
+                pct = ( overhead_ms / total_ms * 100 )
+                print( f"  {'Other (GPU release, overhead)':<35} | {self._format_duration_ms( overhead_ms ):>12} | {pct:>9.1f}%" )
+
+            print( "  " + "-" * 60 )
+            if "total_pipeline" in self.stage_timings:
+                print( f"  {'Total pipeline':<35} | {self._format_duration_ms( total_ms ):>12} | {'100.0%':>10}" )
+
+            print( "  " + "-" * 60 )
+
+        print( f"\n{sep}\n" )
+
+    @staticmethod
+    def _format_duration_ms( ms: float ) -> str:
+        """
+        Format milliseconds as human-readable duration string.
+
+        Requires:
+            - ms is a non-negative number
+
+        Ensures:
+            - Returns string in format HH:MM:SS or MM:SS for durations under 1 hour
+        """
+        total_seconds = int( ms / 1000 )
+        hours         = total_seconds // 3600
+        minutes       = ( total_seconds % 3600 ) // 60
+        seconds       = total_seconds % 60
+
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        else:
+            return f"{minutes:02d}:{seconds:02d}"
 
     def _get_test_train_data( self, sample_size: float=1.0 ) -> dict[str, Dataset]:
         """
@@ -1569,27 +1750,33 @@ class PeftTrainer:
             - TimeoutError: If the vLLM server does not start within the specified timeout
         """
         timer = Stopwatch( msg=None )
-        
+
+        # Dashboard: collect validation results and stage timings for consolidated summary
+        self.validation_results = []
+        self.stage_timings      = {}
+
         self.login_to_hf()
-        
+
         # Run a pre-training validation using vLLM server
         if pre_training_stats:
+            stage_timer = Stopwatch( msg=None )
             vllm_server_process = None
             try:
                 # Start vLLM server for the base model and wait for it to be available
                 vllm_server_process = self._start_vllm_server( self.model_hf_id )
-                
+
                 # Run validation using the server, pointing it to the HF ID
-                self.run_validation(
-                    banner_prefix="PRE-training:", 
+                result = self.run_validation(
+                    banner_prefix="PRE-training:",
                     model=self.model_hf_id,
                     path_prefix=lupin_root,
-                    switch="deepily", 
+                    switch="deepily",
                     device_map="auto",  # Allow using multiple GPUs
-                    validation_sample_size=validation_sample_size, 
-                    debug=self.debug, 
+                    validation_sample_size=validation_sample_size,
+                    debug=self.debug,
                     verbose=self.verbose
                 )
+                self.validation_results.append( result )
             finally:
                 # Always clean up the vLLM server process if it was started
                 if vllm_server_process: self._stop_vllm_server( vllm_server_process )
@@ -1603,6 +1790,7 @@ class PeftTrainer:
                     time.sleep( 5 )
                 du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
                 print_gpu_memory()
+            self.stage_timings[ "pre_training_validation" ] = stage_timer.get_delta_ms()
         else:
             print( f"Skipping pre-training validation for {args.model_name}" )
 
@@ -1621,6 +1809,7 @@ class PeftTrainer:
             return
 
         # Fine-tune using the dynamically loaded configuration
+        stage_timer = Stopwatch( msg=None )
         checkpoint_dir = self.fine_tune(
             sample_size=fine_tune_params[ "sample_size" ],
             batch_size=fine_tune_params[ "batch_size" ],
@@ -1630,29 +1819,34 @@ class PeftTrainer:
             device_map=fine_tune_params[ "device_map" ],
             output_dir=args.lora_dir
         )
+        self.stage_timings[ "fine_tuning" ] = stage_timer.get_delta_ms()
         release_gpus( [ self.model, self.tokenizer ] )
         du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
         print_gpu_memory()
 
         # Load and merge the adapter
+        stage_timer = Stopwatch( msg=None )
         self.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
         merged_adapter_dir = self.save_merged_adapter( lora_dir=args.lora_dir )
+        self.stage_timings[ "adapter_merge" ] = stage_timer.get_delta_ms()
         release_gpus( [ self.model, self.tokenizer ] )
         du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
         print_gpu_memory()
 
         if post_training_stats:
+            stage_timer = Stopwatch( msg=None )
             vllm_server_process = None
             try:
                 # Start vLLM server and wait for it to be available
                 vllm_server_process = self._start_vllm_server( merged_adapter_dir )
-                
+
                 # create a custom model name using as an ID the mount point for the recently quantized model directory
                 model = llmc.LlmClient.get_model( merged_adapter_dir )
-                self.run_validation(
+                result = self.run_validation(
                     banner_prefix="POST-training:", model=model, path_prefix=lupin_root, switch="deepily", device_map="cuda:0",
                     validation_sample_size=validation_sample_size, debug=self.debug, verbose=self.verbose
                 )
+                self.validation_results.append( result )
             finally:
                 # Always clean up the vLLM server process if it was started
                 if vllm_server_process: self._stop_vllm_server( vllm_server_process )
@@ -1666,24 +1860,29 @@ class PeftTrainer:
                     time.sleep( 5 )
                 du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
                 print_gpu_memory()
+            self.stage_timings[ "post_training_validation" ] = stage_timer.get_delta_ms()
         else:
             print( f"Skipping post-training validation for {args.model_name}" )
 
         # Quantize the merged adapter
+        stage_timer = Stopwatch( msg=None )
         quantized_model_dir = self.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
+        self.stage_timings[ "quantization" ] = stage_timer.get_delta_ms()
         
         if post_quantization_stats:
+            stage_timer = Stopwatch( msg=None )
             vllm_server_process = None
             try:
                 # Start vLLM server and wait for it to be available
                 vllm_server_process = self._start_vllm_server( quantized_model_dir )
-                
+
                 # create a custom model name using as an ID the mount point for the recently quantized model directory
                 model = llmc.LlmClient.get_model( quantized_model_dir )
-                self.run_validation(
+                result = self.run_validation(
                     banner_prefix="POST-quantization:", model=model, path_prefix=lupin_root, switch="deepily", device_map="cuda:0",
                     validation_sample_size=validation_sample_size, debug=self.debug, verbose=self.verbose
                 )
+                self.validation_results.append( result )
             finally:
                 # Always clean up the vLLM server process if it was started
                 if vllm_server_process: self._stop_vllm_server( vllm_server_process )
@@ -1697,6 +1896,7 @@ class PeftTrainer:
                     time.sleep( 5 )
                 du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
                 print_gpu_memory()
+            self.stage_timings[ "post_quantization_validation" ] = stage_timer.get_delta_ms()
         else:
             print( f"Skipping post-quantization validation for {args.model_name}" )
 
@@ -1704,10 +1904,15 @@ class PeftTrainer:
         print()
         msg = f"Finished fine-tuning, merging and quantizing {args.model_name}"
         timer.print( msg )
+        self.stage_timings[ "total_pipeline" ] = timer.get_delta_ms()
         du.print_banner( msg )
         print( f"Quantized model: {quantized_model_dir}" )
         du.print_simple_file_list( quantized_model_dir )
-    
+
+        # Print consolidated training summary dashboard
+        if self.validation_results:
+            self._print_training_summary()
+
     def run_pipeline_adhoc( self, pre_training_stats: bool=False, post_training_stats: bool=False, post_quantization_stats: bool=False, nuclear_kill_button: bool=False,
         validation_sample_size: int=100
     ) -> None:

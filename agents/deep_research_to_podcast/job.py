@@ -61,6 +61,8 @@ class DeepResearchToPodcastJob( AgenticJobBase ):
         target_languages: Optional[ List[ str ] ] = None,
         max_segments: Optional[ int ] = None,
         dry_run: bool = False,
+        audience: Optional[ str ] = None,
+        audience_context: Optional[ str ] = None,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -86,6 +88,8 @@ class DeepResearchToPodcastJob( AgenticJobBase ):
             target_languages: List of ISO language codes (default: ["en"])
             max_segments: Limit TTS to first N segments (None = all)
             dry_run: Simulate execution without API calls
+            audience: Target audience level (beginner/general/expert/academic)
+            audience_context: Custom audience description
             debug: Enable debug output
             verbose: Enable verbose output
         """
@@ -103,6 +107,8 @@ class DeepResearchToPodcastJob( AgenticJobBase ):
         self.target_languages = target_languages or [ "en" ]
         self.max_segments     = max_segments
         self.dry_run          = dry_run
+        self.audience         = audience
+        self.audience_context = audience_context
 
         # Results (populated after execution)
         self.research_path = None
@@ -206,6 +212,8 @@ class DeepResearchToPodcastJob( AgenticJobBase ):
             query            = self.query,
             user_email       = self.user_email,
             budget           = self.budget,
+            audience         = self.audience,
+            audience_context = self.audience_context,
             target_languages = self.target_languages,
             max_segments     = self.max_segments,
             cli_mode         = False,  # Voice-driven mode for queue

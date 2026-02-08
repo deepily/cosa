@@ -42,6 +42,10 @@ from cosa.config.configuration_manager import ConfigurationManager
 if ANTHROPIC_AVAILABLE:
     import anthropic
 
+# User-visible args: the canonical list of args that end users should see
+# and interact with. Engineering params (models, debug, etc.) are excluded.
+USER_VISIBLE_ARGS = [ "query", "budget", "audience", "audience_context" ]
+
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -138,7 +142,7 @@ Examples:
         type=str,
         choices=[ "beginner", "general", "expert", "academic" ],
         default=None,
-        help="Target audience level (default: expert from config). Options: beginner, general, expert, academic"
+        help="Target audience level (default: academic from config). Options: beginner, general, expert, academic"
     )
 
     parser.add_argument(
@@ -170,6 +174,13 @@ Examples:
         "--cli-mode",
         action="store_true",
         help="Force CLI text mode (disable voice I/O)"
+    )
+
+    parser.add_argument(
+        "--user-visible-args",
+        action  = "store_true",
+        default = False,
+        help    = "Print user-visible argument names as JSON and exit"
     )
 
     return parser.parse_args()
@@ -323,7 +334,7 @@ async def run_research(
             system_prompt = PLANNING_SYSTEM_PROMPT,
             user_message  = get_planning_prompt(
                 query            = query,
-                target_audience  = config.target_audience,
+                audience         = config.audience,
                 audience_context = config.audience_context
             ),
             call_type     = "planning",
@@ -531,7 +542,7 @@ async def run_research(
                             topic            = sq.get( "topic", "" ),
                             objective        = sq.get( "objective", "" ),
                             output_format    = sq.get( "output_format", "summary" ),
-                            target_audience  = config.target_audience,
+                            audience         = config.audience,
                             audience_context = config.audience_context,
                         ),
                         subquery_index = i,
@@ -629,7 +640,7 @@ async def run_research(
                 query            = query,
                 findings         = findings,
                 plan_summary     = rationale,
-                target_audience  = config.target_audience,
+                audience         = config.audience,
                 audience_context = config.audience_context,
             ),
             call_type     = "synthesis",
@@ -868,6 +879,12 @@ def save_report_with_frontmatter(
 
 def main():
     """Main entry point."""
+    # Handle --user-visible-args early (before argparse enforces required args)
+    if "--user-visible-args" in sys.argv:
+        import json
+        print( json.dumps( USER_VISIBLE_ARGS ) )
+        sys.exit( 0 )
+
     args = parse_args()
 
     # Initialize configuration manager
@@ -957,9 +974,9 @@ def main():
         config.max_subagents_complex = args.max_subagents
 
     # Target audience configuration (CLI overrides config file)
-    config.target_audience = args.audience or config_mgr.get(
-        "deep research target audience",
-        default="expert"
+    config.audience = args.audience or config_mgr.get(
+        "deep research audience",
+        default="academic"
     )
     audience_context_from_config = config_mgr.get( "deep research audience context", default="" )
     config.audience_context = args.audience_context or audience_context_from_config or None
@@ -984,7 +1001,7 @@ def main():
         print( f"Session ID: {session_id}" )
         print( f"User email: {user_email}" )
         print( f"Notification sender: {cosa_interface.SENDER_ID}" )
-        print( f"\nTarget audience: {config.target_audience}" )
+        print( f"\nTarget audience: {config.audience}" )
         if config.audience_context:
             print( f"Audience context: {config.audience_context}" )
         print( f"\nStorage backend: {storage_backend}" )

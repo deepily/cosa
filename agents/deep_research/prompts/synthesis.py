@@ -222,7 +222,7 @@ def get_synthesis_prompt(
     query: str,
     findings: List[ dict ],
     plan_summary: Optional[ str ] = None,
-    target_audience: Literal[ "beginner", "general", "expert", "academic" ] = "expert",
+    audience: Literal[ "beginner", "general", "expert", "academic" ] = "academic",
     audience_context: Optional[ str ] = None
 ) -> str:
     """
@@ -231,7 +231,7 @@ def get_synthesis_prompt(
     Requires:
         - query is a non-empty string
         - findings is a list of subagent finding dictionaries
-        - target_audience is one of: beginner, general, expert, academic
+        - audience is one of: beginner, general, expert, academic
 
     Ensures:
         - Returns formatted prompt with query, findings, and audience guidelines
@@ -241,7 +241,7 @@ def get_synthesis_prompt(
         query: The original research query
         findings: List of subagent finding dictionaries
         plan_summary: Optional summary of the research plan
-        target_audience: Expertise level of the audience (default: expert)
+        audience: Expertise level of the audience (default: academic)
         audience_context: Optional custom audience description
 
     Returns:
@@ -257,7 +257,7 @@ def get_synthesis_prompt(
         message += f"**Research Approach**: {plan_summary}\n\n"
 
     # Add audience-specific writing guidelines
-    audience_guidelines = AUDIENCE_WRITING_GUIDELINES.get( target_audience, AUDIENCE_WRITING_GUIDELINES[ "expert" ] )
+    audience_guidelines = AUDIENCE_WRITING_GUIDELINES.get( audience, AUDIENCE_WRITING_GUIDELINES[ "academic" ] )
     message += f"{audience_guidelines}\n\n"
 
     if audience_context:
@@ -404,7 +404,7 @@ def quick_smoke_test():
         prompt_expert = get_synthesis_prompt(
             query="Test query",
             findings=findings,
-            target_audience="expert"
+            audience="expert"
         )
         assert "Target Audience: Expert" in prompt_expert
         assert "Don't explain: Basic definitions" in prompt_expert
@@ -413,7 +413,7 @@ def quick_smoke_test():
         prompt_beginner = get_synthesis_prompt(
             query="Test query",
             findings=findings,
-            target_audience="beginner"
+            audience="beginner"
         )
         assert "Target Audience: Beginner" in prompt_beginner
         assert "Define ALL technical terms" in prompt_beginner
@@ -422,7 +422,7 @@ def quick_smoke_test():
         prompt_context = get_synthesis_prompt(
             query="Test query",
             findings=findings,
-            target_audience="expert",
+            audience="expert",
             audience_context="Senior architect at a Fortune 500 company"
         )
         assert "Senior architect at a Fortune 500 company" in prompt_context

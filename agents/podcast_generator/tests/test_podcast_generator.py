@@ -214,7 +214,7 @@ class TestContentAnalysis:
             main_topic = "Quantum Computing",
         )
         assert analysis.complexity_level == "intermediate"
-        assert analysis.target_audience == "general audience"
+        assert analysis.inferred_audience == "general audience"
         assert analysis.key_subtopics == []
 
 

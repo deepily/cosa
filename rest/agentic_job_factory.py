@@ -47,15 +47,17 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
 
     if command == "agent router go to deep research":
         return DeepResearchJob(
-            query      = args_dict.get( "query", "" ),
-            user_id    = user_id,
-            user_email = user_email,
-            session_id = session_id,
-            budget     = float( args_dict[ "budget" ] ) if args_dict.get( "budget" ) else None,
-            no_confirm = True,
-            dry_run    = args_dict.get( "dry_run", False ),
-            debug      = debug,
-            verbose    = verbose
+            query            = args_dict.get( "query", "" ),
+            user_id          = user_id,
+            user_email       = user_email,
+            session_id       = session_id,
+            budget           = float( args_dict[ "budget" ] ) if args_dict.get( "budget" ) else None,
+            no_confirm       = True,
+            dry_run          = args_dict.get( "dry_run", False ),
+            audience         = args_dict.get( "audience" ),
+            audience_context = args_dict.get( "audience_context" ),
+            debug            = debug,
+            verbose          = verbose
         )
 
     elif command == "agent router go to podcast generator":
@@ -74,6 +76,8 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             session_id       = session_id,
             target_languages = languages,
             dry_run          = args_dict.get( "dry_run", False ),
+            audience         = args_dict.get( "audience" ),
+            audience_context = args_dict.get( "audience_context" ),
             debug            = debug,
             verbose          = verbose
         )
@@ -95,6 +99,8 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             budget           = float( args_dict[ "budget" ] ) if args_dict.get( "budget" ) else None,
             target_languages = languages,
             dry_run          = args_dict.get( "dry_run", False ),
+            audience         = args_dict.get( "audience" ),
+            audience_context = args_dict.get( "audience_context" ),
             debug            = debug,
             verbose          = verbose
         )

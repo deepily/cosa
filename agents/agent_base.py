@@ -97,9 +97,12 @@ class AgentBase( RunnableCode, abc.ABC ):
             - ValueError if both question and last_question_asked are empty strings
         """
         
+        # Initialize RunnableCode attributes (code_response_dict, prompt_response, etc.)
+        super().__init__( debug=debug, verbose=verbose )
+
         # Quick sanity check to make sure that either question or last question are non-zero length strings
         if question == "" and last_question_asked == "": raise ValueError( "Either `question` or `last_question_asked` must be provided." )
-        
+
         self.execution_state       = AgentBase.STATE_INITIALIZING
         self.debug                 = debug
         self.verbose               = verbose
