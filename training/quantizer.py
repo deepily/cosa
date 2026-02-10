@@ -64,8 +64,15 @@ class Quantizer:
         self.symmetrical     = sym
         
         if quantize_method == "autoround":
+            # NOTE: enable_torch_compile must be disabled for 8-bit quantization due to a Triton
+            # compilation bug in auto_round<=0.9.7. The upstream int.py has `2 ** (bits - 1)` in
+            # quant_tensor_sym/quant_tensor_rtn_sym, which Triton compiles to
+            # libdevice.pow(int32, int32) — but libdevice.pow requires a float first arg.
+            # 4-bit quantization uses a different code path and works fine with torch.compile.
+            # Re-enable for 8-bit when auto_round ships a complete fix (PR #1120 was partial).
+            enable_torch_compile = ( bits <= 4 )
             self.autoround = AutoRound( self.model, self.tokenizer, nsamples=128, iters=512, low_gpu_mem_usage=True, batch_size=batch_size,
-                gradient_accumulation_steps=8, bits=self.bits, group_size=group_size, sym=sym, enable_torch_compile=True  # Enable torch.compile optimizations
+                gradient_accumulation_steps=8, bits=self.bits, group_size=group_size, sym=sym, enable_torch_compile=enable_torch_compile
             )
         else:
             raise Exception( f"Unsupported quantization method: {quantize_method}" )

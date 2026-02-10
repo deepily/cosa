@@ -19,6 +19,7 @@ from cosa.agents.io_models.xml_models import (
 )
 from cosa.agents.runtime_argument_expeditor.xml_models import ExpeditorResponse, ArgConfirmationResponse
 from cosa.crud_for_dataframes.xml_models import CRUDIntent
+from cosa.agents.calculator.xml_models import CalcIntent
 
 
 class PromptTemplateProcessor:
@@ -49,6 +50,7 @@ class PromptTemplateProcessor:
         'runtime argument expeditor'              : ExpeditorResponse,
         'argument confirmation'                   : ArgConfirmationResponse,
         'agent router go to crud for dataframes'  : CRUDIntent,
+        'agent router go to calculator'            : CalcIntent,
     }
     
     def __init__( self, debug: bool = False, verbose: bool = False ):

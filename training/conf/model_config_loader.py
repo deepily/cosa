@@ -28,10 +28,11 @@ import os
 
 # Map model names to their configuration module paths
 MODEL_CONFIG_MAP = {
-    "Mistral-7B-Instruct-v0.2": "mistral_7b",
+    "Mistral-7B-Instruct-v0.2"  : "mistral_7b",
     "Ministral-8B-Instruct-2410": "ministral_8b",
-    "Llama-3.2-3B-Instruct": "llama_3_2_3b",
-    "Phi-4-mini-instruct": "phi_4_mini"
+    "Llama-3.2-3B-Instruct"     : "llama_3_2_3b",
+    "Phi-4-mini-instruct"       : "phi_4_mini",
+    "Qwen3-4B-Base"             : "qwen3_4b"
 }
 
 def load_model_config(model_name):
@@ -55,10 +56,11 @@ def load_model_config(model_name):
 
     # Combine all configurations into a single dictionary
     config = {
-        "fine_tune": config_module.fine_tune_config,
-        "lora": config_module.lora_config,
-        "tokenizer": config_module.tokenizer_config,
-        "model": config_module.model_config
+        "fine_tune"  : config_module.fine_tune_config,
+        "lora"       : config_module.lora_config,
+        "tokenizer"  : config_module.tokenizer_config,
+        "model"      : config_module.model_config,
+        "vllm"       : getattr( config_module, "vllm_config", {} )
     }
 
     return config

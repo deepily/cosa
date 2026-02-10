@@ -219,7 +219,7 @@ async def notify_user(
     target_user: str = Query(..., description="Target user email address (required - configure in CLI config or pass explicitly)"),
     response_requested: bool = Query(False, description="Whether notification requires user response (Phase 2.1)"),
     response_type: Optional[str] = Query(None, description="Response type: yes_no or open_ended (Phase 2.1)"),
-    timeout_seconds: int = Query(30, description="Timeout in seconds for response-required notifications (Phase 2.2 - reduced for testing)"),
+    timeout_seconds: int = Query(120, description="Timeout in seconds for response-required notifications"),
     response_default: Optional[str] = Query(None, description="Default response value for timeout/offline (Phase 2.1)"),
     title: Optional[str] = Query(None, description="Terse technical title for voice-first UX (Phase 2.1)"),
     sender_id: Optional[str] = Query(None, description="Sender ID (e.g., claude.code@lupin.deepily.ai). Auto-extracted from [PREFIX] in message if not provided."),
@@ -368,12 +368,25 @@ async def notify_user(
             )
 
         target_system_id = user_data["id"]
-        print(f"[NOTIFY] Resolved user {target_user} → UUID {target_system_id}")
+        print( f"[NOTIFY] Resolved user {target_user} → UUID {target_system_id}" )
+
+        # ── Diagnostic: WebSocket state dump for offline debugging ──
+        import fastapi_app.main as main_module
+        if main_module.app_debug and main_module.app_verbose:
+            ws_user_keys   = list( ws_manager.user_sessions.keys() )
+            ws_active_keys = list( ws_manager.active_connections.keys() )
+            print( f"[NOTIFY] 🔍 DIAG target_system_id   = {target_system_id!r}" )
+            print( f"[NOTIFY] 🔍 DIAG user_sessions keys  = {ws_user_keys}" )
+            print( f"[NOTIFY] 🔍 DIAG active_connections  = {len( ws_active_keys )} sessions: {ws_active_keys[ :5 ]}" )
+            for uid, sessions in ws_manager.user_sessions.items():
+                active = [ s for s in sessions if s in ws_manager.active_connections ]
+                print( f"[NOTIFY] 🔍 DIAG   user={uid!r} sessions={sessions} active={active}" )
+        # ── End diagnostic ──
 
         # Check if user is connected
-        is_connected = ws_manager.is_user_connected(target_system_id)
-        connection_count = ws_manager.get_user_connection_count(target_system_id)
-        print(f"[NOTIFY] WebSocket connection check: is_connected={is_connected}, count={connection_count}")
+        is_connected     = ws_manager.is_user_connected( target_system_id )
+        connection_count = ws_manager.get_user_connection_count( target_system_id )
+        print( f"[NOTIFY] WebSocket connection check: is_connected={is_connected}, count={connection_count}" )
 
         # =================================================================================
         # FIRE-AND-FORGET MODE (Phase 1 - existing behavior)

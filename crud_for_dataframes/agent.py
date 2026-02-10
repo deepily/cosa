@@ -128,7 +128,7 @@ class CrudForDataFramesAgent( AgentBase ):
 
         raw_response = llm.run( self.prompt )
 
-        if self.debug: print( f"CrudForDataFramesAgent.run_prompt: raw response length={len( raw_response ) if raw_response else 0}, preview='{( raw_response or '' )[ :200 ]}'" )
+        if self.debug: print( f"CrudForDataFramesAgent.run_prompt: raw response length={len( raw_response ) if raw_response else 0}, response:\n{raw_response or '(empty)'}" )
 
         # Extract <intent> XML and parse into CRUDIntent
         xml_text        = extract_intent_xml( raw_response )

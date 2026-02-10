@@ -37,6 +37,29 @@ def _generate_id():
     return uuid.uuid4().hex[ :8 ]
 
 
+def _validate_match_fields( match_fields, df_columns, schema_type ):
+    """
+    Validate that all match_fields keys exist in the DataFrame columns.
+
+    Requires:
+        - match_fields is a non-empty dict
+        - df_columns is a pandas Index or list of column names
+        - schema_type is a string for error messages
+
+    Ensures:
+        - Returns None if all keys are valid
+        - Returns error dict if any key is invalid
+    """
+    invalid_keys = [ k for k in match_fields if k not in df_columns ]
+    if invalid_keys:
+        valid_keys = sorted( [ c for c in df_columns if c not in ( "id", "list_name", "created_at" ) ] )
+        return {
+            "status"  : "error",
+            "message" : f"Unknown field(s) {invalid_keys} for schema '{schema_type}'. Valid fields: {valid_keys}"
+        }
+    return None
+
+
 def create_list( storage, list_name, schema_type="todo" ):
     """
     Create a new named list (or verify it can be created).
@@ -209,6 +232,11 @@ def delete_item( storage, schema_type, item_id=None, match_fields=None ):
     if item_id:
         mask = df[ "id" ] == item_id
     else:
+        # Validate all match_fields exist before building mask
+        validation_error = _validate_match_fields( match_fields, df.columns, schema_type )
+        if validation_error:
+            return validation_error
+
         mask = pd.Series( True, index=df.index )
         for field, value in match_fields.items():
             if field in df.columns:
@@ -251,6 +279,11 @@ def update_item( storage, schema_type, field_updates, item_id=None, match_fields
     if item_id:
         mask = df[ "id" ] == item_id
     else:
+        # Validate all match_fields exist before building mask
+        validation_error = _validate_match_fields( match_fields, df.columns, schema_type )
+        if validation_error:
+            return validation_error
+
         mask = pd.Series( True, index=df.index )
         for field, value in match_fields.items():
             if field in df.columns:

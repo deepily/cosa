@@ -73,3 +73,8 @@ model_config: dict[str, Union[int, str, Callable[[str], str]]] = {
     {last_tag}""",
     "last_tag_func": lambda output: "</s>" if output else ""
 }
+
+vllm_config: dict[str, Union[int, float]] = {
+    "max_model_len"          : 1024,  # Training uses max_seq_length=683; 1024 is generous for validation prompts + 128 max_new_tokens
+    "gpu_memory_utilization" : 0.80,  # 8B model needs more headroom than smaller models
+}

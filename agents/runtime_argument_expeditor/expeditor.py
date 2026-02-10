@@ -11,6 +11,7 @@ for missing information via synchronous voice notifications.
 Scope: Deep Research, Podcast Generator, Research-to-Podcast (3 agents).
 """
 
+import json
 import os
 import re
 from typing import Optional
@@ -30,6 +31,10 @@ from cosa.cli.notification_models import (
     NotificationRequest,
     NotificationPriority,
     ResponseType
+)
+from cosa.utils.notification_utils import (
+    format_open_ended_batch_for_tts,
+    convert_open_ended_batch_for_api
 )
 
 
@@ -76,7 +81,7 @@ class RuntimeArgumentExpeditor:
         self.confirmation_prompt_path = config_mgr.get( "prompt template for argument confirmation" )
         self.llm_factory              = LlmClientFactory( debug=debug, verbose=verbose )
 
-    def expedite( self, command, raw_args, user_email, session_id, user_id, original_question ):
+    def expedite( self, command, raw_args, user_email, session_id, user_id, original_question, job_id=None ):
         """
         Run argument gap analysis and collect missing arguments from user.
 
@@ -98,10 +103,13 @@ class RuntimeArgumentExpeditor:
             session_id: WebSocket session ID
             user_id: System user ID
             original_question: Full voice command transcription
+            job_id: Optional agentic job ID for routing notifications to job cards
 
         Returns:
             dict or None: Complete argument dictionary or None on cancel
         """
+        self._job_id = job_id
+
         agent_entry = AGENTIC_AGENTS.get( command )
         if not agent_entry:
             print( f"[Expeditor] Unknown command: {command}" )
@@ -172,62 +180,86 @@ class RuntimeArgumentExpeditor:
                 args_missing     = ", ".join( agent_entry[ "required_user_args" ] )
             )
 
-        # Step 6: If all args present, merge and return
+        # Step 6: Merge LLM-detected present args with LORA-mapped args
         present_dict = parsed.get_present_dict()
 
-        # Merge LLM-detected present args with LORA-mapped args
         final_args = dict( mapped_args )
         for k, v in present_dict.items():
             if k not in final_args:
                 final_args[ k ] = v
 
-        if parsed.is_complete():
-            if self.debug: print( f"[Expeditor] All required args present: {final_args}" )
-        else:
-            # Step 7: Ask for missing args
-            missing = parsed.get_missing_list()
-            if self.debug: print( f"[Expeditor] Missing args: {missing}" )
+        if self.debug: print( f"[Expeditor] Args after LLM merge: {final_args}" )
 
-            # Get user-visible whitelist to gate which args we ask about
-            user_visible = get_user_visible_args( command )
+        # Step 7: Compute missing user-visible args deterministically
+        # This replaces the old if/else gate on parsed.is_complete() which
+        # skipped optional arg prompting when all required args were present.
+        user_visible       = get_user_visible_args( command )
+        fallback_questions = agent_entry[ "fallback_questions" ]
+        fallback_defaults  = agent_entry.get( "fallback_defaults", {} )
+        special_handlers   = agent_entry.get( "special_handlers", {} )
 
-            special_handlers = agent_entry.get( "special_handlers", {} )
-            fallback_questions = agent_entry[ "fallback_questions" ]
+        # Fallback: if CLI doesn't publish user-visible-args, use fallback_questions keys
+        if user_visible is None:
+            user_visible = list( fallback_questions.keys() )
 
+        # Missing = user-visible args not yet in final_args
+        missing = [ arg for arg in user_visible if arg not in final_args ]
+
+        if self.debug: print( f"[Expeditor] Missing user-visible args: {missing}" )
+
+        if missing:
+            # Partition missing args into batchable and special
+            batchable = []
+            special   = []
             for arg_name in missing:
-                # Skip if already collected
-                if arg_name in final_args:
-                    continue
-
-                # Only ask about user-visible args (safety net)
-                if user_visible and arg_name not in user_visible:
-                    if self.debug: print( f"  Skipping non-user-visible arg: {arg_name}" )
-                    continue
-
-                handler = special_handlers.get( arg_name )
-
-                if handler == "fuzzy_file_match":
-                    value = self._handle_fuzzy_file_match( user_email )
-                elif arg_name in fallback_questions:
-                    value = self._ask_for_arg(
-                        arg_name, fallback_questions[ arg_name ], user_email
-                    )
+                if special_handlers.get( arg_name ):
+                    special.append( arg_name )
                 else:
-                    # Generic fallback
-                    value = self._ask_for_arg(
-                        arg_name,
-                        f"Please provide the '{arg_name}' argument.",
-                        user_email
-                    )
+                    batchable.append( arg_name )
 
+            # Build request context abstract for notification UI
+            request_abstract = self._build_request_context(
+                agent_entry, original_question, final_args, batchable + special
+            )
+
+            # Batch-collect batchable args if more than one
+            if len( batchable ) > 1:
+                if self.debug: print( f"[Expeditor] Batch-collecting {len( batchable )} args: {batchable}" )
+                batch_answers = self._batch_collect_args( batchable, fallback_questions, user_email, fallback_defaults, command, abstract=request_abstract )
+                if batch_answers is None:
+                    print( "[Expeditor] User cancelled batch collection" )
+                    return None
+                for arg_name, value in batch_answers.items():
+                    # Handle special "no limit" / "none" answers for optional args
+                    if arg_name in ( "budget", "languages" ) and value.lower().strip() in ( "no limit", "none", "skip", "no" ):
+                        continue
+                    final_args[ arg_name ] = value
+            elif len( batchable ) == 1:
+                # Single arg — use existing sequential flow
+                arg_name = batchable[ 0 ]
+                resolved_default = self._resolve_default( command, arg_name, fallback_defaults.get( arg_name ) )
+                if arg_name in fallback_questions:
+                    value = self._ask_for_arg( arg_name, fallback_questions[ arg_name ], user_email, response_default=resolved_default, abstract=request_abstract )
+                else:
+                    value = self._ask_for_arg( arg_name, f"Please provide the '{arg_name}' argument.", user_email, response_default=resolved_default, abstract=request_abstract )
                 if value is None:
                     print( f"[Expeditor] User cancelled at arg '{arg_name}'" )
                     return None
-
-                # Handle special "no limit" / "none" answers for optional args
                 if arg_name in ( "budget", "languages" ) and value.lower().strip() in ( "no limit", "none", "skip", "no" ):
-                    continue
+                    pass  # Skip optional
+                else:
+                    final_args[ arg_name ] = value
 
+            # Handle special args sequentially (e.g., fuzzy_file_match)
+            for arg_name in special:
+                handler = special_handlers[ arg_name ]
+                if handler == "fuzzy_file_match":
+                    value = self._handle_fuzzy_file_match( user_email )
+                else:
+                    value = self._ask_for_arg( arg_name, f"Please provide the '{arg_name}' argument.", user_email, abstract=request_abstract )
+                if value is None:
+                    print( f"[Expeditor] User cancelled at arg '{arg_name}'" )
+                    return None
                 final_args[ arg_name ] = value
 
         if self.debug: print( f"[Expeditor] Final args: {final_args}" )
@@ -246,6 +278,9 @@ class RuntimeArgumentExpeditor:
         """
         Present argument summary and iterate until user approves, modifies, or cancels.
 
+        Uses YES_NO prompt type. Summary is shown via abstract (not spoken).
+        Spoken message is a clean question. User comments carry modification intent.
+
         Requires:
             - args_dict contains all collected user-facing args
             - agent_entry is the registry entry for this agent
@@ -256,6 +291,9 @@ class RuntimeArgumentExpeditor:
             - User has seen and approved all arguments before submission
             - Only user-visible args are shown (whitelist from CLI)
             - Maximum 5 iterations to prevent infinite loops
+            - "yes" approves, "no" cancels
+            - "yes [comment: ...]" applies tweak then proceeds
+            - "no [comment: ...]" applies tweak then re-presents
 
         Args:
             args_dict: Collected argument dictionary
@@ -275,54 +313,53 @@ class RuntimeArgumentExpeditor:
             user_visible = list( agent_entry.get( "fallback_questions", {} ).keys() )
 
         for iteration in range( max_iterations ):
-            # Build summary of user-visible args only
+            # Build summary of user-visible args only → abstract (shown, not spoken)
             summary_lines = []
             for k, v in args_dict.items():
                 if k in user_visible:
-                    summary_lines.append( f"  • {k}: {v}" )
+                    summary_lines.append( f"- **{k}**: {v}" )
 
-            summary    = "\n".join( summary_lines )
-            agent_name = agent_entry[ "cli_module" ].split( "." )[ -1 ].replace( "_", " " )
+            agent_name = agent_entry.get( "display_name", agent_entry[ "cli_module" ].split( "." )[ -1 ].replace( "_", " " ) )
 
-            message = (
-                f"Here's what I have for your {agent_name} job:\n"
-                f"{summary}\n\n"
-                f"Does this look right? Say 'yes' to proceed, "
-                f"'cancel' to abort, or tell me what to change."
-            )
+            abstract = f"**{agent_name} Job Summary**\n\n" + "\n".join( summary_lines )
+            message  = f"Here's what I have for your {agent_name} job. Does this look right?"
 
-            response = self._ask_for_arg( "confirmation", message, user_email )
+            response = self._ask_for_confirmation( message, user_email, abstract=abstract )
 
             if response is None:
                 return None
 
-            # Quick keyword check before LLM parse
             lower = response.lower().strip()
-            if lower in ( "yes", "yeah", "yep", "ok", "okay", "go", "go ahead",
-                           "looks good", "that's fine", "approved", "proceed" ):
+
+            # Plain "yes" or "no" (no comment)
+            if lower == "yes":
                 return args_dict
 
-            if lower in ( "cancel", "nevermind", "never mind", "stop", "quit" ):
+            if lower == "no":
                 return None
 
-            # Send to LLM to parse modification intent
-            modification = self._parse_modification( response, args_dict, agent_entry )
+            # "yes [comment: ...]" or "no [comment: ...]"
+            comment = self._extract_comment( response )
 
-            if modification is None:
-                # LLM parse failed — treat as approval to avoid blocking
-                if self.debug: print( "[Expeditor] Confirmation parse failed, treating as approval" )
+            if lower.startswith( "yes" ):
+                if comment:
+                    modification = self._parse_modification( comment, args_dict, agent_entry )
+                    if modification and modification.is_modify() and modification.arg_name and modification.new_value:
+                        args_dict[ modification.arg_name ] = modification.new_value
+                        if self.debug: print( f"  Modified: {modification.arg_name} = {modification.new_value}" )
+                    # User said "yes" — proceed even if parse failed
                 return args_dict
 
-            if modification.is_approval():
-                return args_dict
-
-            if modification.is_cancel():
+            if lower.startswith( "no" ):
+                if comment:
+                    modification = self._parse_modification( comment, args_dict, agent_entry )
+                    if modification and modification.is_modify() and modification.arg_name and modification.new_value:
+                        args_dict[ modification.arg_name ] = modification.new_value
+                        if self.debug: print( f"  Modified: {modification.arg_name} = {modification.new_value}" )
+                        # Loop continues — re-present updated summary
+                        continue
+                # No comment or parse failed — respect the "no"
                 return None
-
-            if modification.is_modify() and modification.arg_name and modification.new_value:
-                args_dict[ modification.arg_name ] = modification.new_value
-                if self.debug: print( f"  Modified: {modification.arg_name} = {modification.new_value}" )
-                # Loop continues — re-present updated summary
 
         # Safety valve: too many iterations
         if self.debug: print( "[Expeditor] Max confirmation iterations reached, proceeding" )
@@ -465,7 +502,93 @@ class RuntimeArgumentExpeditor:
 
         return result
 
-    def _ask_for_arg( self, arg_name, question, user_email ):
+    def _resolve_default( self, command_key, arg_name, registry_default ):
+        """
+        Resolve default value for an argument: config override > registry > None.
+
+        Requires:
+            - command_key is a key in AGENTIC_AGENTS
+            - arg_name is the CLI argument name
+            - registry_default is the fallback_defaults value (or None)
+
+        Ensures:
+            - Returns config override if present, else registry default, else None
+
+        Args:
+            command_key: Routing command key (e.g., "agent router go to deep research")
+            arg_name: CLI argument name (e.g., "budget")
+            registry_default: Default from agent_registry fallback_defaults
+
+        Returns:
+            str or None: Resolved default value
+        """
+        agent_short = command_key.replace( "agent router go to ", "" )
+        config_key  = f"expeditor default value for {agent_short} {arg_name}"
+        config_value = self.config_mgr.get( config_key, default=None )
+        if config_value is not None:
+            return config_value
+        return registry_default
+
+    def _build_request_context( self, agent_entry, original_question, final_args, missing_args ):
+        """
+        Build a markdown abstract summarizing the current request context.
+
+        Displayed alongside batch question forms in the notification UI (not spoken via TTS).
+        Helps the user understand why they're being asked and what the system already knows.
+
+        Requires:
+            - agent_entry is a valid registry entry with 'display_name'
+            - original_question is the user's voice command string
+            - final_args is a dict of already-extracted arguments
+            - missing_args is a list of arg names still needed
+
+        Ensures:
+            - Returns a markdown string with request context
+            - Only includes user-visible args in "Already extracted" section
+            - Conditionally includes sections only when non-empty
+
+        Args:
+            agent_entry: Registry entry for the target agent
+            original_question: Full voice command transcription
+            final_args: Dict of already-resolved arguments
+            missing_args: List of arg names still needed
+
+        Returns:
+            str: Markdown-formatted context summary
+        """
+        display_name = agent_entry.get( "display_name", agent_entry[ "cli_module" ].split( "." )[ -1 ].replace( "_", " " ) )
+
+        lines = [
+            f'**Your request**: "{original_question}"',
+            f"**Agent**: {display_name}",
+        ]
+
+        # Filter present args to user-visible only
+        user_visible = get_user_visible_args(
+            next( ( k for k, v in AGENTIC_AGENTS.items() if v is agent_entry ), None )
+        )
+        system_args = set( agent_entry.get( "system_provided", [] ) )
+
+        visible_present = {
+            k: v for k, v in final_args.items()
+            if k not in system_args
+            and k not in ( "dry_run", "no_confirm" )
+            and ( user_visible is None or k in user_visible )
+        }
+
+        if visible_present:
+            lines.append( "" )
+            lines.append( "**Already extracted**:" )
+            for k, v in visible_present.items():
+                lines.append( f"- {k}: {v}" )
+
+        if missing_args:
+            lines.append( "" )
+            lines.append( "**Still needed**: " + ", ".join( missing_args ) )
+
+        return "\n".join( lines )
+
+    def _ask_for_arg( self, arg_name, question, user_email, response_default=None, abstract=None ):
         """
         Ask the user for a missing argument via synchronous notification.
 
@@ -482,22 +605,32 @@ class RuntimeArgumentExpeditor:
             arg_name: Name of the missing argument
             question: Fallback question from registry
             user_email: Target user for notification
+            response_default: Optional pre-filled default value for the input
+            abstract: Optional markdown context shown in UI but not spoken
 
         Returns:
             str or None: User's response or None
         """
         request = NotificationRequest(
-            message         = question,
-            response_type   = ResponseType.OPEN_ENDED,
-            priority        = NotificationPriority.HIGH,
-            target_user     = user_email,
-            timeout_seconds = 60,
-            sender_id       = self.SENDER_ID,
-            title           = f"Missing: {arg_name}",
-            suppress_ding   = False
+            message          = question,
+            response_type    = ResponseType.OPEN_ENDED,
+            priority         = NotificationPriority.HIGH,
+            target_user      = user_email,
+            timeout_seconds  = 180,
+            sender_id        = self.SENDER_ID,
+            title            = f"Missing: {arg_name}",
+            suppress_ding    = False,
+            response_default = response_default,
+            abstract         = abstract,
+            job_id           = self._job_id
         )
 
         response = notify_user_sync( request=request, debug=self.debug )
+
+        if self.debug:
+            print( f"[Expeditor] _ask_for_arg response: success={response.success}, status={response.status}, "
+                   f"exit_code={response.exit_code}, is_timeout={response.is_timeout}, "
+                   f"value={response.response_value[ :100 ] if response.response_value else None}" )
 
         if response.success and response.response_value:
             value = response.response_value.strip()
@@ -507,6 +640,178 @@ class RuntimeArgumentExpeditor:
             return value
 
         return None
+
+    def _ask_for_confirmation( self, message, user_email, abstract=None ):
+        """
+        Ask the user a YES_NO confirmation question via synchronous notification.
+
+        Requires:
+            - message is a non-empty string (spoken via TTS)
+            - user_email is the target user's email
+
+        Ensures:
+            - Returns raw response string ("yes", "no", "yes [comment: ...]", "no [comment: ...]")
+            - Returns None on timeout or error
+
+        Args:
+            message: The confirmation question to speak
+            user_email: Target user for notification
+            abstract: Optional markdown context shown in UI but not spoken
+
+        Returns:
+            str or None: Raw response string or None
+        """
+        request = NotificationRequest(
+            message          = message,
+            response_type    = ResponseType.YES_NO,
+            priority         = NotificationPriority.HIGH,
+            target_user      = user_email,
+            timeout_seconds  = 180,
+            sender_id        = self.SENDER_ID,
+            title            = "Confirm",
+            suppress_ding    = False,
+            response_default = "no",
+            abstract         = abstract,
+            job_id           = self._job_id
+        )
+
+        response = notify_user_sync( request=request, debug=self.debug )
+
+        if self.debug:
+            print( f"[Expeditor] _ask_for_confirmation response: success={response.success}, status={response.status}, "
+                   f"exit_code={response.exit_code}, is_timeout={response.is_timeout}, "
+                   f"value={response.response_value[ :100 ] if response.response_value else None}" )
+
+        if response.success and response.response_value:
+            return response.response_value.strip()
+
+        return None
+
+    @staticmethod
+    def _extract_comment( response_text ):
+        """
+        Extract comment text from a YES_NO response with annotation.
+
+        Requires:
+            - response_text is a string like "yes [comment: change budget to 10]"
+
+        Ensures:
+            - Returns the comment string if pattern matches
+            - Returns None if no comment found
+
+        Args:
+            response_text: Raw YES_NO response string
+
+        Returns:
+            str or None: Extracted comment text or None
+        """
+        match = re.search( r'\[comment:\s*(.+?)\]', response_text )
+        return match.group( 1 ).strip() if match else None
+
+    def _batch_collect_args( self, batchable_args, fallback_questions, user_email, fallback_defaults=None, command_key=None, abstract=None ):
+        """
+        Collect multiple missing arguments in a single batch notification.
+
+        Sends all questions at once via OPEN_ENDED_BATCH notification type.
+        User sees all questions on one screen and submits all answers together.
+        When defaults are available, text inputs are pre-filled so the user
+        can accept by simply hitting Submit All.
+
+        Requires:
+            - batchable_args is a list of arg names (len > 1)
+            - fallback_questions maps arg names to question strings
+            - user_email is the target user's email
+
+        Ensures:
+            - Returns dict of { arg_name: value } on success
+            - Returns None on timeout, error, or cancellation
+            - Questions include default_value when resolved default is not None
+
+        Args:
+            batchable_args: List of arg names to collect
+            fallback_questions: Dict mapping arg names to question strings
+            user_email: Target user for notification
+            fallback_defaults: Optional dict mapping arg names to default values
+            command_key: Optional routing command key for config override lookup
+            abstract: Optional markdown context shown in UI but not spoken
+
+        Returns:
+            dict or None: Collected answers or None on cancel/timeout
+        """
+        if fallback_defaults is None:
+            fallback_defaults = {}
+
+        questions = []
+        for arg_name in batchable_args:
+            question_text = fallback_questions.get(
+                arg_name, f"Please provide the '{arg_name}' argument."
+            )
+            q = {
+                "question" : question_text,
+                "header"   : arg_name
+            }
+            # Resolve default: config override > registry > None
+            resolved_default = self._resolve_default(
+                command_key, arg_name, fallback_defaults.get( arg_name )
+            ) if command_key else fallback_defaults.get( arg_name )
+            if resolved_default is not None:
+                q[ "default_value" ] = resolved_default
+            questions.append( q )
+
+        tts_message      = format_open_ended_batch_for_tts( questions )
+        response_options = convert_open_ended_batch_for_api( questions )
+
+        request = NotificationRequest(
+            message          = tts_message,
+            response_type    = ResponseType.OPEN_ENDED_BATCH,
+            priority         = NotificationPriority.HIGH,
+            target_user      = user_email,
+            timeout_seconds  = 300,
+            sender_id        = self.SENDER_ID,
+            title            = "Missing arguments",
+            response_options = response_options,
+            suppress_ding    = False,
+            abstract         = abstract,
+            job_id           = self._job_id
+        )
+
+        response = notify_user_sync( request=request, debug=self.debug )
+
+        if self.debug:
+            print( f"[Expeditor] _batch_collect_args response: success={response.success}, status={response.status}, "
+                   f"exit_code={response.exit_code}, is_timeout={response.is_timeout}, "
+                   f"value={response.response_value[ :100 ] if response.response_value else None}" )
+
+        if not response.success or not response.response_value:
+            return None
+
+        # Parse JSON response
+        try:
+            parsed = json.loads( response.response_value )
+        except ( json.JSONDecodeError, TypeError ):
+            if self.debug: print( f"[Expeditor] Failed to parse batch response: {response.response_value}" )
+            return None
+
+        # Check for cancellation
+        if parsed.get( "cancelled" ):
+            return None
+
+        answers = parsed.get( "answers", {} )
+        if not answers:
+            return None
+
+        # Check for cancellation keywords in any answer
+        for arg_name, value in answers.items():
+            if isinstance( value, str ) and value.lower().strip() in ( "cancel", "nevermind", "never mind", "stop", "quit" ):
+                return None
+
+        # Check all requested args have non-empty values
+        for arg_name in batchable_args:
+            if arg_name not in answers or not str( answers.get( arg_name, "" ) ).strip():
+                if self.debug: print( f"[Expeditor] Batch response missing arg: {arg_name}" )
+                return None
+
+        return answers
 
     def _handle_fuzzy_file_match( self, user_email ):
         """

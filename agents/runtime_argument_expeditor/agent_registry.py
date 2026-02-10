@@ -3,7 +3,8 @@
 Agent Registry for Runtime Argument Expeditor.
 
 Maps agentic routing commands to their CLI modules, required arguments,
-argument name mappings (LORA -> CLI), and fallback questions for missing args.
+argument name mappings (LORA -> CLI), fallback questions for missing args,
+and fallback default values for pre-populating batch question inputs.
 
 Also provides CLI --help capture with per-process-lifetime caching.
 """
@@ -22,6 +23,7 @@ AGENTIC_AGENTS = {
     "agent router go to deep research" : {
         "cli_module"         : "cosa.agents.deep_research.cli",
         "job_class_path"     : "cosa.agents.deep_research.job.DeepResearchJob",
+        "display_name"       : "Deep Research",
         "required_user_args" : [ "query" ],
         "system_provided"    : [ "user_email", "session_id", "user_id", "no_confirm" ],
         "arg_mapping"        : {
@@ -37,10 +39,16 @@ AGENTIC_AGENTS = {
             "audience"         : "Who is the target audience? Options: beginner, intermediate, expert, or academic.",
             "audience_context" : "Any additional context about the audience? Say 'none' to skip.",
         },
+        "fallback_defaults" : {
+            "budget"           : "no limit",
+            "audience"         : "academic",
+            "audience_context" : "none",
+        },
     },
     "agent router go to podcast generator" : {
         "cli_module"         : "cosa.agents.podcast_generator",
         "job_class_path"     : "cosa.agents.podcast_generator.job.PodcastGeneratorJob",
+        "display_name"       : "Podcast Generator",
         "required_user_args" : [ "research" ],
         "system_provided"    : [ "user_id", "user_email", "session_id" ],
         "arg_mapping"        : {
@@ -52,9 +60,14 @@ AGENTIC_AGENTS = {
         },
         "fallback_questions" : {
             "research"         : "Which research document should I use for the podcast? Describe it or say the filename.",
-            "languages"        : "What languages for the podcast? Say 'English' or 'English and Spanish', etc.",
+            "languages"        : "What languages for the podcast? Use ISO codes like 'en' for English, 'es-MX' for Mexican Spanish, or say the language name.",
             "audience"         : "Who is the target audience? Options: beginner, intermediate, expert, or academic.",
             "audience_context" : "Any additional context about the audience? Say 'none' to skip.",
+        },
+        "fallback_defaults" : {
+            "languages"        : "en,es-MX",
+            "audience"         : "academic",
+            "audience_context" : "none",
         },
         "special_handlers"   : {
             "research" : "fuzzy_file_match",
@@ -63,6 +76,7 @@ AGENTIC_AGENTS = {
     "agent router go to research to podcast" : {
         "cli_module"         : "cosa.agents.deep_research_to_podcast",
         "job_class_path"     : "cosa.agents.deep_research_to_podcast.job.DeepResearchToPodcastJob",
+        "display_name"       : "Research to Podcast",
         "required_user_args" : [ "query" ],
         "system_provided"    : [ "user_email", "session_id", "user_id", "no_confirm" ],
         "arg_mapping"        : {
@@ -77,7 +91,13 @@ AGENTIC_AGENTS = {
             "budget"           : "Would you like to set a budget limit for the research phase?",
             "audience"         : "Who is the target audience? Options: beginner, intermediate, expert, or academic.",
             "audience_context" : "Any additional context about the audience? Say 'none' to skip.",
-            "languages"        : "What languages for the podcast? Say 'English' or 'English and Spanish', etc.",
+            "languages"        : "What languages for the podcast? Use ISO codes like 'en' for English, 'es-MX' for Mexican Spanish, or say the language name.",
+        },
+        "fallback_defaults" : {
+            "budget"           : "no limit",
+            "audience"         : "academic",
+            "audience_context" : "none",
+            "languages"        : "en,es-MX",
         },
     },
 }
@@ -211,7 +231,9 @@ def quick_smoke_test():
             assert "system_provided" in entry, f"Missing system_provided in {key}"
             assert "arg_mapping" in entry, f"Missing arg_mapping in {key}"
             assert "fallback_questions" in entry, f"Missing fallback_questions in {key}"
-            print( f"   ✓ {key}: structure valid" )
+            assert "fallback_defaults" in entry, f"Missing fallback_defaults in {key}"
+            assert "display_name" in entry, f"Missing display_name in {key}"
+            print( f"   ✓ {key}: structure valid (has fallback_defaults, display_name={entry[ 'display_name' ]})" )
         tests_passed += 1
     except Exception as e:
         print( f"   ✗ Failed: {e}" )

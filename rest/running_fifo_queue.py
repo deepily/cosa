@@ -508,52 +508,50 @@ class RunningFifoQueue( FifoQueue ):
                 pprint.pprint( running_job.runtime_stats )
             else:
                 print( f"NOT adding to snapshot manager" )
-                # There's no code executed to generate a RAW answer, just a canned, conversational one
-                running_job.answer = "no code executed by non-serializing/ephemeral objects"
+                # Only overwrite answer for truly ephemeral agents (not CRUD which sets answer in run_formatter)
+                if not isinstance( running_job, CrudForDataFramesAgent ):
+                    running_job.answer = "no code executed by non-serializing/ephemeral objects"
 
-            # Emit job state transition (run -> done) with completion metadata
-            if serialize_snapshot:
-                # Phase 2: Direct attribute access - Protocol guarantees these exist
-                job_id  = running_job.id_hash
-                user_id = self.user_job_tracker.get_user_for_job( job_id )
+            # Emit job state transition (run -> done) with completion metadata for ALL agents
+            job_id  = running_job.id_hash
+            user_id = self.user_job_tracker.get_user_for_job( job_id )
 
-                # Calculate completed_at timestamp for duration calculation
-                completed_at = datetime.now().isoformat()
-                started_at   = running_job.started_at
+            # Calculate completed_at timestamp for duration calculation
+            completed_at = datetime.now().isoformat()
+            started_at   = running_job.started_at
 
-                # Calculate duration_seconds if both timestamps exist
-                duration_seconds = None
-                if started_at and completed_at:
-                    try:
-                        start = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
-                        end   = datetime.fromisoformat( completed_at )
-                        duration_seconds = ( end - start ).total_seconds()
-                    except Exception:
-                        pass
+            # Calculate duration_seconds if both timestamps exist
+            duration_seconds = None
+            if started_at and completed_at:
+                try:
+                    start = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
+                    end   = datetime.fromisoformat( completed_at )
+                    duration_seconds = ( end - start ).total_seconds()
+                except Exception:
+                    pass
 
-                metadata = {
-                    'response_text'   : running_job.answer_conversational,
-                    'abstract'        : None,
-                    'report_link'     : None,
-                    'cost_summary'    : None,
-                    'error'           : None,
-                    # Phase 6.2: Card-rendering fields for client-side card creation
-                    'question_text'   : running_job.last_question_asked,
-                    'agent_type'      : running_job.job_type,
-                    'timestamp'       : running_job.created_date,
-                    # Session 107: Fix field parity between WebSocket and server-fetched cards
-                    'status'          : 'completed',
-                    'has_interactions': bool( running_job.session_id ),
-                    'is_cache_hit'    : running_job.is_cache_hit,
-                    'started_at'      : started_at,
-                    'completed_at'    : completed_at,
-                    'duration_seconds': duration_seconds
-                }
-                emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'done', user_id, metadata )
+            metadata = {
+                'response_text'   : running_job.answer_conversational,
+                'abstract'        : None,
+                'report_link'     : None,
+                'cost_summary'    : None,
+                'error'           : None,
+                # Phase 6.2: Card-rendering fields for client-side card creation
+                'question_text'   : running_job.last_question_asked,
+                'agent_type'      : running_job.job_type,
+                'timestamp'       : running_job.created_date,
+                # Session 107: Fix field parity between WebSocket and server-fetched cards
+                'status'          : 'completed',
+                'has_interactions': bool( running_job.session_id ),
+                'is_cache_hit'    : running_job.is_cache_hit,
+                'started_at'      : started_at,
+                'completed_at'    : completed_at,
+                'duration_seconds': duration_seconds
+            }
+            emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'done', user_id, metadata )
 
             self.pop()  # Auto-emits 'run_update'
-            if serialize_snapshot:
-                self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
+            self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
 
             # Write the job to the database for posterity's sake
             self.io_tbl.insert_io_row( input_type=running_job.routing_command, input=running_job.last_question_asked, output_raw=running_job.answer, output_final=running_job.answer_conversational )

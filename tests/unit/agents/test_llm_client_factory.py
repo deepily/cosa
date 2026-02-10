@@ -222,18 +222,21 @@ class LlmClientFactoryUnitTests:
                 
                 # Test various model descriptor formats
                 test_cases = [
-                    # Format: "vendor:model" 
+                    # Format: "vendor:model" (colon is the ONLY vendor delimiter)
                     ( "openai:gpt-4", ( "openai", "gpt-4" ) ),
                     ( "groq:llama-3.1-8b-instant", ( "groq", "llama-3.1-8b-instant" ) ),
                     ( "anthropic:claude-3-sonnet", ( "anthropic", "claude-3-sonnet" ) ),
-                    
-                    # Format: "vendor/model"
-                    ( "Groq/llama-3.1-8b-instant", ( "Groq", "llama-3.1-8b-instant" ) ),
-                    ( "OpenAI/gpt-4", ( "OpenAI", "gpt-4" ) ),
-                    
+                    ( "Groq:llama-3.1-8b-instant", ( "groq", "llama-3.1-8b-instant" ) ),
+
+                    # HuggingFace org/model — slash is NEVER a vendor delimiter, always vLLM
+                    ( "Qwen/Qwen3-4B-Base", ( "vllm", "Qwen/Qwen3-4B-Base" ) ),
+                    ( "meta-llama/Llama-2-70b", ( "vllm", "meta-llama/Llama-2-70b" ) ),
+                    ( "Groq/llama-3.1-8b-instant", ( "vllm", "Groq/llama-3.1-8b-instant" ) ),
+                    ( "OpenAI/gpt-4", ( "vllm", "OpenAI/gpt-4" ) ),
+
                     # Special deepily format
                     ( "llm_deepily_ministral", ( "deepily", "llm_deepily_ministral" ) ),
-                    
+
                     # Default to vllm for unknown formats
                     ( "local-model-name", ( "vllm", "local-model-name" ) ),
                     ( "some_model", ( "vllm", "some_model" ) )
@@ -245,10 +248,11 @@ class LlmClientFactoryUnitTests:
                 
                 self.utils.print_test_status( "Model descriptor parsing test passed", "PASS" )
                 
-                # Test edge cases
+                # Test edge cases (vendor is always lowercased for colon format)
                 edge_cases = [
                     ( "", ( "vllm", "" ) ),  # Empty string
                     ( "vendor:", ( "vendor", "" ) ),  # Empty model
+                    ( "Vendor:", ( "vendor", "" ) ),  # Empty model with uppercase vendor
                     ( ":model", ( "", "model" ) ),  # Empty vendor
                     ( "vendor:model:extra", ( "vendor", "model:extra" ) )  # Multiple colons
                 ]

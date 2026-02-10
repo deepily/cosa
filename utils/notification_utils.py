@@ -91,6 +91,78 @@ def convert_questions_for_api( questions: list ) -> dict:
     return { "questions": converted }
 
 
+def format_open_ended_batch_for_tts( questions: list ) -> str:
+    """
+    Format open-ended batch questions for TTS playback.
+
+    Builds a spoken message like: "I have 3 questions for you.
+    Question 1 of 3: What topic? Question 2 of 3: What budget?"
+
+    Requires:
+        - questions is a non-empty list of question dicts
+        - Each dict should have 'question' key
+
+    Ensures:
+        - Returns TTS-friendly string with numbered questions
+        - Single question: just the question text (no "I have 1 question" preamble)
+        - Multiple questions: preamble + numbered questions
+
+    Args:
+        questions: List of question objects with 'question' and 'header' keys
+
+    Returns:
+        str: TTS-friendly message
+    """
+    total = len( questions )
+    parts = []
+
+    if total > 1:
+        parts.append( f"I have {total} questions for you." )
+
+    for i, q in enumerate( questions, 1 ):
+        question_text = q.get( "question", "Please provide a value" )
+        if total > 1:
+            parts.append( f"Question {i} of {total}: {question_text}" )
+        else:
+            parts.append( question_text )
+
+    return " ".join( parts )
+
+
+def convert_open_ended_batch_for_api( questions: list ) -> dict:
+    """
+    Convert open-ended batch questions to API response_options format.
+
+    Marks each question with input_type: "text" so the frontend knows
+    to render text inputs instead of radio/checkbox options.
+
+    Requires:
+        - questions is a list of question dicts
+
+    Ensures:
+        - Returns dict with 'questions' array
+        - Each question has input_type: "text"
+        - Preserves question and header fields
+
+    Args:
+        questions: List of question dicts with 'question' and 'header' keys
+
+    Returns:
+        dict: API-compatible response_options structure
+    """
+    converted = []
+    for q in questions:
+        converted_q = {
+            "question"   : q.get( "question", "" ),
+            "header"     : q.get( "header", f"Question {len( converted ) + 1}" ),
+            "input_type" : "text"
+        }
+        if "default_value" in q:
+            converted_q[ "default_value" ] = q[ "default_value" ]
+        converted.append( converted_q )
+    return { "questions": converted }
+
+
 def quick_smoke_test():
     """Quick smoke test for notification_utils module."""
     import cosa.utils.util as cu
@@ -147,6 +219,53 @@ def quick_smoke_test():
         assert converted[ "questions" ][ 0 ][ "multi_select" ] is True
         assert "multiSelect" not in converted[ "questions" ][ 0 ]
         print( "✓ multiSelect -> multi_select conversion correct" )
+
+        # Test 5: format_open_ended_batch_for_tts (single question)
+        print( "Testing format_open_ended_batch_for_tts (single question)..." )
+        questions = [ { "question": "What topic?", "header": "Topic" } ]
+        tts = format_open_ended_batch_for_tts( questions )
+        assert tts == "What topic?"
+        assert "I have" not in tts
+        print( f"✓ Result: '{tts}'" )
+
+        # Test 6: format_open_ended_batch_for_tts (multiple questions)
+        print( "Testing format_open_ended_batch_for_tts (multiple questions)..." )
+        questions = [
+            { "question": "What topic?", "header": "Topic" },
+            { "question": "What budget?", "header": "Budget" },
+            { "question": "Who is the audience?", "header": "Audience" }
+        ]
+        tts = format_open_ended_batch_for_tts( questions )
+        assert "I have 3 questions for you" in tts
+        assert "Question 1 of 3" in tts
+        assert "Question 2 of 3" in tts
+        assert "Question 3 of 3" in tts
+        print( f"✓ Result: '{tts[ :80 ]}...'" )
+
+        # Test 7: convert_open_ended_batch_for_api
+        print( "Testing convert_open_ended_batch_for_api..." )
+        questions = [
+            { "question": "What topic?", "header": "Topic" },
+            { "question": "What budget?", "header": "Budget" }
+        ]
+        converted = convert_open_ended_batch_for_api( questions )
+        assert "questions" in converted
+        assert len( converted[ "questions" ] ) == 2
+        assert converted[ "questions" ][ 0 ][ "input_type" ] == "text"
+        assert converted[ "questions" ][ 0 ][ "header" ] == "Topic"
+        assert converted[ "questions" ][ 1 ][ "header" ] == "Budget"
+        print( "✓ Batch questions converted with input_type='text'" )
+
+        # Test 8: convert_open_ended_batch_for_api with default_value
+        print( "Testing convert_open_ended_batch_for_api (with default_value)..." )
+        questions = [
+            { "question": "What budget?", "header": "Budget", "default_value": "no limit" },
+            { "question": "What audience?", "header": "Audience" }
+        ]
+        converted = convert_open_ended_batch_for_api( questions )
+        assert converted[ "questions" ][ 0 ][ "default_value" ] == "no limit"
+        assert "default_value" not in converted[ "questions" ][ 1 ]
+        print( "✓ default_value passed through when present, omitted when absent" )
 
         print( "\n✓ Notification utils smoke test completed successfully" )
 

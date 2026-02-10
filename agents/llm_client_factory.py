@@ -342,42 +342,36 @@ class LlmClientFactory:
     def _parse_model_descriptor( self, model_descriptor: str ) -> tuple[str, str]:
         """
         Parse a model descriptor to extract vendor and model name.
-        
-        This method handles different model descriptor formats and extracts
-        the vendor and model name from the descriptor.
-        
+
         Requires:
             - model_descriptor: A non-empty string in one of the following formats:
-                1. "vendor:model-name" (e.g., "openai:gpt-4", "groq:llama-3.1-8b-instant")
-                2. "vendor/model-name" (e.g., "Groq/llama-3.1-8b-instant")
-                3. Special format for Deepily models (e.g., "deepily/ministral_8b_2410_ft_lora")
-                4. Any other model name (will be assumed to be a vLLM model)
-                
+                1. "vendor:model-name" (e.g., "groq:llama-3.1-8b-instant")
+                   Colon is the ONLY vendor delimiter.
+                2. "llm_deepily_*" legacy format for Deepily models
+                3. Any other string — treated as a HuggingFace model ID or
+                   local model identifier for vLLM (e.g., "Qwen/Qwen3-4B-Base")
+
         Ensures:
             - Returns a tuple of (vendor, model_name)
-            - vendor is a string identifying the LLM provider
-            - model_name is a string identifying the specific model
-            - Special handling for Deepily models and fallback to vLLM
-            
-        Returns:
-            - Tuple of (vendor, model_name)
+            - Slash is NEVER interpreted as a vendor delimiter
+            - Vendor is always lowercased for consistency with VENDOR_CONFIG keys
+            - Unknown formats default to vLLM
         """
         if ":" in model_descriptor:
-            # Format is vendor:model-name (e.g., "groq:llama-3.1-8b-instant")
             vendor, model_name = model_descriptor.split( ":", 1 )
-            return vendor.strip(), model_name.strip()
-        
-        elif "/" in model_descriptor:
-            # Format is vendor/model-name (e.g., "Groq/llama-3.1-8b-instant")
-            vendor, model_name = model_descriptor.split( "/", 1 )
-            return vendor.strip(), model_name.strip()
-        
+            return vendor.strip().lower(), model_name.strip()
+
         elif model_descriptor.startswith( "llm_deepily_" ):
-            # Special case for Deepily models
             return "deepily", model_descriptor
-        
+
         else:
-            # If no vendor specified, assume vLLM for local models
+            # No colon = not vendor-prefixed.
+            # Treat as HuggingFace model ID or local model for vLLM.
+            if "/" in model_descriptor:
+                left = model_descriptor.split( "/", 1 )[ 0 ].strip().lower()
+                if left in self.VENDOR_CONFIG:
+                    print( f"DEPRECATION WARNING: '{model_descriptor}' uses slash as vendor delimiter. "
+                           f"Use '{left}:{model_descriptor.split( '/', 1 )[ 1 ].strip()}' instead." )
             return "vllm", model_descriptor
             
     def _get_vendor_specific_client( self, model_descriptor: str, debug: bool=False, verbose: bool=False ) -> LlmClientInterface:
@@ -388,7 +382,7 @@ class LlmClientFactory:
         configuration, ensuring all clients implement LlmClientInterface.
         
         Requires:
-            - model_descriptor: String in format "vendor:model" or "vendor/model"
+            - model_descriptor: String in format "vendor:model" (colon is the only vendor delimiter)
             - VENDOR_CONFIG map with complete vendor-specific configuration
             - Valid API keys for the requested vendor available in environment or via du.get_api_key()
             

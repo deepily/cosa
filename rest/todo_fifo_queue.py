@@ -13,6 +13,7 @@ from cosa.agents.calendaring_agent import CalendaringAgent
 from cosa.agents.math_agent import MathAgent
 from cosa.crud_for_dataframes.todo_crud_agent import TodoCrudAgent
 from cosa.crud_for_dataframes.calendar_crud_agent import CalendarCrudAgent
+from cosa.agents.calculator.agent import CalculatorAgent
 from cosa.agents.llm_client_factory import LlmClientFactory
 from cosa.memory.gister import Gister
 from cosa.memory.gist_normalizer import GistNormalizer
@@ -52,6 +53,7 @@ MODE_TO_AGENT = {
     "receptionist": ReceptionistAgent,
     "todo"        : TodoListAgent,
     "datetime"    : DateAndTimeAgent,
+    "calculator"  : CalculatorAgent,
 }
 
 # Mode metadata for UI display
@@ -63,6 +65,7 @@ MODE_METADATA = {
     "receptionist": { "display_name": "Receptionist",  "description": "General assistance" },
     "todo"        : { "display_name": "Todo List",     "description": "Task management" },
     "datetime"    : { "display_name": "Date & Time",   "description": "Date/time queries" },
+    "calculator"  : { "display_name": "Calculator",    "description": "Unit conversions, price comparison, mortgage" },
 }
 
 class TodoFifoQueue( FifoQueue ):
@@ -621,6 +624,10 @@ class TodoFifoQueue( FifoQueue ):
                 else:
                     agent = CalendaringAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                     msg = starting_a_new_job.format( agent_type="calendaring" )
+                ding_for_new_job = True
+            elif command == "agent router go to calculator":
+                agent = CalculatorAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                msg = starting_a_new_job.format( agent_type="calculator" )
                 ding_for_new_job = True
             elif command == "agent router go to math":
                 if question.lower().strip().startswith( "refactor " ):

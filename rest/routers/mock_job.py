@@ -10,6 +10,7 @@ Generated on: 2026-01-20
 """
 
 import asyncio
+import uuid
 
 from typing import Optional, Tuple
 from fastapi import APIRouter, HTTPException, Depends
@@ -261,6 +262,9 @@ async def _handle_expeditor_test( voice_command, current_user, todo_queue ):
         verbose    = False
     )
 
+    # Pre-generate job_id so expeditor notifications route to a dedicated job card
+    expeditor_job_id = f"exp-{uuid.uuid4().hex[ :8 ]}"
+
     args_dict = await asyncio.to_thread(
         expeditor.expedite,
         command           = matched_command,
@@ -268,7 +272,8 @@ async def _handle_expeditor_test( voice_command, current_user, todo_queue ):
         user_email        = user_email or "test@test.com",
         session_id        = session_id,
         user_id           = user_id or "test-user",
-        original_question = voice_command
+        original_question = voice_command,
+        job_id            = expeditor_job_id
     )
 
     if args_dict is None:
