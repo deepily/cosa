@@ -765,6 +765,7 @@ class XmlCoordinator:
 
         augmentation_config = {
             "agent router go to automatic routing mode" : { "factor": 9 },
+            "agent router go to calculator"             : { "factor": 3 },
             "agent router go to math"                   : { "factor": 3 },
             "agent router go to todo list"              : { "factor": 3 },
             "none"                                      : { "factor": 3 },
@@ -1263,7 +1264,7 @@ class XmlCoordinator:
             except Exception as e:
                 print( f"ETA: Error '{e}'" )
                 
-        return self.llm_client.run( prompt )
+        return self.llm_client.run( prompt, max_tokens=max_new_tokens )
 
 
 def quick_smoke_test():

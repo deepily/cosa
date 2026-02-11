@@ -72,5 +72,7 @@ model_config: dict[ str, Union[ int, str, Callable[ [ str ], str ] ] ] = {
 
 vllm_config: dict[ str, Union[ int, float ] ] = {
     "max_model_len"          : 1024,  # Training uses max_seq_length=683; 1024 is generous for validation prompts + 128 max_new_tokens
-    "gpu_memory_utilization" : 0.90,  # 4B model fits comfortably — can safely use more VRAM
+    "gpu_memory_utilization" : 0.70,  # was 0.90 — V1 engine (vLLM 0.8.5+) needs headroom for warmup allocations
+    "tensor_parallel_size"   : 1,     # 4B model (~8 GB bf16) fits on 1 GPU — no sharding needed
+    "max_num_seqs"           : 64,    # V1 engine warms up with this many dummy requests (default 256 causes OOM)
 }

@@ -338,7 +338,7 @@ class TodoFifoQueue( FifoQueue ):
                 if self.debug:
                     print( f"[TODO-QUEUE] Failed to send rejection notification: {e}" )
     
-    def push_job( self, question: str, websocket_id: str, user_id: str, user_email: str ) -> str:
+    def push_job( self, question: str, websocket_id: str, user_id: str, user_email: str ) -> Dict:
         """
         Push a new job onto the queue based on the question.
 
@@ -357,6 +357,7 @@ class TodoFifoQueue( FifoQueue ):
             - Associates websocket_id and user_id with the job
             - Passes user_id to agent creation for event routing
             - Sets user_email on agent/job for TTS notification routing
+            - Returns dict with "message" (str) and "job_id" (str or None)
 
         Raises:
             - None (exceptions handled internally)
@@ -375,7 +376,7 @@ class TodoFifoQueue( FifoQueue ):
                 reason = "Question contains invalid content"
                 
             self._notify_rejection( question, websocket_id, reason )
-            return f"Job rejected: {reason}"
+            return { "message": f"Job rejected: {reason}", "job_id": None }
 
         # THREE-LEVEL ARCHITECTURE: Generate representations and embeddings early
         # This needs to be available for all code paths, so do it before conditionals
@@ -663,7 +664,7 @@ class TodoFifoQueue( FifoQueue ):
                     msg = "Automatic routing is already active."
                 print( f"[AUTO-ROUTE] User {user_id} returning to automatic routing (was: {previous_mode})" )
                 self._notify( msg, target_user=user_email )
-                return msg
+                return { "message": msg, "job_id": None }
             elif command == "agent router go to receptionist" or command == "none":
                 print( f"Routing '{command}' to receptionist..." )
                 agent = ReceptionistAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
@@ -719,7 +720,7 @@ class TodoFifoQueue( FifoQueue ):
                 user_id, websocket_id, embeddings, cache_hits, match_result
             )
 
-            return msg
+            return { "message": msg, "job_id": agent.id_hash if agent else None }
 
     def _log_query_with_results( self,
                                query_verbatim: str,
@@ -784,7 +785,7 @@ class TodoFifoQueue( FifoQueue ):
             if len( lines_of_code ) > 0:
                 print()
                 
-    def _queue_best_snapshot( self, best_snapshot: SolutionSnapshot, best_score: float, user_id: str, user_email: str ) -> str:
+    def _queue_best_snapshot( self, best_snapshot: SolutionSnapshot, best_score: float, user_id: str, user_email: str ) -> Dict:
         """
         Queue the best matching snapshot for execution.
 
@@ -800,7 +801,7 @@ class TodoFifoQueue( FifoQueue ):
             - Configures job with current settings
             - Pushes job to queue
             - Emits socket updates
-            - Returns status message
+            - Returns dict with "message" (str) and "job_id" (str)
 
         Raises:
             - None
@@ -836,7 +837,8 @@ class TodoFifoQueue( FifoQueue ):
 
         self.push( job )  # Auto-emits 'todo_update' via parent class
 
-        return f'Job added to queue. Queue size [{self.size()}]'
+        msg = f'Job added to queue. Queue size [{self.size()}]'
+        return { "message": msg, "job_id": job.id_hash }
     
     def _get_routing_command( self, question: str ) -> tuple[str, str]:
         """

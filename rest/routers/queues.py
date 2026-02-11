@@ -203,10 +203,11 @@ async def push(
         raise HTTPException(status_code=500, detail=f"Failed to push job to queue: {str(e)}")
 
     return {
-        "status": "queued",
-        "websocket_id": websocket_id,
-        "user_id": user_id,
-        "result": result
+        "status"       : "queued",
+        "websocket_id" : websocket_id,
+        "user_id"      : user_id,
+        "job_id"       : result.get( "job_id" ) if isinstance( result, dict ) else None,
+        "result"       : result.get( "message", str( result ) ) if isinstance( result, dict ) else str( result )
     }
 
 @router.get("/get-queue/{queue_name}")

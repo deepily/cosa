@@ -344,6 +344,10 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
             await websocket.close()
             return
 
+        # Strip Bearer prefix if present (WebSocket clients may include it)
+        if token.startswith( "Bearer " ):
+            token = token[ 7: ]
+
         # Log token format (first 30 chars for debugging)
         token_preview = token[:30] + "..." if len(token) > 30 else token
         print(f"[WS-QUEUE-AUTH] Token format for session [{session_id}]: {token_preview}")

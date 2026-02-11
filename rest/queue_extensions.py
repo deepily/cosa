@@ -157,7 +157,9 @@ class UserJobTracker:
         Raises:
             - None
         """
-        return f"{base_hash}::{user_id}"
+        # Strip any existing user scope to prevent double-scoping on cache replay
+        clean_hash = self.extract_base_hash( base_hash )
+        return f"{clean_hash}::{user_id}"
 
     def extract_base_hash( self, compound_hash: str ) -> str:
         """

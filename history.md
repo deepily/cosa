@@ -1,5 +1,45 @@
 # COSA Development History
 
+> **✅ SESSIONS 168-180 COMMIT**: Notification Proxy Agent + Calculator Pipeline job_id + JWT WebSocket Fix + vLLM V1 Engine Compatibility (2026.02.10)
+> **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Committed accumulated work from Lupin sessions 168-180** (~20 files modified/created):
+>
+> **New Notification Proxy Agent (Session 171)** — 10 new files:
+> - `agents/notification_proxy/` package — standalone CLI agent that connects via WebSocket, subscribes to notification events, auto-answers expediter questions using hybrid strategy (rules for known patterns, LLM fallback for unknowns)
+> - `listener.py` — async WebSocket client with auth, ping/pong, exponential backoff reconnection
+> - `responder.py` — notification router + REST API response submission
+> - `strategies/expediter_rules.py` — rule-based keyword matching with 4 test profiles
+> - `strategies/llm_fallback.py` — Anthropic SDK fallback
+> - `config.py` — 2-tier credential resolution (Session 173), test profiles, `all_agents` union profile (Session 179)
+>
+> **Calculator agent pipeline (Sessions 161, 172, 177)**:
+> - `SolutionSnapshot`: CalculatorAgent formatter bypass (skip LLM reformatting), `str()` wrapper on answer field
+> - `push_job()` returns `Dict` with `job_id` at all 5 return sites in todo_fifo_queue.py
+> - `queues.py`: Extract `job_id` from dict return, include in `/api/push` API response
+> - `queue_extensions.py`: Double-scoping prevention in `create_compound_hash()`
+> - `xml_coordinator.py`: Added `"agent router go to calculator": { "factor": 3 }` to augmentation_config
+>
+> **JWT WebSocket auth fix (Session 173)**:
+> - `websocket.py`: Strip `Bearer ` prefix before `verify_token()` — REST endpoints got this from FastAPI's HTTPBearer, WebSocket needed manual handling
+>
+> **vLLM V1 engine compatibility (post-0.8.5 upgrade)**:
+> - `ministral_8b.py`: Added `max_num_seqs=64` to prevent V1 engine warmup OOM
+> - `qwen3_4b.py`: Reduced `gpu_memory_utilization` 0.90→0.70, added `tensor_parallel_size=1`, `max_num_seqs=64`
+> - `peft_trainer.py`: Config-driven TP size override (was always auto-detect), `max_num_seqs` passthrough to vLLM serve command
+>
+> **Training pipeline fix**:
+> - `xml_coordinator.py`: Pass `max_tokens=max_new_tokens` to `llm_client.run()` — was dropping parameter, causing context overflow
+>
+> **Expediter rules fix (Session 179)**:
+> - Keyword ordering fix in `expediter_rules.py`
+>
+> **Commit**: 1b58d95
+>
+> ---
+
 > **✅ SESSIONS 155-167 COMMIT**: Batch Questions + PEFT Multi-LLM + Calculator Agent + CRUD Delete Fix + Expeditor Enhancements (2026.02.09)
 > **Owner**: claude.code@cosa.deepily.ai#b726f9e6
 > **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
@@ -44,7 +84,7 @@
 > - Diagnostic `[Expeditor]` debug prints after all 3 `notify_user_sync` calls
 > - API default timeout 30→120s in notifications.py
 >
-> **Commit**: [pending]
+> **Commit**: 0f139aa
 >
 > ---
 

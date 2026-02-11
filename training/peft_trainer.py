@@ -1765,36 +1765,41 @@ class PeftTrainer:
             gpu_memory_utilization = vllm_config.get( "gpu_memory_utilization", gpu_memory_utilization )
             if self.debug: print( f"vLLM config overrides from {self.model_name}: max_model_len={max_model_len}, gpu_memory_utilization={gpu_memory_utilization}" )
 
+        # Read optional per-model overrides for TP size and max concurrent sequences
+        tp_override  = vllm_config.get( "tensor_parallel_size", None )
+        max_num_seqs = vllm_config.get( "max_num_seqs", None )
+
         # Check if DEEPILY_PROJECTS_DIR is set
         projects_dir = os.environ.get( "DEEPILY_PROJECTS_DIR" )
         if not projects_dir: raise ValueError( "DEEPILY_PROJECTS_DIR environment variable is not set." )
-        
+
         du.print_banner( "Starting vLLM server...", prepend_nl=True  )
-        
+
         # Check for multiple GPUs
         gpu_count = torch.cuda.device_count()
-        gpu_devices = ",".join( str( i ) for i in range( gpu_count ) )
-        
+
         if self.debug:
-            print( f"Detected {gpu_count} GPU(s): {gpu_devices}" )
             for i in range( gpu_count ):
                 gpu_name = torch.cuda.get_device_name( i )
-                gpu_mem = torch.cuda.get_device_properties( i ).total_memory / (1024 ** 3)  # in GB
+                gpu_mem  = torch.cuda.get_device_properties( i ).total_memory / ( 1024 ** 3 )  # in GB
                 print( f"  GPU {i}: {gpu_name} with {gpu_mem:.2f} GB memory" )
-        
+
+        # Use config TP size or auto-detect from available GPUs
+        tensor_parallel_size = tp_override if tp_override else gpu_count
+        gpu_devices          = ",".join( str( i ) for i in range( tensor_parallel_size ) )
+
+        if self.debug: print( f"Detected {gpu_count} GPU(s), using tensor_parallel_size={tensor_parallel_size}, CUDA_VISIBLE_DEVICES={gpu_devices}" )
+
         # Build the vLLM command with GPU configuration
-        if gpu_count > 1:
-            # Configure vLLM to use all available GPUs
-            tensor_parallel_size = gpu_count
+        if tensor_parallel_size > 1:
             gpu_config = f"--tensor-parallel-size {tensor_parallel_size} --gpu-memory-utilization {gpu_memory_utilization}"
-            if self.debug: print(
-                f"Configuring vLLM to use multiple GPUs (tensor_parallel_size={tensor_parallel_size})"
-                )
         else:
-            # Use the single GPU with specified memory utilization
             gpu_config = f"--gpu-memory-utilization {gpu_memory_utilization}"
-            if self.debug: print( f"Configuring vLLM to use a single GPU with memory utilization {gpu_memory_utilization}" )
-        
+
+        # Cap V1 engine warmup buffer allocation if specified
+        if max_num_seqs:
+            gpu_config += f" --max-num-seqs {max_num_seqs}"
+
         # Command to start the vLLM server
         cmd = f"cd {projects_dir}/vllm-pip; source .venv/bin/activate; CUDA_VISIBLE_DEVICES={gpu_devices} vllm serve {model_path_or_hf_id} --served-model-name {model_path_or_hf_id} --port {port} --max-model-len {max_model_len} {gpu_config}"
         

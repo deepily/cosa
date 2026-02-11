@@ -74,7 +74,8 @@ model_config: dict[str, Union[int, str, Callable[[str], str]]] = {
     "last_tag_func": lambda output: "</s>" if output else ""
 }
 
-vllm_config: dict[str, Union[int, float]] = {
+vllm_config: dict[ str, Union[ int, float ] ] = {
     "max_model_len"          : 1024,  # Training uses max_seq_length=683; 1024 is generous for validation prompts + 128 max_new_tokens
     "gpu_memory_utilization" : 0.80,  # 8B model needs more headroom than smaller models
+    "max_num_seqs"           : 64,    # V1 engine (vLLM 0.8.5+) warmup safety — default 256 causes OOM
 }

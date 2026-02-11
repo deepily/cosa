@@ -445,7 +445,7 @@ class SolutionSnapshot( RunnableCode ):
                      code_returns=agent.prompt_response_dict.get( "returns", "N/A" ),
                      code_example=agent.prompt_response_dict.get( "example", "N/A" ),
                          thoughts=agent.prompt_response_dict.get( "thoughts", "N/A" ),
-                           answer=agent.code_response_dict.get( "output", "N/A" ),
+                           answer=str( agent.code_response_dict.get( "output", "N/A" ) ),
             answer_conversational=agent.answer_conversational,
             # User context pass-through from agent (AgentBase guarantees these attributes)
                           user_id=agent.user_id,
@@ -970,6 +970,18 @@ class SolutionSnapshot( RunnableCode ):
                 if self.debug:
                     print( f"⚠ Failed to apply MathAgent formatting: {e}" )
                     print( "  Falling back to default LLM formatter" )
+
+        # CalculatorAgent: already formatted during agent pipeline — no LLM reformatting needed
+        if self.agent_class_name == "CalculatorAgent":
+            if self.answer_conversational:
+                if self.debug and self.verbose:
+                    print( f"SolutionSnapshot: CalculatorAgent already formatted. Result: [{self.answer_conversational}]" )
+                return self.answer_conversational
+            # Fallback: return raw answer if conversational not set
+            if self.debug:
+                print( "SolutionSnapshot: CalculatorAgent has no answer_conversational, using raw answer" )
+            self.answer_conversational = self.answer if self.answer else "N/A"
+            return self.answer_conversational
 
         # Default LLM formatter (for unknown agents, non-terse mode, or errors)
         formatter = RawOutputFormatter(
