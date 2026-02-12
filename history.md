@@ -39,7 +39,7 @@
 > - `llama_3_2_3b.py`: `"quantization": "gptq_marlin"` in vllm_config, expanded config structure
 > - `peft_trainer.py`: `quantization` parameter + `verbose_server` flag for Marlin kernel verification
 >
-> **Commit**: PENDING
+> **Commit**: 9f807aa
 >
 > ---
 
