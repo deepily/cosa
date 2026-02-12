@@ -1,5 +1,6 @@
 import cosa.utils.util as du
 from cosa.memory.embedding_manager import EmbeddingManager
+from cosa.memory.embedding_provider import get_embedding_provider
 
 from cosa.config.configuration_manager import ConfigurationManager
 from cosa.utils.util_stopwatch import Stopwatch
@@ -53,7 +54,15 @@ class QuestionEmbeddingsTable():
         self.debug          = debug
         self.verbose        = verbose
         self._config_mgr    = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-        self._embedding_mgr = EmbeddingManager( debug=debug, verbose=verbose )
+        self._embedding_mgr      = EmbeddingManager( debug=debug, verbose=verbose )
+        self._embedding_provider = get_embedding_provider( debug=debug, verbose=verbose )
+
+        # Get embedding dimension from provider config
+        provider = self._config_mgr.get( "embedding provider", default="openai" ).strip().lower()
+        if provider == "local":
+            self._embedding_dim = int( self._config_mgr.get( "local embedding prose matryoshka dim", default="768" ) )
+        else:
+            self._embedding_dim = 1536
         
         uri = du.get_project_root() + self._config_mgr.get( "database_path_wo_root" )
 
@@ -88,7 +97,7 @@ class QuestionEmbeddingsTable():
 
             schema = pa.schema( [
                 pa.field( "question", pa.string() ),
-                pa.field( "embedding", pa.list_( pa.float32(), 1536 ) )
+                pa.field( "embedding", pa.list_( pa.float32(), self._embedding_dim ) )
             ] )
 
             self._question_embeddings_tbl = db.create_table( "question_embeddings_tbl", schema=schema, mode="overwrite" )
@@ -151,7 +160,7 @@ class QuestionEmbeddingsTable():
         if self.debug: timer.print( f"Done! w/ {len( rows_returned )} rows returned", use_millis=True )
         
         if not rows_returned:
-            return self._embedding_mgr.generate_embedding( question, normalize_for_cache=True )
+            return self._embedding_provider.generate_embedding( question, content_type="prose" )
         else:
             return rows_returned[ 0 ][ "embedding"]
         

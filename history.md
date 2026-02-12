@@ -1,5 +1,48 @@
 # COSA Development History
 
+> **✅ SESSIONS 182-189 COMMIT**: LLM Script Matcher + Data-Driven Sender IDs + CRUD Dedup Guards + Local Embedding Provider + vLLM Marlin Config (2026.02.12)
+> **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Committed accumulated work from Lupin sessions 182-189** (~26 files modified/created):
+>
+> **Notification Proxy LLM Script Matcher (Session 183)** — 3 new files:
+> - `xml_models.py` — `ScriptMatcherResponse` and `VerificationResponse` BaseXMLModel subclasses
+> - `strategies/llm_script_matcher.py` — `LlmScriptMatcherStrategy` drop-in replacement for `ExpediterRuleStrategy`, Phi-4 powered
+> - `verification.py` — `LlmAnswerVerifier` with exact-match bypass optimization
+> - `responder.py`: 3-tier strategy chain (script_matcher → rules → cloud)
+> - `__main__.py`: `--strategy` CLI flag for strategy selection
+> - `config.py`: 10 new constants for script matcher configuration
+> - `prompt_template_processor.py`: 2 `MODEL_MAPPING` entries
+>
+> **Data-driven sender ID filtering (Session 187)**:
+> - Replaced hardcoded `EXPEDITER_SENDER_ID` with data-driven `sender_ids` field from Q&A script JSON
+> - `expediter_rules.py`: `accepted_senders` param + list-based `can_handle()`
+> - `config.py`: `DEFAULT_ACCEPTED_SENDERS` list + deprecated alias
+> - `responder.py`: Extract `sender_ids` from script, pass to strategies at construction
+>
+> **CRUD dedup guards + live pipeline test (Session 189)**:
+> - `crud_operations.py`: Dedup guard in `add_item()`, multi-delete guard in `delete_item()`, infrastructure column rejection in `_validate_match_fields()`
+> - `schemas.py`: `DEDUP_KEYS` dict, `INFRASTRUCTURE_COLS` frozenset, `get_dedup_keys()` helper
+> - `dispatcher.py`: `"duplicate"` voice formatting
+> - `config.py`: `crud` profile in `TEST_PROFILES`
+>
+> **Local embedding provider** (undocumented session):
+> - `memory/embedding_provider.py` (NEW) — Routing layer: "openai" → EmbeddingManager (1536 dims), "local" → CodeEmbeddingEngine/ProseEmbeddingEngine (768 dims)
+> - `memory/local_embedding_engine.py` (NEW) — CodeEmbeddingEngine (nomic-ai/CodeRankEmbed) + ProseEmbeddingEngine (nomic-embed-text-v1.5 Matryoshka)
+> - All 7 memory tables: Configurable embedding dimension from provider config (hardcoded 1536 → dynamic)
+> - `todo_fifo_queue.py`: Switched from `EmbeddingManager` to `EmbeddingProvider` for embedding generation
+> - `requirements.txt`: Added sentence-transformers, nomic, llama-index-embeddings-huggingface/nomic
+>
+> **vLLM PEFT pipeline improvements (Sessions 182, 184)**:
+> - `llama_3_2_3b.py`: `"quantization": "gptq_marlin"` in vllm_config, expanded config structure
+> - `peft_trainer.py`: `quantization` parameter + `verbose_server` flag for Marlin kernel verification
+>
+> **Commit**: PENDING
+>
+> ---
+
 > **✅ SESSIONS 168-180 COMMIT**: Notification Proxy Agent + Calculator Pipeline job_id + JWT WebSocket Fix + vLLM V1 Engine Compatibility (2026.02.10)
 > **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
 >

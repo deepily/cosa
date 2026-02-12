@@ -1735,7 +1735,8 @@ class PeftTrainer:
         os.environ[ "WANDB_DISABLE_SERVICE" ] = wandb_disable_service
     
     def _start_vllm_server( self,
-        model_path_or_hf_id: str, port: int=3000, max_model_len: int=2048, gpu_memory_utilization: float=0.75, timeout: int=180
+        model_path_or_hf_id: str, port: int=3000, max_model_len: int=2048, gpu_memory_utilization: float=0.75, timeout: int=180,
+        quantization: str=None, verbose_server: bool=False
     ) -> subprocess.Popen:
         """
         Starts a vLLM server for the quantized model and waits for it to be available.
@@ -1745,11 +1746,15 @@ class PeftTrainer:
             - DEEPILY_PROJECTS_DIR environment set
             - vLLM installed in virtual environment
             - GPU resources available
+            - quantization (if provided) is a valid vLLM quantization method (e.g. "gptq_marlin")
+            - verbose_server is a bool
 
         Ensures:
             - vLLM server started in subprocess
             - Server configured for available GPUs
             - Model-specific vllm_config overrides applied (max_model_len, gpu_memory_utilization)
+            - Quantization flag appended to command only when explicitly passed
+            - When verbose_server=True, all vLLM startup output is printed to console
             - Waits for server availability
             - Returns process object
 
@@ -1800,6 +1805,11 @@ class PeftTrainer:
         if max_num_seqs:
             gpu_config += f" --max-num-seqs {max_num_seqs}"
 
+        # Force specific quantization kernel (e.g. gptq_marlin) — only for quantized models
+        if quantization:
+            gpu_config += f" --quantization {quantization}"
+            if self.debug: print( f"Quantization kernel override: --quantization {quantization}" )
+
         # Command to start the vLLM server
         cmd = f"cd {projects_dir}/vllm-pip; source .venv/bin/activate; CUDA_VISIBLE_DEVICES={gpu_devices} vllm serve {model_path_or_hf_id} --served-model-name {model_path_or_hf_id} --port {port} --max-model-len {max_model_len} {gpu_config}"
         
@@ -1835,7 +1845,7 @@ class PeftTrainer:
         def print_server_output( process: subprocess.Popen, log: list ) -> None:
             for line in process.stdout:
                 log.append( line.strip() )
-                if self.debug and self.verbose:
+                if verbose_server or ( self.debug and self.verbose ):
                     print( f"[vLLM Server] {line.strip()}" )
                 # Check for genuine vLLM server errors (not model-generated text containing "error")
                 # Real server errors: CUDA issues, Python exceptions at line start, vLLM-specific errors
@@ -2175,6 +2185,9 @@ class PeftTrainer:
         quantize_bits_list = self._parse_quantize_bits( quantize_bits )
         self.quantized_model_dirs = {}
 
+        # Load vllm_config for quantization kernel hint (e.g. gptq_marlin)
+        vllm_config = load_model_config( self.model_name ).get( "vllm", {} )
+
         for bits in quantize_bits_list:
 
             stage_timer = Stopwatch( msg=None )
@@ -2184,9 +2197,10 @@ class PeftTrainer:
             if post_quantization_stats:
                 stage_timer = Stopwatch( msg=None )
                 vllm_server_process = None
+                quantization_hint = vllm_config.get( "quantization", None )
                 try:
                     # Start vLLM server and wait for it to be available
-                    vllm_server_process = self._start_vllm_server( quantized_model_dir )
+                    vllm_server_process = self._start_vllm_server( quantized_model_dir, quantization=quantization_hint, verbose_server=True )
 
                     # Use the bare directory path — vLLM was started with this exact path as the model name
                     model = quantized_model_dir
@@ -2364,14 +2378,16 @@ class PeftTrainer:
 
         # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-08-at-21-26/autoround-4-bits-sym.gptq/2025-04-08-at-21-47"
         if post_quantization_stats:
-            
+
             du.print_banner( f"Running post-training validation for {args.model_name}", prepend_nl=True )
-            
+
             vllm_server_process = None
+            adhoc_vllm_config    = load_model_config( self.model_name ).get( "vllm", {} )
+            quantization_hint    = adhoc_vllm_config.get( "quantization", None )
             try:
                 # Start vLLM server and wait for it to be available
-                vllm_server_process = self._start_vllm_server( quantized_model_dir )
-                
+                vllm_server_process = self._start_vllm_server( quantized_model_dir, quantization=quantization_hint, verbose_server=True )
+
                 # Use the bare directory path — vLLM was started with this exact path as the model name
                 model = quantized_model_dir
                 # TODO: add runtime configuration for sample size

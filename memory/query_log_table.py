@@ -50,6 +50,13 @@ class QueryLogTable:
         self.verbose = verbose
         self._config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
 
+        # Get embedding dimension from provider config
+        provider = self._config_mgr.get( "embedding provider", default="openai" ).strip().lower()
+        if provider == "local":
+            self._embedding_dim = int( self._config_mgr.get( "local embedding prose matryoshka dim", default="768" ) )
+        else:
+            self._embedding_dim = 1536
+
         # Get database path from config
         uri = du.get_project_root() + self._config_mgr.get( "database_path_wo_root" )
 
@@ -134,10 +141,10 @@ class QueryLogTable:
             pa.field( "query_normalized", pa.string() ),       # Normalized version
             pa.field( "query_gist", pa.string() ),             # LLM-extracted gist
 
-            # Embeddings for all three levels (1536 dimensions for OpenAI)
-            pa.field( "embedding_verbatim", pa.list_( pa.float32(), 1536 ) ),
-            pa.field( "embedding_normalized", pa.list_( pa.float32(), 1536 ) ),
-            pa.field( "embedding_gist", pa.list_( pa.float32(), 1536 ) ),
+            # Embeddings for all three levels (configurable: 768 for local, 1536 for openai)
+            pa.field( "embedding_verbatim", pa.list_( pa.float32(), self._embedding_dim ) ),
+            pa.field( "embedding_normalized", pa.list_( pa.float32(), self._embedding_dim ) ),
+            pa.field( "embedding_gist", pa.list_( pa.float32(), self._embedding_dim ) ),
 
             # Match results and performance
             pa.field( "matched_snapshot_id", pa.string() ),    # What solution was returned
@@ -359,9 +366,9 @@ def quick_smoke_test():
         # Test 2: Log a query
         print( "\nTest 2: Logging a test query..." )
         test_embeddings = {
-            'verbatim': [0.1] * 1536,
-            'normalized': [0.2] * 1536,
-            'gist': [0.3] * 1536
+            'verbatim': [0.1] * query_log._embedding_dim,
+            'normalized': [0.2] * query_log._embedding_dim,
+            'gist': [0.3] * query_log._embedding_dim
         }
         test_match = {
             'snapshot_id': 'test_snapshot_123',

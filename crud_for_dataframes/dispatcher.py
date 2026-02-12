@@ -133,6 +133,9 @@ def format_result_for_voice( result, operation ):
     if operation == "add" and status == "added":
         return f"Done. {message}"
 
+    if operation == "add" and status == "duplicate":
+        return "That item already exists in the list."
+
     if operation in ( "create_list", ) and status == "created":
         return f"Got it. {message}"
 

@@ -23,6 +23,8 @@ from cosa.agents.notification_proxy.config import (
     DEFAULT_SERVER_PORT,
     DEFAULT_SESSION_ID,
     DEFAULT_PROFILE,
+    DEFAULT_STRATEGY,
+    STRATEGY_CHOICES,
     TEST_PROFILES,
     get_credentials,
 )
@@ -75,6 +77,12 @@ def parse_args():
         default = DEFAULT_PROFILE,
         choices = list( TEST_PROFILES.keys() ),
         help    = f"Test profile for auto-answers (default: {DEFAULT_PROFILE})"
+    )
+    parser.add_argument(
+        "--strategy",
+        default = DEFAULT_STRATEGY,
+        choices = STRATEGY_CHOICES,
+        help    = f"Response strategy: llm_script (Phi-4), rules (keywords), auto (Phi-4 + rules fallback). Default: {DEFAULT_STRATEGY}"
     )
     parser.add_argument(
         "--debug",
@@ -130,22 +138,28 @@ async def main():
     print( f"  Email    : {email}" )
     print( f"  Password : {'***' if password else '(none)'}" )
     print( f"  Session  : {args.session_id}" )
-    print( f"  Profile : {args.profile} — {profile.get( 'description', '' )}" )
-    print( f"  Debug   : {args.debug}" )
-    print( f"  Dry Run : {args.dry_run}" )
-    print( f"  LLM     : checking..." )
+    print( f"  Profile  : {args.profile} — {profile.get( 'description', '' )}" )
+    print( f"  Strategy : {args.strategy}" )
+    print( f"  Debug    : {args.debug}" )
+    print( f"  Dry Run  : {args.dry_run}" )
+    print( f"  LLM      : checking..." )
 
     # Create responder
     responder = NotificationResponder(
         profile_name = args.profile,
         host         = args.host,
         port         = args.port,
+        strategy     = args.strategy,
         dry_run      = args.dry_run,
         debug        = args.debug,
         verbose      = args.verbose
     )
 
-    print( f"  LLM     : {'available' if responder.llm_strategy.available else 'unavailable (rules only)'}" )
+    script_status = "n/a"
+    if responder.script_strategy is not None:
+        script_status = "available" if responder.script_strategy.available else "unavailable"
+    print( f"  Phi-4    : {script_status}" )
+    print( f"  Cloud    : {'available' if responder.llm_strategy.available else 'unavailable'}" )
     print( "=" * 60 )
     print( "\nListening for notifications... (Ctrl+C to stop)\n" )
 

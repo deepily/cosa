@@ -18,6 +18,16 @@ COMMON_COLUMNS = {
     "created_at" : { "dtype": "datetime" },
 }
 
+# Infrastructure columns that must not be used in match_fields
+INFRASTRUCTURE_COLS = frozenset( { "id", "list_name", "created_at" } )
+
+# Dedup keys per schema — columns that define "same item" for duplicate detection
+DEDUP_KEYS = {
+    "todo"     : [ "todo_item" ],
+    "calendar" : [ "event", "start_date" ],
+    "generic"  : [ "name" ],
+}
+
 # Schema definitions keyed by schema type name
 SCHEMAS = {
 
@@ -186,6 +196,20 @@ def validate_schema_type( schema_type ):
         - Returns False otherwise
     """
     return schema_type in SCHEMAS
+
+
+def get_dedup_keys( schema_type ):
+    """
+    Get the dedup key column names for a schema type.
+
+    Requires:
+        - schema_type is a valid schema type string
+
+    Ensures:
+        - Returns list of column name strings that define "same item"
+        - Returns empty list if no dedup keys defined for schema_type
+    """
+    return list( DEDUP_KEYS.get( schema_type, [] ) )
 
 
 def quick_smoke_test():

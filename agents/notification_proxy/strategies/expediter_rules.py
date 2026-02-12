@@ -14,7 +14,7 @@ import json
 import re
 from typing import Optional
 
-from cosa.agents.notification_proxy.config import TEST_PROFILES, EXPEDITER_SENDER_ID
+from cosa.agents.notification_proxy.config import TEST_PROFILES, DEFAULT_ACCEPTED_SENDERS
 
 
 # ============================================================================
@@ -42,15 +42,14 @@ class ExpediterRuleStrategy:
 
     Requires:
         - profile_name is a key in TEST_PROFILES
-        - Notifications from the expediter have sender_id == EXPEDITER_SENDER_ID
 
     Ensures:
-        - can_handle() returns True for expediter notifications that need a response
+        - can_handle() returns True for accepted sender notifications that need a response
         - respond() returns a string answer or dict for batch questions
         - Returns None if no matching rule is found
     """
 
-    def __init__( self, profile_name="deep_research", debug=False, verbose=False ):
+    def __init__( self, profile_name="deep_research", accepted_senders=None, debug=False, verbose=False ):
         """
         Initialize with a test profile.
 
@@ -59,20 +58,23 @@ class ExpediterRuleStrategy:
 
         Ensures:
             - Loads the profile answers
+            - Sets accepted_senders from parameter or falls back to DEFAULT_ACCEPTED_SENDERS
             - Raises KeyError if profile not found
 
         Args:
             profile_name: Key in TEST_PROFILES
+            accepted_senders: List of sender ID prefixes to accept (default: DEFAULT_ACCEPTED_SENDERS)
             debug: Enable debug output
             verbose: Enable verbose output
         """
         if profile_name not in TEST_PROFILES:
             raise KeyError( f"Unknown profile '{profile_name}'. Available: {list( TEST_PROFILES.keys() )}" )
 
-        self.profile_name = profile_name
-        self.profile      = TEST_PROFILES[ profile_name ]
-        self.debug        = debug
-        self.verbose       = verbose
+        self.profile_name     = profile_name
+        self.profile          = TEST_PROFILES[ profile_name ]
+        self.accepted_senders = accepted_senders if accepted_senders is not None else DEFAULT_ACCEPTED_SENDERS
+        self.debug            = debug
+        self.verbose          = verbose
 
     def can_handle( self, notification ):
         """
@@ -82,7 +84,7 @@ class ExpediterRuleStrategy:
             - notification is a dict with at least 'sender_id' and 'response_requested'
 
         Ensures:
-            - Returns True if sender_id matches EXPEDITER_SENDER_ID and response is requested
+            - Returns True if sender matches any accepted sender prefix and response is requested
             - Returns False otherwise
 
         Args:
@@ -94,10 +96,14 @@ class ExpediterRuleStrategy:
         sender_id          = notification.get( "sender_id", "" )
         response_requested = notification.get( "response_requested", False )
 
-        # Match on sender_id prefix (ignore session hash suffix)
-        is_expediter = sender_id.startswith( EXPEDITER_SENDER_ID.split( "#" )[ 0 ] )
+        if not response_requested:
+            return False
 
-        return is_expediter and response_requested
+        # Check sender against accepted list (prefix match, ignoring #suffix)
+        sender_base = sender_id.split( "#" )[ 0 ]
+        is_accepted = any( sender_base == prefix for prefix in self.accepted_senders )
+
+        return is_accepted
 
     def respond( self, notification ):
         """
@@ -272,7 +278,7 @@ def quick_smoke_test():
 
         # Should handle expediter notifications
         assert strategy.can_handle( {
-            "sender_id"          : EXPEDITER_SENDER_ID,
+            "sender_id"          : DEFAULT_ACCEPTED_SENDERS[ 0 ],
             "response_requested" : True
         } )
         print( "   ✓ Handles expediter notifications" )
@@ -286,7 +292,7 @@ def quick_smoke_test():
 
         # Should NOT handle non-response-requested
         assert not strategy.can_handle( {
-            "sender_id"          : EXPEDITER_SENDER_ID,
+            "sender_id"          : DEFAULT_ACCEPTED_SENDERS[ 0 ],
             "response_requested" : False
         } )
         print( "   ✓ Rejects non-response-requested notifications" )

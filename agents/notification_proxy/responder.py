@@ -18,7 +18,18 @@ from typing import Optional
 
 from cosa.agents.notification_proxy.strategies.expediter_rules import ExpediterRuleStrategy
 from cosa.agents.notification_proxy.strategies.llm_fallback import LLMFallbackStrategy
-from cosa.agents.notification_proxy.config import DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT
+from cosa.agents.notification_proxy.strategies.llm_script_matcher import (
+    LlmScriptMatcherStrategy, resolve_script_path
+)
+from cosa.agents.notification_proxy.config import (
+    DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT,
+    DEFAULT_STRATEGY, DEFAULT_ACCEPTED_SENDERS,
+    NOTIFICATION_PROXY_SCRIPTS_DIR,
+    LLM_SCRIPT_MATCHER_SPEC_KEY,
+    LLM_SCRIPT_MATCHER_TEMPLATE,
+    LLM_SCRIPT_MATCHER_BATCH_TEMPLATE,
+)
+import cosa.utils.util as cu
 
 
 class NotificationResponder:
@@ -42,40 +53,80 @@ class NotificationResponder:
         profile_name = "deep_research",
         host         = DEFAULT_SERVER_HOST,
         port         = DEFAULT_SERVER_PORT,
+        strategy     = DEFAULT_STRATEGY,
         dry_run      = False,
         debug        = False,
         verbose      = False
     ):
         """
-        Initialize the responder with strategies.
+        Initialize the responder with a 3-tier strategy chain.
 
         Requires:
             - profile_name is a valid test profile key
+            - strategy is one of: "llm_script", "rules", "auto"
 
         Ensures:
-            - Creates rule strategy and LLM fallback strategy
+            - Creates strategies based on the strategy mode:
+              - "llm_script": Phi-4 script matcher only (+ cloud fallback)
+              - "rules": keyword rules only (+ cloud fallback)
+              - "auto": Phi-4 first, rules fallback if vLLM unavailable (+ cloud)
             - Stores server connection info for response submission
 
         Args:
-            profile_name: Test profile for rule-based answers
+            profile_name: Test profile for auto-answers
             host: Server hostname for REST API
             port: Server port for REST API
+            strategy: Strategy mode ("llm_script", "rules", "auto")
             dry_run: Display notifications without computing answers
             debug: Enable debug output
             verbose: Enable verbose output
         """
-        self.host    = host
-        self.port    = port
-        self.dry_run = dry_run
-        self.debug   = debug
-        self.verbose = verbose
+        self.host          = host
+        self.port          = port
+        self.strategy_mode = strategy
+        self.dry_run       = dry_run
+        self.debug         = debug
+        self.verbose       = verbose
 
+        # Extract sender_ids from Q&A script if available
+        accepted_senders = DEFAULT_ACCEPTED_SENDERS
+        scripts_dir      = cu.get_project_root() + NOTIFICATION_PROXY_SCRIPTS_DIR
+        script_path      = resolve_script_path( profile_name, scripts_dir )
+        try:
+            with open( script_path, "r" ) as f:
+                script_data      = json.load( f )
+                accepted_senders = script_data.get( "sender_ids", DEFAULT_ACCEPTED_SENDERS )
+        except Exception as e:
+            if self.debug: print( f"[Responder] Could not load script for sender_ids: {e}" )
+
+        # Always create rule strategy (needed for "rules" and "auto" modes)
         self.rule_strategy = ExpediterRuleStrategy(
-            profile_name = profile_name,
-            debug        = debug,
-            verbose      = verbose
+            profile_name     = profile_name,
+            accepted_senders = accepted_senders,
+            debug            = debug,
+            verbose          = verbose
         )
 
+        # Create LLM script matcher if requested
+        self.script_strategy = None
+        if strategy in ( "llm_script", "auto" ):
+            try:
+                self.script_strategy = LlmScriptMatcherStrategy(
+                    script_path          = script_path,
+                    llm_spec_key         = LLM_SCRIPT_MATCHER_SPEC_KEY,
+                    prompt_template_path = LLM_SCRIPT_MATCHER_TEMPLATE,
+                    batch_template_path  = LLM_SCRIPT_MATCHER_BATCH_TEMPLATE,
+                    accepted_senders     = accepted_senders,
+                    debug                = debug,
+                    verbose              = verbose
+                )
+                if self.debug:
+                    print( f"[Responder] LLM script matcher: {'available' if self.script_strategy.available else 'unavailable'}" )
+            except Exception as e:
+                print( f"[Responder] LLM script matcher init failed: {e}" )
+                self.script_strategy = None
+
+        # Cloud LLM fallback (Anthropic SDK)
         self.llm_strategy = LLMFallbackStrategy(
             debug   = debug,
             verbose = verbose
@@ -85,6 +136,7 @@ class NotificationResponder:
         self.stats = {
             "notifications_received" : 0,
             "responses_sent"         : 0,
+            "script_matcher_used"    : 0,
             "rules_used"             : 0,
             "llm_used"               : 0,
             "skipped"                : 0,
@@ -202,17 +254,24 @@ class NotificationResponder:
                 print( f"[Responder] DRY RUN — Declined ({cancel_value} sent)" )
             return
 
-        # Strategy chain: rules first, then LLM
-        answer       = None
+        # Strategy chain: script matcher → rules (auto mode) → cloud LLM
+        answer        = None
         strategy_name = None
 
-        # Try rule strategy
-        if self.rule_strategy.can_handle( notification ):
-            answer = self.rule_strategy.respond( notification )
+        # Tier 1: LLM script matcher (if enabled)
+        if answer is None and self.script_strategy is not None and self.script_strategy.can_handle( notification ):
+            answer = self.script_strategy.respond( notification )
             if answer is not None:
-                strategy_name = "rules"
+                strategy_name = "script_matcher"
 
-        # Fall through to LLM
+        # Tier 2: Rule-based strategy (only in "rules" or "auto" mode)
+        if answer is None and self.strategy_mode in ( "rules", "auto" ):
+            if self.rule_strategy.can_handle( notification ):
+                answer = self.rule_strategy.respond( notification )
+                if answer is not None:
+                    strategy_name = "rules"
+
+        # Tier 3: Cloud LLM fallback
         if answer is None and self.llm_strategy.can_handle( notification ):
             answer = await self.llm_strategy.respond( notification )
             if answer is not None:
@@ -228,7 +287,9 @@ class NotificationResponder:
 
         if success:
             self.stats[ "responses_sent" ] += 1
-            if strategy_name == "rules":
+            if strategy_name == "script_matcher":
+                self.stats[ "script_matcher_used" ] += 1
+            elif strategy_name == "rules":
                 self.stats[ "rules_used" ] += 1
             elif strategy_name == "llm":
                 self.stats[ "llm_used" ] += 1
@@ -357,13 +418,13 @@ def quick_smoke_test():
     # Test 3: Strategy routing
     print( "\n3. Testing strategy routing logic..." )
     try:
-        from cosa.agents.notification_proxy.config import EXPEDITER_SENDER_ID
+        from cosa.agents.notification_proxy.config import DEFAULT_ACCEPTED_SENDERS
 
         responder = NotificationResponder( "deep_research" )
 
         # Expediter notification should be handled by rules
         notif = {
-            "sender_id"          : EXPEDITER_SENDER_ID,
+            "sender_id"          : DEFAULT_ACCEPTED_SENDERS[ 0 ],
             "response_requested" : True,
             "response_type"      : "yes_no",
             "message"            : "Does this look right?",

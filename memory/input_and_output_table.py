@@ -1,5 +1,6 @@
 import cosa.utils.util as du
 from cosa.memory.embedding_manager import EmbeddingManager
+from cosa.memory.embedding_provider import get_embedding_provider
 
 from cosa.memory.question_embeddings_table import QuestionEmbeddingsTable
 from cosa.memory.solution_snapshot import SolutionSnapshot as ss
@@ -39,7 +40,15 @@ class InputAndOutputTable():
         self.debug          = debug
         self.verbose        = verbose
         self._config_mgr    = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-        self._embedding_mgr = EmbeddingManager( debug=debug, verbose=verbose )
+        self._embedding_mgr      = EmbeddingManager( debug=debug, verbose=verbose )
+        self._embedding_provider = get_embedding_provider( debug=debug, verbose=verbose )
+
+        # Get embedding dimension from provider config
+        provider = self._config_mgr.get( "embedding provider", default="openai" ).strip().lower()
+        if provider == "local":
+            self._embedding_dim = int( self._config_mgr.get( "local embedding prose matryoshka dim", default="768" ) )
+        else:
+            self._embedding_dim = 1536
 
         # Read nprobes configuration for vector search performance tuning
         self._nprobes = self._config_mgr.get( "solution snapshots lancedb nprobes", default=20, return_type="int" )
@@ -86,10 +95,10 @@ class InputAndOutputTable():
                 pa.field( "time",                     pa.string() ),
                 pa.field( "input_type",               pa.string() ),
                 pa.field( "input",                    pa.string() ),
-                pa.field( "input_embedding",          pa.list_( pa.float32(), 1536 ) ),
+                pa.field( "input_embedding",          pa.list_( pa.float32(), self._embedding_dim ) ),
                 pa.field( "output_raw",               pa.string() ),
                 pa.field( "output_final",             pa.string() ),
-                pa.field( "output_final_embedding",   pa.list_( pa.float32(), 1536 ) ),
+                pa.field( "output_final_embedding",   pa.list_( pa.float32(), self._embedding_dim ) ),
                 pa.field( "solution_path_wo_root",    pa.string() ),
             ] )
 
@@ -169,7 +178,7 @@ class InputAndOutputTable():
                         output_str = str(output_final) if output_final else ""
                         if self.debug and self.verbose: print( f"  Generating output embedding for: '{output_str[:debug_truncate_len]}...'" )
                         # Note: EmbeddingManager handles its own cache hit detection internally
-                        final_output_embedding = self._embedding_mgr.generate_embedding( output_final, normalize_for_cache=True )
+                        final_output_embedding = self._embedding_provider.generate_embedding( output_final, content_type="prose" )
                     else:
                         final_output_embedding = output_final_embedding
                         if self.debug and self.verbose: print( f"  Output embedding provided (skipping generation)" )
@@ -219,7 +228,7 @@ class InputAndOutputTable():
                 "input_embedding"                  : input_embedding if input_embedding else self._question_embeddings_tbl.get_embedding( input ),
                 "output_raw"                       : output_raw,
                 "output_final"                     : output_final,
-                "output_final_embedding"           : output_final_embedding if output_final_embedding else self._embedding_mgr.generate_embedding( output_final, normalize_for_cache=True ),
+                "output_final_embedding"           : output_final_embedding if output_final_embedding else self._embedding_provider.generate_embedding( output_final, content_type="prose" ),
                 "solution_path_wo_root"            : solution_path_wo_root
             } ]
             self._input_and_output_tbl.add( new_row )
@@ -410,10 +419,10 @@ class InputAndOutputTable():
                 pa.field( "time",                     pa.string() ),
                 pa.field( "input_type",               pa.string() ),
                 pa.field( "input",                    pa.string() ),
-                pa.field( "input_embedding",          pa.list_( pa.float32(), 1536 ) ),
+                pa.field( "input_embedding",          pa.list_( pa.float32(), self._embedding_dim ) ),
                 pa.field( "output_raw",               pa.string() ),
                 pa.field( "output_final",             pa.string() ),
-                pa.field( "output_final_embedding",   pa.list_( pa.float32(), 1536 ) ),
+                pa.field( "output_final_embedding",   pa.list_( pa.float32(), self._embedding_dim ) ),
                 pa.field( "solution_path_wo_root",    pa.string() ),
             ]
         )

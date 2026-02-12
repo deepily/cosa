@@ -26,6 +26,7 @@ from cosa.memory.snapshot_manager_interface import (
 )
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.memory.embedding_manager import EmbeddingManager
+from cosa.memory.embedding_provider import get_embedding_provider
 from cosa.memory.question_embeddings_table import QuestionEmbeddingsTable
 from cosa.memory.normalizer import Normalizer
 
@@ -81,7 +82,8 @@ class FileBasedSolutionManager( SolutionSnapshotManagerInterface ):
             raise KeyError( "FileBasedSolutionManager requires 'path' in configuration" )
 
         self.path = config["path"]
-        self._embedding_mgr = EmbeddingManager( debug=debug, verbose=verbose )
+        self._embedding_mgr      = EmbeddingManager( debug=debug, verbose=verbose )
+        self._embedding_provider = get_embedding_provider( debug=debug, verbose=verbose )
         self._normalizer = Normalizer()  # For consistent normalization
 
         # Internal data structures
@@ -856,7 +858,7 @@ class FileBasedSolutionManager( SolutionSnapshotManagerInterface ):
         # Fields to exclude from serialization (copied from SolutionSnapshot.to_jsons)
         fields_to_exclude = [
             "prompt_response", "prompt_response_dict", "code_response_dict",
-            "phind_tgi_url", "config_mgr", "_embedding_mgr", "websocket_id", "user_id"
+            "phind_tgi_url", "config_mgr", "_embedding_mgr", "_embedding_provider", "websocket_id", "user_id"
         ]
         data = { field: value for field, value in snapshot.__dict__.items() if field not in fields_to_exclude }
         return json.dumps( data )
@@ -993,7 +995,7 @@ class FileBasedSolutionManager( SolutionSnapshotManagerInterface ):
 
         # Generate the embedding for the question if it doesn't already exist
         if not self._question_embeddings_tbl.has( question ):
-            question_embedding = self._embedding_mgr.generate_embedding( question, normalize_for_cache=True )
+            question_embedding = self._embedding_provider.generate_embedding( question, content_type="prose" )
             self._question_embeddings_tbl.add_embedding( question, question_embedding )
         else:
             if self.debug:
@@ -1003,7 +1005,7 @@ class FileBasedSolutionManager( SolutionSnapshotManagerInterface ):
         # generate the embedding for the question gist if it doesn't already exist
         question_gist_embedding = []
         if question_gist is not None and not self._question_embeddings_tbl.has( question_gist ):
-            question_gist_embedding = self._embedding_mgr.generate_embedding( question_gist, normalize_for_cache=True )
+            question_gist_embedding = self._embedding_provider.generate_embedding( question_gist, content_type="prose" )
             self._question_embeddings_tbl.add_embedding( question_gist, question_gist_embedding )
         elif question_gist is not None:
             if self.debug:

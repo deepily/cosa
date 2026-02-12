@@ -21,6 +21,7 @@ from cosa.memory.normalizer import Normalizer
 from cosa.memory.embedding_manager import EmbeddingManager
 
 
+
 class CanonicalSynonymsTable:
     """
     Manages canonical synonyms in LanceDB for fast exact-match lookups.
@@ -55,6 +56,14 @@ class CanonicalSynonymsTable:
         # Initialize text processors
         self._normalizer = Normalizer()
         self._embedding_manager = EmbeddingManager( debug=debug, verbose=verbose )
+
+        # Get embedding dimension from provider config
+        self._config_mgr_local = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+        provider = self._config_mgr_local.get( "embedding provider", default="openai" ).strip().lower()
+        if provider == "local":
+            self._embedding_dim = int( self._config_mgr_local.get( "local embedding prose matryoshka dim", default="768" ) )
+        else:
+            self._embedding_dim = 1536
 
         # Get database path from parameter or config
         if db_path:
@@ -145,10 +154,10 @@ class CanonicalSynonymsTable:
             pa.field( "question_normalized", pa.string() ),   # Normalized version
             pa.field( "question_gist", pa.string() ),         # LLM-extracted gist
 
-            # Embeddings for all three levels (1536 dimensions for OpenAI)
-            pa.field( "embedding_verbatim", pa.list_( pa.float32(), 1536 ) ),
-            pa.field( "embedding_normalized", pa.list_( pa.float32(), 1536 ) ),
-            pa.field( "embedding_gist", pa.list_( pa.float32(), 1536 ) ),
+            # Embeddings for all three levels (configurable: 768 for local, 1536 for openai)
+            pa.field( "embedding_verbatim", pa.list_( pa.float32(), self._embedding_dim ) ),
+            pa.field( "embedding_normalized", pa.list_( pa.float32(), self._embedding_dim ) ),
+            pa.field( "embedding_gist", pa.list_( pa.float32(), self._embedding_dim ) ),
 
             # Metadata and statistics
             pa.field( "confidence_score", pa.float32() ),     # 0-100 confidence

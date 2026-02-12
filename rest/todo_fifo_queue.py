@@ -20,6 +20,7 @@ from cosa.memory.gist_normalizer import GistNormalizer
 from cosa.memory.normalizer import Normalizer
 from cosa.memory.query_log_table import QueryLogTable
 from cosa.memory.embedding_manager import EmbeddingManager
+from cosa.memory.embedding_provider import get_embedding_provider
 from cosa.tools.search_lupin_v010 import LupinSearch
 
 # from app       import emit_audio
@@ -121,7 +122,8 @@ class TodoFifoQueue( FifoQueue ):
 
         # Initialize three-level architecture components
         self.query_log = QueryLogTable( debug=debug, verbose=verbose )
-        self.embedding_manager = EmbeddingManager( debug=debug, verbose=verbose )
+        self.embedding_manager  = EmbeddingManager( debug=debug, verbose=verbose )
+        self._embedding_provider = get_embedding_provider( debug=debug, verbose=verbose )
 
         if self.debug: print( "TodoFifoQueue: Text processors and three-level architecture components initialized" )
         
@@ -395,14 +397,14 @@ class TodoFifoQueue( FifoQueue ):
         query_gist       = question_gist  # Use the gist computed above
 
         # Generate embeddings using cache-first strategy
-        embedding_verbatim = self.embedding_manager.generate_embedding(
-            query_verbatim, normalize_for_cache=False
+        embedding_verbatim = self._embedding_provider.generate_embedding(
+            query_verbatim, content_type="prose"
         )
-        embedding_normalized = self.embedding_manager.generate_embedding(
-            query_normalized, normalize_for_cache=False
+        embedding_normalized = self._embedding_provider.generate_embedding(
+            query_normalized, content_type="prose"
         )
-        embedding_gist = self.embedding_manager.generate_embedding(
-            query_gist, normalize_for_cache=False
+        embedding_gist = self._embedding_provider.generate_embedding(
+            query_gist, content_type="prose"
         )
 
         # Track cache hits for analytics

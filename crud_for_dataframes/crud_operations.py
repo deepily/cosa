@@ -19,9 +19,11 @@ import pandas as pd
 
 from cosa.crud_for_dataframes.schemas import (
     get_columns,
+    get_dedup_keys,
     get_defaults,
     get_schema,
     validate_schema_type,
+    INFRASTRUCTURE_COLS,
     VALID_SCHEMA_TYPES,
 )
 from cosa.crud_for_dataframes.storage import DataFrameStorage
@@ -50,9 +52,18 @@ def _validate_match_fields( match_fields, df_columns, schema_type ):
         - Returns None if all keys are valid
         - Returns error dict if any key is invalid
     """
+    # Reject infrastructure columns — they pass the "exists in df" check but must not be used
+    infra_keys = [ k for k in match_fields if k in INFRASTRUCTURE_COLS ]
+    if infra_keys:
+        data_fields = sorted( [ c for c in df_columns if c not in INFRASTRUCTURE_COLS ] )
+        return {
+            "status"  : "error",
+            "message" : f"Cannot match by infrastructure column(s) {infra_keys}. Use data fields: {data_fields}"
+        }
+
     invalid_keys = [ k for k in match_fields if k not in df_columns ]
     if invalid_keys:
-        valid_keys = sorted( [ c for c in df_columns if c not in ( "id", "list_name", "created_at" ) ] )
+        valid_keys = sorted( [ c for c in df_columns if c not in INFRASTRUCTURE_COLS ] )
         return {
             "status"  : "error",
             "message" : f"Unknown field(s) {invalid_keys} for schema '{schema_type}'. Valid fields: {valid_keys}"
@@ -201,8 +212,22 @@ def add_item( storage, list_name, schema_type, field_values ):
     row[ "list_name" ]  = list_name
     row[ "created_at" ] = datetime.now().isoformat()
 
-    # Load existing, append, save
+    # Load existing DF once — reused for dedup check and concat
     df = storage.load_df( schema_type )
+
+    # Dedup guard: reject if identical business data already exists in same list
+    dedup_keys = get_dedup_keys( schema_type )
+    if dedup_keys and not df.empty:
+        same_list = df[ df[ "list_name" ] == list_name ]
+        if not same_list.empty:
+            mask = pd.Series( True, index=same_list.index )
+            for key in dedup_keys:
+                if key in same_list.columns and key in row:
+                    mask = mask & ( same_list[ key ].astype( str ) == str( row[ key ] ) )
+            if mask.any():
+                return { "status": "duplicate", "message": f"Item already exists in '{list_name}'" }
+
+    # Append and save
     df = pd.concat( [ df, pd.DataFrame( [ row ] ) ], ignore_index=True )
     storage.save_df( df, schema_type )
 
@@ -245,6 +270,15 @@ def delete_item( storage, schema_type, item_id=None, match_fields=None ):
     deleted_count = mask.sum()
     if deleted_count == 0:
         return { "status": "not_found", "message": "No matching items found" }
+
+    # Multi-delete guard: only applies to match_fields path (not item_id)
+    if match_fields and deleted_count > 1:
+        preview = df[ mask ][ list( match_fields.keys() ) ].head( 5 ).to_dict( orient="records" )
+        return {
+            "status"  : "error",
+            "message" : f"Multiple items ({deleted_count}) match. Be more specific or use item_id.",
+            "matched_preview" : preview,
+        }
 
     df = df[ ~mask ].reset_index( drop=True )
     storage.save_df( df, schema_type )

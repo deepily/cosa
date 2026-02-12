@@ -49,6 +49,21 @@ LLM_FALLBACK_MAX_TOKENS = 500
 
 
 # ============================================================================
+# LLM Script Matcher Configuration
+# ============================================================================
+
+LLM_SCRIPT_MATCHER_SPEC_KEY        = "kaitchup/phi_4_14b"
+LLM_SCRIPT_MATCHER_TEMPLATE        = "/src/conf/prompts/notification-proxy-script-matcher.txt"
+LLM_SCRIPT_MATCHER_BATCH_TEMPLATE  = "/src/conf/prompts/notification-proxy-batch-matcher.txt"
+LLM_ANSWER_VERIFIER_TEMPLATE       = "/src/conf/prompts/notification-proxy-answer-verifier.txt"
+NOTIFICATION_PROXY_SCRIPTS_DIR     = "/src/conf/notification-proxy-scripts"
+
+# Valid strategy choices for --strategy CLI flag
+STRATEGY_CHOICES = [ "llm_script", "rules", "auto" ]
+DEFAULT_STRATEGY = "llm_script"
+
+
+# ============================================================================
 # Test Profiles
 # ============================================================================
 
@@ -84,10 +99,23 @@ TEST_PROFILES = {
         "research"         : "/tmp/mock-research-document.md",
         "languages"        : "en",
     },
+    "expeditor_smoke" : {
+        "description"      : "Q&A answers for 13-scenario expeditor smoke test matrix",
+        "query"            : "quantum computing breakthroughs 2026",
+        "budget"           : "no limit",
+        "audience"         : "academic",
+        "audience_context" : "none",
+        "research"         : "/tmp/mock-research-document.md",
+        "languages"        : "en",
+    },
     "minimal" : {
         "description" : "Bare minimum answers — required args only, skip optionals",
         "query"    : "test query for automated proxy",
         "research" : "latest",
+    },
+    "crud" : {
+        "description"  : "Auto-confirm for CRUD agent delete/update operations",
+        "confirmation" : "yes",
     },
 }
 
@@ -96,7 +124,10 @@ TEST_PROFILES = {
 # Known Expediter Sender IDs
 # ============================================================================
 
-EXPEDITER_SENDER_ID = "arg.expeditor@lupin.deepily.ai"
+DEFAULT_ACCEPTED_SENDERS = [ "arg.expeditor@lupin.deepily.ai" ]
+
+# Deprecated alias — kept for backward compatibility in smoke tests
+EXPEDITER_SENDER_ID = DEFAULT_ACCEPTED_SENDERS[ 0 ]
 
 
 # ============================================================================

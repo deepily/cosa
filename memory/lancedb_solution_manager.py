@@ -17,6 +17,7 @@ import pyarrow as pa
 import numpy as np
 
 import cosa.utils.util as du
+from cosa.config.configuration_manager import ConfigurationManager
 from cosa.memory.snapshot_manager_interface import (
     SolutionSnapshotManagerInterface,
     PerformanceMetrics,
@@ -95,11 +96,20 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         # Vector search performance tuning (nprobes for IVF index)
         self._nprobes = config.get( "nprobes", 20 )
 
+        # Get embedding dimension from provider config (768 for local, 1536 for openai)
+        _cfg = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+        _provider = _cfg.get( "embedding provider", default="openai" ).strip().lower()
+        if _provider == "local":
+            self._embedding_dim = int( _cfg.get( "local embedding prose matryoshka dim", default="768" ) )
+        else:
+            self._embedding_dim = 1536
+
         if self.debug:
             print( f"LanceDBSolutionManager configured:" )
             print( f"       Backend: {self.storage_backend}" )
             print( f"      Database: {self.db_path}" )
             print( f"         Table: {self.table_name}" )
+            print( f"  Embedding dim: {self._embedding_dim}" )
 
     def _resolve_db_path( self, config: Dict[str, Any] ) -> str:
         """
@@ -242,14 +252,14 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             pa.field( "replay_stats", pa.string() ),     # JSON serialized dict
             pa.field( "is_cache_hit", pa.bool_() ),
 
-            # Vector embeddings (1536 dimensions for OpenAI embeddings)
-            pa.field( "question_embedding", pa.list_( pa.float32(), 1536 ) ),
-            pa.field( "question_normalized_embedding", pa.list_( pa.float32(), 1536 ) ),
-            pa.field( "question_gist_embedding", pa.list_( pa.float32(), 1536 ) ),
-            pa.field( "solution_embedding", pa.list_( pa.float32(), 1536 ) ),
-            pa.field( "code_embedding", pa.list_( pa.float32(), 1536 ) ),
-            pa.field( "thoughts_embedding", pa.list_( pa.float32(), 1536 ) ),
-            pa.field( "solution_gist_embedding", pa.list_( pa.float32(), 1536 ) ),
+            # Vector embeddings (configurable dimensions: 768 for local, 1536 for openai)
+            pa.field( "question_embedding", pa.list_( pa.float32(), self._embedding_dim ) ),
+            pa.field( "question_normalized_embedding", pa.list_( pa.float32(), self._embedding_dim ) ),
+            pa.field( "question_gist_embedding", pa.list_( pa.float32(), self._embedding_dim ) ),
+            pa.field( "solution_embedding", pa.list_( pa.float32(), self._embedding_dim ) ),
+            pa.field( "code_embedding", pa.list_( pa.float32(), self._embedding_dim ) ),
+            pa.field( "thoughts_embedding", pa.list_( pa.float32(), self._embedding_dim ) ),
+            pa.field( "solution_gist_embedding", pa.list_( pa.float32(), self._embedding_dim ) ),
         ])
 
     def _snapshot_to_record( self, snapshot: SolutionSnapshot ) -> Dict[str, Any]:
@@ -282,19 +292,19 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         
         # Helper function to ensure vector is proper format
         def normalize_embedding( embedding ):
+            dim = self._embedding_dim
             if not embedding:
-                return [0.0] * 1536  # Default embedding
+                return [0.0] * dim
             if isinstance( embedding, list ):
-                # Ensure we have exactly 1536 dimensions
-                if len( embedding ) == 1536:
+                if len( embedding ) == dim:
                     return [float( x ) for x in embedding]
-                elif len( embedding ) < 1536:
+                elif len( embedding ) < dim:
                     # Pad with zeros
-                    return [float( x ) for x in embedding] + [0.0] * ( 1536 - len( embedding ) )
+                    return [float( x ) for x in embedding] + [0.0] * ( dim - len( embedding ) )
                 else:
-                    # Truncate to 1536
-                    return [float( x ) for x in embedding[:1536]]
-            return [0.0] * 1536
+                    # Truncate
+                    return [float( x ) for x in embedding[ :dim ]]
+            return [0.0] * dim
         
         record = {
             # Primary identifiers
