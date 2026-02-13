@@ -2,7 +2,7 @@
 Embedding provider routing layer with performance metrics.
 
 Routes embedding generation to the configured engine:
-- "openai" -> existing EmbeddingManager (1536 dims)
+- "openai" -> existing EmbeddingManager (768 dims via MRL truncation)
 - "local"  -> CodeEmbeddingEngine or ProseEmbeddingEngine (768 dims)
 
 Callers specify content_type="prose" or content_type="code" to route
@@ -194,22 +194,18 @@ class EmbeddingProvider:
     @property
     def dimensions( self ):
         """
-        Return the embedding dimension for the current provider.
+        Return the standardized embedding dimension from config.
 
         Ensures:
-            - Returns 1536 for openai provider
-            - Returns matryoshka dim from config for local provider
+            - Returns the configured embedding dimensions (default 768)
+            - Same value for all providers (OpenAI uses MRL truncation)
         """
-        if self._provider == "openai":
-            return 1536
-        return int( self._config_mgr.get( "local embedding prose matryoshka dim" ) )
+        return int( self._config_mgr.get( "embedding dimensions", default="768" ) )
 
     @property
     def code_dimensions( self ):
         """Return the embedding dimension for the code engine."""
-        if self._provider == "openai":
-            return 1536
-        return int( self._config_mgr.get( "local embedding code model dimensions" ) )
+        return int( self._config_mgr.get( "embedding dimensions", default="768" ) )
 
     def _record_metric( self, content_type, provider, delta_ms, dims ):
         """Record timing metric for a provider/content_type pair."""

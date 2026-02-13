@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from cosa.rest.auth import get_current_user
+from cosa.rest.agentic_job_factory import create_agentic_job
 
 router = APIRouter( tags=[ "claude-code-queue" ] )
 
@@ -114,8 +115,6 @@ async def submit_claude_code_to_queue(
         HTTPException 400: Invalid request parameters
         HTTPException 500: Queue push failed
     """
-    from cosa.agents.claude_code.job import ClaudeCodeJob
-
     # Get user ID and email from token (canonical source - don't trust client)
     user_id    = current_user.get( "uid" )
     user_email = current_user.get( "email" )
@@ -144,18 +143,19 @@ async def submit_claude_code_to_queue(
     session_id = request_body.websocket_id or f"api-{user_id[ :8 ]}"
 
     try:
-        # Create the ClaudeCodeJob
-        job = ClaudeCodeJob(
-            prompt     = request_body.prompt,
-            project    = request_body.project,
+        # Create the ClaudeCodeJob via shared factory (same as voice path)
+        job = create_agentic_job(
+            command    = "agent router go to claude code",
+            args_dict  = {
+                "prompt"    : request_body.prompt,
+                "project"   : request_body.project,
+                "task_type" : task_type,
+                "max_turns" : request_body.max_turns,
+                "dry_run"   : request_body.dry_run
+            },
             user_id    = user_id,
             user_email = user_email,
-            session_id = session_id,
-            task_type  = task_type,
-            max_turns  = request_body.max_turns,
-            dry_run    = request_body.dry_run,
-            debug      = False,
-            verbose    = False
+            session_id = session_id
         )
 
         # Session 108: Associate BEFORE push to prevent race condition

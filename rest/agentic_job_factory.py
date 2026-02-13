@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Shared factory for creating agentic jobs.
+Shared factory for creating agentic jobs in CJ Flow (COSA Jobs Flow).
 
 Extracted from TodoFifoQueue to enable both voice routing and REST endpoints
 to create jobs identically. This eliminates duplicated job creation code.
@@ -44,6 +44,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
     from cosa.agents.deep_research.job import DeepResearchJob
     from cosa.agents.podcast_generator.job import PodcastGeneratorJob
     from cosa.agents.deep_research_to_podcast.job import DeepResearchToPodcastJob
+    from cosa.agents.claude_code.job import ClaudeCodeJob
 
     if command == "agent router go to deep research":
         return DeepResearchJob(
@@ -103,6 +104,21 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             audience_context = args_dict.get( "audience_context" ),
             debug            = debug,
             verbose          = verbose
+        )
+
+    elif command == "agent router go to claude code":
+        return ClaudeCodeJob(
+            prompt          = args_dict.get( "prompt", "" ),
+            project         = args_dict.get( "project", "lupin" ),
+            user_id         = user_id,
+            user_email      = user_email,
+            session_id      = session_id,
+            task_type       = args_dict.get( "task_type", "BOUNDED" ),
+            max_turns       = int( args_dict[ "max_turns" ] ) if args_dict.get( "max_turns" ) else None,
+            timeout_seconds = int( args_dict[ "timeout_seconds" ] ) if args_dict.get( "timeout_seconds" ) else None,
+            dry_run         = args_dict.get( "dry_run", False ),
+            debug           = debug,
+            verbose         = verbose
         )
 
     else:

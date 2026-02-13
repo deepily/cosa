@@ -2427,6 +2427,7 @@ class AgentRouterResponse( BaseXMLModel ):
             'agent router go to deep research',
             'agent router go to podcast generator',
             'agent router go to research to podcast',
+            'agent router go to claude code',
             'none'
         ]
         

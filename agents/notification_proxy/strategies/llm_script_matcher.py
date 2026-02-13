@@ -20,7 +20,7 @@ from typing import Optional
 import cosa.utils.util as cu
 from cosa.agents.llm_client_factory import LlmClientFactory
 from cosa.agents.notification_proxy.config import DEFAULT_ACCEPTED_SENDERS
-from cosa.agents.notification_proxy.xml_models import ScriptMatcherResponse
+from cosa.agents.notification_proxy.xml_models import ScriptMatcherResponse, BatchScriptMatcherResponse
 from cosa.agents.io_models.utils.prompt_template_processor import PromptTemplateProcessor
 
 
@@ -305,7 +305,7 @@ class LlmScriptMatcherStrategy:
             cu.get_project_root() + self.batch_template_path
         )
         template_processed = self._processor.process_template(
-            template_raw, "notification proxy script matcher"
+            template_raw, "notification proxy batch script matcher"
         )
 
         # Fill runtime placeholders
@@ -322,17 +322,15 @@ class LlmScriptMatcherStrategy:
             response_text = self._client.run( prompt )
             if self.debug: print( f"[LlmScriptMatcher] Batch raw response: {response_text[ :200 ]}" )
 
-            parsed = ScriptMatcherResponse.from_xml( response_text )
+            parsed = BatchScriptMatcherResponse.from_xml( response_text )
 
             if parsed.is_match():
-                # Try parsing as JSON dict
                 answers = parsed.get_answers_dict()
                 if answers:
                     if self.debug: print( f"[LlmScriptMatcher] Batch answers: {answers}" )
                     return json.dumps( { "answers": answers } )
 
-                # If not JSON, the LLM may have returned a single answer
-                if self.debug: print( f"[LlmScriptMatcher] Batch answer not valid JSON: {parsed.answer[ :100 ]}" )
+                if self.debug: print( "[LlmScriptMatcher] Batch: entries parsed but no answers extracted" )
                 return None
             else:
                 if self.debug: print( f"[LlmScriptMatcher] Batch: no match" )

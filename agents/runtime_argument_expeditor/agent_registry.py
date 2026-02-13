@@ -100,6 +100,26 @@ AGENTIC_AGENTS = {
             "languages"        : "en,es-MX",
         },
     },
+    "agent router go to claude code" : {
+        "cli_module"         : "cosa.agents.claude_code",
+        "job_class_path"     : "cosa.agents.claude_code.job.ClaudeCodeJob",
+        "display_name"       : "Claude Code",
+        "required_user_args" : [ "prompt" ],
+        "system_provided"    : [ "user_id", "user_email", "session_id" ],
+        "arg_mapping"        : {
+            "prompt"           : "prompt",
+            "task"             : "prompt",
+            "project"          : "project",
+        },
+        "fallback_questions" : {
+            "prompt"           : "What coding task would you like Claude Code to work on?",
+            "project"          : "Which project should it run against? Options: lupin, cosa, or another project name.",
+        },
+        "fallback_defaults" : {
+            "project"          : "lupin",
+            "task_type"        : "BOUNDED",
+        },
+    },
 }
 
 
@@ -224,7 +244,7 @@ def quick_smoke_test():
     # Test 1: Registry structure
     print( "\n1. Testing registry structure..." )
     try:
-        assert len( AGENTIC_AGENTS ) == 3, f"Expected 3 agents, got {len( AGENTIC_AGENTS )}"
+        assert len( AGENTIC_AGENTS ) == 4, f"Expected 4 agents, got {len( AGENTIC_AGENTS )}"
         for key, entry in AGENTIC_AGENTS.items():
             assert "cli_module" in entry, f"Missing cli_module in {key}"
             assert "required_user_args" in entry, f"Missing required_user_args in {key}"

@@ -681,6 +681,11 @@ class XmlCoordinator:
                 "template_file" : "/src/ephemera/prompts/data/synthetic-data-agent-routing-research-to-podcast.txt",
                 "placeholders"  : {"DOCUMENT_PATH": "document_paths"},
                 "args_key"      : "document_path"
+            },
+            "agent router go to claude code" : {
+                "template_file" : "/src/ephemera/prompts/data/synthetic-data-agent-routing-claude-code.txt",
+                "placeholders"  : {"TASK": "claude_code_tasks"},
+                "args_key"      : "prompt"
             }
         }
 
@@ -698,6 +703,8 @@ class XmlCoordinator:
                     placeholder_values[ placeholder ] = self.prompt_generator.get_research_topics( requested_length=None )
                 elif getter_name == "document_paths":
                     placeholder_values[ placeholder ] = self.prompt_generator.get_document_paths( requested_length=None )
+                elif getter_name == "claude_code_tasks":
+                    placeholder_values[ placeholder ] = self.prompt_generator.get_claude_code_tasks( requested_length=None )
 
             # Load templates from external file
             template_path    = self.path_prefix + config[ "template_file" ]

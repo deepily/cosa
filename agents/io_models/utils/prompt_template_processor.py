@@ -18,7 +18,7 @@ from cosa.agents.io_models.xml_models import (
     FuzzyFileMatchResponse
 )
 from cosa.agents.runtime_argument_expeditor.xml_models import ExpeditorResponse, ArgConfirmationResponse
-from cosa.agents.notification_proxy.xml_models import ScriptMatcherResponse, VerificationResponse
+from cosa.agents.notification_proxy.xml_models import ScriptMatcherResponse, BatchScriptMatcherResponse, VerificationResponse
 from cosa.crud_for_dataframes.xml_models import CRUDIntent
 from cosa.agents.calculator.xml_models import CalcIntent
 
@@ -54,6 +54,7 @@ class PromptTemplateProcessor:
         'agent router go to calculator'            : CalcIntent,
         # Notification proxy models
         'notification proxy script matcher'        : ScriptMatcherResponse,
+        'notification proxy batch script matcher'  : BatchScriptMatcherResponse,
         'notification proxy answer verifier'       : VerificationResponse,
     }
     

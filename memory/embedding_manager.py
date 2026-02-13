@@ -291,9 +291,11 @@ class EmbeddingManager:
                 print( f"Using OpenAI API endpoint: https://api.openai.com/v1" )
             
             # Generate embedding for text_for_embedding (normalized or exact)
+            embedding_dim = int( self._config_mgr.get( "embedding dimensions", default="768" ) )
             response = embedding_client.embeddings.create(
                 input=text_for_embedding,
-                model=embedding_model
+                model=embedding_model,
+                dimensions=embedding_dim
             )
             timer.print( "Done!", use_millis=True )
 

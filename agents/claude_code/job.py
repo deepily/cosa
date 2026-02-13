@@ -49,6 +49,25 @@ class ClaudeCodeJob( AgenticJobBase ):
     JOB_TYPE   = "claude_code"
     JOB_PREFIX = "cc"
 
+    # Config-driven defaults (loaded once at class level, overridden per-instance)
+    _config_defaults_loaded = False
+    _default_max_turns      = 50
+    _default_timeout        = 3600
+
+    @classmethod
+    def _load_config_defaults( cls ):
+        """Load defaults from ConfigurationManager (once per process)."""
+        if cls._config_defaults_loaded:
+            return
+        try:
+            from cosa.app.configuration_manager import ConfigurationManager
+            config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+            cls._default_max_turns = config_mgr.get( "claude code job max turns default", default=50, return_type="int" )
+            cls._default_timeout   = config_mgr.get( "claude code job timeout seconds default", default=3600, return_type="int" )
+        except Exception:
+            pass  # Fall back to hardcoded defaults if config unavailable
+        cls._config_defaults_loaded = True
+
     def __init__(
         self,
         prompt: str,
@@ -57,8 +76,8 @@ class ClaudeCodeJob( AgenticJobBase ):
         user_email: str,
         session_id: str,
         task_type: str = "BOUNDED",
-        max_turns: int = 50,
-        timeout_seconds: int = 3600,
+        max_turns: int = None,
+        timeout_seconds: int = None,
         dry_run: bool = False,
         debug: bool = False,
         verbose: bool = False
@@ -77,6 +96,7 @@ class ClaudeCodeJob( AgenticJobBase ):
         Ensures:
             - Job ID generated with "cc-" prefix
             - All parameters stored for execution
+            - Defaults loaded from ConfigurationManager when params are None
 
         Args:
             prompt: The task prompt for Claude Code
@@ -85,8 +105,8 @@ class ClaudeCodeJob( AgenticJobBase ):
             user_email: Email address for user association
             session_id: WebSocket session for notifications
             task_type: "BOUNDED" (default) or "INTERACTIVE"
-            max_turns: Maximum agentic turns (default 50)
-            timeout_seconds: Task timeout (default 3600)
+            max_turns: Maximum agentic turns (None = load from config, default 50)
+            timeout_seconds: Task timeout (None = load from config, default 3600)
             dry_run: If True, simulate execution without running Claude Code
             debug: Enable debug output
             verbose: Enable verbose output
@@ -99,12 +119,15 @@ class ClaudeCodeJob( AgenticJobBase ):
             verbose    = verbose
         )
 
-        # Claude Code task parameters
+        # Load config defaults if not yet loaded
+        self._load_config_defaults()
+
+        # Claude Code task parameters (use config defaults when not explicitly provided)
         self.prompt          = prompt
         self.project         = project
         self.task_type       = task_type.upper()
-        self.max_turns       = max_turns
-        self.timeout_seconds = timeout_seconds
+        self.max_turns       = max_turns if max_turns is not None else self._default_max_turns
+        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else self._default_timeout
         self.dry_run         = dry_run
 
         # Results (populated after execution)

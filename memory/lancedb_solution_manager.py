@@ -96,13 +96,9 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         # Vector search performance tuning (nprobes for IVF index)
         self._nprobes = config.get( "nprobes", 20 )
 
-        # Get embedding dimension from provider config (768 for local, 1536 for openai)
+        # Get standardized embedding dimension from config
         _cfg = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-        _provider = _cfg.get( "embedding provider", default="openai" ).strip().lower()
-        if _provider == "local":
-            self._embedding_dim = int( _cfg.get( "local embedding prose matryoshka dim", default="768" ) )
-        else:
-            self._embedding_dim = 1536
+        self._embedding_dim = int( _cfg.get( "embedding dimensions", default="768" ) )
 
         if self.debug:
             print( f"LanceDBSolutionManager configured:" )
@@ -110,6 +106,38 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             print( f"      Database: {self.db_path}" )
             print( f"         Table: {self.table_name}" )
             print( f"  Embedding dim: {self._embedding_dim}" )
+
+    def _validate_embedding_dimensions( self, db, table_name, embedding_field_name ):
+        """
+        Validate that existing table's embedding dimensions match current config.
+
+        Requires:
+            - db is a valid lancedb connection
+            - table_name is a string
+            - embedding_field_name is the name of an embedding column in the table
+
+        Ensures:
+            - No-op if table doesn't exist (will be created fresh)
+            - No-op if dimensions match
+            - Drops table if dimensions mismatch (will be recreated by caller)
+        """
+        if table_name not in db.table_names():
+            return
+
+        table        = db.open_table( table_name )
+        schema       = table.schema
+        field        = schema.field( embedding_field_name )
+        existing_dim = field.type.list_size
+
+        if existing_dim == self._embedding_dim:
+            return
+
+        du.print_banner( f"EMBEDDING DIMENSION MISMATCH: {table_name}" )
+        print( f"  Table schema expects: {existing_dim} dims" )
+        print( f"  Current config has:   {self._embedding_dim} dims" )
+        print( f"  Action: Dropping table (will be recreated with correct dimensions)" )
+
+        db.drop_table( table_name )
 
     def _resolve_db_path( self, config: Dict[str, Any] ) -> str:
         """
@@ -516,7 +544,10 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             
             # Connect to database
             self._db = lancedb.connect( self.db_path )
-            
+
+            # Validate existing table dimensions match config before opening
+            self._validate_embedding_dimensions( self._db, self.table_name, "question_embedding" )
+
             # Check if table exists
             existing_tables = self._db.table_names()
             

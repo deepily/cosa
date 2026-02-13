@@ -57,16 +57,15 @@ class QuestionEmbeddingsTable():
         self._embedding_mgr      = EmbeddingManager( debug=debug, verbose=verbose )
         self._embedding_provider = get_embedding_provider( debug=debug, verbose=verbose )
 
-        # Get embedding dimension from provider config
-        provider = self._config_mgr.get( "embedding provider", default="openai" ).strip().lower()
-        if provider == "local":
-            self._embedding_dim = int( self._config_mgr.get( "local embedding prose matryoshka dim", default="768" ) )
-        else:
-            self._embedding_dim = 1536
-        
+        # Get standardized embedding dimension from config
+        self._embedding_dim = int( self._config_mgr.get( "embedding dimensions", default="768" ) )
+
         uri = du.get_project_root() + self._config_mgr.get( "database_path_wo_root" )
 
         db = lancedb.connect( uri )
+
+        # Validate existing table dimensions match config before creating/opening
+        self._validate_embedding_dimensions( db, "question_embeddings_tbl", "embedding" )
 
         # Create table if it doesn't exist
         self._create_table_if_needed( db )
@@ -74,6 +73,38 @@ class QuestionEmbeddingsTable():
         self._question_embeddings_tbl = db.open_table( "question_embeddings_tbl" )
         
         print( f"Opened question_embeddings_tbl w/ [{self._question_embeddings_tbl.count_rows()}] rows" )
+
+    def _validate_embedding_dimensions( self, db, table_name, embedding_field_name ):
+        """
+        Validate that existing table's embedding dimensions match current config.
+
+        Requires:
+            - db is a valid lancedb connection
+            - table_name is a string
+            - embedding_field_name is the name of an embedding column in the table
+
+        Ensures:
+            - No-op if table doesn't exist (will be created fresh)
+            - No-op if dimensions match
+            - Drops table if dimensions mismatch (will be recreated by caller)
+        """
+        if table_name not in db.table_names():
+            return
+
+        table        = db.open_table( table_name )
+        schema       = table.schema
+        field        = schema.field( embedding_field_name )
+        existing_dim = field.type.list_size
+
+        if existing_dim == self._embedding_dim:
+            return
+
+        du.print_banner( f"EMBEDDING DIMENSION MISMATCH: {table_name}" )
+        print( f"  Table schema expects: {existing_dim} dims" )
+        print( f"  Current config has:   {self._embedding_dim} dims" )
+        print( f"  Action: Dropping table (will be recreated with correct dimensions)" )
+
+        db.drop_table( table_name )
 
     def _create_table_if_needed( self, db ) -> None:
         """

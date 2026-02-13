@@ -73,15 +73,16 @@ class RuntimeArgumentExpeditor:
             debug: Enable debug output
             verbose: Enable verbose output
         """
-        self.config_mgr               = config_mgr
-        self.debug                    = debug
-        self.verbose                  = verbose
-        self.llm_spec_key             = config_mgr.get( "llm spec key for runtime argument expeditor" )
-        self.prompt_template_path     = config_mgr.get( "prompt template for runtime argument expeditor" )
-        self.confirmation_prompt_path = config_mgr.get( "prompt template for argument confirmation" )
-        self.llm_factory              = LlmClientFactory( debug=debug, verbose=verbose )
+        self.config_mgr                = config_mgr
+        self.debug                     = debug
+        self.verbose                   = verbose
+        self.llm_spec_key              = config_mgr.get( "llm spec key for runtime argument expeditor" )
+        self.prompt_template_path      = config_mgr.get( "prompt template for runtime argument expeditor" )
+        self.confirmation_prompt_path  = config_mgr.get( "prompt template for argument confirmation" )
+        self.llm_factory               = LlmClientFactory( debug=debug, verbose=verbose )
+        self._last_notification_status = None
 
-    def expedite( self, command, raw_args, user_email, session_id, user_id, original_question, job_id=None ):
+    def expedite( self, command, raw_args, user_email, session_id, user_id, original_question, job_id=None, bearer_token=None ):
         """
         Run argument gap analysis and collect missing arguments from user.
 
@@ -104,11 +105,13 @@ class RuntimeArgumentExpeditor:
             user_id: System user ID
             original_question: Full voice command transcription
             job_id: Optional agentic job ID for routing notifications to job cards
+            bearer_token: Optional JWT for authenticating notification requests
 
         Returns:
             dict or None: Complete argument dictionary or None on cancel
         """
-        self._job_id = job_id
+        self._job_id       = job_id
+        self._bearer_token = bearer_token
 
         agent_entry = AGENTIC_AGENTS.get( command )
         if not agent_entry:
@@ -625,7 +628,8 @@ class RuntimeArgumentExpeditor:
             job_id           = self._job_id
         )
 
-        response = notify_user_sync( request=request, debug=self.debug )
+        response = notify_user_sync( request=request, debug=self.debug, bearer_token=self._bearer_token )
+        self._last_notification_status = response.status
 
         if self.debug:
             print( f"[Expeditor] _ask_for_arg response: success={response.success}, status={response.status}, "
@@ -675,7 +679,8 @@ class RuntimeArgumentExpeditor:
             job_id           = self._job_id
         )
 
-        response = notify_user_sync( request=request, debug=self.debug )
+        response = notify_user_sync( request=request, debug=self.debug, bearer_token=self._bearer_token )
+        self._last_notification_status = response.status
 
         if self.debug:
             print( f"[Expeditor] _ask_for_confirmation response: success={response.success}, status={response.status}, "
@@ -775,7 +780,8 @@ class RuntimeArgumentExpeditor:
             job_id           = self._job_id
         )
 
-        response = notify_user_sync( request=request, debug=self.debug )
+        response = notify_user_sync( request=request, debug=self.debug, bearer_token=self._bearer_token )
+        self._last_notification_status = response.status
 
         if self.debug:
             print( f"[Expeditor] _batch_collect_args response: success={response.success}, status={response.status}, "

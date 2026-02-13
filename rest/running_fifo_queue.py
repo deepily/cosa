@@ -22,8 +22,8 @@ from typing import Optional, Any
 
 class RunningFifoQueue( FifoQueue ):
     """
-    Queue for handling running jobs with agents and solution snapshots.
-    
+    CJ Flow execution engine — processes running jobs with agents and solution snapshots.
+
     Manages execution of jobs from todo queue to done/dead queues.
     Handles both AgentBase instances and SolutionSnapshot instances.
     """
@@ -198,21 +198,22 @@ class RunningFifoQueue( FifoQueue ):
             if failed_job:
                 self.jobs_dead_queue.push( failed_job )
     
-    def _handle_error_case( self, response: dict, running_job: Any, truncated_question: str ) -> Any:
+    def _handle_error_case( self, response: dict, running_job: Any, truncated_question: str, error_message: str=None ) -> Any:
         """
         Handle error cases during job execution.
-        
+
         Requires:
             - response is a dictionary with 'output' key
             - running_job is a valid job instance
             - truncated_question is a string
-            
+            - error_message is an optional string with a specific error description
+
         Ensures:
             - Moves job from running to dead queue
-            - Emits error audio message
+            - Emits specific error_message if provided, otherwise generic fallback
             - Updates socket connections
             - Returns the job instance
-            
+
         Raises:
             - None (handles errors gracefully)
         """
@@ -223,7 +224,39 @@ class RunningFifoQueue( FifoQueue ):
         self.pop()  # Auto-emits 'run_update'
 
         # TTS Migration (Session 97): Use notification service instead of _emit_speech
-        self._notify( "I'm sorry Dave, I'm afraid I can't do that. Please check your logs", job=running_job, priority="urgent" )
+        notification_msg = error_message if error_message else "I'm sorry Dave, I'm afraid I can't do that. Please check your logs"
+        self._notify( notification_msg, job=running_job, priority="urgent" )
+
+        running_job.error = notification_msg
+
+        # Emit job state transition (run -> dead) with error metadata
+        job_id  = running_job.id_hash
+        user_id = self.user_job_tracker.get_user_for_job( job_id )
+
+        completed_at = datetime.now().isoformat()
+        started_at   = running_job.started_at
+        duration_seconds = None
+        if started_at:
+            try:
+                start = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
+                end   = datetime.fromisoformat( completed_at )
+                duration_seconds = ( end - start ).total_seconds()
+            except Exception:
+                pass
+
+        metadata = {
+            'error'           : notification_msg,
+            'question_text'   : running_job.last_question_asked,
+            'agent_type'      : running_job.job_type,
+            'timestamp'       : running_job.created_date,
+            'status'          : 'failed',
+            'has_interactions': bool( running_job.session_id ),
+            'is_cache_hit'    : False,
+            'started_at'      : started_at,
+            'completed_at'    : completed_at,
+            'duration_seconds': duration_seconds
+        }
+        emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'dead', user_id, metadata )
 
         self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
 
@@ -460,8 +493,9 @@ class RunningFifoQueue( FifoQueue ):
         except Exception as e:
 
             du.print_stack_trace( e, explanation="do_all() failed", caller="RunningFifoQueue._handle_base_agent()", debug=self.debug )
-            running_job = self._handle_error_case( code_response, running_job, truncated_question )
-        
+            running_job = self._handle_error_case( code_response, running_job, truncated_question, error_message=str( e ) )
+            return running_job
+
         du.print_banner( f"Job [{running_job.last_question_asked}] complete...", prepend_nl=True, end="\n" )
         
         if running_job.code_ran_to_completion() and running_job.formatter_ran_to_completion():

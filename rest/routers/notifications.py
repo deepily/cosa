@@ -21,7 +21,7 @@ import re
 # Import dependencies and services
 from ..notification_fifo_queue import NotificationFifoQueue
 from ..websocket_manager import WebSocketManager
-from ..middleware.api_key_auth import require_api_key
+from ..middleware.api_key_auth import require_api_key, require_api_key_or_jwt
 from ..db.database import get_db
 from ..db.repositories.notification_repository import NotificationRepository
 
@@ -212,7 +212,7 @@ def resolve_sender_id( explicit_sender_id: Optional[str], message: str ) -> str:
 # API stability takes precedence over naming consistency.
 @router.post("/notify")
 async def notify_user(
-    authenticated_user_id: Annotated[str, Depends(require_api_key)],
+    authenticated_user_id: Annotated[str, Depends(require_api_key_or_jwt)],
     message: str = Query(..., description="Notification message text"),
     type: str = Query("custom", description="Notification type (task, progress, alert, custom)"),
     priority: str = Query("medium", description="Priority level (low, medium, high, urgent)"),
@@ -249,7 +249,7 @@ async def notify_user(
     - Supports offline detection (immediate default return)
 
     Requires:
-        - Valid API key in X-API-Key header (validated by require_api_key middleware)
+        - Valid API key (X-API-Key) or Bearer JWT (validated by require_api_key_or_jwt)
         - message is non-empty after stripping whitespace
         - type is one of: task, progress, alert, custom
         - priority is one of: low, medium, high, urgent
@@ -285,8 +285,8 @@ async def notify_user(
     Returns:
         dict (fire-and-forget) or StreamingResponse (SSE for response-required)
     """
-    # API key validation handled by require_api_key middleware
-    # authenticated_user_id contains the validated service account user ID
+    # Auth validation handled by require_api_key_or_jwt middleware (API key or Bearer JWT)
+    # authenticated_user_id contains the validated user ID
 
     # Validate notification type
     valid_types = ["task", "progress", "alert", "custom"]
@@ -316,7 +316,7 @@ async def notify_user(
                 detail="response_type is required when response_requested=True (yes_no or open_ended)"
             )
 
-        valid_response_types = ["yes_no", "open_ended", "multiple_choice"]
+        valid_response_types = ["yes_no", "open_ended", "multiple_choice", "open_ended_batch"]
         if response_type not in valid_response_types:
             raise HTTPException(
                 status_code=400,

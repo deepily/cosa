@@ -439,10 +439,9 @@ class LlmClientFactory:
             if debug: print( f"Creating CompletionClient with base_url={base_url}, model={model_name}" )
             
             if vendor_key in ["vllm", "deepily"]:
-                # Dynamic local vLLM model (e.g., post-training/post-quantization validation)
-                # Uses localhost since _start_vllm_server() runs locally on default port 3000
-                base_url = f"http://localhost:3000/v1/completions"
-                if debug: print( f"Creating dynamic CompletionClient for local vLLM: base_url={base_url}, model={model_name}" )
+                # Local vLLM model — append /completions to the already-resolved VENDOR_URLS base_url
+                base_url = f"{base_url}/completions"
+                if debug: print( f"Creating CompletionClient for local vLLM: base_url={base_url}, model={model_name}" )
                 return CompletionClient(
                     base_url=base_url,
                     model_name=model_name,

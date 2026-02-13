@@ -370,6 +370,7 @@ async def get_queue(
             "agent_type"   : job.job_type,  # Unified property replaces getattr() chain
             "status"       : job.status,
             "started_at"   : job.started_at,
+            "error"        : job.error,
         }
         structured_jobs.append( job_data )
 

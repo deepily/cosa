@@ -1,5 +1,5 @@
 """
-Deep Research report viewing, management, and job submission endpoints.
+Deep Research report viewing, management, and CJ Flow job submission endpoints.
 
 Provides endpoints for:
 - Viewing research reports stored locally or in GCS

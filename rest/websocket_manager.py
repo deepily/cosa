@@ -307,46 +307,6 @@ class WebSocketManager:
         """
         return session_id in self.active_connections
     
-    async def emit_to_user( self, user_id: str, event: str, data: dict ):
-        """
-        Emit an event to all sessions belonging to a specific user.
-        
-        Requires:
-            - user_id is a non-empty string
-            - event is a non-empty string event name
-            - data is a dictionary containing event data
-            
-        Ensures:
-            - Sends timestamped message to all user's active sessions
-            - Only sends to sessions subscribed to the event
-            - Cleans up disconnected sessions
-            - Returns early if user has no sessions
-            
-        Raises:
-            - None (WebSocket send failures handled gracefully)
-        """
-        if user_id not in self.user_sessions:
-            return
-            
-        message = {
-            "type": event,
-            "timestamp": datetime.now().isoformat(),
-            **data
-        }
-        
-        disconnected = []
-        for session_id in self.user_sessions[user_id]:
-            if session_id in self.active_connections:
-                try:
-                    websocket = self.active_connections[session_id]
-                    await websocket.send_json( message )
-                except:
-                    disconnected.append( session_id )
-        
-        # Clean up disconnected sessions
-        for session_id in disconnected:
-            self.disconnect( session_id )
-    
     async def emit_to_session( self, session_id: str, event: str, data: dict ):
         """
         Emit an event to a specific WebSocket session.
@@ -551,7 +511,7 @@ class WebSocketManager:
         message = {
             "type": event,
             "timestamp": datetime.now().isoformat(),
-            "data": data
+            **data
         }
         
         sent_count = 0

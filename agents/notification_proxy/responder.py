@@ -165,9 +165,10 @@ class NotificationResponder:
 
         elif event_type == "job_state_transition":
             if self.verbose:
-                job_id = event_data.get( "job_id", "?" )
-                state  = event_data.get( "state", "?" )
-                print( f"[Responder] Job state: {job_id} → {state}" )
+                job_id     = event_data.get( "job_id", "?" )
+                from_queue = event_data.get( "from_queue", "?" )
+                to_queue   = event_data.get( "to_queue", "?" )
+                print( f"[Responder] Job state: {job_id} {from_queue} → {to_queue}" )
 
         elif self.verbose:
             print( f"[Responder] Event: {event_type}" )

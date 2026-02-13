@@ -1,5 +1,5 @@
 """
-Deep Research to Podcast API router for queue-based chained workflows.
+Deep Research to Podcast API router for CJ Flow queue-based chained workflows.
 
 Submits research queries that automatically generate a podcast after
 research completion. Combines Deep Research → Podcast Generation pipeline.

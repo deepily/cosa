@@ -3,7 +3,7 @@ import threading
 from typing import Any, Optional, Dict, Type, List
 
 from cosa.agents.confirmation_dialog import ConfirmationDialogue
-from cosa.rest.fifo_queue import FifoQueue
+from cosa.rest.fifo_queue import FifoQueue  # CJ Flow ingress queue — receives all incoming jobs
 
 from cosa.agents.date_and_time_agent import DateAndTimeAgent
 from cosa.agents.receptionist_agent import ReceptionistAgent
@@ -903,6 +903,7 @@ class TodoFifoQueue( FifoQueue ):
         "agent router go to deep research"      : "Deep Dive (investigate a topic)",
         "agent router go to podcast generator"   : "PodMaker (create a podcast from a topic)",
         "agent router go to research to podcast" : "Doc-to-Pod (convert existing research to podcast)",
+        "agent router go to claude code"         : "Claude Code (run a coding task)",
     }
 
     def _confirm_agentic_routing( self, command, args, user_id, user_email, original_question ):

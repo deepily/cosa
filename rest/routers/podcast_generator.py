@@ -1,5 +1,5 @@
 """
-Podcast Generator API router for queue-based podcast generation.
+Podcast Generator API router for CJ Flow queue-based podcast generation.
 
 Provides smart input parsing that handles both direct file paths and
 natural language descriptions with LLM-powered fuzzy matching.

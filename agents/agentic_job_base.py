@@ -1,5 +1,5 @@
 """
-Base class for long-running Claude Code agentic jobs.
+Base class for long-running agentic jobs in CJ Flow (COSA Jobs Flow).
 
 Provides shared behaviors across agentic processes that:
 - Run asynchronously in the queue system

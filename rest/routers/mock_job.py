@@ -13,7 +13,7 @@ import asyncio
 import uuid
 
 from typing import Optional, Tuple
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, Field
 
 from cosa.rest.auth import get_current_user
@@ -74,6 +74,7 @@ def get_todo_queue():
 
 @router.post( "/submit", response_model=MockJobSubmitResponse )
 async def submit_mock_job(
+    request: Request,
     request_body: MockJobSubmitRequest = MockJobSubmitRequest(),
     current_user: dict = Depends( get_current_user ),
     todo_queue = Depends( get_todo_queue )
@@ -113,12 +114,17 @@ async def submit_mock_job(
     """
     from cosa.agents.test_harness.mock_job import MockAgenticJob
 
+    # Extract raw JWT for passing to expeditor (internal auth forwarding)
+    auth_header  = request.headers.get( "Authorization", "" )
+    bearer_token = auth_header[ 7: ] if auth_header.startswith( "Bearer " ) else None
+
     # Expeditor test mode: route voice_command through expeditor pipeline
     if request_body.voice_command:
         return await _handle_expeditor_test(
             voice_command = request_body.voice_command,
             current_user  = current_user,
-            todo_queue    = todo_queue
+            todo_queue    = todo_queue,
+            bearer_token  = bearer_token
         )
 
     # Validate ranges
@@ -198,7 +204,7 @@ async def submit_mock_job(
         )
 
 
-async def _handle_expeditor_test( voice_command, current_user, todo_queue ):
+async def _handle_expeditor_test( voice_command, current_user, todo_queue, bearer_token=None ):
     """
     Test the RuntimeArgumentExpeditor pipeline with a voice command.
 
@@ -273,7 +279,8 @@ async def _handle_expeditor_test( voice_command, current_user, todo_queue ):
         session_id        = session_id,
         user_id           = user_id or "test-user",
         original_question = voice_command,
-        job_id            = expeditor_job_id
+        job_id            = expeditor_job_id,
+        bearer_token      = bearer_token
     )
 
     if args_dict is None:
@@ -282,10 +289,11 @@ async def _handle_expeditor_test( voice_command, current_user, todo_queue ):
             job_id         = "expeditor-test-cancelled",
             queue_position = 0,
             config         = {
-                "command"       : matched_command,
-                "voice_command" : voice_command,
-                "result"        : "cancelled_or_timeout",
-                "args_found"    : None
+                "command"              : matched_command,
+                "voice_command"        : voice_command,
+                "result"               : "cancelled_or_timeout",
+                "args_found"           : None,
+                "notification_status"  : expeditor._last_notification_status
             },
             message        = "Expeditor test: user cancelled or timed out"
         )

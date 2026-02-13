@@ -1,5 +1,51 @@
 # COSA Development History
 
+> **✅ SESSIONS 190-200 COMMIT**: CJ Flow Bounded Jobs + 768-dim Embedding Standardization + Dead Job WebSocket Fix + Batch XML Model + Expeditor open_ended_batch Fix (2026.02.12)
+> **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Committed accumulated work from Lupin sessions 190-200** (~38 files modified, +863/-189 lines):
+>
+> **CJ Flow Bounded Job Packaging + Claude Code LORA Data (Session 197)**:
+> - `claude_code/job.py`: Externalized hardcoded defaults (max_turns=50, timeout_seconds=3600) to config with class-level caching
+> - `agentic_job_factory.py`: Registered ClaudeCodeJob in shared factory
+> - `claude_code_queue.py`: Router updated to use shared factory
+> - `agent_registry.py`: ClaudeCodeJob entry with display_name + user-visible-args
+> - CJ Flow branding propagated to 12 files (docstrings/comments only): agentic_job_base, queue_protocol, queue_consumer, running_fifo_queue, websocket_manager, 5 routers
+> - `xml_coordinator.py` + `xml_prompt_generator.py` + `xml_models.py`: Claude Code LORA training pipeline (66 templates, 1,500 samples)
+>
+> **LanceDB Embedding Dimension Mismatch — 768 Standardization (Session 198)**:
+> - `embedding_manager.py`: Pass `dimensions=embedding_dim` to OpenAI API (MRL truncation)
+> - `embedding_provider.py`: Simplified `dimensions` + `code_dimensions` properties using centralized config
+> - All 6 LanceDB table classes: Simplified dimension init + added `_validate_embedding_dimensions()` auto-drop/recreate on schema mismatch
+>   - canonical_synonyms_table, embedding_cache_table, input_and_output_table, lancedb_solution_manager, query_log_table, question_embeddings_table
+>
+> **Dead Job Card WebSocket Fix (Session 199)**:
+> - `running_fifo_queue.py`: Added missing `emit_job_state_transition()` in `_handle_error_case()` for `run -> dead` transition with full error metadata
+>
+> **Batch XML Model + Ampersand Escaping (Session 195)**:
+> - `notification_proxy/xml_models.py`: NEW `BatchScriptMatcherResponse` — first-class Pydantic XML model with nested `<entries><entry>` structure
+> - `llm_script_matcher.py`: Updated `_handle_batch()` to use new model
+> - `prompt_template_processor.py`: Registered batch model in `MODEL_MAPPING`
+> - `util_xml_pydantic.py`: Added `&` entity escaping in `from_xml()` for bare ampersands in LLM reasoning
+>
+> **Expeditor open_ended_batch Fix (Session 200)**:
+> - `notifications.py`: Added `"open_ended_batch"` to `valid_response_types` list
+> - `notify_user_sync.py`: Enhanced HTTP error diagnostic — status code now in error string (`http_error_400`)
+> - `expeditor.py`: Updated expeditor notification flow
+> - `notification_proxy/voice_io.py`: Voice I/O enhancements
+> - `notification_proxy/config.py` + `responder.py`: Configuration updates
+>
+> **Other**:
+> - `rest/middleware/api_key_auth.py`: Auth middleware additions
+> - `mock_job.py`: Expeditor test mode updates
+> - `llm_client_factory.py`: Client factory refinements
+>
+> **Commit**: [pending]
+>
+> ---
+
 > **✅ SESSIONS 182-189 COMMIT**: LLM Script Matcher + Data-Driven Sender IDs + CRUD Dedup Guards + Local Embedding Provider + vLLM Marlin Config (2026.02.12)
 > **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
 >
