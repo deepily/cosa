@@ -8,6 +8,8 @@ and resetting all queues.
 Generated on: 2025-01-24
 """
 
+import asyncio
+
 from fastapi import APIRouter, Query, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 from datetime import datetime
@@ -194,7 +196,7 @@ async def push(
 
     # Push to queue with websocket_id, user_id, and user_email for TTS routing
     try:
-        result = todo_queue.push_job( question, websocket_id, user_id, user_email )
+        result = await asyncio.to_thread( todo_queue.push_job, question, websocket_id, user_id, user_email )
         print(f"[API] /api/push successful - result: {result}")
     except Exception as e:
         print(f"[API] /api/push failed - error: {str(e)}")
