@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""
+Configuration for COSA SWE Team Agent.
+
+Design decisions:
+- Opus 4.6 for Lead and Architect agents (planning, extended thinking)
+- Sonnet 4.5 for Coder, Reviewer, Tester, Debugger (cost optimization)
+- Safety limits from architecture design doc Section 7.2
+- Configurable limits to prevent runaway execution
+"""
+
+from dataclasses import dataclass
+from typing import Literal, Optional
+
+
+@dataclass
+class SweTeamConfig:
+    """
+    Configuration for the SWE Team multi-agent engineering system.
+
+    Requires:
+        - All numeric values must be positive
+        - Model IDs must be valid Anthropic model identifiers
+
+    Ensures:
+        - Provides sensible defaults for all parameters
+        - Safety limits enforced at configuration level
+    """
+
+    # === Model Selection ===
+    lead_model   : str = "claude-opus-4-20250514"
+    worker_model : str = "claude-sonnet-4-20250514"
+
+    # === Execution Limits ===
+    max_iterations_per_task   : int = 10
+    max_tokens_per_session    : int = 500_000
+    wall_clock_timeout_secs   : int = 1800
+    max_consecutive_failures  : int = 3
+    max_file_changes_per_task : int = 20
+    require_test_pass         : bool = True
+
+    # === Budget ===
+    budget_usd : float = 5.00
+
+    # === COSA Integration ===
+    feedback_timeout_seconds : int  = 300
+    narrate_progress         : bool = True
+
+    # === Feature Flags ===
+    enabled  : bool = False
+    dry_run  : bool = False
+
+
+def quick_smoke_test():
+    """Quick smoke test for SweTeamConfig."""
+    import cosa.utils.util as cu
+
+    cu.print_banner( "SweTeamConfig Smoke Test", prepend_nl=True )
+
+    try:
+        # Test 1: Default instantiation
+        print( "Testing default config..." )
+        config = SweTeamConfig()
+        assert config.lead_model == "claude-opus-4-20250514"
+        assert config.worker_model == "claude-sonnet-4-20250514"
+        assert config.enabled is False
+        print( "✓ Default config created" )
+
+        # Test 2: Safety limit defaults
+        print( "Testing safety limit defaults..." )
+        assert config.max_iterations_per_task == 10
+        assert config.max_tokens_per_session == 500_000
+        assert config.wall_clock_timeout_secs == 1800
+        assert config.max_consecutive_failures == 3
+        assert config.max_file_changes_per_task == 20
+        assert config.require_test_pass is True
+        print( "✓ Safety limits have correct defaults" )
+
+        # Test 3: Custom values
+        print( "Testing custom config values..." )
+        custom = SweTeamConfig(
+            lead_model="custom-opus",
+            worker_model="custom-sonnet",
+            budget_usd=10.00,
+            max_iterations_per_task=5,
+            dry_run=True
+        )
+        assert custom.lead_model == "custom-opus"
+        assert custom.budget_usd == 10.00
+        assert custom.dry_run is True
+        print( "✓ Custom config values work" )
+
+        # Test 4: COSA integration defaults
+        print( "Testing COSA integration..." )
+        assert config.feedback_timeout_seconds == 300
+        assert config.narrate_progress is True
+        print( "✓ COSA integration defaults correct" )
+
+        print( "\n✓ SweTeamConfig smoke test completed successfully" )
+
+    except Exception as e:
+        print( f"\n✗ Smoke test failed: {e}" )
+        import traceback
+        traceback.print_exc()
+
+
+if __name__ == "__main__":
+    quick_smoke_test()
