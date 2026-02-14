@@ -1,5 +1,43 @@
 # COSA Development History
 
+> **✅ SESSIONS 201-205 COMMIT**: Routing Command Normalization + Cache N/A Bug Fix + Similarity Confirmation Toggle + WebSocket Exception Fix + SWE Team Agent (2026.02.14)
+> **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Committed accumulated work from Lupin sessions 201-205** (~11 files modified, 1 new package, +219/-74 lines):
+>
+> **Routing Command Normalization (Sessions 201-205)**:
+> - Shortened verbose routing commands across 6 files: `"date and time"` → `"datetime"`, `"todo list"` → `"todo"`, `"automatic routing mode"` → `"automatic"`
+> - `date_and_time_agent.py`: Default routing_command updated
+> - `todo_list_agent.py`: Default routing_command updated
+> - `prompt_template_processor.py`: MODEL_MAPPING keys normalized
+> - `xml_parser_factory.py`: agent_model_map + formatter keys normalized
+> - `xml_models.py`: AgentRouterResponse valid_commands list normalized
+> - `todo_fifo_queue.py`: Backward-compatible `in` tuple/list checks for old + new command strings
+> - `llm_client_factory.py`: Smoke test prompt template key normalized
+> - `xml_coordinator.py`: Training augmentation_config keys normalized
+>
+> **Bug Fix: Cache Re-Execution of Non-Executable Code — "N/A" Bug (Session 204)**:
+> - `solution_snapshot.py`: Changed code fallback from `"N/A"` to `[ "" ]` (correct `list[str]` type)
+> - `solution_snapshot.py`: Added empty-code guard in `run_code()` raising `ValueError` before subprocess spawn
+> - `running_fifo_queue.py`: `try/except ValueError` wrapper in `_format_cached_result()` for empty code
+>
+> **Bug Fix: Missing WebSocket Event in Generic Exception Handler (Session 204)**:
+> - `running_fifo_queue.py`: Generic except block in `_process_job()` now emits `job_state_transition('run', 'dead')` with full metadata (error, timing, status) + TTS notification — matching `_handle_error_case()` pattern
+>
+> **Bug Fix: Stopwatch API Mismatch in Cache Hit Path (Session 204)**:
+> - `running_fifo_queue.py`: Replaced non-existent `stop()` + `get_elapsed_millis()` with `get_delta_ms()`
+>
+> **Similarity Confirmation Toggle — Runtime Configurable (Session 205)**:
+> - `todo_fifo_queue.py`: Check `similarity_confirmation_enabled` config before prompting user; auto-accept semantic match when disabled
+> - `rest/routers/system.py`: New GET/POST `/api/config/similarity-confirmation` endpoints with Pydantic models + `get_todo_queue()` dependency
+>
+> **Dead Code Removal**:
+> - `todo_fifo_queue.py`: Removed unreachable `refactor` branch in math routing, removed defensive `hasattr(agent, 'id_hash')` check
+>
+> ---
+
 > **✅ SESSIONS 190-200 COMMIT**: CJ Flow Bounded Jobs + 768-dim Embedding Standardization + Dead Job WebSocket Fix + Batch XML Model + Expeditor open_ended_batch Fix (2026.02.12)
 > **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
 >

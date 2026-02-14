@@ -488,7 +488,7 @@ def quick_smoke_test():
         # Prepare simple test prompt
         question = "What time is it?"
         try:
-            prompt_template = du.get_file_as_string( du.get_project_root() + config_mgr.get( "prompt template for agent router go to date and time" ) )
+            prompt_template = du.get_file_as_string( du.get_project_root() + config_mgr.get( "prompt template for agent router go to datetime" ) )
             prompt = prompt_template.format( question=question )
             print( "✓ Test prompt prepared successfully" )
         except Exception as e:

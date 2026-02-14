@@ -443,7 +443,7 @@ class SolutionSnapshot( RunnableCode ):
         synonymous_question_gists=OrderedDict( { agent.question_gist: 100.0 } ),
                             error=agent.prompt_response_dict.get( "error", "" ),
                  solution_summary=agent.prompt_response_dict.get( "explanation", "N/A" ),
-                             code=agent.prompt_response_dict.get( "code", "N/A" ),
+                             code=agent.prompt_response_dict.get( "code", [ "" ] ),
                      code_returns=agent.prompt_response_dict.get( "returns", "N/A" ),
                      code_example=agent.prompt_response_dict.get( "example", "N/A" ),
                          thoughts=agent.prompt_response_dict.get( "thoughts", "N/A" ),
@@ -898,6 +898,10 @@ class SolutionSnapshot( RunnableCode ):
         Raises:
             - Code execution errors propagated
         """
+        # Guard: Reject empty code lists — nothing to execute
+        if not self.code or all( line.strip() == "" for line in self.code ):
+            raise ValueError( "Cannot execute empty code list — snapshot has no executable code" )
+
         if self.routing_command == "agent router go to todo list":
             path_to_df = "/src/conf/long-term-memory/todo.csv"
         elif self.routing_command == "agent router go to calendar":

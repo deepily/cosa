@@ -355,7 +355,7 @@ class XmlCoordinator:
 
             raw_lines = du.get_file_as_list( self.path_prefix + self.prompt_generator.agent_router_compound_commands[ compound_command ], clean=True, skip_empty=True, skip_comments=True, randomize=True )[ 0:100 ]
 
-            if compound_command in [ "agent router go to weather", "agent router go to date and time" ]:
+            if compound_command in [ "agent router go to weather", "agent router go to datetime" ]:
                 arguments   = self.prompt_generator.get_cities_and_countries( len( raw_lines ) )
                 placeholder = "GEOGRAPHIC_LOCATION"
             elif compound_command == "agent router go to receptionist":
@@ -771,10 +771,10 @@ class XmlCoordinator:
         compound_router_qna_df        = self.build_compound_agent_router_training_prompts( sample_size_per_command=sample_size_per_command )
 
         augmentation_config = {
-            "agent router go to automatic routing mode" : { "factor": 9 },
+            "agent router go to automatic"              : { "factor": 9 },
             "agent router go to calculator"             : { "factor": 3 },
             "agent router go to math"                   : { "factor": 3 },
-            "agent router go to todo list"              : { "factor": 3 },
+            "agent router go to todo"                   : { "factor": 3 },
             "none"                                      : { "factor": 3 },
         }
         simple_router_qna_df          = self.build_simple_agent_router_training_prompts( sample_size_per_command=sample_size_per_command, augmentation_config=augmentation_config )

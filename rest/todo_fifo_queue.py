@@ -496,47 +496,79 @@ class TodoFifoQueue( FifoQueue ):
             # verify that this is what they were looking for, according to the similarity threshold for confirmation
             if best_score < self.config_mgr.get( "similarity_threshold_confirmation", default=98.0, return_type="float" ):
 
-                # TTS Migration (Session 97): Use notification service blocking query instead of _emit_speech
-                # This replaces the legacy push_blocking_object() pattern with a proper blocking query
-                msg = f"Is that the same as: {best_snapshot.question}?"
-                du.print_banner( msg )
-                print( "Asking user for confirmation via notification service..." )
+                # Check if similarity confirmation is enabled (default: true)
+                confirmation_enabled = self.config_mgr.get( "similarity_confirmation_enabled", default=True, return_type="boolean" )
 
-                request = NotificationRequest(
-                    message          = msg,
-                    response_type    = ResponseType.YES_NO,
-                    response_default = "no",
-                    timeout_seconds  = 30,
-                    priority         = "high",
-                    suppress_ding    = True,  # Queue TTS - no ding
-                    target_user      = user_email,
-                    sender_id        = f"queue.{self.queue_name or 'todo'}@lupin.deepily.ai"
-                )
+                if confirmation_enabled:
 
-                response = notify_user_sync(
-                    request,
-                    retry_on_timeout = True,    # Enable exponential backoff
-                    max_attempts     = 3,       # 30s → 60s → 120s
-                    backoff_multiplier = 2.0
-                )
+                    # TTS Migration (Session 97): Use notification service blocking query instead of _emit_speech
+                    # This replaces the legacy push_blocking_object() pattern with a proper blocking query
+                    msg = f"Is that the same as: {best_snapshot.question}?"
+                    du.print_banner( msg )
+                    print( "Asking user for confirmation via notification service..." )
 
-                if response.status == "responded" and response.response_value == "yes":
-                    # User confirmed - use cached result
-                    print( f"User confirmed cached result match (score: {best_score}%)" )
-                    # Update last question asked before we throw it on the queue
+                    request = NotificationRequest(
+                        message          = msg,
+                        response_type    = ResponseType.YES_NO,
+                        response_default = "no",
+                        timeout_seconds  = 30,
+                        priority         = "high",
+                        suppress_ding    = True,  # Queue TTS - no ding
+                        target_user      = user_email,
+                        sender_id        = f"queue.{self.queue_name or 'todo'}@lupin.deepily.ai"
+                    )
+
+                    response = notify_user_sync(
+                        request,
+                        retry_on_timeout = True,    # Enable exponential backoff
+                        max_attempts     = 3,       # 30s → 60s → 120s
+                        backoff_multiplier = 2.0
+                    )
+
+                    if response.status == "responded" and response.response_value == "yes":
+                        # User confirmed - use cached result
+                        print( f"User confirmed cached result match (score: {best_score}%)" )
+                        # Update last question asked before we throw it on the queue
+                        best_snapshot.last_question_asked = ( salutations + ' ' + question ).strip()
+                        self._dump_code( best_snapshot )
+
+                        # Log query with match results (snapshot found)
+                        match_result = {
+                            'snapshot_id': best_snapshot.id_hash,
+                            'type': 'user_confirmed_similarity_match',
+                            'confidence': best_score
+                        }
+                        embeddings = {
+                            'verbatim': embedding_verbatim,
+                            'normalized': embedding_normalized,
+                            'gist': embedding_gist
+                        }
+                        self._log_query_with_results(
+                            query_verbatim, query_normalized, query_gist,
+                            user_id, websocket_id, embeddings, cache_hits, match_result
+                        )
+
+                        return self._queue_best_snapshot( best_snapshot, best_score, user_id, user_email )
+                    else:
+                        # User declined, timeout, or offline - fall through to LLM routing
+                        print( f"User response: '{response.status}:{response.response_value}' - routing as new question..." )
+                        needs_llm_routing = True
+
+                else:
+                    # Confirmation disabled - auto-accept the best semantic match
+                    print( f"Similarity confirmation disabled, auto-accepting match (score: {best_score}%)" )
                     best_snapshot.last_question_asked = ( salutations + ' ' + question ).strip()
                     self._dump_code( best_snapshot )
 
-                    # Log query with match results (snapshot found)
                     match_result = {
-                        'snapshot_id': best_snapshot.id_hash,
-                        'type': 'user_confirmed_similarity_match',
-                        'confidence': best_score
+                        'snapshot_id' : best_snapshot.id_hash,
+                        'type'        : 'auto_accepted_similarity_match',
+                        'confidence'  : best_score
                     }
                     embeddings = {
-                        'verbatim': embedding_verbatim,
-                        'normalized': embedding_normalized,
-                        'gist': embedding_gist
+                        'verbatim'   : embedding_verbatim,
+                        'normalized' : embedding_normalized,
+                        'gist'       : embedding_gist
                     }
                     self._log_query_with_results(
                         query_verbatim, query_normalized, query_gist,
@@ -544,10 +576,6 @@ class TodoFifoQueue( FifoQueue ):
                     )
 
                     return self._queue_best_snapshot( best_snapshot, best_score, user_id, user_email )
-                else:
-                    # User declined, timeout, or offline - fall through to LLM routing
-                    print( f"User response: '{response.status}:{response.response_value}' - routing as new question..." )
-                    needs_llm_routing = True
 
             # This is an exact match (high confidence), so queue it up
             else:
@@ -633,16 +661,10 @@ class TodoFifoQueue( FifoQueue ):
                 msg = starting_a_new_job.format( agent_type="calculator" )
                 ding_for_new_job = True
             elif command == "agent router go to math":
-                if question.lower().strip().startswith( "refactor " ):
-                    # raise a not implemented exception
-                    raise NotImplementedError( "Refactoring agent not implemented yet!" )
-                    # agent = self._get_math_refactoring_agent( question, question_gist, salutation_plus_question, self.push_counter )
-                    # msg = starting_a_new_job.format( agent_type="math refactoring" )
-                else:
-                    agent = MathAgent( question=salutation_plus_question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
-                    msg = starting_a_new_job.format( agent_type="math" )
+                agent = MathAgent( question=salutation_plus_question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                msg = starting_a_new_job.format( agent_type="math" )
                 ding_for_new_job = True
-            elif command == "agent router go to todo list":
+            elif command in ( "agent router go to todo", "agent router go to todo list" ):
                 if self._crud_agents_enabled():
                     agent = TodoCrudAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                     msg = starting_a_new_job.format( agent_type="todo (CRUD)" )
@@ -650,7 +672,7 @@ class TodoFifoQueue( FifoQueue ):
                     agent = TodoListAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                     msg = starting_a_new_job.format( agent_type="todo list" )
                 ding_for_new_job = True
-            elif command == "agent router go to date and time":
+            elif command in [ "agent router go to date and time", "agent router go to datetime" ]:
                 agent = DateAndTimeAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="date and time" )
                 ding_for_new_job = True
@@ -658,7 +680,7 @@ class TodoFifoQueue( FifoQueue ):
                 agent = WeatherAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="weather" )
                 # ding_for_new_job = False
-            elif command == "agent router go to automatic routing mode":
+            elif command in ( "agent router go to automatic", "agent router go to automatic routing mode" ):
                 previous_mode = self.clear_user_mode( user_id )
                 if previous_mode:
                     msg = f"Switching back to automatic routing mode. Was in {previous_mode} mode."
@@ -698,9 +720,8 @@ class TodoFifoQueue( FifoQueue ):
             if agent is not None:
                 # Session 108: Generate compound hash AND associate BEFORE push to prevent race condition
                 # The consumer thread may grab the job immediately after push(), so user mapping must exist first
-                if hasattr( agent, 'id_hash' ) and user_id:
-                    agent.id_hash = self.user_job_tracker.generate_user_scoped_hash( agent.id_hash, user_id )
-                    self.user_job_tracker.associate_job_with_user( agent.id_hash, user_id )
+                agent.id_hash = self.user_job_tracker.generate_user_scoped_hash( agent.id_hash, user_id )
+                self.user_job_tracker.associate_job_with_user( agent.id_hash, user_id )
                 self.push( agent )
             
             # TTS Migration (Session 98): Use notification service instead of emit_speech_callback

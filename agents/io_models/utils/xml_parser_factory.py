@@ -47,9 +47,9 @@ class PydanticXmlParser:
         self.agent_model_map = {
             # Agent code generation schemas
             "agent router go to receptionist": ReceptionistResponse,
-            "agent router go to todo list": CodeResponse,
+            "agent router go to todo": CodeResponse,
             "agent router go to calendar": CalendarResponse,
-            "agent router go to date and time": CodeBrainstormResponse,
+            "agent router go to datetime": CodeBrainstormResponse,
             "agent router go to math": CodeBrainstormResponse,
             "agent router go to bug injector": BugInjectionResponse,
             "agent router go to debugger": self._get_debugging_model,  # Dynamic model selection based on mode
@@ -58,9 +58,9 @@ class PydanticXmlParser:
             # Formatter schemas (universal FormatterResponse for all agent formatters)
             "formatter for agent router go to math": FormatterResponse,
             "formatter for agent router go to calendar": FormatterResponse,
-            "formatter for agent router go to date and time": FormatterResponse,
+            "formatter for agent router go to datetime": FormatterResponse,
             "formatter for agent router go to receptionist": FormatterResponse,
-            "formatter for agent router go to todo list": FormatterResponse,
+            "formatter for agent router go to todo": FormatterResponse,
             "formatter for agent router go to weather": FormatterResponse,  # Could also use WeatherResponse
 
             # Future mappings will be added as more agents are migrated

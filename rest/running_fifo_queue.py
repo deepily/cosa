@@ -192,10 +192,44 @@ class RunningFifoQueue( FifoQueue ):
             print( f"[RUNNING] Error processing job: {e}" )
             print( f"[RUNNING] Full stack trace:" )
             traceback.print_exc()
-            
-            # Move job to dead queue on error
-            failed_job = self.pop()
+
+            # Get job info BEFORE popping (head is still in queue)
+            failed_job = self.head()
             if failed_job:
+                job_id  = failed_job.id_hash
+                user_id = self.user_job_tracker.get_user_for_job( job_id )
+
+                # TTS notification for the error
+                self._notify( f"Job failed: {e}", job=failed_job, priority="urgent" )
+
+                # Build metadata matching _handle_error_case pattern
+                completed_at     = datetime.now().isoformat()
+                started_at       = failed_job.started_at
+                duration_seconds = None
+                if started_at:
+                    try:
+                        start            = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
+                        end              = datetime.fromisoformat( completed_at )
+                        duration_seconds = ( end - start ).total_seconds()
+                    except Exception:
+                        pass
+
+                metadata = {
+                    'error'           : str( e ),
+                    'question_text'   : failed_job.last_question_asked,
+                    'agent_type'      : failed_job.job_type,
+                    'timestamp'       : failed_job.created_date,
+                    'status'          : 'failed',
+                    'has_interactions' : bool( failed_job.session_id ),
+                    'is_cache_hit'    : False,
+                    'started_at'      : started_at,
+                    'completed_at'    : completed_at,
+                    'duration_seconds': duration_seconds
+                }
+                emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'dead', user_id, metadata )
+
+                # Now pop and move to dead queue
+                self.pop()
                 self.jobs_dead_queue.push( failed_job )
     
     def _handle_error_case( self, response: dict, running_job: Any, truncated_question: str, error_message: str=None ) -> Any:
@@ -726,7 +760,11 @@ class RunningFifoQueue( FifoQueue ):
 
         # Re-execute cached code to get fresh output (fixes stale time queries)
         if self.debug: print( f"[CACHE] Re-executing cached code for fresh result..." )
-        code_response = cached_snapshot.run_code( debug=self.debug, verbose=self.verbose )
+        try:
+            code_response = cached_snapshot.run_code( debug=self.debug, verbose=self.verbose )
+        except ValueError as e:
+            code_response = { "return_code" : 1, "output" : "" }
+            if self.debug: print( f"[CACHE] ⚠ {e}" )
 
         if code_response.get( "return_code" ) == 0:
             # Format fresh output
@@ -737,8 +775,7 @@ class RunningFifoQueue( FifoQueue ):
             if self.debug: print( f"[CACHE] ⚠ Re-execution failed, using cached answer" )
 
         # Calculate time saved (first_run_ms - current cache retrieval time)
-        run_timer.stop()
-        cache_retrieval_ms = run_timer.get_elapsed_millis()
+        cache_retrieval_ms = run_timer.get_delta_ms()
         first_run_ms       = cached_snapshot.runtime_stats.get( "first_run_ms", 0 )
         time_saved_ms      = max( 0, first_run_ms - cache_retrieval_ms )
 

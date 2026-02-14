@@ -34,9 +34,9 @@ class PromptTemplateProcessor:
     # Clean mapping of routing commands to model classes
     MODEL_MAPPING = {
         'agent router go to math': CodeBrainstormResponse,
-        'agent router go to date and time': CodeBrainstormResponse,
+        'agent router go to datetime': CodeBrainstormResponse,
         'agent router go to calendar': CalendarResponse,
-        'agent router go to todo list': CodeResponse,
+        'agent router go to todo': CodeResponse,
         'agent router go to debugger': IterativeDebuggingFullResponse,
         'agent router go to debugger minimalist': IterativeDebuggingMinimalistResponse,
         'agent router go to bug injector': BugInjectionResponse,
