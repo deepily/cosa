@@ -1,5 +1,35 @@
 # COSA Development History
 
+> **✅ SESSIONS 206-213 COMMIT**: SWE Team Delegation/Verification/Decision Proxy + PEFT Resume-from-Merged + GPU Memory Release (2026.02.14)
+> **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Committed accumulated work from Lupin sessions 206-213** (34 files, +4,755/-375 lines):
+>
+> **SWE Team Multi-Agent System (Sessions 206-207, 210)**:
+> - Phase 2: Lead→Coder delegation loop via Claude Agent SDK — `hooks.py` (notification/pre-tool/post-tool hooks), `state_files.py` (FeatureList + ProgressLog persistence), `_decompose_task()` → `_parse_task_specs()` → `_delegate_task()` pipeline, coder role activated (v0.2.0)
+> - Phase 3: Coder-Tester verification loop — `test_runner.py` (pytest subprocess via `asyncio.create_subprocess_exec`), `VerificationResult` model, `_verify_result()` + `_redelegate_with_feedback()`, MAX_VERIFICATION_ITERATIONS=3, tester role activated (v0.3.0)
+> - Phase 4: Trust-Aware Decision Proxy — 4-layer hybrid architecture:
+>   - Extracted shared proxy infra to `agents/utils/proxy_agents/` (7 files): BaseStrategy protocol, BaseWebSocketListener, BaseResponder ABC, shared config, REST submitter, CLI args
+>   - Built decision proxy framework in `agents/decision_proxy/` (13 files): trust mode, smart router, category classifier ABC, base decision strategy ABC, XML models, circuit breaker, trust tracker L1-L5 with time-weighted decay
+>   - SWE engineering domain in `agents/swe_team/proxy/` (5 files): 6 engineering categories (deployment/testing/deps/architecture/destructive/general), keyword classifier with sender hints
+>   - Decision store + ratification API: ProxyDecision + TrustState ORM models in `postgres_models.py`, repository with shadow/log/ratify/find_similar, FastAPI router (4 endpoints)
+>   - Refactored `notification_proxy/config.py` for backward compatibility (re-export shared constants)
+>
+> **PEFT Trainer Enhancements (Sessions 209, 213)**:
+> - `peft_trainer.py`: Added `--resume-from-merged` CLI arg — skips phases 1-3, uses existing merged adapter for phases 4-5 (post-validation, quantization)
+> - `peft_trainer.py`: Removed `run_pipeline_adhoc()` (170 lines hardcoded workaround) — replaced by new CLI flag
+> - `quantizer.py`: Added `release_gpu_memory()` — `model.cpu()` + GC + CUDA cache clear for post-quantization vLLM OOM fix
+> - `peft_trainer.py`: Cleanup block calls `release_gpu_memory()` before `del quantizer`
+>
+> **Bug Fix: vLLM max_tokens overflow in PEFT validation**:
+> - `xml_coordinator.py`: Threads `max_new_tokens` param through to `CompletionClient.run()`
+>
+> **Commit**: 357ca84
+>
+> ---
+
 > **✅ SESSIONS 201-205 COMMIT**: Routing Command Normalization + Cache N/A Bug Fix + Similarity Confirmation Toggle + WebSocket Exception Fix + SWE Team Agent (2026.02.14)
 > **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
 >
