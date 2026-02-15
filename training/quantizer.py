@@ -1,3 +1,4 @@
+import gc
 import sys
 import os
 
@@ -123,9 +124,55 @@ class Quantizer:
         print( f"Saving quantized model to [{full_path}]..." )
         self.autoround.save_quantized( full_path, format=format, inplace=inplace )
         print( f"Saving quantized model to [{full_path}]... Done!" )
-        
+
         return full_path
 
+    def release_gpu_memory( self ):
+        """
+        Explicitly release all GPU memory held by this Quantizer instance.
+
+        Dismantles the autoround → model reference web, moves the model off GPU,
+        then forces garbage collection and CUDA cache clearing. This ensures
+        reserved GPU memory is actually freed, not just dereferenced.
+
+        Requires:
+            - Instance has been initialized (model and tokenizer loaded)
+
+        Ensures:
+            - AutoRound internal references broken first (model, tokenizer)
+            - Model moved to CPU before deletion (physically frees GPU blocks)
+            - All internal references (model, tokenizer, autoround) set to None
+            - gc.collect() and torch.cuda.empty_cache() called
+            - GPU reserved memory drops to near zero
+        """
+        # Step 1: Break AutoRound's reference to the model FIRST
+        # AutoRound stores its own reference to self.model — if we del self.model
+        # first, AutoRound's reference keeps the model alive on GPU
+        if hasattr( self, "autoround" ) and self.autoround is not None:
+            if hasattr( self.autoround, "model" ):
+                del self.autoround.model
+            if hasattr( self.autoround, "tokenizer" ):
+                del self.autoround.tokenizer
+            del self.autoround
+            self.autoround = None
+
+        # Step 2: Move model to CPU (physically frees GPU memory blocks)
+        # Unlike del which just drops the Python reference, model.cpu() forces
+        # CUDA to release the underlying blocks. Then del frees CPU memory (cheap).
+        if self.model is not None:
+            self.model.cpu()
+            del self.model
+            self.model = None
+
+        # Step 3: Delete tokenizer (CPU-only, but clean up references)
+        if self.tokenizer is not None:
+            del self.tokenizer
+            self.tokenizer = None
+
+        # Step 4: Force garbage collection + CUDA cache clear
+        gc.collect()
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
 
 
 def quick_smoke_test():
@@ -151,7 +198,7 @@ def quick_smoke_test():
         print( "Testing core Quantizer structure..." )
         
         # Test that Quantizer class exists and basic methods are present
-        expected_methods = [ "quantize_model", "save" ]
+        expected_methods = [ "quantize_model", "save", "release_gpu_memory" ]
         
         methods_found = 0
         for method_name in expected_methods:

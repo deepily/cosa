@@ -558,7 +558,8 @@ class PeftTrainer:
     
     def run_validation( self, banner_prefix: str="",
             model: Optional[Any]=None, switch: str="", path_prefix: str="/var/model/lupin",
-            device_map: dict={ "": 0 }, validation_sample_size: int=1000, debug: Optional[bool]=None, verbose: Optional[bool]=None
+            device_map: dict={ "": 0 }, validation_sample_size: int=1000, debug: Optional[bool]=None, verbose: Optional[bool]=None,
+            vllm_base_url: Optional[str]=None
     ) -> pd.DataFrame:
         """
         Run validation against model server.
@@ -587,7 +588,7 @@ class PeftTrainer:
         # else:
         #     self.model = model
         
-        du.print_banner( f"{banner_prefix} Testing model [{self.model}]".strip(), prepend_nl=True )
+        du.print_banner( f"{banner_prefix} Testing model [{model}]".strip(), prepend_nl=True )
         
         df = pd.read_json(
             f"{self.test_train_dir}/voice-commands-xml-validate.jsonl", lines=True
@@ -617,7 +618,8 @@ class PeftTrainer:
         
         # generate responses
         df = xml_coordinator.generate_responses(
-            df, model=model, model_name=self.model_name, device=device_map, max_new_tokens=128, debug=debug, verbose=verbose
+            df, model=model, model_name=self.model_name, device=device_map, max_new_tokens=128, debug=debug, verbose=verbose,
+            vllm_base_url=vllm_base_url
         )
         # validate responses
         df = xml_coordinator.validate_responses( df )
@@ -778,6 +780,23 @@ class PeftTrainer:
             if not hasattr( self, "quantized_model_dirs" ):
                 self.quantized_model_dirs = {}
             self.quantized_model_dirs[ bits ] = quantized_dir
+
+            # Release quantizer GPU memory before returning — explicitly dismantles
+            # the autoround → model reference web, moves model to CPU, then clears cache.
+            # This ensures reserved GPU memory is actually freed (not just dereferenced).
+            du.print_banner( "Releasing quantizer GPU memory...", prepend_nl=True )
+            print_gpu_memory()
+            quantizer.release_gpu_memory()
+            del quantizer
+            gc.collect()
+            torch.cuda.empty_cache()
+            if not self._wait_for_gpu_memory_release():
+                print( "Attempting forced GPU cache clear..." )
+                torch.cuda.empty_cache()
+                gc.collect()
+                time.sleep( 5 )
+            du.print_banner( "Releasing quantizer GPU memory... AFTER", prepend_nl=True )
+            print_gpu_memory()
 
             return quantized_dir
         
@@ -2033,7 +2052,8 @@ class PeftTrainer:
 
     def run_pipeline( self,
         pre_training_stats: bool=False, post_training_stats: bool=False, post_quantization_stats: bool=False, nuclear_kill_button: bool=False,
-        validation_sample_size: int=100, sample_size_override: float=None, dry_run: bool=False, quantize_bits: str="both"
+        validation_sample_size: int=100, sample_size_override: float=None, dry_run: bool=False, quantize_bits: str="both",
+        resume_from_merged: str=None
     ) -> None:
         """
         Executes the full training pipeline from fine-tuning to quantization.
@@ -2045,11 +2065,13 @@ class PeftTrainer:
             - GPU resources must be available with sufficient VRAM for the model
             - Required datasets must be available at test_train_path
             - The specified model must be one of the supported models
-        
+            - If resume_from_merged is provided, it must be a valid directory containing a merged adapter
+
         Ensures:
-            - If pre_training_stats is True, validation is performed before training
-            - The model is fine-tuned with LoRA adapters
-            - The LoRA adapter is merged with the base model
+            - If resume_from_merged is provided, phases 1-3 (pre-validation, fine-tuning, merge) are skipped
+            - If pre_training_stats is True (and not resuming), validation is performed before training
+            - The model is fine-tuned with LoRA adapters (unless resuming)
+            - The LoRA adapter is merged with the base model (unless resuming)
             - A quantized version of the merged model is created
             - If post_training_stats is True, validation is performed after merging the adapter
             - If post_quantization_stats is True, validation is performed after quantizing the model
@@ -2074,81 +2096,91 @@ class PeftTrainer:
 
         self.login_to_hf()
 
-        # Run a pre-training validation using vLLM server
-        if pre_training_stats:
-            stage_timer = Stopwatch( msg=None )
-            vllm_server_process = None
-            try:
-                # Start vLLM server for the base model and wait for it to be available
-                vllm_server_process = self._start_vllm_server( self.model_hf_id )
-
-                # Run validation using the server, pointing it to the HF ID
-                result = self.run_validation(
-                    banner_prefix="PRE-training:",
-                    model=self.model_hf_id,
-                    path_prefix=lupin_root,
-                    switch="deepily",
-                    device_map="auto",  # Allow using multiple GPUs
-                    validation_sample_size=validation_sample_size,
-                    debug=self.debug,
-                    verbose=self.verbose
-                )
-                self.validation_results.append( result )
-            finally:
-                # Always clean up the vLLM server process if it was started
-                if vllm_server_process: self._stop_vllm_server( vllm_server_process )
-                # Release GPU resources
-                release_gpus( [ self.model, self.tokenizer ], nuclear_kill_button=nuclear_kill_button )
-                # Wait for GPU memory to actually be freed (vLLM process cleanup is async)
-                if not self._wait_for_gpu_memory_release():
-                    print( "Attempting forced GPU cache clear..." )
-                    torch.cuda.empty_cache()
-                    gc.collect()
-                    time.sleep( 5 )
-                du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
-                print_gpu_memory()
-            self.stage_timings[ "pre_training_validation" ] = stage_timer.get_delta_ms()
+        if resume_from_merged:
+            # Resume mode: skip training and merge, jump to validation/quantization
+            du.print_banner( f"RESUME MODE: Using existing merged adapter at {resume_from_merged}" )
+            if not os.path.isdir( resume_from_merged ):
+                raise ValueError( f"Merged adapter directory does not exist: {resume_from_merged}" )
+            merged_adapter_dir      = resume_from_merged
+            self.merged_adapter_dir = merged_adapter_dir
         else:
-            print( f"Skipping pre-training validation for {args.model_name}" )
+            # Normal mode: run pre-validation, fine-tuning, and merge (phases 1-3)
 
-        # Load model-specific fine-tuning configuration
-        model_config = load_model_config( self.model_name )
-        fine_tune_params = model_config[ "fine_tune" ]
+            # Run a pre-training validation using vLLM server
+            if pre_training_stats:
+                stage_timer = Stopwatch( msg=None )
+                vllm_server_process = None
+                try:
+                    # Start vLLM server for the base model and wait for it to be available
+                    vllm_server_process = self._start_vllm_server( self.model_hf_id )
 
-        # Allow CLI override of sample_size
-        if sample_size_override is not None:
-            fine_tune_params[ "sample_size" ] = sample_size_override
-            print( f"CLI override: sample_size = {sample_size_override}" )
+                    # Run validation using the server, pointing it to the HF ID
+                    result = self.run_validation(
+                        banner_prefix="PRE-training:",
+                        model=self.model_hf_id,
+                        path_prefix=lupin_root,
+                        switch="deepily",
+                        device_map="auto",  # Allow using multiple GPUs
+                        validation_sample_size=validation_sample_size,
+                        debug=self.debug,
+                        verbose=self.verbose
+                    )
+                    self.validation_results.append( result )
+                finally:
+                    # Always clean up the vLLM server process if it was started
+                    if vllm_server_process: self._stop_vllm_server( vllm_server_process )
+                    # Release GPU resources
+                    release_gpus( [ self.model, self.tokenizer ], nuclear_kill_button=nuclear_kill_button )
+                    # Wait for GPU memory to actually be freed (vLLM process cleanup is async)
+                    if not self._wait_for_gpu_memory_release():
+                        print( "Attempting forced GPU cache clear..." )
+                        torch.cuda.empty_cache()
+                        gc.collect()
+                        time.sleep( 5 )
+                    du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
+                    print_gpu_memory()
+                self.stage_timings[ "pre_training_validation" ] = stage_timer.get_delta_ms()
+            else:
+                print( f"Skipping pre-training validation for {args.model_name}" )
 
-        # Dry-run mode: show training data stats and exit without training
-        if dry_run:
-            self._print_dry_run_stats( fine_tune_params[ "sample_size" ] )
-            return
+            # Load model-specific fine-tuning configuration
+            model_config = load_model_config( self.model_name )
+            fine_tune_params = model_config[ "fine_tune" ]
 
-        # Fine-tune using the dynamically loaded configuration
-        stage_timer = Stopwatch( msg=None )
-        checkpoint_dir = self.fine_tune(
-            sample_size=fine_tune_params[ "sample_size" ],
-            batch_size=fine_tune_params[ "batch_size" ],
-            gradient_accumulation_steps=fine_tune_params[ "gradient_accumulation_steps" ],
-            logging_steps=fine_tune_params[ "logging_steps" ],
-            eval_steps=fine_tune_params[ "eval_steps" ],
-            device_map=fine_tune_params[ "device_map" ],
-            output_dir=args.lora_dir
-        )
-        self.stage_timings[ "fine_tuning" ] = stage_timer.get_delta_ms()
-        release_gpus( [ self.model, self.tokenizer ] )
-        du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
-        print_gpu_memory()
+            # Allow CLI override of sample_size
+            if sample_size_override is not None:
+                fine_tune_params[ "sample_size" ] = sample_size_override
+                print( f"CLI override: sample_size = {sample_size_override}" )
 
-        # Load and merge the adapter
-        stage_timer = Stopwatch( msg=None )
-        self.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
-        merged_adapter_dir = self.save_merged_adapter( lora_dir=args.lora_dir )
-        self.stage_timings[ "adapter_merge" ] = stage_timer.get_delta_ms()
-        release_gpus( [ self.model, self.tokenizer ] )
-        du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
-        print_gpu_memory()
+            # Dry-run mode: show training data stats and exit without training
+            if dry_run:
+                self._print_dry_run_stats( fine_tune_params[ "sample_size" ] )
+                return
+
+            # Fine-tune using the dynamically loaded configuration
+            stage_timer = Stopwatch( msg=None )
+            checkpoint_dir = self.fine_tune(
+                sample_size=fine_tune_params[ "sample_size" ],
+                batch_size=fine_tune_params[ "batch_size" ],
+                gradient_accumulation_steps=fine_tune_params[ "gradient_accumulation_steps" ],
+                logging_steps=fine_tune_params[ "logging_steps" ],
+                eval_steps=fine_tune_params[ "eval_steps" ],
+                device_map=fine_tune_params[ "device_map" ],
+                output_dir=args.lora_dir
+            )
+            self.stage_timings[ "fine_tuning" ] = stage_timer.get_delta_ms()
+            release_gpus( [ self.model, self.tokenizer ] )
+            du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
+            print_gpu_memory()
+
+            # Load and merge the adapter
+            stage_timer = Stopwatch( msg=None )
+            self.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
+            merged_adapter_dir = self.save_merged_adapter( lora_dir=args.lora_dir )
+            self.stage_timings[ "adapter_merge" ] = stage_timer.get_delta_ms()
+            release_gpus( [ self.model, self.tokenizer ] )
+            du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
+            print_gpu_memory()
 
         if post_training_stats:
             stage_timer = Stopwatch( msg=None )
@@ -2161,7 +2193,8 @@ class PeftTrainer:
                 model = merged_adapter_dir
                 result = self.run_validation(
                     banner_prefix="POST-training:", model=model, path_prefix=lupin_root, switch="deepily", device_map="cuda:0",
-                    validation_sample_size=validation_sample_size, debug=self.debug, verbose=self.verbose
+                    validation_sample_size=validation_sample_size, debug=self.debug, verbose=self.verbose,
+                    vllm_base_url="http://192.168.1.21:3000/v1/completions"
                 )
                 self.validation_results.append( result )
             finally:
@@ -2206,7 +2239,8 @@ class PeftTrainer:
                     model = quantized_model_dir
                     result = self.run_validation(
                         banner_prefix=f"POST-quantization ({bits}-bit):", model=model, path_prefix=lupin_root, switch="deepily", device_map="cuda:0",
-                        validation_sample_size=validation_sample_size, debug=self.debug, verbose=self.verbose
+                        validation_sample_size=validation_sample_size, debug=self.debug, verbose=self.verbose,
+                        vllm_base_url="http://192.168.1.21:3000/v1/completions"
                     )
                     self.validation_results.append( result )
                 finally:
@@ -2229,7 +2263,10 @@ class PeftTrainer:
         # Print completion information
         print()
         bits_label = " and ".join( [ f"{b}-bit" for b in quantize_bits_list ] )
-        msg = f"Finished fine-tuning, merging and quantizing ({bits_label}) {args.model_name}"
+        if resume_from_merged:
+            msg = f"Finished validation and quantizing ({bits_label}) from merged adapter: {resume_from_merged}"
+        else:
+            msg = f"Finished fine-tuning, merging and quantizing ({bits_label}) {args.model_name}"
         timer.print( msg )
         self.stage_timings[ "total_pipeline" ] = timer.get_delta_ms()
         du.print_banner( msg )
@@ -2247,177 +2284,6 @@ class PeftTrainer:
             print( f"Training results written to: {results_path}" )
         except Exception as e:
             print( f"Warning: Failed to write training results file: {e}" )
-
-    def run_pipeline_adhoc( self, pre_training_stats: bool=False, post_training_stats: bool=False, post_quantization_stats: bool=False, nuclear_kill_button: bool=False,
-        validation_sample_size: int=100
-    ) -> None:
-        """
-        Executes a customized version of the training pipeline for debugging and testing purposes.
-        
-        Requires:
-            - The trainer instance must be properly initialized with valid model_hf_id, model_name, and test_train_path
-            - Hugging Face credentials must be available for login
-            - A valid merged adapter directory must be specified in the hardcoded path or be created during execution
-            - GPU resources must be available with sufficient VRAM for the model
-            - The specified model must be one of the supported models
-        
-        Ensures:
-            - Various pipeline steps can be enabled/disabled through code modifications for debugging
-            - All enabled steps are executed in the correct sequence
-            - If pre_training_stats is True and the code is uncommented, validation is performed before training
-            - If post_training_stats is True and the code is uncommented, validation is performed after merging the adapter
-            - The quantization step is always executed with the hardcoded merged adapter path
-            - If post_quantization_stats is True and the code is uncommented, validation is performed after quantization
-            - All processes (including vLLM server) are properly cleaned up regardless of success or failure
-            - GPU memory is properly released after the quantization step
-            - The following instance attributes are updated (for the steps that are executed):
-              - self.checkpoint_dir: Set to the path of the last training checkpoint
-              - self.merged_adapter_dir: Set to the path of the merged adapter
-              - self.quantized_model_dir: Set to the path of the quantized model
-        
-        Raises:
-            - ValueError: If required paths or credentials are invalid
-            - RuntimeError: If GPU resources are insufficient or if model loading fails
-            - Various exceptions based on which parts of the pipeline are enabled for testing
-        
-        Notes:
-            - This method is intended for development and debugging only
-            - Parts of the pipeline are commented out to allow targeted testing of specific components
-            - The commented sections should be adjusted based on the specific testing needs
-        """
-        timer = Stopwatch( msg=None )
-        
-        self.login_to_hf()
-        
-        # # Run a pre-training validation using vLLM server
-        # if pre_training_stats:
-        #     vllm_server_process = None
-        #     try:
-        #         # Start vLLM server for the base model and wait for it to be available
-        #         vllm_server_process = self._start_vllm_server( self.model_hf_id )
-        #         
-        #         # Create a custom model name using the base model ID
-        #         model = llmc.LlmClient.get_model( self.model_hf_id )
-        #         
-        #         # Run validation using the server
-        #         self.run_validation(
-        #             banner_prefix="PRE-training:", 
-        #             model=model, 
-        #             path_prefix=lupin_root,
-        #             switch="deepily", 
-        #             device_map="auto",  # Allow using multiple GPUs
-        #             validation_sample_size=validation_sample_size, 
-        #             debug=self.debug, 
-        #             verbose=self.verbose
-        #         )
-        #     finally:
-        #         # Always clean up the vLLM server process if it was started
-        #         if vllm_server_process: self._stop_vllm_server( vllm_server_process )
-        #         # Release GPU resources
-        #         release_gpus( [ self.model, self.tokenizer ], nuclear_kill_button=nuclear_kill_button )
-        # else:
-        #     print( f"Skipping pre-training validation for {args.model_name}" )
-        #
-        # # Load model-specific fine-tuning configuration
-        # model_config     = load_model_config( self.model_name )
-        # fine_tune_params = model_config[ "fine_tune" ]
-        #
-        # # Fine-tune using the dynamically loaded configuration
-        # checkpoint_dir = self.fine_tune(
-        #                     sample_size=fine_tune_params[ "sample_size" ],
-        #                      batch_size=fine_tune_params[ "batch_size" ],
-        #     gradient_accumulation_steps=fine_tune_params[ "gradient_accumulation_steps" ],
-        #                   logging_steps=fine_tune_params[ "logging_steps" ],
-        #                      eval_steps=fine_tune_params[ "eval_steps" ],
-        #                      device_map=fine_tune_params[ "device_map" ],
-        #                      output_dir=args.lora_dir
-        # )
-        #
-        # release_gpus( [ self.model, self.tokenizer ] )
-        #
-        # # Load and merge the adapter
-        # self.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
-        # merged_adapter_dir = self.save_merged_adapter( lora_dir=args.lora_dir )
-        release_gpus( [ self.model, self.tokenizer ] )
-        du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
-        print_gpu_memory()
-
-        # merged_adapter_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-29-at-12-04"
-        merged_adapter_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Mistral-7B-Instruct-v0.2.lora/merged-on-2025-05-01-at-02-10"
-        # 
-        # if post_training_stats:
-        #     du.print_banner( f"Running post-training validation for {args.model_name}", prepend_nl=True )
-        #
-        #     vllm_server_process = None
-        #     try:
-        #         # Start vLLM server and wait for it to be available
-        #         vllm_server_process = self._start_vllm_server( merged_adapter_dir )
-        #
-        #         # Use the bare directory path — vLLM was started with this exact path as the model name
-        #         model = merged_adapter_dir
-        #         # TODO: add runtime configuration for sample size
-        #         self.run_validation(
-        #             model=model, path_prefix=lupin_root, switch="deepily", device_map="cuda:0", validation_sample_size=100, debug=False,
-        #             verbose=False
-        #         )
-        #     finally:
-        #         # Always clean up the vLLM server process if it was started
-        #         if vllm_server_process: self._stop_vllm_server( vllm_server_process )
-        #         # release GPU before doing anything else
-        #         release_gpus( [ self.model, self.tokenizer ], nuclear_kill_button=nuclear_kill_button )
-        # else:
-        #     print( f"Skipping post-training validation for {args.model_name}" )
-        
-        # Quantize the merged adapter
-        quantized_model_dir = self.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
-        
-        # release GPU before doing anything else
-        release_gpus( [ self.model, self.tokenizer ] )
-        du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
-        print_gpu_memory()
-
-        # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-08-at-21-26/autoround-4-bits-sym.gptq/2025-04-08-at-21-47"
-        if post_quantization_stats:
-
-            du.print_banner( f"Running post-training validation for {args.model_name}", prepend_nl=True )
-
-            vllm_server_process = None
-            adhoc_vllm_config    = load_model_config( self.model_name ).get( "vllm", {} )
-            quantization_hint    = adhoc_vllm_config.get( "quantization", None )
-            try:
-                # Start vLLM server and wait for it to be available
-                vllm_server_process = self._start_vllm_server( quantized_model_dir, quantization=quantization_hint, verbose_server=True )
-
-                # Use the bare directory path — vLLM was started with this exact path as the model name
-                model = quantized_model_dir
-                # TODO: add runtime configuration for sample size
-                self.run_validation(
-                    model=model, path_prefix=lupin_root, switch="deepily", device_map="cuda:0",
-                    validation_sample_size=validation_sample_size, debug=False,
-                    verbose=False
-                )
-            finally:
-                # Always clean up the vLLM server process if it was started
-                if vllm_server_process: self._stop_vllm_server( vllm_server_process )
-                # release GPU before doing anything else
-                release_gpus( [ self.model, self.tokenizer ] )
-                # Wait for GPU memory to actually be freed (vLLM process cleanup is async)
-                if not self._wait_for_gpu_memory_release():
-                    print( "Attempting forced GPU cache clear..." )
-                    torch.cuda.empty_cache()
-                    gc.collect()
-                    time.sleep( 5 )
-                du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
-                print_gpu_memory()
-        else:
-            print( f"Skipping post-quantization validation for {args.model_name}" )
-
-        # Print completion information
-        msg = f"Finished fine-tuning, merging and quantizing {args.model_name}"
-        timer.print( msg )
-        du.print_banner( msg )
-        print( f"Quantized model: {quantized_model_dir}" )
-        du.print_simple_file_list( quantized_model_dir )
 
 
 def check_env() -> str:
@@ -2530,18 +2396,11 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument( "--sample-size",             type=float,          help="Training data sample size (0.0-1.0, overrides model config)", default=None )
     parser.add_argument( "--quantize-bits",           type=str,            help="Quantization bits: both, 4, or 8",                            default="both",
                                                       choices=[ "both", "4", "8" ] )
+    parser.add_argument( "--resume-from-merged",      type=str,            help="Path to existing merged adapter dir; skips training and merge phases", default=None )
 
     return parser.parse_args()
 
-# NOTE: The actual __main__ block is below quick_smoke_test() (line ~2297)
-# DO NOT REMOVE THIS LINE! Use call below for debugging
-# trainer.run_pipeline_adhoc(
-#     pre_training_stats=args.pre_training_stats,
-#     post_training_stats=args.post_training_stats,
-#     post_quantization_stats=args.post_quantization_stats,
-#     validation_sample_size=args.validation_sample_size,
-#     nuclear_kill_button=args.nuclear_kill_button
-# )
+# NOTE: The actual __main__ block is below quick_smoke_test()
 
 
 def quick_smoke_test():
@@ -2571,7 +2430,7 @@ def quick_smoke_test():
             "login_to_hf", "get_training_prompt_stats", "fine_tune", "save_model",
             "run_validation", "load_and_merge_adapter", "save_merged_adapter", 
             "quantize_merged_adapter", "get_prompt", "set_hf_env_vars", 
-            "set_lupin_env_vars", "run_pipeline", "run_pipeline_adhoc"
+            "set_lupin_env_vars", "run_pipeline"
         ]
         
         methods_found = 0
@@ -2872,5 +2731,6 @@ if __name__ == "__main__":
         nuclear_kill_button=args.nuclear_kill_button,
         sample_size_override=args.sample_size,
         dry_run=args.dry_run,
-        quantize_bits=args.quantize_bits
+        quantize_bits=args.quantize_bits,
+        resume_from_merged=args.resume_from_merged
     )

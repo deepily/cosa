@@ -899,7 +899,7 @@ class XmlCoordinator:
         
         return response
     
-    def generate_responses( self, df: pd.DataFrame, model: Optional[Any]=None, model_name: Optional[str]=None, max_new_tokens: int=1024, temperature: float=0.25, top_k: int=10, top_p: float=0.9, device: str="cuda:0", debug: Optional[bool]=None, verbose: Optional[bool]=None, silent: bool=False ) -> pd.DataFrame:
+    def generate_responses( self, df: pd.DataFrame, model: Optional[Any]=None, model_name: Optional[str]=None, max_new_tokens: int=1024, temperature: float=0.25, top_k: int=10, top_p: float=0.9, device: str="cuda:0", debug: Optional[bool]=None, verbose: Optional[bool]=None, silent: bool=False, vllm_base_url: Optional[str]=None ) -> pd.DataFrame:
         """
         Generates responses for a given DataFrame using various LLM backends.
         
@@ -928,8 +928,16 @@ class XmlCoordinator:
             
         # initialize variables we'll need to maintain state while iterating using the apply function
         self.reset_call_counter()
-        factory = LlmClientFactory()
-        self.llm_client = factory.get_client( model, debug=self.debug, verbose=self.verbose )
+        if vllm_base_url:
+            from cosa.agents.completion_client import CompletionClient
+            self.llm_client = CompletionClient(
+                base_url=vllm_base_url, model_name=model,
+                prompt_format="instruction_completion",
+                debug=self.debug, verbose=self.verbose
+            )
+        else:
+            factory = LlmClientFactory()
+            self.llm_client = factory.get_client( model, debug=self.debug, verbose=self.verbose )
         rows = df.shape[0]
         timer = Stopwatch( msg=f"Generating responses for {rows:,} rows...", silent=silent )
 

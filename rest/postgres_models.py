@@ -697,6 +697,227 @@ class AuthAuditLog( Base ):
         return f"<AuthAuditLog(id={self.id}, event_type='{self.event_type}', user_id={self.user_id}, success={self.success})>"
 
 
+# ============================================================================
+# Decision Proxy Models (Phase 4)
+# ============================================================================
+
+class ProxyDecision( Base ):
+    """
+    Decision proxy decision log — every decision classified and acted on (or shadowed).
+
+    Requires:
+        - notification_id: UUID of the original notification
+        - domain: Domain identifier (e.g., "swe", "devops")
+        - category: Decision category within the domain
+        - question: Original question text
+        - action: Action taken (shadow, suggest, act, defer)
+
+    Ensures:
+        - id is automatically generated UUID
+        - created_at defaults to current timestamp
+        - ratification_state defaults to "not_required"
+        - metadata stored as JSONB for extensibility
+    """
+    __tablename__ = "proxy_decisions"
+
+    # Primary Key
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID( as_uuid=True ),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid()
+    )
+
+    # Decision context
+    notification_id: Mapped[str] = mapped_column(
+        String( 255 ),
+        nullable=False,
+        index=True
+    )
+    domain: Mapped[str] = mapped_column(
+        String( 50 ),
+        nullable=False,
+        index=True
+    )
+    category: Mapped[str] = mapped_column(
+        String( 100 ),
+        nullable=False,
+        index=True
+    )
+    question: Mapped[str] = mapped_column(
+        Text,
+        nullable=False
+    )
+    sender_id: Mapped[Optional[str]] = mapped_column(
+        String( 255 ),
+        nullable=True,
+        index=True
+    )
+
+    # Decision outcome
+    action: Mapped[str] = mapped_column(
+        String( 50 ),
+        nullable=False,
+        index=True
+    )
+    decision_value: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True
+    )
+    confidence: Mapped[Optional[float]] = mapped_column(
+        nullable=True
+    )
+    trust_level: Mapped[int] = mapped_column(
+        nullable=False,
+        default=1
+    )
+    reason: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True
+    )
+
+    # Ratification
+    ratification_state: Mapped[str] = mapped_column(
+        String( 50 ),
+        nullable=False,
+        default="not_required",
+        server_default="not_required",
+        index=True
+    )
+    ratified_by: Mapped[Optional[str]] = mapped_column(
+        String( 255 ),
+        nullable=True
+    )
+    ratified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime( timezone=True ),
+        nullable=True
+    )
+    ratification_feedback: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True
+    )
+
+    # Extensible metadata
+    metadata_json: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True
+    )
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime( timezone=True ),
+        nullable=False,
+        default=func.now(),
+        server_default=func.now()
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index( 'idx_proxy_decisions_domain', 'domain' ),
+        Index( 'idx_proxy_decisions_category', 'category' ),
+        Index( 'idx_proxy_decisions_action', 'action' ),
+        Index( 'idx_proxy_decisions_ratification', 'ratification_state' ),
+        Index( 'idx_proxy_decisions_created_at', 'created_at' ),
+        Index( 'idx_proxy_decisions_domain_category', 'domain', 'category' ),
+    )
+
+    def __repr__( self ) -> str:
+        return f"<ProxyDecision(id={self.id}, domain='{self.domain}', category='{self.category}', action='{self.action}')>"
+
+
+class TrustState( Base ):
+    """
+    Trust state snapshot — per-user, per-domain, per-category trust tracking.
+
+    Stores the current trust level and aggregate decision statistics for
+    a specific domain+category combination. Updated after each ratification.
+
+    Requires:
+        - user_email: User email for multi-user trust isolation
+        - domain: Domain identifier
+        - category: Decision category
+
+    Ensures:
+        - id is automatically generated UUID
+        - updated_at tracks last modification
+        - circuit_breaker_state stored as JSONB
+    """
+    __tablename__ = "trust_states"
+
+    # Primary Key
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID( as_uuid=True ),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid()
+    )
+
+    # Trust context
+    user_email: Mapped[str] = mapped_column(
+        String( 255 ),
+        nullable=False,
+        index=True
+    )
+    domain: Mapped[str] = mapped_column(
+        String( 50 ),
+        nullable=False,
+        index=True
+    )
+    category: Mapped[str] = mapped_column(
+        String( 100 ),
+        nullable=False,
+        index=True
+    )
+
+    # Trust metrics
+    trust_level: Mapped[int] = mapped_column(
+        nullable=False,
+        default=1
+    )
+    total_decisions: Mapped[int] = mapped_column(
+        nullable=False,
+        default=0
+    )
+    successful_decisions: Mapped[int] = mapped_column(
+        nullable=False,
+        default=0
+    )
+    rejected_decisions: Mapped[int] = mapped_column(
+        nullable=False,
+        default=0
+    )
+
+    # Circuit breaker
+    circuit_breaker_state: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True
+    )
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime( timezone=True ),
+        nullable=False,
+        default=func.now(),
+        server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime( timezone=True ),
+        nullable=False,
+        default=func.now(),
+        server_default=func.now()
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index( 'idx_trust_states_user_domain', 'user_email', 'domain' ),
+        Index( 'idx_trust_states_category', 'category' ),
+        Index( 'idx_trust_states_user_domain_category', 'user_email', 'domain', 'category', unique=True ),
+    )
+
+    def __repr__( self ) -> str:
+        return f"<TrustState(user={self.user_email}, domain='{self.domain}', category='{self.category}', level={self.trust_level})>"
+
+
 def quick_smoke_test():
     """
     Quick smoke test for postgres_models module - validates PostgreSQL ORM model definitions.
