@@ -30,7 +30,7 @@ from cosa.training.conf.model_config_loader import load_model_config
 import cosa.utils.util as du
 import cosa.utils.util_pytorch as dupt
 
-import cosa.agents.llm_client as llm_v010
+import cosa.agents.llm_client as llmc
 from cosa.training.quantizer import Quantizer
 from cosa.utils.util_stopwatch import Stopwatch
 
@@ -197,9 +197,6 @@ def release_gpus( models: Iterable[Any], nuclear_kill_button: bool=False ) -> No
         except Exception as e:
             print( f"Unexpected error during GPU reset: {e}" )
 
-    du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
-    print_gpu_memory()
-
 class PeftTrainer:
     """
     Trainer for fine-tuning models using PEFT (Parameter-Efficient Fine-Tuning).
@@ -241,8 +238,9 @@ class PeftTrainer:
         self.model_name = model_name
         self.test_train_dir = test_train_path
         self.lora_dir = lora_dir
-        self.merged_adapter_dir = None
-        self.quantized_model_dir = None
+        self.merged_adapter_dir   = None
+        self.quantized_model_dir  = None
+        self.quantized_model_dirs = {}
         
         # stats tracking
         self.start_gpu_memory = -1
@@ -250,7 +248,7 @@ class PeftTrainer:
         
         # models supported by this trainer
         self.supported_model_names = [ "Mistral-7B-Instruct-v0.2", "Ministral-8B-Instruct-2410",
-            "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct" ]
+            "Llama-3.2-3B-Instruct", "Phi-4-mini-instruct", "Qwen3-4B-Base" ]
         
         # Validate the model name
         self._validate_model_name()
@@ -560,7 +558,8 @@ class PeftTrainer:
     
     def run_validation( self, banner_prefix: str="",
             model: Optional[Any]=None, switch: str="", path_prefix: str="/var/model/lupin",
-            device_map: dict={ "": 0 }, validation_sample_size: int=1000, debug: Optional[bool]=None, verbose: Optional[bool]=None
+            device_map: dict={ "": 0 }, validation_sample_size: int=1000, debug: Optional[bool]=None, verbose: Optional[bool]=None,
+            vllm_base_url: Optional[str]=None
     ) -> pd.DataFrame:
         """
         Run validation against model server.
@@ -589,11 +588,19 @@ class PeftTrainer:
         # else:
         #     self.model = model
         
-        du.print_banner( f"{banner_prefix} Testing model [{self.model}]".strip(), prepend_nl=True )
+        du.print_banner( f"{banner_prefix} Testing model [{model}]".strip(), prepend_nl=True )
         
         df = pd.read_json(
             f"{self.test_train_dir}/voice-commands-xml-validate.jsonl", lines=True
-        ).sample( validation_sample_size, random_state=42 )
+        )
+        # Stratified sampling: equal representation per command for balanced validation
+        num_commands       = df[ "command" ].nunique()
+        samples_per_command = max( 1, validation_sample_size // num_commands )
+        df = df.groupby( "command" ).apply(
+            lambda x: x.sample( min( len( x ), samples_per_command ), random_state=42 ),
+            include_groups=False
+        ).droplevel( 1 ).reset_index()
+        print( f"Stratified validation: {samples_per_command} samples/command, {len( df )} total from {num_commands} commands" )
         
         # update the prompt field
         # KLUDGE: this is a workaround for the fact that the prompt field is not being created when the validation df is created
@@ -611,14 +618,25 @@ class PeftTrainer:
         
         # generate responses
         df = xml_coordinator.generate_responses(
-            df, model=model, model_name=self.model_name, device=device_map, max_new_tokens=128, debug=debug, verbose=verbose
+            df, model=model, model_name=self.model_name, device=device_map, max_new_tokens=128, debug=debug, verbose=verbose,
+            vllm_base_url=vllm_base_url
         )
         # validate responses
         df = xml_coordinator.validate_responses( df )
         # print validation stats using the coordinator
         xml_coordinator.print_validation_stats( df, title=f"Validation stats for model {self.model_name}" )
-        
-        return df
+
+        # Build results dict for consolidated dashboard
+        stage_name  = banner_prefix.strip().rstrip( ":" ) if banner_prefix else "Unknown"
+        stats_dict  = xml_coordinator.response_validator.get_validation_stats( df )
+        ms_per_item = xml_coordinator.last_ms_per_item
+
+        return {
+            "df"          : df,
+            "stats"       : stats_dict,
+            "ms_per_item" : ms_per_item,
+            "stage"       : stage_name
+        }
     
     def load_and_merge_adapter( self, checkpoint_dir: Optional[str]=None, device_map: dict={ "": 0 } ) -> None:
         """
@@ -703,21 +721,22 @@ class PeftTrainer:
         
         return self.merged_adapter_dir
     
-    def quantize_merged_adapter( self, merged_adapter_dir: Optional[str]=None ) -> str:
+    def quantize_merged_adapter( self, merged_adapter_dir: Optional[str]=None, bits: int=4 ) -> str:
         """
         Quantize merged model to reduce size and memory.
-        
+
         Requires:
             - Valid merged adapter path provided or in self.merged_adapter_dir
             - Quantizer class properly implemented
             - GPU available for quantization
-            
+            - bits is a positive integer (typically 4 or 8)
+
         Ensures:
-            - Quantizes model using Quantizer
+            - Quantizes model using Quantizer at the specified bit width
             - Saves quantized model to disk
-            - Updates self.quantized_model_dir
+            - Updates self.quantized_model_dir and self.quantized_model_dirs[bits]
             - Returns path to quantized model
-            
+
         Raises:
             - ValueError if no adapter path available
             - RuntimeError if no GPU or quantization fails
@@ -727,13 +746,13 @@ class PeftTrainer:
             self.merged_adapter_dir = merged_adapter_dir
         elif self.merged_adapter_dir is None:
             raise ValueError( "merged_adapter_dir is neither provided nor found" )
-        
+
         try:
             # Detect available GPUs
             num_gpus = torch.cuda.device_count()
             if num_gpus == 0:
                 raise RuntimeError( "No GPUs available for quantization" )
-            
+
             # Use specific device mapping rather than "auto" to avoid meta device issues
             if num_gpus == 1:
                 # Use a specific device (cuda:0) instead of "auto" to prevent meta device placement
@@ -743,20 +762,43 @@ class PeftTrainer:
                 # For multi-GPU setup, only use first GPU to avoid meta device issues
                 device_map = "cuda:0"
                 if self.debug: print( f"Multiple GPUs detected but using only first GPU with device_map={device_map}" )
-            
-            du.print_banner( f"Quantizing merged adapter in {self.merged_adapter_dir}", prepend_nl=True )
-            
+
+            du.print_banner( f"Quantizing merged adapter ({bits}-bit) in {self.merged_adapter_dir}", prepend_nl=True )
+
             # Initialize quantizer with specific device mapping
             quantizer = Quantizer( self.merged_adapter_dir, device_map=device_map, local_files_only=True )
-            
+
             # Quantize with appropriate batch size for the GPU
             batch_size = 1  # Conservative batch size to prevent OOM
-            quantizer.quantize_model( batch_size=batch_size )
-            
+            quantizer.quantize_model( batch_size=batch_size, bits=bits )
+
             # Save the quantized model
-            self.quantized_model_dir = quantizer.save( self.merged_adapter_dir, include_model_name=False )
-            
-            return self.quantized_model_dir
+            quantized_dir = quantizer.save( self.merged_adapter_dir, include_model_name=False )
+
+            # Track both single and multi-quant paths
+            self.quantized_model_dir = quantized_dir
+            if not hasattr( self, "quantized_model_dirs" ):
+                self.quantized_model_dirs = {}
+            self.quantized_model_dirs[ bits ] = quantized_dir
+
+            # Release quantizer GPU memory before returning — explicitly dismantles
+            # the autoround → model reference web, moves model to CPU, then clears cache.
+            # This ensures reserved GPU memory is actually freed (not just dereferenced).
+            du.print_banner( "Releasing quantizer GPU memory...", prepend_nl=True )
+            print_gpu_memory()
+            quantizer.release_gpu_memory()
+            del quantizer
+            gc.collect()
+            torch.cuda.empty_cache()
+            if not self._wait_for_gpu_memory_release():
+                print( "Attempting forced GPU cache clear..." )
+                torch.cuda.empty_cache()
+                gc.collect()
+                time.sleep( 5 )
+            du.print_banner( "Releasing quantizer GPU memory... AFTER", prepend_nl=True )
+            print_gpu_memory()
+
+            return quantized_dir
         
         except Exception as e:
             error_msg = f"Quantization failed: {str( e )}"
@@ -953,6 +995,508 @@ class PeftTrainer:
         model_config = load_model_config( self.model_name )
         return model_config[ "model" ][ "max_seq_length" ]
     
+    def _print_dry_run_stats( self, sample_size: float ) -> None:
+        """
+        Prints training data statistics without performing training.
+
+        Requires:
+            - sample_size is between 0.0 and 1.0
+            - Training JSONL files exist at test_train_dir
+
+        Ensures:
+            - Loads and parses training/test data
+            - Prints total row counts, effective sample counts
+            - Prints per-command distribution with imbalance analysis
+            - Does NOT load any model or perform training
+        """
+        import re
+
+        train_path = f"/{self.test_train_dir}/voice-commands-xml-train.jsonl"
+        test_path  = f"/{self.test_train_dir}/voice-commands-xml-test.jsonl"
+
+        train_rows_raw = du.get_file_as_list( train_path )
+        test_rows_raw  = du.get_file_as_list( test_path )
+
+        train_total    = len( train_rows_raw )
+        test_total     = len( test_rows_raw )
+        train_effective = int( train_total * sample_size ) if sample_size < 1.0 else train_total
+        test_effective  = int( test_total * sample_size ) if sample_size < 1.0 else test_total
+
+        # Parse commands from training data output field
+        command_pattern = re.compile( r"<command>(.*?)</command>" )
+        command_counts  = {}
+        for line in train_rows_raw[ :train_effective ]:
+            row   = json.loads( line )
+            match = command_pattern.search( row.get( "output", "" ) )
+            if match:
+                cmd = match.group( 1 )
+                command_counts[ cmd ] = command_counts.get( cmd, 0 ) + 1
+
+        separator = "=" * 65
+        print( f"\n{separator}" )
+        print( f" DRY RUN: Training Data Summary" )
+        print( f"{separator}\n" )
+        print( f"  Model:            {self.model_name}" )
+        print( f"  Sample size:      {sample_size} ({sample_size * 100:.0f}%)" )
+        print( f"  Train file:       voice-commands-xml-train.jsonl" )
+        print( f"  Test file:        voice-commands-xml-test.jsonl" )
+        print( f"\n  Training rows:    {train_total:,} total, {train_effective:,} effective" )
+        print( f"  Test rows:        {test_total:,} total, {test_effective:,} effective" )
+
+        if command_counts:
+            sorted_commands = sorted( command_counts.items() )
+            print( f"\n  Per-command distribution (training set, {len( sorted_commands )} commands):" )
+            print( f"  {'#':<4} {'Command':<55} {'Count':>7} {'Pct':>7}" )
+            print( "  " + "." * 75 )
+            for i, ( cmd, count ) in enumerate( sorted_commands, 1 ):
+                pct = 100.0 * count / train_effective
+                print( f"  {i:<4} {cmd:<55} {count:>7} {pct:>6.1f}%" )
+            print( "  " + "." * 75 )
+            print( f"  {'':4} {'TOTAL':<55} {train_effective:>7} {'100.0%':>7}" )
+
+            counts_list = list( command_counts.values() )
+            min_count   = min( counts_list )
+            max_count   = max( counts_list )
+            mean_count  = sum( counts_list ) / len( counts_list )
+            ratio       = max_count / min_count if min_count > 0 else float( "inf" )
+            print( f"\n  Min: {min_count}  Max: {max_count}  Mean: {mean_count:.1f}  Ratio: {ratio:.1f}x" )
+
+        print( f"\n{separator}" )
+
+    def _print_training_summary( self ) -> None:
+        """
+        Print consolidated training results dashboard comparing all validation stages.
+
+        Requires:
+            - self.validation_results is a non-empty list of dicts from run_validation()
+            - Each dict has keys: "stats", "ms_per_item", "stage", "df"
+            - self.stage_timings is a dict mapping stage names to elapsed milliseconds
+
+        Ensures:
+            - Prints Table 1: Overall metrics comparison across stages
+            - Prints Table 2: Per-command accuracy with deltas (if 2+ stages)
+            - Prints Table 3: Quantization impact summary (if post-training + post-quantization both present)
+            - Prints Table 4: Pipeline stage timing breakdown
+        """
+        sep = "=" * 90
+        print( f"\n{sep}" )
+        print( f" TRAINING RESULTS DASHBOARD" )
+        print( f"{sep}\n" )
+
+        # ── Table 1: Overall Metrics Comparison ──
+        print( "  Table 1: Overall Metrics Comparison" )
+        print( "  " + "-" * 86 )
+        header = f"  {'Stage':<22} | {'Exact Match':>12} | {'Command':>9} | {'Args':>9} | {'ms/item':>9} | {'Speedup':>8}"
+        print( header )
+        print( "  " + "-" * 86 )
+
+        baseline_ms = None
+        for r in self.validation_results:
+            s           = r[ "stats" ]
+            exact       = s[ "response_exact_percent" ]
+            cmd         = s[ "command_correct_percent" ]
+            args_pct    = s[ "args_correct_percent" ]
+            ms          = r[ "ms_per_item" ]
+            stage       = r[ "stage" ]
+
+            if baseline_ms is None:
+                baseline_ms = ms
+                speedup_str = "-".rjust( 8 )
+            else:
+                speedup     = baseline_ms / ms if ms > 0 else 0
+                speedup_str = f"{speedup:.2f}x".rjust( 8 )
+
+            print( f"  {stage:<22} | {exact:>11.1f}% | {cmd:>8.1f}% | {args_pct:>8.1f}% | {ms:>9.1f} | {speedup_str}" )
+
+        print( "  " + "-" * 86 )
+        print()
+
+        # ── Tables 2 & 3: Per-Command Accuracy + Quantization Impact (per quant variant) ──
+        # Find the post-training baseline (if present) and all post-quantization results
+        baseline_result = None
+        quant_results   = []
+        for r in self.validation_results:
+            if "POST-training" in r[ "stage" ]:
+                baseline_result = r
+            elif "POST-quantization" in r[ "stage" ]:
+                quant_results.append( r )
+
+        # Fall back to comparing last two stages if no post-training baseline found
+        if baseline_result is None and len( self.validation_results ) >= 2:
+            baseline_result = self.validation_results[ -2 ]
+            quant_results   = [ self.validation_results[ -1 ] ]
+
+        table_number = 2
+        for current_result in quant_results:
+            if baseline_result is None:
+                break
+
+            prev_per_cmd    = baseline_result[ "stats" ].get( "per_command", {} )
+            current_per_cmd = current_result[ "stats" ].get( "per_command", {} )
+            prev_label      = baseline_result[ "stage" ]
+            current_label   = current_result[ "stage" ]
+
+            all_commands = sorted( set( prev_per_cmd.keys() ) | set( current_per_cmd.keys() ) )
+
+            if all_commands:
+                print( f"  Table {table_number}: Per-Command Accuracy ({prev_label} vs {current_label})" )
+                print( "  " + "-" * 86 )
+                print( f"  {'Command':<50} | {prev_label:>12} | {current_label:>12} | {'Delta':>7}" )
+                print( "  " + "-" * 86 )
+
+                # Sort by delta ascending (worst degradation first)
+                command_deltas = []
+                for cmd in all_commands:
+                    prev_val    = prev_per_cmd.get( cmd, 0.0 )
+                    current_val = current_per_cmd.get( cmd, 0.0 )
+                    delta       = current_val - prev_val
+                    command_deltas.append( ( cmd, prev_val, current_val, delta ) )
+
+                command_deltas.sort( key=lambda x: x[ 3 ] )
+
+                degraded_count = 0
+                worst_cmd      = None
+                worst_delta    = 0.0
+                for cmd, prev_val, current_val, delta in command_deltas:
+                    delta_str = f"{delta:+.1f}"
+                    print( f"  {cmd:<50} | {prev_val:>11.2f}% | {current_val:>11.2f}% | {delta_str:>7}" )
+                    if delta < -0.5:
+                        degraded_count += 1
+                        if delta < worst_delta:
+                            worst_delta = delta
+                            worst_cmd   = cmd
+
+                print( "  " + "-" * 86 )
+                print()
+
+                # ── Impact Summary for this quant variant ──
+                table_number += 1
+                prev_exact    = baseline_result[ "stats" ][ "response_exact_percent" ]
+                current_exact = current_result[ "stats" ][ "response_exact_percent" ]
+                prev_ms       = baseline_result[ "ms_per_item" ]
+                current_ms    = current_result[ "ms_per_item" ]
+                speedup       = prev_ms / current_ms if current_ms > 0 else 0
+
+                print( f"  Table {table_number}: Quantization Impact Summary ({current_label})" )
+                print( "  " + "-" * 60 )
+                print( f"  Quantization Speedup : {speedup:.2f}x ({prev_ms:.1f}ms -> {current_ms:.1f}ms)" )
+                print( f"  Accuracy Cost        : {current_exact - prev_exact:+.1f}pp ({prev_exact:.1f}% -> {current_exact:.1f}%)" )
+                print( f"  Commands Degraded    : {degraded_count} of {len( all_commands )}" )
+                if worst_cmd:
+                    print( f"  Worst Degradation    : {worst_cmd} ({worst_delta:+.1f}pp)" )
+                print( "  " + "-" * 60 )
+                print()
+
+                table_number += 1
+
+        # ── Pipeline Stage Timing ──
+        if self.stage_timings:
+            print( f"  Table {table_number}: Pipeline Stage Timing" )
+            print( "  " + "-" * 60 )
+            print( f"  {'Stage':<35} | {'Duration':>12} | {'% of Total':>10}" )
+            print( "  " + "-" * 60 )
+
+            total_ms = self.stage_timings.get( "total_pipeline", sum( self.stage_timings.values() ) )
+
+            # Display order for stages — includes both legacy and new dual-quant keys
+            stage_display_order = [
+                ( "pre_training_validation",              "Pre-training validation" ),
+                ( "fine_tuning",                          "Fine-tuning" ),
+                ( "adapter_merge",                        "Adapter merge" ),
+                ( "post_training_validation",             "Post-training validation" ),
+                ( "quantization",                         "Quantization" ),
+                ( "quantization_4bit",                    "Quantization (4-bit)" ),
+                ( "quantization_8bit",                    "Quantization (8-bit)" ),
+                ( "post_quantization_validation",         "Post-quantization validation" ),
+                ( "post_quantization_4bit_validation",    "Post-quant (4-bit) validation" ),
+                ( "post_quantization_8bit_validation",    "Post-quant (8-bit) validation" ),
+            ]
+
+            displayed_ms = 0
+            for key, label in stage_display_order:
+                if key in self.stage_timings:
+                    ms  = self.stage_timings[ key ]
+                    pct = ( ms / total_ms * 100 ) if total_ms > 0 else 0
+                    displayed_ms += ms
+                    print( f"  {label:<35} | {self._format_duration_ms( ms ):>12} | {pct:>9.1f}%" )
+
+            # Show unaccounted time (GPU release, overhead, etc.)
+            if total_ms > 0 and displayed_ms < total_ms:
+                overhead_ms = total_ms - displayed_ms
+                pct = ( overhead_ms / total_ms * 100 )
+                print( f"  {'Other (GPU release, overhead)':<35} | {self._format_duration_ms( overhead_ms ):>12} | {pct:>9.1f}%" )
+
+            print( "  " + "-" * 60 )
+            if "total_pipeline" in self.stage_timings:
+                print( f"  {'Total pipeline':<35} | {self._format_duration_ms( total_ms ):>12} | {'100.0%':>10}" )
+
+            print( "  " + "-" * 60 )
+
+        print( f"\n{sep}\n" )
+
+    def _write_training_summary_to_file( self ) -> str:
+        """
+        Write training results to a versioned markdown file with YAML frontmatter.
+
+        Requires:
+            - self.validation_results is populated with at least one result
+            - self.stage_timings is populated
+            - cu.get_project_root() returns a valid path
+
+        Ensures:
+            - Creates io/peft/ directory if it doesn't exist
+            - Writes YAML frontmatter with machine-parseable training metadata
+            - Writes 4 tables in GitHub-flavored markdown matching the console dashboard
+            - Writes Output Paths section listing all pipeline artifacts
+            - Returns the path to the written file
+
+        Raises:
+            - IOError if file write fails
+            - ImportError if yaml is not available
+        """
+        import yaml
+
+        project_root = du.get_project_root()
+        output_dir   = project_root + "/io/peft"
+        os.makedirs( output_dir, exist_ok=True )
+
+        # Build filename: YYYY.MM.DD-at-HH-MM-peft-training-results-{model}-{bits}-bits.md
+        date_str = du.get_current_date()
+        time_str = du.get_current_time( format='%H-%M', include_timezone=False )
+
+        # Determine model short name for filename
+        model_short = self.model_name.lower().replace( " ", "-" )
+
+        # Determine bits label for filename
+        quant_bits = sorted( self.quantized_model_dirs.keys() ) if self.quantized_model_dirs else []
+        if len( quant_bits ) == 0:
+            bits_label = "no-quant"
+        elif len( quant_bits ) == 1:
+            bits_label = f"{quant_bits[ 0 ]}-bits"
+        else:
+            bits_label = f"{quant_bits[ 0 ]}-and-{quant_bits[ -1 ]}-bits"
+
+        filename    = f"{date_str}-at-{time_str}-peft-training-results-{model_short}-{bits_label}.md"
+        output_path = f"{output_dir}/{filename}"
+
+        # ── Build YAML frontmatter ──
+        frontmatter = {
+            "model_name"  : self.model_name,
+            "model_hf_id" : self.model_hf_id,
+            "generated"   : du.get_current_date() + "T" + du.get_current_time( format='%H:%M:%S', include_timezone=False ),
+        }
+
+        if self.lora_dir is not None:
+            frontmatter[ "lora_dir" ] = self.lora_dir
+        if self.merged_adapter_dir is not None:
+            frontmatter[ "merged_adapter_dir" ] = self.merged_adapter_dir
+        if self.quantized_model_dirs:
+            frontmatter[ "quantized_model_dirs" ] = { str( k ): v for k, v in self.quantized_model_dirs.items() }
+
+        frontmatter[ "validation_stages" ] = len( self.validation_results )
+
+        stages_list = []
+        for r in self.validation_results:
+            s = r[ "stats" ]
+            stage_entry = {
+                "stage"       : r[ "stage" ],
+                "exact_match" : round( s[ "response_exact_percent" ], 1 ),
+                "command_pct" : round( s[ "command_correct_percent" ], 1 ),
+                "args_pct"    : round( s[ "args_correct_percent" ], 1 ),
+                "ms_per_item" : round( r[ "ms_per_item" ], 1 ),
+            }
+            stages_list.append( stage_entry )
+        frontmatter[ "stages" ] = stages_list
+
+        if "total_pipeline" in self.stage_timings:
+            frontmatter[ "total_pipeline_ms" ]    = round( self.stage_timings[ "total_pipeline" ] )
+            frontmatter[ "total_pipeline_human" ] = self._format_duration_ms( self.stage_timings[ "total_pipeline" ] )
+
+        # ── Build markdown body ──
+        lines = []
+        lines.append( "---" )
+        lines.append( yaml.dump( frontmatter, default_flow_style=False, sort_keys=False ).rstrip() )
+        lines.append( "---" )
+        lines.append( "" )
+        lines.append( f"# PEFT Training Results: {self.model_name}" )
+        lines.append( "" )
+
+        # ── Table 1: Overall Metrics Comparison ──
+        lines.append( "## Table 1: Overall Metrics Comparison" )
+        lines.append( "" )
+        lines.append( "| Stage | Exact Match | Command | Args | ms/item | Speedup |" )
+        lines.append( "|-------|-------------|---------|------|---------|---------|" )
+
+        baseline_ms = None
+        for r in self.validation_results:
+            s     = r[ "stats" ]
+            exact = s[ "response_exact_percent" ]
+            cmd   = s[ "command_correct_percent" ]
+            args  = s[ "args_correct_percent" ]
+            ms    = r[ "ms_per_item" ]
+            stage = r[ "stage" ]
+
+            if baseline_ms is None:
+                baseline_ms = ms
+                speedup_str = "-"
+            else:
+                speedup     = baseline_ms / ms if ms > 0 else 0
+                speedup_str = f"{speedup:.2f}x"
+
+            lines.append( f"| {stage} | {exact:.1f}% | {cmd:.1f}% | {args:.1f}% | {ms:.1f} | {speedup_str} |" )
+
+        lines.append( "" )
+
+        # ── Tables 2 & 3: Per-Command + Impact (per quant variant) ──
+        baseline_result = None
+        quant_results   = []
+        for r in self.validation_results:
+            if "POST-training" in r[ "stage" ]:
+                baseline_result = r
+            elif "POST-quantization" in r[ "stage" ]:
+                quant_results.append( r )
+
+        if baseline_result is None and len( self.validation_results ) >= 2:
+            baseline_result = self.validation_results[ -2 ]
+            quant_results   = [ self.validation_results[ -1 ] ]
+
+        for current_result in quant_results:
+            if baseline_result is None:
+                break
+
+            prev_per_cmd    = baseline_result[ "stats" ].get( "per_command", {} )
+            current_per_cmd = current_result[ "stats" ].get( "per_command", {} )
+            prev_label      = baseline_result[ "stage" ]
+            current_label   = current_result[ "stage" ]
+            all_commands    = sorted( set( prev_per_cmd.keys() ) | set( current_per_cmd.keys() ) )
+
+            if all_commands:
+                lines.append( f"## Per-Command Accuracy: {prev_label} vs {current_label}" )
+                lines.append( "" )
+                lines.append( f"| Command | {prev_label} | {current_label} | Delta |" )
+                lines.append( "|---------|-------------|-------------|-------|" )
+
+                command_deltas = []
+                for cmd in all_commands:
+                    prev_val    = prev_per_cmd.get( cmd, 0.0 )
+                    current_val = current_per_cmd.get( cmd, 0.0 )
+                    delta       = current_val - prev_val
+                    command_deltas.append( ( cmd, prev_val, current_val, delta ) )
+                command_deltas.sort( key=lambda x: x[ 3 ] )
+
+                degraded_count = 0
+                worst_cmd      = None
+                worst_delta    = 0.0
+                for cmd, prev_val, current_val, delta in command_deltas:
+                    lines.append( f"| {cmd} | {prev_val:.2f}% | {current_val:.2f}% | {delta:+.1f} |" )
+                    if delta < -0.5:
+                        degraded_count += 1
+                        if delta < worst_delta:
+                            worst_delta = delta
+                            worst_cmd   = cmd
+
+                lines.append( "" )
+
+                # Impact summary
+                prev_exact    = baseline_result[ "stats" ][ "response_exact_percent" ]
+                current_exact = current_result[ "stats" ][ "response_exact_percent" ]
+                prev_ms       = baseline_result[ "ms_per_item" ]
+                current_ms    = current_result[ "ms_per_item" ]
+                speedup       = prev_ms / current_ms if current_ms > 0 else 0
+
+                lines.append( f"### Quantization Impact Summary ({current_label})" )
+                lines.append( "" )
+                lines.append( f"- **Quantization Speedup**: {speedup:.2f}x ({prev_ms:.1f}ms -> {current_ms:.1f}ms)" )
+                lines.append( f"- **Accuracy Cost**: {current_exact - prev_exact:+.1f}pp ({prev_exact:.1f}% -> {current_exact:.1f}%)" )
+                lines.append( f"- **Commands Degraded**: {degraded_count} of {len( all_commands )}" )
+                if worst_cmd:
+                    lines.append( f"- **Worst Degradation**: {worst_cmd} ({worst_delta:+.1f}pp)" )
+                lines.append( "" )
+
+        # ── Pipeline Stage Timing ──
+        if self.stage_timings:
+            lines.append( "## Pipeline Stage Timing" )
+            lines.append( "" )
+            lines.append( "| Stage | Duration | % of Total |" )
+            lines.append( "|-------|----------|------------|" )
+
+            total_ms = self.stage_timings.get( "total_pipeline", sum( self.stage_timings.values() ) )
+
+            stage_display_order = [
+                ( "pre_training_validation",              "Pre-training validation" ),
+                ( "fine_tuning",                          "Fine-tuning" ),
+                ( "adapter_merge",                        "Adapter merge" ),
+                ( "post_training_validation",             "Post-training validation" ),
+                ( "quantization",                         "Quantization" ),
+                ( "quantization_4bit",                    "Quantization (4-bit)" ),
+                ( "quantization_8bit",                    "Quantization (8-bit)" ),
+                ( "post_quantization_validation",         "Post-quantization validation" ),
+                ( "post_quantization_4bit_validation",    "Post-quant (4-bit) validation" ),
+                ( "post_quantization_8bit_validation",    "Post-quant (8-bit) validation" ),
+            ]
+
+            displayed_ms = 0
+            for key, label in stage_display_order:
+                if key in self.stage_timings:
+                    ms  = self.stage_timings[ key ]
+                    pct = ( ms / total_ms * 100 ) if total_ms > 0 else 0
+                    displayed_ms += ms
+                    lines.append( f"| {label} | {self._format_duration_ms( ms )} | {pct:.1f}% |" )
+
+            if total_ms > 0 and displayed_ms < total_ms:
+                overhead_ms = total_ms - displayed_ms
+                pct = ( overhead_ms / total_ms * 100 )
+                lines.append( f"| Other (GPU release, overhead) | {self._format_duration_ms( overhead_ms )} | {pct:.1f}% |" )
+
+            if "total_pipeline" in self.stage_timings:
+                lines.append( f"| **Total pipeline** | **{self._format_duration_ms( total_ms )}** | **100.0%** |" )
+
+            lines.append( "" )
+
+        # ── Output Paths ──
+        lines.append( "## Output Paths" )
+        lines.append( "" )
+        lines.append( "| Artifact | Path |" )
+        lines.append( "|----------|------|" )
+
+        if self.lora_dir is not None:
+            lines.append( f"| LoRA Adapter | {self.lora_dir} |" )
+        if self.merged_adapter_dir is not None:
+            lines.append( f"| Merged Adapter | {self.merged_adapter_dir} |" )
+        for bits, qdir in sorted( self.quantized_model_dirs.items() ):
+            lines.append( f"| Quantized ({bits}-bit) | {qdir} |" )
+        if hasattr( self, "test_train_dir" ) and self.test_train_dir is not None:
+            lines.append( f"| Test/Train Data | {self.test_train_dir} |" )
+        lines.append( f"| Training Results | {output_path} |" )
+        lines.append( "" )
+
+        # Write file
+        with open( output_path, "w" ) as f:
+            f.write( "\n".join( lines ) )
+
+        return output_path
+
+    @staticmethod
+    def _format_duration_ms( ms: float ) -> str:
+        """
+        Format milliseconds as human-readable duration string.
+
+        Requires:
+            - ms is a non-negative number
+
+        Ensures:
+            - Returns string in format HH:MM:SS or MM:SS for durations under 1 hour
+        """
+        total_seconds = int( ms / 1000 )
+        hours         = total_seconds // 3600
+        minutes       = ( total_seconds % 3600 ) // 60
+        seconds       = total_seconds % 60
+
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        else:
+            return f"{minutes:02d}:{seconds:02d}"
+
     def _get_test_train_data( self, sample_size: float=1.0 ) -> dict[str, Dataset]:
         """
         Load and prepare training and testing datasets.
@@ -974,7 +1518,7 @@ class PeftTrainer:
         """
         # Validate model name for supported models
         if self.model_name not in [ "Mistral-7B-Instruct-v0.2", "Ministral-8B-Instruct-2410", "Llama-3.2-3B-Instruct",
-            "Phi-4-mini-instruct" ]:
+            "Phi-4-mini-instruct", "Qwen3-4B-Base" ]:
             self._validate_model_name()
 
         path = f"/{self.test_train_dir}/voice-commands-xml-train.jsonl"
@@ -1210,60 +1754,83 @@ class PeftTrainer:
         os.environ[ "WANDB_DISABLE_SERVICE" ] = wandb_disable_service
     
     def _start_vllm_server( self,
-        model_path_or_hf_id: str, port: int=3000, max_model_len: int=2048, gpu_memory_utilization: float=0.75, timeout: int=180
+        model_path_or_hf_id: str, port: int=3000, max_model_len: int=2048, gpu_memory_utilization: float=0.75, timeout: int=180,
+        quantization: str=None, verbose_server: bool=False
     ) -> subprocess.Popen:
         """
         Starts a vLLM server for the quantized model and waits for it to be available.
-        
+
         Requires:
             - Valid model path or HF model ID
             - DEEPILY_PROJECTS_DIR environment set
             - vLLM installed in virtual environment
             - GPU resources available
-        
+            - quantization (if provided) is a valid vLLM quantization method (e.g. "gptq_marlin")
+            - verbose_server is a bool
+
         Ensures:
             - vLLM server started in subprocess
             - Server configured for available GPUs
+            - Model-specific vllm_config overrides applied (max_model_len, gpu_memory_utilization)
+            - Quantization flag appended to command only when explicitly passed
+            - When verbose_server=True, all vLLM startup output is printed to console
             - Waits for server availability
             - Returns process object
-        
+
         Raises:
             - ValueError if DEEPILY_PROJECTS_DIR not set
             - TimeoutError if server start times out
             - RuntimeError if server exits unexpectedly
         """
+        # Apply model-specific vLLM config overrides if available
+        vllm_config = load_model_config( self.model_name ).get( "vllm", {} )
+        if vllm_config:
+            max_model_len          = vllm_config.get( "max_model_len", max_model_len )
+            gpu_memory_utilization = vllm_config.get( "gpu_memory_utilization", gpu_memory_utilization )
+            if self.debug: print( f"vLLM config overrides from {self.model_name}: max_model_len={max_model_len}, gpu_memory_utilization={gpu_memory_utilization}" )
+
+        # Read optional per-model overrides for TP size and max concurrent sequences
+        tp_override  = vllm_config.get( "tensor_parallel_size", None )
+        max_num_seqs = vllm_config.get( "max_num_seqs", None )
+
         # Check if DEEPILY_PROJECTS_DIR is set
         projects_dir = os.environ.get( "DEEPILY_PROJECTS_DIR" )
         if not projects_dir: raise ValueError( "DEEPILY_PROJECTS_DIR environment variable is not set." )
-        
+
         du.print_banner( "Starting vLLM server...", prepend_nl=True  )
-        
+
         # Check for multiple GPUs
         gpu_count = torch.cuda.device_count()
-        gpu_devices = ",".join( str( i ) for i in range( gpu_count ) )
-        
+
         if self.debug:
-            print( f"Detected {gpu_count} GPU(s): {gpu_devices}" )
             for i in range( gpu_count ):
                 gpu_name = torch.cuda.get_device_name( i )
-                gpu_mem = torch.cuda.get_device_properties( i ).total_memory / (1024 ** 3)  # in GB
+                gpu_mem  = torch.cuda.get_device_properties( i ).total_memory / ( 1024 ** 3 )  # in GB
                 print( f"  GPU {i}: {gpu_name} with {gpu_mem:.2f} GB memory" )
-        
+
+        # Use config TP size or auto-detect from available GPUs
+        tensor_parallel_size = tp_override if tp_override else gpu_count
+        gpu_devices          = ",".join( str( i ) for i in range( tensor_parallel_size ) )
+
+        if self.debug: print( f"Detected {gpu_count} GPU(s), using tensor_parallel_size={tensor_parallel_size}, CUDA_VISIBLE_DEVICES={gpu_devices}" )
+
         # Build the vLLM command with GPU configuration
-        if gpu_count > 1:
-            # Configure vLLM to use all available GPUs
-            tensor_parallel_size = gpu_count
+        if tensor_parallel_size > 1:
             gpu_config = f"--tensor-parallel-size {tensor_parallel_size} --gpu-memory-utilization {gpu_memory_utilization}"
-            if self.debug: print(
-                f"Configuring vLLM to use multiple GPUs (tensor_parallel_size={tensor_parallel_size})"
-                )
         else:
-            # Use the single GPU with specified memory utilization
             gpu_config = f"--gpu-memory-utilization {gpu_memory_utilization}"
-            if self.debug: print( f"Configuring vLLM to use a single GPU with memory utilization {gpu_memory_utilization}" )
-        
+
+        # Cap V1 engine warmup buffer allocation if specified
+        if max_num_seqs:
+            gpu_config += f" --max-num-seqs {max_num_seqs}"
+
+        # Force specific quantization kernel (e.g. gptq_marlin) — only for quantized models
+        if quantization:
+            gpu_config += f" --quantization {quantization}"
+            if self.debug: print( f"Quantization kernel override: --quantization {quantization}" )
+
         # Command to start the vLLM server
-        cmd = f"cd {projects_dir}/vllm-pip; source .venv/bin/activate; CUDA_VISIBLE_DEVICES={gpu_devices} vllm serve {model_path_or_hf_id} --port {port} --max-model-len {max_model_len} {gpu_config}"
+        cmd = f"cd {projects_dir}/vllm-pip; source .venv/bin/activate; CUDA_VISIBLE_DEVICES={gpu_devices} vllm serve {model_path_or_hf_id} --served-model-name {model_path_or_hf_id} --port {port} --max-model-len {max_model_len} {gpu_config}"
         
         if self.debug: print( f"Command to start vLLM server: {cmd}" )
         
@@ -1290,17 +1857,22 @@ class PeftTrainer:
         
         # Start the vLLM server in a separate process with its own process group
         process = subprocess.Popen(
-            cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True
+            cmd, shell=True, executable='/bin/bash', stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True
         )
         
         # Start a thread to read and print server output
         def print_server_output( process: subprocess.Popen, log: list ) -> None:
             for line in process.stdout:
                 log.append( line.strip() )
-                if self.debug and self.verbose:
+                if verbose_server or ( self.debug and self.verbose ):
                     print( f"[vLLM Server] {line.strip()}" )
-                # Check if any known error patterns appear in the output
-                if "CUDA out of memory" in line or "CUDA error" in line or "Error:" in line:
+                # Check for genuine vLLM server errors (not model-generated text containing "error")
+                # Real server errors: CUDA issues, Python exceptions at line start, vLLM-specific errors
+                is_cuda_error   = "CUDA out of memory" in line or "CUDA error" in line
+                is_server_error = line.strip().startswith( "Error:" ) or line.strip().startswith( "ERROR" )
+                is_python_error = line.strip().startswith( "Traceback" ) or line.strip().startswith( "RuntimeError" )
+                is_vllm_error   = "AsyncEngineDeadError" in line or "EngineDeadError" in line
+                if is_cuda_error or is_server_error or is_python_error or is_vllm_error:
                     print( f"[vLLM Server ERROR] Detected error: {line.strip()}" )
         
         output_thread = threading.Thread( target=print_server_output, args=(process, server_log), daemon=True )
@@ -1408,10 +1980,80 @@ class PeftTrainer:
         
         if self.debug: print( "vLLM server has been stopped" )
         return True
-    
+
+    def _wait_for_gpu_memory_release( self, max_wait_seconds=30, target_free_pct=0.90 ):
+        """
+        Polls GPU memory until sufficient memory is free after process termination.
+
+        Requires:
+            - torch.cuda is available
+            - max_wait_seconds is a positive integer
+            - target_free_pct is between 0.0 and 1.0
+
+        Ensures:
+            - Returns True when all GPUs have >= target_free_pct memory free
+            - Returns False if timeout reached (caller should handle)
+            - Prints progress during wait
+
+        Raises:
+            - None (returns False on failure)
+        """
+        gpu_count = torch.cuda.device_count()
+        if gpu_count == 0: return True
+
+        print( f"Waiting for GPU memory release (target: {target_free_pct * 100:.0f}% free)..." )
+
+        for elapsed in range( max_wait_seconds ):
+            all_clear = True
+            for i in range( gpu_count ):
+                free, total = torch.cuda.mem_get_info( i )
+                free_pct    = free / total
+                if free_pct < target_free_pct:
+                    all_clear = False
+                    break
+
+            if all_clear:
+                print( f"GPU memory released after {elapsed}s" )
+                return True
+
+            if elapsed % 5 == 0 and elapsed > 0:
+                # Show progress every 5 seconds
+                for i in range( gpu_count ):
+                    free, total = torch.cuda.mem_get_info( i )
+                    print( f"  GPU {i}: {free / ( 1024 ** 3 ):.1f} GB free / {total / ( 1024 ** 3 ):.1f} GB total ({free / total * 100:.0f}%)" )
+
+            time.sleep( 1 )
+
+        print( f"WARNING: GPU memory not fully released after {max_wait_seconds}s" )
+        return False
+
+    @staticmethod
+    def _parse_quantize_bits( quantize_bits: str ) -> list:
+        """
+        Parse the --quantize-bits CLI argument into a list of int bit widths.
+
+        Requires:
+            - quantize_bits is one of "both", "4", or "8"
+
+        Ensures:
+            - Returns [4, 8] for "both", [4] for "4", [8] for "8"
+
+        Raises:
+            - ValueError if quantize_bits is not a recognized value
+        """
+        if quantize_bits == "both":
+            return [ 4, 8 ]
+        elif quantize_bits == "4":
+            return [ 4 ]
+        elif quantize_bits == "8":
+            return [ 8 ]
+        else:
+            raise ValueError( f"Unknown quantize_bits value: {quantize_bits}. Must be 'both', '4', or '8'" )
+
     def run_pipeline( self,
         pre_training_stats: bool=False, post_training_stats: bool=False, post_quantization_stats: bool=False, nuclear_kill_button: bool=False,
-        validation_sample_size: int=100
+        validation_sample_size: int=100, sample_size_override: float=None, dry_run: bool=False, quantize_bits: str="both",
+        resume_from_merged: str=None
     ) -> None:
         """
         Executes the full training pipeline from fine-tuning to quantization.
@@ -1423,11 +2065,13 @@ class PeftTrainer:
             - GPU resources must be available with sufficient VRAM for the model
             - Required datasets must be available at test_train_path
             - The specified model must be one of the supported models
-        
+            - If resume_from_merged is provided, it must be a valid directory containing a merged adapter
+
         Ensures:
-            - If pre_training_stats is True, validation is performed before training
-            - The model is fine-tuned with LoRA adapters
-            - The LoRA adapter is merged with the base model
+            - If resume_from_merged is provided, phases 1-3 (pre-validation, fine-tuning, merge) are skipped
+            - If pre_training_stats is True (and not resuming), validation is performed before training
+            - The model is fine-tuned with LoRA adapters (unless resuming)
+            - The LoRA adapter is merged with the base model (unless resuming)
             - A quantized version of the merged model is created
             - If post_training_stats is True, validation is performed after merging the adapter
             - If post_quantization_stats is True, validation is performed after quantizing the model
@@ -1445,263 +2089,201 @@ class PeftTrainer:
             - TimeoutError: If the vLLM server does not start within the specified timeout
         """
         timer = Stopwatch( msg=None )
-        
+
+        # Dashboard: collect validation results and stage timings for consolidated summary
+        self.validation_results = []
+        self.stage_timings      = {}
+
         self.login_to_hf()
-        
-        # Run a pre-training validation using vLLM server
-        if pre_training_stats:
-            vllm_server_process = None
-            try:
-                # Start vLLM server for the base model and wait for it to be available
-                vllm_server_process = self._start_vllm_server( self.model_hf_id )
-                
-                # Run validation using the server, pointing it to the HF ID
-                self.run_validation(
-                    banner_prefix="PRE-training:", 
-                    model=self.model_hf_id,
-                    path_prefix=lupin_root,
-                    switch="deepily", 
-                    device_map="auto",  # Allow using multiple GPUs
-                    validation_sample_size=validation_sample_size, 
-                    debug=self.debug, 
-                    verbose=self.verbose
-                )
-            finally:
-                # Always clean up the vLLM server process if it was started
-                if vllm_server_process: self._stop_vllm_server( vllm_server_process )
-                # Release GPU resources
-                release_gpus( [ self.model, self.tokenizer ], nuclear_kill_button=nuclear_kill_button )
+
+        if resume_from_merged:
+            # Resume mode: skip training and merge, jump to validation/quantization
+            du.print_banner( f"RESUME MODE: Using existing merged adapter at {resume_from_merged}" )
+            if not os.path.isdir( resume_from_merged ):
+                raise ValueError( f"Merged adapter directory does not exist: {resume_from_merged}" )
+            merged_adapter_dir      = resume_from_merged
+            self.merged_adapter_dir = merged_adapter_dir
         else:
-            print( f"Skipping pre-training validation for {args.model_name}" )
-        
-        # Load model-specific fine-tuning configuration
-        model_config = load_model_config( self.model_name )
-        fine_tune_params = model_config[ "fine_tune" ]
-        
-        # Fine-tune using the dynamically loaded configuration
-        checkpoint_dir = self.fine_tune(
-            sample_size=fine_tune_params[ "sample_size" ],
-            batch_size=fine_tune_params[ "batch_size" ],
-            gradient_accumulation_steps=fine_tune_params[ "gradient_accumulation_steps" ],
-            logging_steps=fine_tune_params[ "logging_steps" ],
-            eval_steps=fine_tune_params[ "eval_steps" ],
-            device_map=fine_tune_params[ "device_map" ],
-            output_dir=args.lora_dir
-        )
-        release_gpus( [ self.model, self.tokenizer ] )
-        
-        # Load and merge the adapter
-        self.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
-        merged_adapter_dir = self.save_merged_adapter( lora_dir=args.lora_dir )
-        release_gpus( [ self.model, self.tokenizer ] )
-        
+            # Normal mode: run pre-validation, fine-tuning, and merge (phases 1-3)
+
+            # Run a pre-training validation using vLLM server
+            if pre_training_stats:
+                stage_timer = Stopwatch( msg=None )
+                vllm_server_process = None
+                try:
+                    # Start vLLM server for the base model and wait for it to be available
+                    vllm_server_process = self._start_vllm_server( self.model_hf_id )
+
+                    # Run validation using the server, pointing it to the HF ID
+                    result = self.run_validation(
+                        banner_prefix="PRE-training:",
+                        model=self.model_hf_id,
+                        path_prefix=lupin_root,
+                        switch="deepily",
+                        device_map="auto",  # Allow using multiple GPUs
+                        validation_sample_size=validation_sample_size,
+                        debug=self.debug,
+                        verbose=self.verbose
+                    )
+                    self.validation_results.append( result )
+                finally:
+                    # Always clean up the vLLM server process if it was started
+                    if vllm_server_process: self._stop_vllm_server( vllm_server_process )
+                    # Release GPU resources
+                    release_gpus( [ self.model, self.tokenizer ], nuclear_kill_button=nuclear_kill_button )
+                    # Wait for GPU memory to actually be freed (vLLM process cleanup is async)
+                    if not self._wait_for_gpu_memory_release():
+                        print( "Attempting forced GPU cache clear..." )
+                        torch.cuda.empty_cache()
+                        gc.collect()
+                        time.sleep( 5 )
+                    du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
+                    print_gpu_memory()
+                self.stage_timings[ "pre_training_validation" ] = stage_timer.get_delta_ms()
+            else:
+                print( f"Skipping pre-training validation for {args.model_name}" )
+
+            # Load model-specific fine-tuning configuration
+            model_config = load_model_config( self.model_name )
+            fine_tune_params = model_config[ "fine_tune" ]
+
+            # Allow CLI override of sample_size
+            if sample_size_override is not None:
+                fine_tune_params[ "sample_size" ] = sample_size_override
+                print( f"CLI override: sample_size = {sample_size_override}" )
+
+            # Dry-run mode: show training data stats and exit without training
+            if dry_run:
+                self._print_dry_run_stats( fine_tune_params[ "sample_size" ] )
+                return
+
+            # Fine-tune using the dynamically loaded configuration
+            stage_timer = Stopwatch( msg=None )
+            checkpoint_dir = self.fine_tune(
+                sample_size=fine_tune_params[ "sample_size" ],
+                batch_size=fine_tune_params[ "batch_size" ],
+                gradient_accumulation_steps=fine_tune_params[ "gradient_accumulation_steps" ],
+                logging_steps=fine_tune_params[ "logging_steps" ],
+                eval_steps=fine_tune_params[ "eval_steps" ],
+                device_map=fine_tune_params[ "device_map" ],
+                output_dir=args.lora_dir
+            )
+            self.stage_timings[ "fine_tuning" ] = stage_timer.get_delta_ms()
+            release_gpus( [ self.model, self.tokenizer ] )
+            du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
+            print_gpu_memory()
+
+            # Load and merge the adapter
+            stage_timer = Stopwatch( msg=None )
+            self.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
+            merged_adapter_dir = self.save_merged_adapter( lora_dir=args.lora_dir )
+            self.stage_timings[ "adapter_merge" ] = stage_timer.get_delta_ms()
+            release_gpus( [ self.model, self.tokenizer ] )
+            du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
+            print_gpu_memory()
+
         if post_training_stats:
+            stage_timer = Stopwatch( msg=None )
             vllm_server_process = None
             try:
                 # Start vLLM server and wait for it to be available
                 vllm_server_process = self._start_vllm_server( merged_adapter_dir )
-                
-                # create a custom model name using as an ID the mount point for the recently quantized model directory
-                model = llm_v010.get_model( merged_adapter_dir )
-                self.run_validation(
+
+                # Use the bare directory path — vLLM was started with this exact path as the model name
+                model = merged_adapter_dir
+                result = self.run_validation(
                     banner_prefix="POST-training:", model=model, path_prefix=lupin_root, switch="deepily", device_map="cuda:0",
-                    validation_sample_size=validation_sample_size, debug=self.debug, verbose=self.verbose
+                    validation_sample_size=validation_sample_size, debug=self.debug, verbose=self.verbose,
+                    vllm_base_url="http://192.168.1.21:3000/v1/completions"
                 )
+                self.validation_results.append( result )
             finally:
                 # Always clean up the vLLM server process if it was started
                 if vllm_server_process: self._stop_vllm_server( vllm_server_process )
                 # release GPUs -- with prejudice -- before doing anything else
                 release_gpus( [ self.model, self.tokenizer ], nuclear_kill_button=nuclear_kill_button )
+                # Wait for GPU memory to actually be freed (vLLM process cleanup is async)
+                if not self._wait_for_gpu_memory_release():
+                    print( "Attempting forced GPU cache clear..." )
+                    torch.cuda.empty_cache()
+                    gc.collect()
+                    time.sleep( 5 )
+                du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
+                print_gpu_memory()
+            self.stage_timings[ "post_training_validation" ] = stage_timer.get_delta_ms()
         else:
             print( f"Skipping post-training validation for {args.model_name}" )
-        
-        # Quantize the merged adapter
-        quantized_model_dir = self.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
-        
-        if post_quantization_stats:
-            vllm_server_process = None
-            try:
-                # Start vLLM server and wait for it to be available
-                vllm_server_process = self._start_vllm_server( quantized_model_dir )
-                
-                # create a custom model name using as an ID the mount point for the recently quantized model directory
-                model = llm_v010.get_model( quantized_model_dir )
-                self.run_validation(
-                    banner_prefix="POST-quantization:", model=model, path_prefix=lupin_root, switch="deepily", device_map="cuda:0",
-                    validation_sample_size=validation_sample_size, debug=self.debug, verbose=self.verbose
-                )
-            finally:
-                # Always clean up the vLLM server process if it was started
-                if vllm_server_process: self._stop_vllm_server( vllm_server_process )
-                # release GPU before doing anything else
-                release_gpus( [ self.model, self.tokenizer ] )
-        else:
-            print( f"Skipping post-quantization validation for {args.model_name}" )
-        
+
+        # Quantize the merged adapter — loop over requested bit widths
+        quantize_bits_list = self._parse_quantize_bits( quantize_bits )
+        self.quantized_model_dirs = {}
+
+        # Load vllm_config for quantization kernel hint (e.g. gptq_marlin)
+        vllm_config = load_model_config( self.model_name ).get( "vllm", {} )
+
+        for bits in quantize_bits_list:
+
+            stage_timer = Stopwatch( msg=None )
+            quantized_model_dir = self.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir, bits=bits )
+            self.stage_timings[ f"quantization_{bits}bit" ] = stage_timer.get_delta_ms()
+
+            if post_quantization_stats:
+                stage_timer = Stopwatch( msg=None )
+                vllm_server_process = None
+                quantization_hint = vllm_config.get( "quantization", None )
+                try:
+                    # Start vLLM server and wait for it to be available
+                    vllm_server_process = self._start_vllm_server( quantized_model_dir, quantization=quantization_hint, verbose_server=True )
+
+                    # Use the bare directory path — vLLM was started with this exact path as the model name
+                    model = quantized_model_dir
+                    result = self.run_validation(
+                        banner_prefix=f"POST-quantization ({bits}-bit):", model=model, path_prefix=lupin_root, switch="deepily", device_map="cuda:0",
+                        validation_sample_size=validation_sample_size, debug=self.debug, verbose=self.verbose,
+                        vllm_base_url="http://192.168.1.21:3000/v1/completions"
+                    )
+                    self.validation_results.append( result )
+                finally:
+                    # Always clean up the vLLM server process if it was started
+                    if vllm_server_process: self._stop_vllm_server( vllm_server_process )
+                    # release GPU before doing anything else
+                    release_gpus( [ self.model, self.tokenizer ] )
+                    # Wait for GPU memory to actually be freed (vLLM process cleanup is async)
+                    if not self._wait_for_gpu_memory_release():
+                        print( "Attempting forced GPU cache clear..." )
+                        torch.cuda.empty_cache()
+                        gc.collect()
+                        time.sleep( 5 )
+                    du.print_banner( "Releasing GPU memory... AFTER", prepend_nl=True )
+                    print_gpu_memory()
+                self.stage_timings[ f"post_quantization_{bits}bit_validation" ] = stage_timer.get_delta_ms()
+            else:
+                print( f"Skipping post-quantization ({bits}-bit) validation for {args.model_name}" )
+
         # Print completion information
         print()
-        msg = f"Finished fine-tuning, merging and quantizing {args.model_name}"
-        timer.print( msg )
-        du.print_banner( msg )
-        print( f"Quantized model: {quantized_model_dir}" )
-        du.print_simple_file_list( quantized_model_dir )
-    
-    def run_pipeline_adhoc( self, pre_training_stats: bool=False, post_training_stats: bool=False, post_quantization_stats: bool=False, nuclear_kill_button: bool=False,
-        validation_sample_size: int=100
-    ) -> None:
-        """
-        Executes a customized version of the training pipeline for debugging and testing purposes.
-        
-        Requires:
-            - The trainer instance must be properly initialized with valid model_hf_id, model_name, and test_train_path
-            - Hugging Face credentials must be available for login
-            - A valid merged adapter directory must be specified in the hardcoded path or be created during execution
-            - GPU resources must be available with sufficient VRAM for the model
-            - The specified model must be one of the supported models
-        
-        Ensures:
-            - Various pipeline steps can be enabled/disabled through code modifications for debugging
-            - All enabled steps are executed in the correct sequence
-            - If pre_training_stats is True and the code is uncommented, validation is performed before training
-            - If post_training_stats is True and the code is uncommented, validation is performed after merging the adapter
-            - The quantization step is always executed with the hardcoded merged adapter path
-            - If post_quantization_stats is True and the code is uncommented, validation is performed after quantization
-            - All processes (including vLLM server) are properly cleaned up regardless of success or failure
-            - GPU memory is properly released after the quantization step
-            - The following instance attributes are updated (for the steps that are executed):
-              - self.checkpoint_dir: Set to the path of the last training checkpoint
-              - self.merged_adapter_dir: Set to the path of the merged adapter
-              - self.quantized_model_dir: Set to the path of the quantized model
-        
-        Raises:
-            - ValueError: If required paths or credentials are invalid
-            - RuntimeError: If GPU resources are insufficient or if model loading fails
-            - Various exceptions based on which parts of the pipeline are enabled for testing
-        
-        Notes:
-            - This method is intended for development and debugging only
-            - Parts of the pipeline are commented out to allow targeted testing of specific components
-            - The commented sections should be adjusted based on the specific testing needs
-        """
-        timer = Stopwatch( msg=None )
-        
-        self.login_to_hf()
-        
-        # # Run a pre-training validation using vLLM server
-        # if pre_training_stats:
-        #     vllm_server_process = None
-        #     try:
-        #         # Start vLLM server for the base model and wait for it to be available
-        #         vllm_server_process = self._start_vllm_server( self.model_hf_id )
-        #         
-        #         # Create a custom model name using the base model ID
-        #         model = llm_v010.get_model( self.model_hf_id )
-        #         
-        #         # Run validation using the server
-        #         self.run_validation(
-        #             banner_prefix="PRE-training:", 
-        #             model=model, 
-        #             path_prefix=lupin_root,
-        #             switch="deepily", 
-        #             device_map="auto",  # Allow using multiple GPUs
-        #             validation_sample_size=validation_sample_size, 
-        #             debug=self.debug, 
-        #             verbose=self.verbose
-        #         )
-        #     finally:
-        #         # Always clean up the vLLM server process if it was started
-        #         if vllm_server_process: self._stop_vllm_server( vllm_server_process )
-        #         # Release GPU resources
-        #         release_gpus( [ self.model, self.tokenizer ], nuclear_kill_button=nuclear_kill_button )
-        # else:
-        #     print( f"Skipping pre-training validation for {args.model_name}" )
-        #
-        # # Load model-specific fine-tuning configuration
-        # model_config     = load_model_config( self.model_name )
-        # fine_tune_params = model_config[ "fine_tune" ]
-        #
-        # # Fine-tune using the dynamically loaded configuration
-        # checkpoint_dir = self.fine_tune(
-        #                     sample_size=fine_tune_params[ "sample_size" ],
-        #                      batch_size=fine_tune_params[ "batch_size" ],
-        #     gradient_accumulation_steps=fine_tune_params[ "gradient_accumulation_steps" ],
-        #                   logging_steps=fine_tune_params[ "logging_steps" ],
-        #                      eval_steps=fine_tune_params[ "eval_steps" ],
-        #                      device_map=fine_tune_params[ "device_map" ],
-        #                      output_dir=args.lora_dir
-        # )
-        #
-        # release_gpus( [ self.model, self.tokenizer ] )
-        #
-        # # Load and merge the adapter
-        # self.load_and_merge_adapter( checkpoint_dir=checkpoint_dir )
-        # merged_adapter_dir = self.save_merged_adapter( lora_dir=args.lora_dir )
-        release_gpus( [ self.model, self.tokenizer ] )
-        
-        # merged_adapter_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-29-at-12-04"
-        merged_adapter_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Mistral-7B-Instruct-v0.2.lora/merged-on-2025-05-01-at-02-10"
-        # 
-        # if post_training_stats:
-        #     du.print_banner( f"Running post-training validation for {args.model_name}", prepend_nl=True )
-        #
-        #     vllm_server_process = None
-        #     try:
-        #         # Start vLLM server and wait for it to be available
-        #         vllm_server_process = self._start_vllm_server( merged_adapter_dir )
-        #
-        #         # create a custom model name using as an ID the mount point for the recently quantized model directory
-        #         model = llm_v010.get_model( merged_adapter_dir )
-        #         # TODO: add runtime configuration for sample size
-        #         self.run_validation(
-        #             model=model, path_prefix=lupin_root, switch="deepily", device_map="cuda:0", validation_sample_size=100, debug=False,
-        #             verbose=False
-        #         )
-        #     finally:
-        #         # Always clean up the vLLM server process if it was started
-        #         if vllm_server_process: self._stop_vllm_server( vllm_server_process )
-        #         # release GPU before doing anything else
-        #         release_gpus( [ self.model, self.tokenizer ], nuclear_kill_button=nuclear_kill_button )
-        # else:
-        #     print( f"Skipping post-training validation for {args.model_name}" )
-        
-        # Quantize the merged adapter
-        quantized_model_dir = self.quantize_merged_adapter( merged_adapter_dir=merged_adapter_dir )
-        
-        # release GPU before doing anything else
-        release_gpus( [ self.model, self.tokenizer ] )
-        
-        # quantized_model_dir = "/mnt/DATA01/include/www.deepily.ai/projects/models/Ministral-8B-Instruct-2410.lora/merged-on-2025-04-08-at-21-26/autoround-4-bits-sym.gptq/2025-04-08-at-21-47"
-        if post_quantization_stats:
-            
-            du.print_banner( f"Running post-training validation for {args.model_name}", prepend_nl=True )
-            
-            vllm_server_process = None
-            try:
-                # Start vLLM server and wait for it to be available
-                vllm_server_process = self._start_vllm_server( quantized_model_dir )
-                
-                # create a custom model name using as an ID the mount point for the recently quantized model directory
-                model = llm_v010.get_model( quantized_model_dir )
-                # TODO: add runtime configuration for sample size
-                self.run_validation(
-                    model=model, path_prefix=lupin_root, switch="deepily", device_map="cuda:0",
-                    validation_sample_size=validation_sample_size, debug=False,
-                    verbose=False
-                )
-            finally:
-                # Always clean up the vLLM server process if it was started
-                if vllm_server_process: self._stop_vllm_server( vllm_server_process )
-                # release GPU before doing anything else
-                release_gpus( [ self.model, self.tokenizer ] )
+        bits_label = " and ".join( [ f"{b}-bit" for b in quantize_bits_list ] )
+        if resume_from_merged:
+            msg = f"Finished validation and quantizing ({bits_label}) from merged adapter: {resume_from_merged}"
         else:
-            print( f"Skipping post-quantization validation for {args.model_name}" )
-        
-        # Print completion information
-        msg = f"Finished fine-tuning, merging and quantizing {args.model_name}"
+            msg = f"Finished fine-tuning, merging and quantizing ({bits_label}) {args.model_name}"
         timer.print( msg )
+        self.stage_timings[ "total_pipeline" ] = timer.get_delta_ms()
         du.print_banner( msg )
-        print( f"Quantized model: {quantized_model_dir}" )
-        du.print_simple_file_list( quantized_model_dir )
+        for bits, qdir in self.quantized_model_dirs.items():
+            print( f"Quantized model ({bits}-bit): {qdir}" )
+            du.print_simple_file_list( qdir )
+
+        # Print consolidated training summary dashboard
+        if self.validation_results:
+            self._print_training_summary()
+
+        # Write training results to markdown file
+        try:
+            results_path = self._write_training_summary_to_file()
+            print( f"Training results written to: {results_path}" )
+        except Exception as e:
+            print( f"Warning: Failed to write training results file: {e}" )
 
 
 def check_env() -> str:
@@ -1808,47 +2390,17 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument( "--post-training-stats",     action="store_true", help="Run validation after training and merging",  default=False )
     parser.add_argument( "--post-quantization-stats", action="store_true", help="Run validation after quantization",          default=False )
     parser.add_argument( "--nuclear-kill-button",     action="store_true", help="Enable nuclear option for GPU memory reset", default=False )
-    
-    parser.add_argument( "--validation-sample-size",  type=int,            help="Sample size for validation",                 default=100 )
-    
+    parser.add_argument( "--dry-run",                  action="store_true", help="Show training data stats without training",   default=False )
+
+    parser.add_argument( "--validation-sample-size",  type=int,            help="Sample size for validation",                                  default=100 )
+    parser.add_argument( "--sample-size",             type=float,          help="Training data sample size (0.0-1.0, overrides model config)", default=None )
+    parser.add_argument( "--quantize-bits",           type=str,            help="Quantization bits: both, 4, or 8",                            default="both",
+                                                      choices=[ "both", "4", "8" ] )
+    parser.add_argument( "--resume-from-merged",      type=str,            help="Path to existing merged adapter dir; skips training and merge phases", default=None )
+
     return parser.parse_args()
 
-if __name__ == "__main__":
-    
-    # Check for required environment variables
-    lupin_root = check_env()
-    
-    # Validate command line arguments
-    args = parse_arguments()
-    
-    # Check for nuclear_kill_button + elevated privileges
-    if args.nuclear_kill_button:
-        if args.debug: print( "Nuclear kill button is enabled..." )
-        check_privileges( debug=args.debug )
-    else:
-        if args.debug: print( "Nuclear kill button is disabled..." )
-        
-    # instantiate a trainer...
-    trainer = PeftTrainer(
-        args.model, args.model_name, args.test_train_path, lora_dir=args.lora_dir, debug=args.debug, verbose=args.verbose
-    )
-    
-    # ... And you're off to the races!
-    trainer.run_pipeline(
-        pre_training_stats=args.pre_training_stats,
-        post_training_stats=args.post_training_stats,
-        post_quantization_stats=args.post_quantization_stats,
-        validation_sample_size=args.validation_sample_size,
-        nuclear_kill_button=args.nuclear_kill_button
-    )
-    # DO NOT REMOVE THIS LINE! Use call below for debugging
-    # trainer.run_pipeline_adhoc(
-    #     pre_training_stats=args.pre_training_stats,
-    #     post_training_stats=args.post_training_stats,
-    #     post_quantization_stats=args.post_quantization_stats,
-    #     validation_sample_size=args.validation_sample_size,
-    #     nuclear_kill_button=args.nuclear_kill_button
-    # )
+# NOTE: The actual __main__ block is below quick_smoke_test()
 
 
 def quick_smoke_test():
@@ -1878,7 +2430,7 @@ def quick_smoke_test():
             "login_to_hf", "get_training_prompt_stats", "fine_tune", "save_model",
             "run_validation", "load_and_merge_adapter", "save_merged_adapter", 
             "quantize_merged_adapter", "get_prompt", "set_hf_env_vars", 
-            "set_lupin_env_vars", "run_pipeline", "run_pipeline_adhoc"
+            "set_lupin_env_vars", "run_pipeline"
         ]
         
         methods_found = 0
@@ -2176,5 +2728,9 @@ if __name__ == "__main__":
         post_training_stats=args.post_training_stats,
         post_quantization_stats=args.post_quantization_stats,
         validation_sample_size=args.validation_sample_size,
-        nuclear_kill_button=args.nuclear_kill_button
+        nuclear_kill_button=args.nuclear_kill_button,
+        sample_size_override=args.sample_size,
+        dry_run=args.dry_run,
+        quantize_bits=args.quantize_bits,
+        resume_from_merged=args.resume_from_merged
     )

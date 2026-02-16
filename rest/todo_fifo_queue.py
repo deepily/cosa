@@ -3,7 +3,7 @@ import threading
 from typing import Any, Optional, Dict, Type, List
 
 from cosa.agents.confirmation_dialog import ConfirmationDialogue
-from cosa.rest.fifo_queue import FifoQueue
+from cosa.rest.fifo_queue import FifoQueue  # CJ Flow ingress queue — receives all incoming jobs
 
 from cosa.agents.date_and_time_agent import DateAndTimeAgent
 from cosa.agents.receptionist_agent import ReceptionistAgent
@@ -11,12 +11,16 @@ from cosa.agents.weather_agent import WeatherAgent
 from cosa.agents.todo_list_agent import TodoListAgent
 from cosa.agents.calendaring_agent import CalendaringAgent
 from cosa.agents.math_agent import MathAgent
+from cosa.crud_for_dataframes.todo_crud_agent import TodoCrudAgent
+from cosa.crud_for_dataframes.calendar_crud_agent import CalendarCrudAgent
+from cosa.agents.calculator.agent import CalculatorAgent
 from cosa.agents.llm_client_factory import LlmClientFactory
 from cosa.memory.gister import Gister
 from cosa.memory.gist_normalizer import GistNormalizer
 from cosa.memory.normalizer import Normalizer
 from cosa.memory.query_log_table import QueryLogTable
 from cosa.memory.embedding_manager import EmbeddingManager
+from cosa.memory.embedding_provider import get_embedding_provider
 from cosa.tools.search_lupin_v010 import LupinSearch
 
 # from app       import emit_audio
@@ -38,6 +42,10 @@ from cosa.cli.notification_models import (
     ResponseType
 )
 
+# Runtime Argument Expeditor imports for agentic job routing
+from cosa.agents.runtime_argument_expeditor.agent_registry import AGENTIC_AGENTS
+from cosa.agents.runtime_argument_expeditor.expeditor import RuntimeArgumentExpeditor
+
 # Mode-to-Agent mapping for direct routing (bypasses LLM router)
 MODE_TO_AGENT = {
     "math"        : MathAgent,
@@ -46,6 +54,7 @@ MODE_TO_AGENT = {
     "receptionist": ReceptionistAgent,
     "todo"        : TodoListAgent,
     "datetime"    : DateAndTimeAgent,
+    "calculator"  : CalculatorAgent,
 }
 
 # Mode metadata for UI display
@@ -57,6 +66,7 @@ MODE_METADATA = {
     "receptionist": { "display_name": "Receptionist",  "description": "General assistance" },
     "todo"        : { "display_name": "Todo List",     "description": "Task management" },
     "datetime"    : { "display_name": "Date & Time",   "description": "Date/time queries" },
+    "calculator"  : { "display_name": "Calculator",    "description": "Unit conversions, price comparison, mortgage" },
 }
 
 class TodoFifoQueue( FifoQueue ):
@@ -112,7 +122,8 @@ class TodoFifoQueue( FifoQueue ):
 
         # Initialize three-level architecture components
         self.query_log = QueryLogTable( debug=debug, verbose=verbose )
-        self.embedding_manager = EmbeddingManager( debug=debug, verbose=verbose )
+        self.embedding_manager  = EmbeddingManager( debug=debug, verbose=verbose )
+        self._embedding_provider = get_embedding_provider( debug=debug, verbose=verbose )
 
         if self.debug: print( "TodoFifoQueue: Text processors and three-level architecture components initialized" )
         
@@ -329,7 +340,7 @@ class TodoFifoQueue( FifoQueue ):
                 if self.debug:
                     print( f"[TODO-QUEUE] Failed to send rejection notification: {e}" )
     
-    def push_job( self, question: str, websocket_id: str, user_id: str, user_email: str ) -> str:
+    def push_job( self, question: str, websocket_id: str, user_id: str, user_email: str ) -> Dict:
         """
         Push a new job onto the queue based on the question.
 
@@ -348,6 +359,7 @@ class TodoFifoQueue( FifoQueue ):
             - Associates websocket_id and user_id with the job
             - Passes user_id to agent creation for event routing
             - Sets user_email on agent/job for TTS notification routing
+            - Returns dict with "message" (str) and "job_id" (str or None)
 
         Raises:
             - None (exceptions handled internally)
@@ -366,7 +378,7 @@ class TodoFifoQueue( FifoQueue ):
                 reason = "Question contains invalid content"
                 
             self._notify_rejection( question, websocket_id, reason )
-            return f"Job rejected: {reason}"
+            return { "message": f"Job rejected: {reason}", "job_id": None }
 
         # THREE-LEVEL ARCHITECTURE: Generate representations and embeddings early
         # This needs to be available for all code paths, so do it before conditionals
@@ -385,14 +397,14 @@ class TodoFifoQueue( FifoQueue ):
         query_gist       = question_gist  # Use the gist computed above
 
         # Generate embeddings using cache-first strategy
-        embedding_verbatim = self.embedding_manager.generate_embedding(
-            query_verbatim, normalize_for_cache=False
+        embedding_verbatim = self._embedding_provider.generate_embedding(
+            query_verbatim, content_type="prose"
         )
-        embedding_normalized = self.embedding_manager.generate_embedding(
-            query_normalized, normalize_for_cache=False
+        embedding_normalized = self._embedding_provider.generate_embedding(
+            query_normalized, content_type="prose"
         )
-        embedding_gist = self.embedding_manager.generate_embedding(
-            query_gist, normalize_for_cache=False
+        embedding_gist = self._embedding_provider.generate_embedding(
+            query_gist, content_type="prose"
         )
 
         # Track cache hits for analytics
@@ -484,47 +496,79 @@ class TodoFifoQueue( FifoQueue ):
             # verify that this is what they were looking for, according to the similarity threshold for confirmation
             if best_score < self.config_mgr.get( "similarity_threshold_confirmation", default=98.0, return_type="float" ):
 
-                # TTS Migration (Session 97): Use notification service blocking query instead of _emit_speech
-                # This replaces the legacy push_blocking_object() pattern with a proper blocking query
-                msg = f"Is that the same as: {best_snapshot.question}?"
-                du.print_banner( msg )
-                print( "Asking user for confirmation via notification service..." )
+                # Check if similarity confirmation is enabled (default: true)
+                confirmation_enabled = self.config_mgr.get( "similarity_confirmation_enabled", default=True, return_type="boolean" )
 
-                request = NotificationRequest(
-                    message          = msg,
-                    response_type    = ResponseType.YES_NO,
-                    response_default = "no",
-                    timeout_seconds  = 30,
-                    priority         = "high",
-                    suppress_ding    = True,  # Queue TTS - no ding
-                    target_user      = user_email,
-                    sender_id        = f"queue.{self.queue_name or 'todo'}@lupin.deepily.ai"
-                )
+                if confirmation_enabled:
 
-                response = notify_user_sync(
-                    request,
-                    retry_on_timeout = True,    # Enable exponential backoff
-                    max_attempts     = 3,       # 30s → 60s → 120s
-                    backoff_multiplier = 2.0
-                )
+                    # TTS Migration (Session 97): Use notification service blocking query instead of _emit_speech
+                    # This replaces the legacy push_blocking_object() pattern with a proper blocking query
+                    msg = f"Is that the same as: {best_snapshot.question}?"
+                    du.print_banner( msg )
+                    print( "Asking user for confirmation via notification service..." )
 
-                if response.status == "responded" and response.response_value == "yes":
-                    # User confirmed - use cached result
-                    print( f"User confirmed cached result match (score: {best_score}%)" )
-                    # Update last question asked before we throw it on the queue
+                    request = NotificationRequest(
+                        message          = msg,
+                        response_type    = ResponseType.YES_NO,
+                        response_default = "no",
+                        timeout_seconds  = 30,
+                        priority         = "high",
+                        suppress_ding    = True,  # Queue TTS - no ding
+                        target_user      = user_email,
+                        sender_id        = f"queue.{self.queue_name or 'todo'}@lupin.deepily.ai"
+                    )
+
+                    response = notify_user_sync(
+                        request,
+                        retry_on_timeout = True,    # Enable exponential backoff
+                        max_attempts     = 3,       # 30s → 60s → 120s
+                        backoff_multiplier = 2.0
+                    )
+
+                    if response.status == "responded" and response.response_value == "yes":
+                        # User confirmed - use cached result
+                        print( f"User confirmed cached result match (score: {best_score}%)" )
+                        # Update last question asked before we throw it on the queue
+                        best_snapshot.last_question_asked = ( salutations + ' ' + question ).strip()
+                        self._dump_code( best_snapshot )
+
+                        # Log query with match results (snapshot found)
+                        match_result = {
+                            'snapshot_id': best_snapshot.id_hash,
+                            'type': 'user_confirmed_similarity_match',
+                            'confidence': best_score
+                        }
+                        embeddings = {
+                            'verbatim': embedding_verbatim,
+                            'normalized': embedding_normalized,
+                            'gist': embedding_gist
+                        }
+                        self._log_query_with_results(
+                            query_verbatim, query_normalized, query_gist,
+                            user_id, websocket_id, embeddings, cache_hits, match_result
+                        )
+
+                        return self._queue_best_snapshot( best_snapshot, best_score, user_id, user_email )
+                    else:
+                        # User declined, timeout, or offline - fall through to LLM routing
+                        print( f"User response: '{response.status}:{response.response_value}' - routing as new question..." )
+                        needs_llm_routing = True
+
+                else:
+                    # Confirmation disabled - auto-accept the best semantic match
+                    print( f"Similarity confirmation disabled, auto-accepting match (score: {best_score}%)" )
                     best_snapshot.last_question_asked = ( salutations + ' ' + question ).strip()
                     self._dump_code( best_snapshot )
 
-                    # Log query with match results (snapshot found)
                     match_result = {
-                        'snapshot_id': best_snapshot.id_hash,
-                        'type': 'user_confirmed_similarity_match',
-                        'confidence': best_score
+                        'snapshot_id' : best_snapshot.id_hash,
+                        'type'        : 'auto_accepted_similarity_match',
+                        'confidence'  : best_score
                     }
                     embeddings = {
-                        'verbatim': embedding_verbatim,
-                        'normalized': embedding_normalized,
-                        'gist': embedding_gist
+                        'verbatim'   : embedding_verbatim,
+                        'normalized' : embedding_normalized,
+                        'gist'       : embedding_gist
                     }
                     self._log_query_with_results(
                         query_verbatim, query_normalized, query_gist,
@@ -532,10 +576,6 @@ class TodoFifoQueue( FifoQueue ):
                     )
 
                     return self._queue_best_snapshot( best_snapshot, best_score, user_id, user_email )
-                else:
-                    # User declined, timeout, or offline - fall through to LLM routing
-                    print( f"User response: '{response.status}:{response.response_value}' - routing as new question..." )
-                    needs_llm_routing = True
 
             # This is an exact match (high confidence), so queue it up
             else:
@@ -609,24 +649,30 @@ class TodoFifoQueue( FifoQueue ):
                 msg = search.get_results( scope="summary" )
             
             elif command == "agent router go to calendar":
-                agent = CalendaringAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
-                msg = starting_a_new_job.format( agent_type="calendaring" )
+                if self._crud_agents_enabled():
+                    agent = CalendarCrudAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                    msg = starting_a_new_job.format( agent_type="calendar (CRUD)" )
+                else:
+                    agent = CalendaringAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                    msg = starting_a_new_job.format( agent_type="calendaring" )
+                ding_for_new_job = True
+            elif command == "agent router go to calculator":
+                agent = CalculatorAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                msg = starting_a_new_job.format( agent_type="calculator" )
                 ding_for_new_job = True
             elif command == "agent router go to math":
-                if question.lower().strip().startswith( "refactor " ):
-                    # raise a not implemented exception
-                    raise NotImplementedError( "Refactoring agent not implemented yet!" )
-                    # agent = self._get_math_refactoring_agent( question, question_gist, salutation_plus_question, self.push_counter )
-                    # msg = starting_a_new_job.format( agent_type="math refactoring" )
+                agent = MathAgent( question=salutation_plus_question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                msg = starting_a_new_job.format( agent_type="math" )
+                ding_for_new_job = True
+            elif command in ( "agent router go to todo", "agent router go to todo list" ):
+                if self._crud_agents_enabled():
+                    agent = TodoCrudAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                    msg = starting_a_new_job.format( agent_type="todo (CRUD)" )
                 else:
-                    agent = MathAgent( question=salutation_plus_question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
-                    msg = starting_a_new_job.format( agent_type="math" )
+                    agent = TodoListAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
+                    msg = starting_a_new_job.format( agent_type="todo list" )
                 ding_for_new_job = True
-            elif command == "agent router go to todo list":
-                agent = TodoListAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
-                msg = starting_a_new_job.format( agent_type="todo list" )
-                ding_for_new_job = True
-            elif command == "agent router go to date and time":
+            elif command in [ "agent router go to date and time", "agent router go to datetime" ]:
                 agent = DateAndTimeAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="date and time" )
                 ding_for_new_job = True
@@ -634,12 +680,32 @@ class TodoFifoQueue( FifoQueue ):
                 agent = WeatherAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 msg = starting_a_new_job.format( agent_type="weather" )
                 # ding_for_new_job = False
+            elif command in ( "agent router go to automatic", "agent router go to automatic routing mode" ):
+                previous_mode = self.clear_user_mode( user_id )
+                if previous_mode:
+                    msg = f"Switching back to automatic routing mode. Was in {previous_mode} mode."
+                else:
+                    msg = "Automatic routing is already active."
+                print( f"[AUTO-ROUTE] User {user_id} returning to automatic routing (was: {previous_mode})" )
+                self._notify( msg, target_user=user_email )
+                return { "message": msg, "job_id": None }
             elif command == "agent router go to receptionist" or command == "none":
                 print( f"Routing '{command}' to receptionist..." )
                 agent = ReceptionistAgent( question=question, question_gist=question_gist, last_question_asked=salutation_plus_question, push_counter=self.push_counter, user_id=user_id, user_email=user_email, session_id=websocket_id, debug=True, verbose=False, auto_debug=self.auto_debug, inject_bugs=self.inject_bugs )
                 # Randomly grab hemming and hawing string and prepend it to a randomly chosen thinking string
                 msg = f"{self.hemming_and_hawing[ random.randint( 0, len( self.hemming_and_hawing ) - 1 ) ]} {self.thinking[ random.randint( 0, len( self.thinking ) - 1 ) ]}".strip()
                 # ding_for_new_job = False
+            elif command in AGENTIC_AGENTS:
+                # Disambiguation confirmation for confusable agentic commands
+                confirmed_command = self._confirm_agentic_routing(
+                    command, args, user_id, user_email, salutation_plus_question
+                )
+                if confirmed_command is None:
+                    msg = "Command cancelled by user."
+                else:
+                    msg = self._handle_agentic_command(
+                        confirmed_command, args, user_id, user_email, websocket_id, salutation_plus_question
+                    )
             else:
                 msg = du.print_banner( f"TO DO: Implement else case command {command}" )
                 print( msg )
@@ -654,9 +720,8 @@ class TodoFifoQueue( FifoQueue ):
             if agent is not None:
                 # Session 108: Generate compound hash AND associate BEFORE push to prevent race condition
                 # The consumer thread may grab the job immediately after push(), so user mapping must exist first
-                if hasattr( agent, 'id_hash' ) and user_id:
-                    agent.id_hash = self.user_job_tracker.generate_user_scoped_hash( agent.id_hash, user_id )
-                    self.user_job_tracker.associate_job_with_user( agent.id_hash, user_id )
+                agent.id_hash = self.user_job_tracker.generate_user_scoped_hash( agent.id_hash, user_id )
+                self.user_job_tracker.associate_job_with_user( agent.id_hash, user_id )
                 self.push( agent )
             
             # TTS Migration (Session 98): Use notification service instead of emit_speech_callback
@@ -678,7 +743,7 @@ class TodoFifoQueue( FifoQueue ):
                 user_id, websocket_id, embeddings, cache_hits, match_result
             )
 
-            return msg
+            return { "message": msg, "job_id": agent.id_hash if agent else None }
 
     def _log_query_with_results( self,
                                query_verbatim: str,
@@ -743,7 +808,7 @@ class TodoFifoQueue( FifoQueue ):
             if len( lines_of_code ) > 0:
                 print()
                 
-    def _queue_best_snapshot( self, best_snapshot: SolutionSnapshot, best_score: float, user_id: str, user_email: str ) -> str:
+    def _queue_best_snapshot( self, best_snapshot: SolutionSnapshot, best_score: float, user_id: str, user_email: str ) -> Dict:
         """
         Queue the best matching snapshot for execution.
 
@@ -759,7 +824,7 @@ class TodoFifoQueue( FifoQueue ):
             - Configures job with current settings
             - Pushes job to queue
             - Emits socket updates
-            - Returns status message
+            - Returns dict with "message" (str) and "job_id" (str)
 
         Raises:
             - None
@@ -795,7 +860,8 @@ class TodoFifoQueue( FifoQueue ):
 
         self.push( job )  # Auto-emits 'todo_update' via parent class
 
-        return f'Job added to queue. Queue size [{self.size()}]'
+        msg = f'Job added to queue. Queue size [{self.size()}]'
+        return { "message": msg, "job_id": job.id_hash }
     
     def _get_routing_command( self, question: str ) -> tuple[str, str]:
         """
@@ -839,7 +905,260 @@ class TodoFifoQueue( FifoQueue ):
             command, args = "unknown", ""
 
         return command, args
-    
+
+    def _crud_agents_enabled( self ):
+        """
+        Check if CRUD DataFrame agents are enabled via feature flag.
+
+        Requires:
+            - self.config_mgr is a valid ConfigurationManager
+
+        Ensures:
+            - Returns True if 'crud for dataframes agents enabled' is 'true'
+            - Returns True by default (flag missing = enabled)
+        """
+        return self.config_mgr.get( "crud for dataframes agents enabled", default="true" ).strip().lower() == "true"
+
+    # Product name mapping for agentic command disambiguation
+    PRODUCT_NAMES = {
+        "agent router go to deep research"      : "Deep Dive (investigate a topic)",
+        "agent router go to podcast generator"   : "PodMaker (create a podcast from a topic)",
+        "agent router go to research to podcast" : "Doc-to-Pod (convert existing research to podcast)",
+        "agent router go to claude code"         : "Claude Code (run a coding task)",
+    }
+
+    def _confirm_agentic_routing( self, command, args, user_id, user_email, original_question ):
+        """
+        Confirm agentic command routing with user via voice prompt.
+        Shows what was detected and offers alternatives from the same confusable group.
+
+        Requires:
+            - command is a valid AGENTIC_AGENTS key
+            - user_email is set for notification routing
+
+        Ensures:
+            - Returns confirmed command string, or None if cancelled
+            - User sees product name, not internal command string
+            - On timeout, returns original detected command (safe default)
+        """
+        detected_name = self.PRODUCT_NAMES.get( command, command )
+
+        # Build multiple choice options: detected option always first, then alternatives, then cancel
+        options = []
+        options.append( { "label": detected_name, "description": "This is what I detected" } )
+        for cmd, name in self.PRODUCT_NAMES.items():
+            if cmd != command:
+                options.append( { "label": name, "description": "Switch to this instead" } )
+        options.append( { "label": "Cancel", "description": "Nevermind, cancel this command" } )
+
+        request = NotificationRequest(
+            message         = f"I think you want {detected_name}. Is that right?",
+            response_type   = ResponseType.MULTIPLE_CHOICE,
+            target_user     = user_email,
+            timeout_seconds = 30,
+            sender_id       = "agentic.router@lupin.deepily.ai",
+            priority        = "high",
+            title           = "Confirm Command",
+            suppress_ding   = True,
+            response_options = {
+                "questions": [ {
+                    "question"     : f"I think you want {detected_name}. Is that right?",
+                    "header"       : "Command",
+                    "multi_select" : False,
+                    "options"      : options
+                } ]
+            }
+        )
+
+        response = notify_user_sync( request, debug=self.debug )
+
+        if response.is_timeout or response.is_error:
+            if self.debug: print( f"Confirmation timeout/error — proceeding with detected command [{command}]" )
+            return command  # Default: proceed with detected command on timeout
+
+        # Parse response — handle both raw string and JSON formats
+        selected = response.response_value
+        if self.debug: print( f"User selected (raw): [{selected}]" )
+
+        # MULTIPLE_CHOICE may return JSON: {"answers": {"Command": "Deep Dive ..."}}
+        if selected and selected.startswith( "{" ):
+            import json
+            try:
+                parsed   = json.loads( selected )
+                answers  = parsed.get( "answers", {} )
+                selected = answers.get( "Command", answers.get( "0", selected ) )
+            except ( json.JSONDecodeError, AttributeError ):
+                pass  # Use raw value as-is
+
+        if self.debug: print( f"User selected (parsed): [{selected}]" )
+
+        if selected is None or selected == "Cancel":
+            return None
+
+        # Reverse lookup: product name → command
+        for cmd, name in self.PRODUCT_NAMES.items():
+            if name == selected:
+                return cmd
+
+        # Fallback: proceed with original
+        return command
+
+    def _handle_agentic_command( self, command, raw_args, user_id, user_email, session_id, original_question ):
+        """
+        Handle an agentic agent command via the Runtime Argument Expeditor.
+
+        Requires:
+            - command is a key in AGENTIC_AGENTS
+            - raw_args is a string (may be empty)
+            - user_id, user_email, session_id are non-empty strings
+            - original_question is the full voice command string
+
+        Ensures:
+            - Returns human-readable status message
+            - Creates and queues an agentic job if expeditor succeeds
+            - Notifies user of cancellation if expeditor returns None
+
+        Args:
+            command: Routing command key
+            raw_args: LORA-extracted arguments
+            user_id: System user ID
+            user_email: User's email address
+            session_id: WebSocket session ID
+            original_question: Full voice command transcription
+
+        Returns:
+            str: Status message
+        """
+        # Check if expeditor is enabled
+        enabled = self.config_mgr.get(
+            "runtime argument expeditor enabled", default=True, return_type="boolean"
+        )
+        if not enabled:
+            return f"Runtime argument expeditor is disabled. Cannot process command: {command}"
+
+        # Create expeditor and run gap analysis
+        expeditor = RuntimeArgumentExpeditor(
+            config_mgr = self.config_mgr,
+            debug      = self.debug,
+            verbose    = self.verbose
+        )
+
+        args_dict = expeditor.expedite(
+            command           = command,
+            raw_args          = raw_args,
+            user_email        = user_email,
+            session_id        = session_id,
+            user_id           = user_id,
+            original_question = original_question
+        )
+
+        if args_dict is None:
+            self._notify( "Job cancelled.", target_user=user_email )
+            return "Agentic job cancelled by user or timeout."
+
+        # Create the appropriate job
+        job = self._create_agentic_job(
+            command    = command,
+            args_dict  = args_dict,
+            user_id    = user_id,
+            user_email = user_email,
+            session_id = session_id
+        )
+
+        if job is None:
+            self._notify( "Failed to create job.", target_user=user_email )
+            return "Failed to create agentic job."
+
+        # Associate job with user BEFORE push (prevents race condition)
+        if hasattr( job, 'id_hash' ) and user_id:
+            job.id_hash = self.user_job_tracker.generate_user_scoped_hash( job.id_hash, user_id )
+            self.user_job_tracker.associate_job_with_user( job.id_hash, user_id )
+
+        # Ding for new job
+        self.websocket_mgr.emit( 'notification_sound_update', { 'soundFile': '/static/gentle-gong.mp3' } )
+
+        self.push( job )
+
+        msg = f"New {job.JOB_TYPE} job submitted."
+        self._notify( msg, job=job )
+        return msg
+
+    def _create_agentic_job( self, command, args_dict, user_id, user_email, session_id ):
+        """
+        Factory method to create the correct agentic job based on command.
+
+        Requires:
+            - command is a key in AGENTIC_AGENTS
+            - args_dict contains all required arguments
+            - user_id, user_email, session_id are non-empty strings
+
+        Ensures:
+            - Returns appropriate Job instance for the command
+            - Returns None if command is unrecognized
+
+        Args:
+            command: Routing command key
+            args_dict: Complete argument dictionary from expeditor
+            user_id: System user ID
+            user_email: User's email address
+            session_id: WebSocket session ID
+
+        Returns:
+            AgenticJobBase subclass instance, or None
+        """
+        from cosa.agents.deep_research.job import DeepResearchJob
+        from cosa.agents.podcast_generator.job import PodcastGeneratorJob
+        from cosa.agents.deep_research_to_podcast.job import DeepResearchToPodcastJob
+
+        if command == "agent router go to deep research":
+            return DeepResearchJob(
+                query      = args_dict.get( "query", "" ),
+                user_id    = user_id,
+                user_email = user_email,
+                session_id = session_id,
+                budget     = float( args_dict[ "budget" ] ) if args_dict.get( "budget" ) else None,
+                no_confirm = True,
+                debug      = self.debug,
+                verbose    = self.verbose
+            )
+
+        elif command == "agent router go to podcast generator":
+            # Parse target_languages if provided
+            languages = None
+            if args_dict.get( "languages" ):
+                languages = [ lang.strip() for lang in args_dict[ "languages" ].split( "," ) ]
+
+            return PodcastGeneratorJob(
+                research_path    = args_dict.get( "research", "" ),
+                user_id          = user_id,
+                user_email       = user_email,
+                session_id       = session_id,
+                target_languages = languages,
+                debug            = self.debug,
+                verbose          = self.verbose
+            )
+
+        elif command == "agent router go to research to podcast":
+            # Parse target_languages if provided
+            languages = None
+            if args_dict.get( "languages" ):
+                languages = [ lang.strip() for lang in args_dict[ "languages" ].split( "," ) ]
+
+            return DeepResearchToPodcastJob(
+                query            = args_dict.get( "query", "" ),
+                user_id          = user_id,
+                user_email       = user_email,
+                session_id       = session_id,
+                budget           = float( args_dict[ "budget" ] ) if args_dict.get( "budget" ) else None,
+                target_languages = languages,
+                debug            = self.debug,
+                verbose          = self.verbose
+            )
+
+        else:
+            print( f"[TodoFifoQueue] Unknown agentic command: {command}" )
+            return None
+
     def push( self, item: Any ) -> None:
         """
         Override parent's push to add producer-consumer coordination and emit pending→todo transition.

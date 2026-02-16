@@ -197,7 +197,7 @@ def get_subagent_prompt(
     max_sources: int = 10,
     priority: int = 1,
     context: Optional[ str ] = None,
-    target_audience: Literal[ "beginner", "general", "expert", "academic" ] = "expert",
+    audience: Literal[ "beginner", "general", "expert", "academic" ] = "academic",
     audience_context: Optional[ str ] = None
 ) -> str:
     """
@@ -205,7 +205,7 @@ def get_subagent_prompt(
 
     Requires:
         - topic and objective are non-empty strings
-        - target_audience is one of: beginner, general, expert, academic
+        - audience is one of: beginner, general, expert, academic
 
     Ensures:
         - Returns formatted prompt with topic, objective, and audience guidelines
@@ -219,7 +219,7 @@ def get_subagent_prompt(
         max_sources: Maximum sources to include
         priority: Priority level (1=highest)
         context: Optional context from lead agent
-        target_audience: Expertise level of the audience (default: expert)
+        audience: Expertise level of the audience (default: academic)
         audience_context: Optional custom audience description
 
     Returns:
@@ -242,7 +242,7 @@ def get_subagent_prompt(
         message += f"\n\n**Additional Context**: {context}"
 
     # Add audience-specific research guidelines
-    audience_guidelines = AUDIENCE_RESEARCH_GUIDELINES.get( target_audience, AUDIENCE_RESEARCH_GUIDELINES[ "expert" ] )
+    audience_guidelines = AUDIENCE_RESEARCH_GUIDELINES.get( audience, AUDIENCE_RESEARCH_GUIDELINES[ "academic" ] )
     message += f"\n\n{audience_guidelines}"
 
     if audience_context:
@@ -359,7 +359,7 @@ def quick_smoke_test():
             topic="LLM optimization",
             objective="Find optimization techniques",
             output_format="list",
-            target_audience="expert"
+            audience="expert"
         )
         assert "Target Audience: Expert" in prompt_expert
         assert "arXiv papers" in prompt_expert
@@ -369,7 +369,7 @@ def quick_smoke_test():
             topic="LLM basics",
             objective="Explain fundamentals",
             output_format="summary",
-            target_audience="beginner"
+            audience="beginner"
         )
         assert "Target Audience: Beginner" in prompt_beginner
         assert "getting-started" in prompt_beginner
@@ -379,7 +379,7 @@ def quick_smoke_test():
             topic="Test topic",
             objective="Test objective",
             output_format="list",
-            target_audience="expert",
+            audience="expert",
             audience_context="ML engineer with PyTorch experience"
         )
         assert "ML engineer with PyTorch experience" in prompt_context

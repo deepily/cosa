@@ -9,8 +9,11 @@ Provides endpoints for:
 Generated on: 2026-01-20
 """
 
+import asyncio
+import uuid
+
 from typing import Optional, Tuple
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, Field
 
 from cosa.rest.auth import get_current_user
@@ -37,6 +40,8 @@ class MockJobSubmitRequest( BaseModel ):
     # Optional metadata
     description: Optional[ str ] = Field( None, max_length=100, description="Custom description for queue display" )
     websocket_id: Optional[ str ] = Field( None, description="WebSocket session ID for notifications" )
+    # Expeditor test mode
+    voice_command: Optional[ str ] = Field( None, description="Test expeditor: provide a voice command to route through RuntimeArgumentExpeditor" )
 
 
 class MockJobSubmitResponse( BaseModel ):
@@ -69,6 +74,7 @@ def get_todo_queue():
 
 @router.post( "/submit", response_model=MockJobSubmitResponse )
 async def submit_mock_job(
+    request: Request,
     request_body: MockJobSubmitRequest = MockJobSubmitRequest(),
     current_user: dict = Depends( get_current_user ),
     todo_queue = Depends( get_todo_queue )
@@ -107,6 +113,19 @@ async def submit_mock_job(
         HTTPException 500: Queue push failed
     """
     from cosa.agents.test_harness.mock_job import MockAgenticJob
+
+    # Extract raw JWT for passing to expeditor (internal auth forwarding)
+    auth_header  = request.headers.get( "Authorization", "" )
+    bearer_token = auth_header[ 7: ] if auth_header.startswith( "Bearer " ) else None
+
+    # Expeditor test mode: route voice_command through expeditor pipeline
+    if request_body.voice_command:
+        return await _handle_expeditor_test(
+            voice_command = request_body.voice_command,
+            current_user  = current_user,
+            todo_queue    = todo_queue,
+            bearer_token  = bearer_token
+        )
 
     # Validate ranges
     if request_body.iterations_min > request_body.iterations_max:
@@ -183,6 +202,133 @@ async def submit_mock_job(
             status_code=500,
             detail=f"Failed to submit mock job: {str( e )}"
         )
+
+
+async def _handle_expeditor_test( voice_command, current_user, todo_queue, bearer_token=None ):
+    """
+    Test the RuntimeArgumentExpeditor pipeline with a voice command.
+
+    Routes the command through expeditor gap analysis and creates a dry-run job.
+    Returns the disambiguation results for debugging without inference costs.
+
+    Requires:
+        - voice_command is a non-empty string
+        - current_user has uid and email
+
+    Ensures:
+        - Returns MockJobSubmitResponse with expeditor results in config
+        - Creates job with dry_run=True
+
+    Args:
+        voice_command: Voice command to test (e.g., "make me a podcast")
+        current_user: Authenticated user from token
+        todo_queue: Todo queue instance
+
+    Returns:
+        MockJobSubmitResponse with expeditor results
+    """
+    from cosa.agents.runtime_argument_expeditor.agent_registry import AGENTIC_AGENTS
+    from cosa.agents.runtime_argument_expeditor.expeditor import RuntimeArgumentExpeditor
+    from cosa.rest.agentic_job_factory import create_agentic_job
+    from cosa.config.configuration_manager import ConfigurationManager
+
+    user_id    = current_user.get( "uid" )
+    user_email = current_user.get( "email" )
+    session_id = f"expeditor-test-{user_id[ :8 ]}" if user_id else "expeditor-test"
+
+    # Simple keyword matching to find the command
+    matched_command = None
+    for cmd_key in AGENTIC_AGENTS.keys():
+        # Extract keywords from command (e.g., "deep research", "podcast", "research to podcast")
+        keywords = cmd_key.replace( "agent router go to ", "" ).split()
+        if all( kw in voice_command.lower() for kw in keywords ):
+            matched_command = cmd_key
+            break
+
+    if not matched_command:
+        # Try partial matching
+        if "podcast" in voice_command.lower() and "research" in voice_command.lower():
+            matched_command = "agent router go to research to podcast"
+        elif "podcast" in voice_command.lower():
+            matched_command = "agent router go to podcast generator"
+        elif "research" in voice_command.lower():
+            matched_command = "agent router go to deep research"
+
+    if not matched_command:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not match voice command to any agentic agent. Available: {list( AGENTIC_AGENTS.keys() )}"
+        )
+
+    # Run through expeditor
+    config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+    expeditor = RuntimeArgumentExpeditor(
+        config_mgr = config_mgr,
+        debug      = True,
+        verbose    = False
+    )
+
+    # Pre-generate job_id so expeditor notifications route to a dedicated job card
+    expeditor_job_id = f"exp-{uuid.uuid4().hex[ :8 ]}"
+
+    args_dict = await asyncio.to_thread(
+        expeditor.expedite,
+        command           = matched_command,
+        raw_args          = "",
+        user_email        = user_email or "test@test.com",
+        session_id        = session_id,
+        user_id           = user_id or "test-user",
+        original_question = voice_command,
+        job_id            = expeditor_job_id,
+        bearer_token      = bearer_token
+    )
+
+    if args_dict is None:
+        return MockJobSubmitResponse(
+            status         = "cancelled",
+            job_id         = "expeditor-test-cancelled",
+            queue_position = 0,
+            config         = {
+                "command"              : matched_command,
+                "voice_command"        : voice_command,
+                "result"               : "cancelled_or_timeout",
+                "args_found"           : None,
+                "notification_status"  : expeditor._last_notification_status
+            },
+            message        = "Expeditor test: user cancelled or timed out"
+        )
+
+    # Create dry-run job
+    args_dict[ "dry_run" ] = True
+    job = create_agentic_job(
+        command    = matched_command,
+        args_dict  = args_dict,
+        user_id    = user_id or "test-user",
+        user_email = user_email or "test@test.com",
+        session_id = session_id,
+        debug      = True
+    )
+
+    job_id = job.id_hash if job else "factory-failed"
+
+    # Associate and push if job was created
+    if job:
+        user_job_tracker.associate_job_with_user( job.id_hash, user_id or "test-user" )
+        user_job_tracker.associate_job_with_session( job.id_hash, session_id )
+        todo_queue.push( job )
+
+    return MockJobSubmitResponse(
+        status         = "queued" if job else "error",
+        job_id         = job_id,
+        queue_position = todo_queue.size() if job else 0,
+        config         = {
+            "command"       : matched_command,
+            "voice_command" : voice_command,
+            "args_resolved" : { k: str( v ) for k, v in args_dict.items() if k not in ( "user_email", "session_id", "user_id", "no_confirm" ) },
+            "dry_run"       : True
+        },
+        message        = f"Expeditor test: {matched_command} (dry_run=True)"
+    )
 
 
 @router.get( "/health" )

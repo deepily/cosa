@@ -215,6 +215,12 @@ class PodcastConfig:
     intro_music_path           : Optional[ str ] = None
     outro_music_path           : Optional[ str ] = None
 
+    # === Target Audience ===
+    # Controls dialogue depth, terminology, and analogies in podcast script
+    # Levels: beginner, general, expert, academic (default)
+    audience         : Literal[ "beginner", "general", "expert", "academic" ] = "academic"
+    audience_context : Optional[ str ] = None  # Custom description (e.g., "AI architect with ML background")
+
     # === COSA Integration ===
     stream_thoughts_to_voice   : bool  = True
     narrate_progress           : bool  = True

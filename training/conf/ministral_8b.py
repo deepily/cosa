@@ -7,7 +7,7 @@ larger Mistral model. The configuration is organized into four dictionaries that
 model-specific parameters for the fine-tuning process:
 
 1. fine_tune_config: Training parameters tailored for Ministral-8B:
-   - sample_size: Small data fraction (1%) for quick experimentation
+   - sample_size: Full data (100%) by default (use --sample-size CLI arg to override)
    - batch_size: Very small batch size (2) due to the model's large memory requirements
    - gradient_accumulation_steps: High value (8) to compensate for small batch size
    - logging/eval_steps: Regular evaluation at 10% epoch intervals
@@ -38,7 +38,7 @@ and architectural differences from other models in the collection.
 from typing import Union, Callable
 
 fine_tune_config: dict[str, Union[float, int, str]] = {
-    "sample_size": 0.01,
+    "sample_size": 1.0,
     "batch_size": 2,
     "gradient_accumulation_steps": 8,
     "logging_steps": 0.10,
@@ -72,4 +72,10 @@ model_config: dict[str, Union[int, str, Callable[[str], str]]] = {
     {output}
     {last_tag}""",
     "last_tag_func": lambda output: "</s>" if output else ""
+}
+
+vllm_config: dict[ str, Union[ int, float ] ] = {
+    "max_model_len"          : 1024,  # Training uses max_seq_length=683; 1024 is generous for validation prompts + 128 max_new_tokens
+    "gpu_memory_utilization" : 0.80,  # 8B model needs more headroom than smaller models
+    "max_num_seqs"           : 64,    # V1 engine (vLLM 0.8.5+) warmup safety — default 256 causes OOM
 }

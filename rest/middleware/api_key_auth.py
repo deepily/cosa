@@ -144,6 +144,77 @@ async def require_api_key(
     return user_id
 
 
+async def require_api_key_or_jwt(
+    x_api_key: Annotated[str | None, Header()] = None,
+    authorization: Annotated[str | None, Header()] = None
+) -> str:
+    """
+    FastAPI dependency for dual authentication: API key OR JWT Bearer token.
+
+    Accepts either X-API-Key header (bcrypt validated) or Authorization: Bearer <jwt>.
+    Used by endpoints that need to serve both external CLI clients (API key)
+    and internal server-side callers (JWT).
+
+    Requires:
+        - At least one of x_api_key or authorization header is present
+        - If x_api_key: matches format ck_live_{64+} and validates against database
+        - If authorization: starts with "Bearer " and contains a valid JWT
+
+    Ensures:
+        - Returns user_id (UUID string) on success
+        - Raises HTTPException 401 on failure
+        - Tries API key first, then JWT
+
+    Args:
+        x_api_key: API key from X-API-Key header (optional)
+        authorization: Bearer token from Authorization header (optional)
+
+    Returns:
+        str: user_id (UUID) of authenticated user
+
+    Raises:
+        HTTPException: 401 if neither auth method succeeds
+    """
+    # Option 1: API key
+    if x_api_key:
+        if not re.match( r'^ck_live_[A-Za-z0-9_-]{64,}$', x_api_key ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid API key format",
+                headers={ "WWW-Authenticate": "API-Key, Bearer" }
+            )
+        user_id = await validate_api_key( x_api_key )
+        if user_id:
+            return user_id
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or inactive API key",
+            headers={ "WWW-Authenticate": "API-Key, Bearer" }
+        )
+
+    # Option 2: Bearer JWT
+    if authorization and authorization.startswith( "Bearer " ):
+        token = authorization[ 7: ]
+        try:
+            from cosa.rest.auth import verify_token
+            user_info = await verify_token( token )
+            return user_info[ "uid" ]
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Invalid JWT: {e}",
+                headers={ "WWW-Authenticate": "API-Key, Bearer" }
+            )
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Missing auth. Provide X-API-Key or Authorization: Bearer <jwt>",
+        headers={ "WWW-Authenticate": "API-Key, Bearer" }
+    )
+
+
 def quick_smoke_test():
     """
     Quick smoke test for API key authentication middleware.

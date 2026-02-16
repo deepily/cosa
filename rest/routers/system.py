@@ -10,8 +10,9 @@ Generated on: 2025-01-24
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # Import dependencies
 from ..auth import get_current_user, get_current_user_id
@@ -20,6 +21,34 @@ from cosa.config.configuration_manager import ConfigurationManager
 from cosa.memory.solution_snapshot_mgr import SolutionSnapshotManager
 from cosa.agents.two_word_id_generator import TwoWordIdGenerator
 import cosa.utils.util as du
+
+
+# ─── Pydantic models for similarity confirmation toggle ──────────────
+class SimilarityConfirmationRequest( BaseModel ):
+    enabled: bool
+
+class SimilarityConfirmationResponse( BaseModel ):
+    enabled  : bool
+    previous : Optional[ bool ] = None
+
+
+def get_todo_queue():
+    """
+    Dependency to get todo queue from main module.
+
+    Requires:
+        - fastapi_app.main module is available
+        - main_module has jobs_todo_queue attribute
+
+    Ensures:
+        - Returns the todo queue instance
+
+    Raises:
+        - ImportError if main module not available
+        - AttributeError if todo queue not found
+    """
+    import fastapi_app.main as main_module
+    return main_module.jobs_todo_queue
 
 router = APIRouter(tags=["system"])
 
@@ -477,3 +506,57 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
         # IANA timezone name for client-side date/time formatting
         "app_timezone": app_timezone
     }
+
+
+@router.get( "/api/config/similarity-confirmation" )
+async def get_similarity_confirmation(
+    current_user = Depends( get_current_user ),
+    todo_queue   = Depends( get_todo_queue )
+):
+    """
+    Get current state of the similarity confirmation toggle.
+
+    Requires:
+        - Valid JWT authentication token in Authorization header
+        - todo_queue dependency provides access to live config_mgr
+
+    Ensures:
+        - Returns JSON with current enabled/disabled state
+
+    Returns:
+        dict: { "enabled": true/false }
+    """
+    enabled = todo_queue.config_mgr.get(
+        "similarity_confirmation_enabled", default=True, return_type="boolean"
+    )
+    return { "enabled": enabled }
+
+
+@router.post( "/api/config/similarity-confirmation" )
+async def set_similarity_confirmation(
+    body: SimilarityConfirmationRequest,
+    current_user = Depends( get_current_user ),
+    todo_queue   = Depends( get_todo_queue )
+):
+    """
+    Set the similarity confirmation toggle at runtime.
+
+    Requires:
+        - Valid JWT authentication token in Authorization header
+        - body.enabled is a boolean
+        - todo_queue dependency provides access to live config_mgr
+
+    Ensures:
+        - Updates similarity_confirmation_enabled in the queue's config_mgr
+        - Returns new value and previous value for verification
+
+    Returns:
+        dict: { "enabled": true/false, "previous": true/false }
+    """
+    previous = todo_queue.config_mgr.get(
+        "similarity_confirmation_enabled", default=True, return_type="boolean"
+    )
+    todo_queue.config_mgr.set_config(
+        "similarity_confirmation_enabled", str( body.enabled ).lower()
+    )
+    return { "enabled": body.enabled, "previous": previous }

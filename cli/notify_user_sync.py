@@ -165,7 +165,8 @@ def _send_sync_notification(
     debug: bool,
     api_key: str,
     base_url: str,
-    env: str
+    env: str,
+    bearer_token: Optional[str] = None
 ) -> NotificationResponse:
     """
     Internal helper to send a single sync notification request.
@@ -175,12 +176,13 @@ def _send_sync_notification(
 
     Requires:
         - request is a validated NotificationRequest model
-        - api_key is a valid API key string
+        - At least one of api_key or bearer_token is provided
         - base_url is the server base URL
 
     Ensures:
         - Returns NotificationResponse with status and response_value
         - Handles all HTTP and SSE errors gracefully
+        - Uses Bearer JWT auth when bearer_token is provided, else X-API-Key
 
     Args:
         request: NotificationRequest model (already validated)
@@ -189,6 +191,7 @@ def _send_sync_notification(
         api_key: API key for authentication
         base_url: Server base URL
         env: Environment name (for debug output)
+        bearer_token: Optional JWT for Bearer auth (takes priority over api_key)
 
     Returns:
         NotificationResponse: Result of the notification request
@@ -199,10 +202,12 @@ def _send_sync_notification(
         # Convert request to API params (Phase 2.5 - api_key moved to headers)
         params = request.to_api_params()
 
-        # Create headers with API key authentication (Phase 2.5)
-        headers = {
-            'X-API-Key': api_key
-        }
+        # Create auth headers: Bearer JWT (if available) or X-API-Key
+        headers = {}
+        if bearer_token:
+            headers[ "Authorization" ] = f"Bearer {bearer_token}"
+        elif api_key:
+            headers[ "X-API-Key" ] = api_key
 
         if debug:
             print( f"[DEBUG] Sending notification to: {url}", file=sys.stderr )
@@ -227,7 +232,7 @@ def _send_sync_notification(
             return NotificationResponse(
                 response_value = None,
                 exit_code      = 1,
-                status         = "http_error"
+                status         = f"http_error_{response.status_code}"
             )
 
         if debug:
@@ -349,7 +354,8 @@ def notify_user_sync(
     debug: bool = False,
     retry_on_timeout: bool = False,
     max_attempts: int = 1,
-    backoff_multiplier: float = 2.0
+    backoff_multiplier: float = 2.0,
+    bearer_token: Optional[str] = None
 ) -> NotificationResponse:
     """
     Send response-required notification with SSE blocking.
@@ -383,6 +389,7 @@ def notify_user_sync(
         retry_on_timeout: Retry with exponential backoff on timeout (default: False)
         max_attempts: Maximum number of attempts if retry_on_timeout=True (default: 1)
         backoff_multiplier: Multiplier for timeout on each retry (default: 2.0)
+        bearer_token: Optional JWT for Bearer auth (used instead of API key when provided)
 
     Returns:
         NotificationResponse: Typed response with exit_code, response_value, metadata
@@ -428,7 +435,7 @@ def notify_user_sync(
             print( f"[SYNC] Attempt {attempts_made}/{max_attempts}, timeout={current_timeout}s", file=sys.stderr )
 
         response = _send_sync_notification(
-            request_copy, server_url, debug, api_key, base_url, env
+            request_copy, server_url, debug, api_key, base_url, env, bearer_token
         )
 
         # Check if we got a response or should retry

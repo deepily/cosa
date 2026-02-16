@@ -1,5 +1,6 @@
 import cosa.utils.util as du
 from cosa.memory.embedding_manager import EmbeddingManager
+from cosa.memory.embedding_provider import get_embedding_provider
 
 from cosa.memory.question_embeddings_table import QuestionEmbeddingsTable
 from cosa.memory.solution_snapshot import SolutionSnapshot as ss
@@ -39,12 +40,19 @@ class InputAndOutputTable():
         self.debug          = debug
         self.verbose        = verbose
         self._config_mgr    = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-        self._embedding_mgr = EmbeddingManager( debug=debug, verbose=verbose )
+        self._embedding_mgr      = EmbeddingManager( debug=debug, verbose=verbose )
+        self._embedding_provider = get_embedding_provider( debug=debug, verbose=verbose )
+
+        # Get standardized embedding dimension from config
+        self._embedding_dim = int( self._config_mgr.get( "embedding dimensions", default="768" ) )
 
         # Read nprobes configuration for vector search performance tuning
         self._nprobes = self._config_mgr.get( "solution snapshots lancedb nprobes", default=20, return_type="int" )
 
         self.db = lancedb.connect( du.get_project_root() + self._config_mgr.get( "database_path_wo_root" ) )
+
+        # Validate existing table dimensions match config before creating/opening
+        self._validate_embedding_dimensions( self.db, "input_and_output_tbl", "input_embedding" )
 
         # Create table if it doesn't exist
         self._create_table_if_needed( self.db )
@@ -59,6 +67,38 @@ class InputAndOutputTable():
         #     print( self.db.table_names() )
         #     du.print_banner( "Table:" )
         #     print( self._input_and_output_tbl.select( [ "date", "time", "input", "output_final" ] ).head( 10 ) )
+
+    def _validate_embedding_dimensions( self, db, table_name, embedding_field_name ):
+        """
+        Validate that existing table's embedding dimensions match current config.
+
+        Requires:
+            - db is a valid lancedb connection
+            - table_name is a string
+            - embedding_field_name is the name of an embedding column in the table
+
+        Ensures:
+            - No-op if table doesn't exist (will be created fresh)
+            - No-op if dimensions match
+            - Drops table if dimensions mismatch (will be recreated by caller)
+        """
+        if table_name not in db.table_names():
+            return
+
+        table        = db.open_table( table_name )
+        schema       = table.schema
+        field        = schema.field( embedding_field_name )
+        existing_dim = field.type.list_size
+
+        if existing_dim == self._embedding_dim:
+            return
+
+        du.print_banner( f"EMBEDDING DIMENSION MISMATCH: {table_name}" )
+        print( f"  Table schema expects: {existing_dim} dims" )
+        print( f"  Current config has:   {self._embedding_dim} dims" )
+        print( f"  Action: Dropping table (will be recreated with correct dimensions)" )
+
+        db.drop_table( table_name )
 
     def _create_table_if_needed( self, db ) -> None:
         """
@@ -86,10 +126,10 @@ class InputAndOutputTable():
                 pa.field( "time",                     pa.string() ),
                 pa.field( "input_type",               pa.string() ),
                 pa.field( "input",                    pa.string() ),
-                pa.field( "input_embedding",          pa.list_( pa.float32(), 1536 ) ),
+                pa.field( "input_embedding",          pa.list_( pa.float32(), self._embedding_dim ) ),
                 pa.field( "output_raw",               pa.string() ),
                 pa.field( "output_final",             pa.string() ),
-                pa.field( "output_final_embedding",   pa.list_( pa.float32(), 1536 ) ),
+                pa.field( "output_final_embedding",   pa.list_( pa.float32(), self._embedding_dim ) ),
                 pa.field( "solution_path_wo_root",    pa.string() ),
             ] )
 
@@ -169,7 +209,7 @@ class InputAndOutputTable():
                         output_str = str(output_final) if output_final else ""
                         if self.debug and self.verbose: print( f"  Generating output embedding for: '{output_str[:debug_truncate_len]}...'" )
                         # Note: EmbeddingManager handles its own cache hit detection internally
-                        final_output_embedding = self._embedding_mgr.generate_embedding( output_final, normalize_for_cache=True )
+                        final_output_embedding = self._embedding_provider.generate_embedding( output_final, content_type="prose" )
                     else:
                         final_output_embedding = output_final_embedding
                         if self.debug and self.verbose: print( f"  Output embedding provided (skipping generation)" )
@@ -219,7 +259,7 @@ class InputAndOutputTable():
                 "input_embedding"                  : input_embedding if input_embedding else self._question_embeddings_tbl.get_embedding( input ),
                 "output_raw"                       : output_raw,
                 "output_final"                     : output_final,
-                "output_final_embedding"           : output_final_embedding if output_final_embedding else self._embedding_mgr.generate_embedding( output_final, normalize_for_cache=True ),
+                "output_final_embedding"           : output_final_embedding if output_final_embedding else self._embedding_provider.generate_embedding( output_final, content_type="prose" ),
                 "solution_path_wo_root"            : solution_path_wo_root
             } ]
             self._input_and_output_tbl.add( new_row )
@@ -410,10 +450,10 @@ class InputAndOutputTable():
                 pa.field( "time",                     pa.string() ),
                 pa.field( "input_type",               pa.string() ),
                 pa.field( "input",                    pa.string() ),
-                pa.field( "input_embedding",          pa.list_( pa.float32(), 1536 ) ),
+                pa.field( "input_embedding",          pa.list_( pa.float32(), self._embedding_dim ) ),
                 pa.field( "output_raw",               pa.string() ),
                 pa.field( "output_final",             pa.string() ),
-                pa.field( "output_final_embedding",   pa.list_( pa.float32(), 1536 ) ),
+                pa.field( "output_final_embedding",   pa.list_( pa.float32(), self._embedding_dim ) ),
                 pa.field( "solution_path_wo_root",    pa.string() ),
             ]
         )

@@ -59,6 +59,8 @@ class PodcastGeneratorJob( AgenticJobBase ):
         target_languages: Optional[ List[ str ] ] = None,
         max_segments: Optional[ int ] = None,
         dry_run: bool = False,
+        audience: Optional[ str ] = None,
+        audience_context: Optional[ str ] = None,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -83,6 +85,8 @@ class PodcastGeneratorJob( AgenticJobBase ):
             target_languages: List of ISO language codes (default: ["en"])
             max_segments: Limit TTS to first N segments (None = all)
             dry_run: Simulate execution without API calls
+            audience: Target audience level (beginner/general/expert/academic)
+            audience_context: Custom audience description
             debug: Enable debug output
             verbose: Enable verbose output
         """
@@ -99,6 +103,8 @@ class PodcastGeneratorJob( AgenticJobBase ):
         self.target_languages = target_languages or [ "en" ]
         self.max_segments     = max_segments
         self.dry_run          = dry_run
+        self.audience         = audience
+        self.audience_context = audience_context
 
         # Results (populated after execution)
         self.audio_path    = None
@@ -213,6 +219,16 @@ class PodcastGeneratorJob( AgenticJobBase ):
 
         # Create config
         config = PodcastConfig()
+
+        # Target audience configuration (job arg overrides config file)
+        from cosa.config.configuration_manager import ConfigurationManager
+        config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+        config.audience = self.audience or config_mgr.get(
+            "podcast generator audience",
+            default="academic"
+        )
+        audience_context_from_config = config_mgr.get( "podcast generator audience context", default="" )
+        config.audience_context = self.audience_context or audience_context_from_config or None
 
         # Create orchestrator
         agent = PodcastOrchestratorAgent(

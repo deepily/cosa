@@ -136,9 +136,10 @@ class NotificationPriority(str, Enum):
 
 class ResponseType(str, Enum):
     """Response type for notifications."""
-    YES_NO = "yes_no"
-    OPEN_ENDED = "open_ended"
-    MULTIPLE_CHOICE = "multiple_choice"
+    YES_NO           = "yes_no"
+    OPEN_ENDED       = "open_ended"
+    MULTIPLE_CHOICE  = "multiple_choice"
+    OPEN_ENDED_BATCH = "open_ended_batch"
 
 
 # ============================================================================
@@ -302,6 +303,16 @@ class NotificationRequest(BaseModel):
                 for j, opt in enumerate( q['options'] ):
                     if not isinstance( opt, dict ) or 'label' not in opt:
                         raise ValueError( f"Question {i} option {j} must have 'label'" )
+
+        elif response_type == ResponseType.OPEN_ENDED_BATCH:
+            if 'questions' not in v or not isinstance( v['questions'], list ):
+                raise ValueError( "response_options must have 'questions' array for open_ended_batch type" )
+
+            for i, q in enumerate( v['questions'] ):
+                if not isinstance( q, dict ):
+                    raise ValueError( f"Question {i} must be a dict" )
+                if 'question' not in q:
+                    raise ValueError( f"Question {i} missing 'question' field" )
 
         return v
 

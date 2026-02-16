@@ -23,6 +23,10 @@ import asyncio
 import re
 import sys
 
+# User-visible args: the canonical list of args that end users should see
+# and interact with. Engineering params (models, debug, etc.) are excluded.
+USER_VISIBLE_ARGS = [ "research", "languages", "audience", "audience_context" ]
+
 
 def extract_user_id_from_path( path: str ) -> str:
     """
@@ -179,6 +183,16 @@ async def run_podcast_generation( args ):
     # Create config
     config = PodcastConfig()
 
+    # Target audience configuration (CLI overrides config file)
+    from cosa.config.configuration_manager import ConfigurationManager
+    config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+    config.audience = args.audience or config_mgr.get(
+        "podcast generator audience",
+        default="academic"
+    )
+    audience_context_from_config = config_mgr.get( "podcast generator audience context", default="" )
+    config.audience_context = args.audience_context or audience_context_from_config or None
+
     # Create orchestrator with target languages
     agent = PodcastOrchestratorAgent(
         research_doc_path = research_path,
@@ -190,6 +204,10 @@ async def run_podcast_generation( args ):
     )
 
     print( f"Podcast ID: {agent.podcast_id}" )
+    if config.audience:
+        print( f"Target audience: {config.audience}" )
+    if config.audience_context:
+        print( f"Audience context: {config.audience_context}" )
     print( "" )
 
     # Run the workflow
@@ -387,6 +405,12 @@ async def run_audio_generation( args ):
 
 def main():
     """Main entry point."""
+    # Handle --user-visible-args early (before argparse enforces required args)
+    if "--user-visible-args" in sys.argv:
+        import json
+        print( json.dumps( USER_VISIBLE_ARGS ) )
+        sys.exit( 0 )
+
     parser = argparse.ArgumentParser(
         description = "COSA Podcast Generator Agent - Transform research into podcasts",
         formatter_class = argparse.RawDescriptionHelpFormatter,
@@ -478,6 +502,28 @@ Language codes:
         "--languages", "-l",
         default = None,
         help    = "Comma-separated ISO language codes (e.g., 'en' or 'en,es-MX'). Default: en only"
+    )
+
+    parser.add_argument(
+        "--audience",
+        type    = str,
+        choices = [ "beginner", "general", "expert", "academic" ],
+        default = None,
+        help    = "Target audience level (default: academic from config). Options: beginner, general, expert, academic"
+    )
+
+    parser.add_argument(
+        "--audience-context",
+        type    = str,
+        default = None,
+        help    = "Custom audience description (e.g., 'AI architect familiar with LLMs')"
+    )
+
+    parser.add_argument(
+        "--user-visible-args",
+        action  = "store_true",
+        default = False,
+        help    = "Print user-visible argument names as JSON and exit"
     )
 
     args = parser.parse_args()

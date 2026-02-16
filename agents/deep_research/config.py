@@ -64,8 +64,8 @@ class ResearchConfig:
 
     # === Target Audience ===
     # Controls depth, terminology, and assumptions in research output
-    # Levels: beginner, general, expert (default), academic
-    target_audience  : Literal[ "beginner", "general", "expert", "academic" ] = "expert"
+    # Levels: beginner, general, expert, academic (default)
+    audience         : Literal[ "beginner", "general", "expert", "academic" ] = "academic"
     audience_context : Optional[ str ] = None  # Custom description (e.g., "AI architect with ML background")
 
     def get_max_subagents( self, complexity: str ) -> int:
@@ -129,13 +129,13 @@ def quick_smoke_test():
 
         # Test 4: Target audience defaults
         print( "Testing target audience..." )
-        assert config.target_audience == "expert"
+        assert config.audience == "academic"
         assert config.audience_context is None
         custom_audience = ResearchConfig(
-            target_audience="academic",
+            audience="beginner",
             audience_context="PhD researcher in AI safety"
         )
-        assert custom_audience.target_audience == "academic"
+        assert custom_audience.audience == "beginner"
         assert custom_audience.audience_context == "PhD researcher in AI safety"
         print( "✓ Target audience configuration works" )
 

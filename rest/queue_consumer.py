@@ -1,5 +1,5 @@
 """
-Background consumer thread for producer-consumer queue pattern.
+CJ Flow background consumer thread for producer-consumer queue pattern.
 
 This module implements the consumer side of the TodoFifoQueue -> RunningFifoQueue
 producer-consumer pattern, replacing the old polling-based approach with

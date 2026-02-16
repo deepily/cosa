@@ -1142,6 +1142,8 @@ class PodcastOrchestratorAgent:
             prompt = get_content_analysis_prompt(
                 research_content = research_content,
                 max_topics       = self.config.key_topics_to_extract,
+                audience         = self.config.audience,
+                audience_context = self.config.audience_context,
             )
 
             response = await self.api_client.call_for_analysis(
@@ -1158,7 +1160,8 @@ class PodcastOrchestratorAgent:
                 interesting_facts          = result.get( "interesting_facts", [] ),
                 discussion_questions       = result.get( "discussion_questions", [] ),
                 analogies_suggested        = result.get( "analogies_suggested", [] ),
-                target_audience            = result.get( "target_audience", "general audience" ),
+                # LLM outputs "target_audience" in JSON → mapped to Python field "inferred_audience"
+                inferred_audience          = result.get( "target_audience", "general audience" ),
                 complexity_level           = result.get( "complexity_level", "intermediate" ),
                 estimated_coverage_minutes = result.get( "estimated_coverage_minutes", 10.0 ),
             )
@@ -1206,6 +1209,8 @@ class PodcastOrchestratorAgent:
                 target_duration_minutes = self.config.target_duration_minutes,
                 min_exchanges          = self.config.min_exchanges,
                 max_exchanges          = self.config.max_exchanges,
+                audience               = self.config.audience,
+                audience_context       = self.config.audience_context,
             )
 
             response = await self.api_client.call_for_script(

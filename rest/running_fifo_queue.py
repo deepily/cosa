@@ -1,6 +1,7 @@
 # from cosa.agents.math_refactoring_agent import MathRefactoringAgent
 from cosa.agents.receptionist_agent import ReceptionistAgent
 from cosa.agents.weather_agent import WeatherAgent
+from cosa.crud_for_dataframes.agent import CrudForDataFramesAgent
 from cosa.rest.fifo_queue import FifoQueue
 from cosa.rest.queue_util import emit_job_state_transition
 from cosa.rest.queue_protocol import is_queueable_job
@@ -21,8 +22,8 @@ from typing import Optional, Any
 
 class RunningFifoQueue( FifoQueue ):
     """
-    Queue for handling running jobs with agents and solution snapshots.
-    
+    CJ Flow execution engine — processes running jobs with agents and solution snapshots.
+
     Manages execution of jobs from todo queue to done/dead queues.
     Handles both AgentBase instances and SolutionSnapshot instances.
     """
@@ -157,28 +158,33 @@ class RunningFifoQueue( FifoQueue ):
                 running_job = self._handle_agentic_job( running_job, truncated_question, run_timer )
 
             elif isinstance( running_job, AgentBase ):
-                # NEW: Check cache BEFORE agent execution
-                question = running_job.last_question_asked
-
-                if self.debug: print( f"[CACHE] Checking cache for question: {question}" )
-
-                # Search for existing snapshot
-                cached_snapshots = self.snapshot_mgr.get_snapshots_by_question( question )
-
-                if cached_snapshots and len( cached_snapshots ) > 0:
-                    # CACHE HIT - Use the cached result
-                    score, cached_snapshot = cached_snapshots[0]  # Unpack (score, snapshot) tuple
-
-                    if self.debug: print( f"[CACHE] 🎯 CACHE HIT: Found cached solution from {cached_snapshot.run_date} (score: {score:.1f}%)" )
-
-                    # Convert cached snapshot to proper format and use it
-                    # Pass original running_job to get current user context for done queue
-                    running_job = self._format_cached_result( cached_snapshot, running_job, truncated_question, run_timer )
-                else:
-                    # CACHE MISS - Continue with normal agent execution
-                    if self.debug: print( f"[CACHE] ❌ CACHE MISS: Running agent for new question" )
-
+                if isinstance( running_job, CrudForDataFramesAgent ):
+                    # CRUD agents: skip cache — data is mutable, snapshots go stale
+                    if self.debug: print( "[CACHE] Skipping cache for CRUD agent (mutable data)" )
                     running_job = self._handle_base_agent( running_job, truncated_question, run_timer )
+                else:
+                    # NEW: Check cache BEFORE agent execution
+                    question = running_job.last_question_asked
+
+                    if self.debug: print( f"[CACHE] Checking cache for question: {question}" )
+
+                    # Search for existing snapshot
+                    cached_snapshots = self.snapshot_mgr.get_snapshots_by_question( question )
+
+                    if cached_snapshots and len( cached_snapshots ) > 0:
+                        # CACHE HIT - Use the cached result
+                        score, cached_snapshot = cached_snapshots[0]  # Unpack (score, snapshot) tuple
+
+                        if self.debug: print( f"[CACHE] 🎯 CACHE HIT: Found cached solution from {cached_snapshot.run_date} (score: {score:.1f}%)" )
+
+                        # Convert cached snapshot to proper format and use it
+                        # Pass original running_job to get current user context for done queue
+                        running_job = self._format_cached_result( cached_snapshot, running_job, truncated_question, run_timer )
+                    else:
+                        # CACHE MISS - Continue with normal agent execution
+                        if self.debug: print( f"[CACHE] ❌ CACHE MISS: Running agent for new question" )
+
+                        running_job = self._handle_base_agent( running_job, truncated_question, run_timer )
             else:
                 running_job = self._handle_solution_snapshot( running_job, truncated_question, run_timer )
                 
@@ -186,27 +192,62 @@ class RunningFifoQueue( FifoQueue ):
             print( f"[RUNNING] Error processing job: {e}" )
             print( f"[RUNNING] Full stack trace:" )
             traceback.print_exc()
-            
-            # Move job to dead queue on error
-            failed_job = self.pop()
+
+            # Get job info BEFORE popping (head is still in queue)
+            failed_job = self.head()
             if failed_job:
+                job_id  = failed_job.id_hash
+                user_id = self.user_job_tracker.get_user_for_job( job_id )
+
+                # TTS notification for the error
+                self._notify( f"Job failed: {e}", job=failed_job, priority="urgent" )
+
+                # Build metadata matching _handle_error_case pattern
+                completed_at     = datetime.now().isoformat()
+                started_at       = failed_job.started_at
+                duration_seconds = None
+                if started_at:
+                    try:
+                        start            = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
+                        end              = datetime.fromisoformat( completed_at )
+                        duration_seconds = ( end - start ).total_seconds()
+                    except Exception:
+                        pass
+
+                metadata = {
+                    'error'           : str( e ),
+                    'question_text'   : failed_job.last_question_asked,
+                    'agent_type'      : failed_job.job_type,
+                    'timestamp'       : failed_job.created_date,
+                    'status'          : 'failed',
+                    'has_interactions' : bool( failed_job.session_id ),
+                    'is_cache_hit'    : False,
+                    'started_at'      : started_at,
+                    'completed_at'    : completed_at,
+                    'duration_seconds': duration_seconds
+                }
+                emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'dead', user_id, metadata )
+
+                # Now pop and move to dead queue
+                self.pop()
                 self.jobs_dead_queue.push( failed_job )
     
-    def _handle_error_case( self, response: dict, running_job: Any, truncated_question: str ) -> Any:
+    def _handle_error_case( self, response: dict, running_job: Any, truncated_question: str, error_message: str=None ) -> Any:
         """
         Handle error cases during job execution.
-        
+
         Requires:
             - response is a dictionary with 'output' key
             - running_job is a valid job instance
             - truncated_question is a string
-            
+            - error_message is an optional string with a specific error description
+
         Ensures:
             - Moves job from running to dead queue
-            - Emits error audio message
+            - Emits specific error_message if provided, otherwise generic fallback
             - Updates socket connections
             - Returns the job instance
-            
+
         Raises:
             - None (handles errors gracefully)
         """
@@ -217,7 +258,39 @@ class RunningFifoQueue( FifoQueue ):
         self.pop()  # Auto-emits 'run_update'
 
         # TTS Migration (Session 97): Use notification service instead of _emit_speech
-        self._notify( "I'm sorry Dave, I'm afraid I can't do that. Please check your logs", job=running_job, priority="urgent" )
+        notification_msg = error_message if error_message else "I'm sorry Dave, I'm afraid I can't do that. Please check your logs"
+        self._notify( notification_msg, job=running_job, priority="urgent" )
+
+        running_job.error = notification_msg
+
+        # Emit job state transition (run -> dead) with error metadata
+        job_id  = running_job.id_hash
+        user_id = self.user_job_tracker.get_user_for_job( job_id )
+
+        completed_at = datetime.now().isoformat()
+        started_at   = running_job.started_at
+        duration_seconds = None
+        if started_at:
+            try:
+                start = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
+                end   = datetime.fromisoformat( completed_at )
+                duration_seconds = ( end - start ).total_seconds()
+            except Exception:
+                pass
+
+        metadata = {
+            'error'           : notification_msg,
+            'question_text'   : running_job.last_question_asked,
+            'agent_type'      : running_job.job_type,
+            'timestamp'       : running_job.created_date,
+            'status'          : 'failed',
+            'has_interactions': bool( running_job.session_id ),
+            'is_cache_hit'    : False,
+            'started_at'      : started_at,
+            'completed_at'    : completed_at,
+            'duration_seconds': duration_seconds
+        }
+        emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'dead', user_id, metadata )
 
         self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
 
@@ -454,8 +527,9 @@ class RunningFifoQueue( FifoQueue ):
         except Exception as e:
 
             du.print_stack_trace( e, explanation="do_all() failed", caller="RunningFifoQueue._handle_base_agent()", debug=self.debug )
-            running_job = self._handle_error_case( code_response, running_job, truncated_question )
-        
+            running_job = self._handle_error_case( code_response, running_job, truncated_question, error_message=str( e ) )
+            return running_job
+
         du.print_banner( f"Job [{running_job.last_question_asked}] complete...", prepend_nl=True, end="\n" )
         
         if running_job.code_ran_to_completion() and running_job.formatter_ran_to_completion():
@@ -469,8 +543,8 @@ class RunningFifoQueue( FifoQueue ):
             # TODO: this needs to not be so ad hoc as it appears right now!
             serialize_snapshot = (
                 not isinstance( running_job, ReceptionistAgent ) and
-                not isinstance( running_job, WeatherAgent ) # and
-                # not isinstance( running_job, MathRefactoringAgent )
+                not isinstance( running_job, WeatherAgent ) and
+                not isinstance( running_job, CrudForDataFramesAgent )
             )
             if serialize_snapshot:
 
@@ -502,52 +576,50 @@ class RunningFifoQueue( FifoQueue ):
                 pprint.pprint( running_job.runtime_stats )
             else:
                 print( f"NOT adding to snapshot manager" )
-                # There's no code executed to generate a RAW answer, just a canned, conversational one
-                running_job.answer = "no code executed by non-serializing/ephemeral objects"
+                # Only overwrite answer for truly ephemeral agents (not CRUD which sets answer in run_formatter)
+                if not isinstance( running_job, CrudForDataFramesAgent ):
+                    running_job.answer = "no code executed by non-serializing/ephemeral objects"
 
-            # Emit job state transition (run -> done) with completion metadata
-            if serialize_snapshot:
-                # Phase 2: Direct attribute access - Protocol guarantees these exist
-                job_id  = running_job.id_hash
-                user_id = self.user_job_tracker.get_user_for_job( job_id )
+            # Emit job state transition (run -> done) with completion metadata for ALL agents
+            job_id  = running_job.id_hash
+            user_id = self.user_job_tracker.get_user_for_job( job_id )
 
-                # Calculate completed_at timestamp for duration calculation
-                completed_at = datetime.now().isoformat()
-                started_at   = running_job.started_at
+            # Calculate completed_at timestamp for duration calculation
+            completed_at = datetime.now().isoformat()
+            started_at   = running_job.started_at
 
-                # Calculate duration_seconds if both timestamps exist
-                duration_seconds = None
-                if started_at and completed_at:
-                    try:
-                        start = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
-                        end   = datetime.fromisoformat( completed_at )
-                        duration_seconds = ( end - start ).total_seconds()
-                    except Exception:
-                        pass
+            # Calculate duration_seconds if both timestamps exist
+            duration_seconds = None
+            if started_at and completed_at:
+                try:
+                    start = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
+                    end   = datetime.fromisoformat( completed_at )
+                    duration_seconds = ( end - start ).total_seconds()
+                except Exception:
+                    pass
 
-                metadata = {
-                    'response_text'   : running_job.answer_conversational,
-                    'abstract'        : None,
-                    'report_link'     : None,
-                    'cost_summary'    : None,
-                    'error'           : None,
-                    # Phase 6.2: Card-rendering fields for client-side card creation
-                    'question_text'   : running_job.last_question_asked,
-                    'agent_type'      : running_job.job_type,
-                    'timestamp'       : running_job.created_date,
-                    # Session 107: Fix field parity between WebSocket and server-fetched cards
-                    'status'          : 'completed',
-                    'has_interactions': bool( running_job.session_id ),
-                    'is_cache_hit'    : running_job.is_cache_hit,
-                    'started_at'      : started_at,
-                    'completed_at'    : completed_at,
-                    'duration_seconds': duration_seconds
-                }
-                emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'done', user_id, metadata )
+            metadata = {
+                'response_text'   : running_job.answer_conversational,
+                'abstract'        : None,
+                'report_link'     : None,
+                'cost_summary'    : None,
+                'error'           : None,
+                # Phase 6.2: Card-rendering fields for client-side card creation
+                'question_text'   : running_job.last_question_asked,
+                'agent_type'      : running_job.job_type,
+                'timestamp'       : running_job.created_date,
+                # Session 107: Fix field parity between WebSocket and server-fetched cards
+                'status'          : 'completed',
+                'has_interactions': bool( running_job.session_id ),
+                'is_cache_hit'    : running_job.is_cache_hit,
+                'started_at'      : started_at,
+                'completed_at'    : completed_at,
+                'duration_seconds': duration_seconds
+            }
+            emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'done', user_id, metadata )
 
             self.pop()  # Auto-emits 'run_update'
-            if serialize_snapshot:
-                self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
+            self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
 
             # Write the job to the database for posterity's sake
             self.io_tbl.insert_io_row( input_type=running_job.routing_command, input=running_job.last_question_asked, output_raw=running_job.answer, output_final=running_job.answer_conversational )
@@ -688,7 +760,11 @@ class RunningFifoQueue( FifoQueue ):
 
         # Re-execute cached code to get fresh output (fixes stale time queries)
         if self.debug: print( f"[CACHE] Re-executing cached code for fresh result..." )
-        code_response = cached_snapshot.run_code( debug=self.debug, verbose=self.verbose )
+        try:
+            code_response = cached_snapshot.run_code( debug=self.debug, verbose=self.verbose )
+        except ValueError as e:
+            code_response = { "return_code" : 1, "output" : "" }
+            if self.debug: print( f"[CACHE] ⚠ {e}" )
 
         if code_response.get( "return_code" ) == 0:
             # Format fresh output
@@ -699,8 +775,7 @@ class RunningFifoQueue( FifoQueue ):
             if self.debug: print( f"[CACHE] ⚠ Re-execution failed, using cached answer" )
 
         # Calculate time saved (first_run_ms - current cache retrieval time)
-        run_timer.stop()
-        cache_retrieval_ms = run_timer.get_elapsed_millis()
+        cache_retrieval_ms = run_timer.get_delta_ms()
         first_run_ms       = cached_snapshot.runtime_stats.get( "first_run_ms", 0 )
         time_saved_ms      = max( 0, first_run_ms - cache_retrieval_ms )
 

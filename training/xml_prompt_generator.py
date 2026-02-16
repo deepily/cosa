@@ -1,3 +1,4 @@
+import json
 import os
 import random
 import regex as re
@@ -46,6 +47,7 @@ class XmlPromptGenerator:
         self.vox_cmd_simple_commands                  = self._get_simple_vox_commands()
         self.agent_router_compound_commands           = self._get_compound_agent_router_commands()
         self.agent_router_simple_commands             = self._get_simple_agent_router_commands()
+        self.agent_router_agentic_commands            = self._get_agentic_job_commands()
         self.agent_function_mapping_compound_commands = self._get_compound_agent_function_mapping_commands()
         
         # Compile commands after loading dictionaries
@@ -88,108 +90,94 @@ class XmlPromptGenerator:
     def _get_compound_vox_commands( self ) -> dict:
         """
         Returns dictionary of compound voice commands and their corresponding file paths.
-        
+
         Requires:
-            - None
-        
+            - JSON config file exists at src/conf/training/vox-cmd-compound-commands.json
+
         Ensures:
-            - Returns command name to file path mapping
+            - Returns command name to file path mapping loaded from JSON config
             - All file paths are tested for existence
         """
-        compound_commands = {
-            "go to current tab"                : "/src/ephemera/prompts/data/synthetic-data-load-url-current-tab.txt",
-            "go to new tab"                    : "/src/ephemera/prompts/data/synthetic-data-load-url-new-tab.txt",
-            "search current tab"               : "/src/ephemera/prompts/data/synthetic-data-search-in-current-tab.txt",
-            "search new tab"                   : "/src/ephemera/prompts/data/synthetic-data-search-in-new-tab.txt",
-            "search google current tab"        : "/src/ephemera/prompts/data/synthetic-data-search-google-in-current-tab.txt",
-            "search google new tab"            : "/src/ephemera/prompts/data/synthetic-data-search-google-in-new-tab.txt",
-            "search google scholar current tab": "/src/ephemera/prompts/data/synthetic-data-search-google-scholar-in-current-tab.txt",
-            "search google scholar new tab"    : "/src/ephemera/prompts/data/synthetic-data-search-google-scholar-in-new-tab.txt",
-            "search kagi new tab"              : "/src/ephemera/prompts/data/synthetic-data-search-kagi-in-new-tab.txt",
-            "search kagi current tab"          : "/src/ephemera/prompts/data/synthetic-data-search-kagi-in-current-tab.txt",
-            "search perplexity current tab"    : "/src/ephemera/prompts/data/synthetic-data-search-perplexity-in-current-tab.txt",
-            "search perplexity new tab"        : "/src/ephemera/prompts/data/synthetic-data-search-perplexity-in-new-tab.txt",
-            "search phind current tab"         : "/src/ephemera/prompts/data/synthetic-data-search-phind-in-current-tab.txt",
-            "search phind new tab"             : "/src/ephemera/prompts/data/synthetic-data-search-phind-in-new-tab.txt",
-        }
+        config_path = self.path_prefix + "/src/conf/training/vox-cmd-compound-commands.json"
+        with open( config_path, "r" ) as f:
+            compound_commands = json.load( f )
         self._test_command_paths( compound_commands )
-        
+
         return compound_commands
     
     def _get_simple_vox_commands( self ) -> dict:
         """
         Returns dictionary of simple voice commands and their corresponding file paths.
-        
+
         Requires:
-            - None
-        
+            - JSON config file exists at src/conf/training/vox-cmd-simple-commands.json
+
         Ensures:
-            - Returns command name to file path mapping
+            - Returns command name to file path mapping loaded from JSON config
             - All file paths are tested for existence
         """
-        simple_commands = {
-            "search using clipboard current tab"               : "/src/ephemera/prompts/data/synthetic-data-search-clipboard-in-current-tab.txt",
-            "search using clipboard new tab"                   : "/src/ephemera/prompts/data/synthetic-data-search-clipboard-in-new-tab.txt",
-            "search google using clipboard current tab"        : "/src/ephemera/prompts/data/synthetic-data-search-clipboard-google-in-current-tab.txt",
-            "search google using clipboard new tab"            : "/src/ephemera/prompts/data/synthetic-data-search-clipboard-google-in-new-tab.txt",
-            "search google scholar using clipboard current tab": "/src/ephemera/prompts/data/synthetic-data-search-clipboard-google-scholar-in-current-tab.txt",
-            "search google scholar using clipboard new tab"    : "/src/ephemera/prompts/data/synthetic-data-search-clipboard-google-scholar-in-new-tab.txt",
-            "search kagi using clipboard current tab"          : "/src/ephemera/prompts/data/synthetic-data-search-clipboard-kagi-in-current-tab.txt",
-            "search kagi using clipboard new tab"              : "/src/ephemera/prompts/data/synthetic-data-search-clipboard-kagi-in-new-tab.txt",
-            "search perplexity using clipboard current tab"    : "/src/ephemera/prompts/data/synthetic-data-search-clipboard-perplexity-in-current-tab.txt",
-            "search perplexity using clipboard new tab"        : "/src/ephemera/prompts/data/synthetic-data-search-clipboard-perplexity-in-new-tab.txt",
-            "search phind using clipboard current tab"         : "/src/ephemera/prompts/data/synthetic-data-search-clipboard-phind-in-current-tab.txt",
-            "search phind using clipboard new tab"             : "/src/ephemera/prompts/data/synthetic-data-search-clipboard-phind-in-new-tab.txt",
-            "none"                                             : "/src/ephemera/prompts/data/synthetic-data-none-of-the-above.txt",
-        }
+        config_path = self.path_prefix + "/src/conf/training/vox-cmd-simple-commands.json"
+        with open( config_path, "r" ) as f:
+            simple_commands = json.load( f )
         self._test_command_paths( simple_commands )
-        
+
         return simple_commands
     
     def _get_compound_agent_router_commands( self ) -> dict:
         """
         Returns dictionary of compound agent router commands and their file paths.
-        
+
         Requires:
-            - None
-        
+            - JSON config file exists at src/conf/training/agent-router-compound-commands.json
+
         Ensures:
-            - Returns command name to file path mapping
+            - Returns command name to file path mapping loaded from JSON config
             - All file paths are tested for existence
         """
-        agent_routing_compound_commands = {
-            "agent router go to date and time"   : "/src/ephemera/prompts/data/synthetic-data-agent-routing-date-and-time.txt",
-            "agent router go to weather"         : "/src/ephemera/prompts/data/synthetic-data-agent-routing-weather.txt",
-            "agent router go to calendar"        : "/src/ephemera/prompts/data/synthetic-data-agent-routing-calendaring.txt",
-            "agent router go to receptionist"    : "/src/ephemera/prompts/data/synthetic-data-agent-routing-receptionist.txt",
-        }
-        self._test_command_paths( agent_routing_compound_commands )
-        
-        return agent_routing_compound_commands
+        config_path = self.path_prefix + "/src/conf/training/agent-router-compound-commands.json"
+        with open( config_path, "r" ) as f:
+            compound_commands = json.load( f )
+        self._test_command_paths( compound_commands )
+
+        return compound_commands
     
     def _get_simple_agent_router_commands( self ) -> dict:
         """
         Returns dictionary of simple agent router commands and their file paths.
 
         Requires:
-            - None
+            - JSON config file exists at src/conf/training/agent-router-simple-commands.json
 
         Ensures:
-            - Returns command name to file path mapping
+            - Returns command name to file path mapping loaded from JSON config
             - All file paths are tested for existence
+            - Does NOT include agentic job commands (those have their own getter)
         """
-        simple_commands = {
-            "agent router go to todo list"          : "/src/ephemera/prompts/data/synthetic-data-agent-routing-todo-lists.txt",
-            "agent router go to math"               : "/src/ephemera/prompts/data/synthetic-data-agent-routing-math.txt",
-            "agent router go to deep research"      : "/src/ephemera/prompts/data/synthetic-data-agent-routing-deep-research.txt",
-            "agent router go to podcast generator"  : "/src/ephemera/prompts/data/synthetic-data-agent-routing-podcast-generator.txt",
-            "agent router go to research to podcast": "/src/ephemera/prompts/data/synthetic-data-agent-routing-research-to-podcast.txt",
-            "none"                                  : "/src/ephemera/prompts/data/synthetic-data-none-of-the-above.txt",
-        }
+        config_path = self.path_prefix + "/src/conf/training/agent-router-simple-commands.json"
+        with open( config_path, "r" ) as f:
+            simple_commands = json.load( f )
         self._test_command_paths( simple_commands )
 
         return simple_commands
     
+    def _get_agentic_job_commands( self ) -> dict:
+        """
+        Returns dictionary of agentic job commands and their corresponding file paths.
+
+        Requires:
+            - JSON config file exists at src/conf/training/agent-router-agentic-commands.json
+
+        Ensures:
+            - Returns command name to file path mapping loaded from JSON config
+            - All file paths are tested for existence
+        """
+        config_path = self.path_prefix + "/src/conf/training/agent-router-agentic-commands.json"
+        with open( config_path, "r" ) as f:
+            agentic_commands = json.load( f )
+        self._test_command_paths( agentic_commands )
+
+        return agentic_commands
+
     def _get_compound_agent_function_mapping_commands( self ) -> dict:
         """
         Returns dictionary of compound agent function mapping commands.
@@ -234,20 +222,22 @@ class XmlPromptGenerator:
     
     def _compile_agent_router_commands( self ) -> str:
         """
-        Compiles both compound and simple agent router commands into XML format.
-        
+        Compiles compound, simple, and agentic agent router commands into XML format.
+
         Requires:
             - agent_router_compound_commands initialized
             - agent_router_simple_commands initialized
-        
+            - agent_router_agentic_commands initialized
+
         Ensures:
             - Returns XML formatted commands
-            - Combines compound and simple commands
+            - Combines compound, simple, and agentic commands
         """
         compound_categories = "".join( [ "        <command>" + command + "</command>\n" for command in self.agent_router_compound_commands.keys() ] )
         simple_categories   = "".join( [ "        <command>" + command + "</command>\n" for command in self.agent_router_simple_commands.keys() ] )
-        
-        return ( compound_categories + simple_categories ).strip()
+        agentic_categories  = "".join( [ "        <command>" + command + "</command>\n" for command in self.agent_router_agentic_commands.keys() ] )
+
+        return ( compound_categories + simple_categories + agentic_categories ).strip()
     
     def _init_common_templates( self ) -> None:
         """
@@ -668,6 +658,19 @@ class XmlPromptGenerator:
             - Length matches requested_length if specified
         """
         return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-document-paths.txt", requested_length=requested_length )
+
+    def get_claude_code_tasks( self, requested_length: Optional[int]=None ) -> list:
+        """
+        Gets placeholder task descriptions for Claude Code job training.
+
+        Requires:
+            - requested_length is None or positive integer
+
+        Ensures:
+            - Returns list of coding task descriptions
+            - Length matches requested_length if specified
+        """
+        return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-claude-code-tasks.txt", requested_length=requested_length )
 
     def get_audience_levels( self, requested_length: Optional[int]=None ) -> list:
         """

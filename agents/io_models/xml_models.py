@@ -2418,15 +2418,16 @@ class AgentRouterResponse( BaseXMLModel ):
             Validated command
         """
         valid_commands = [
-            'agent router go to date and time',
+            'agent router go to datetime',
             'agent router go to weather',
             'agent router go to calendar',
             'agent router go to receptionist',
-            'agent router go to todo list',
+            'agent router go to todo',
             'agent router go to math',
             'agent router go to deep research',
             'agent router go to podcast generator',
             'agent router go to research to podcast',
+            'agent router go to claude code',
             'none'
         ]
         

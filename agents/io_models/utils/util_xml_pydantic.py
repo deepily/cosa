@@ -14,6 +14,7 @@ This module provides:
 """
 
 import json
+import re
 import time
 from typing import TypeVar, Type, Dict, Any, Optional, Union, List
 from pydantic import BaseModel, Field, ValidationError, ConfigDict
@@ -184,6 +185,12 @@ class BaseXMLModel( BaseModel ):
                     print( f"[XML-PARSER] WARNING: Stripping {suffix_len} chars after closing tag: '{suffix_preview}...'" )
                     xml_cleaned = xml_cleaned[ :end_pos ]
                 break
+
+        # Escape bare & that aren't already part of XML entities.
+        # LLMs write content like "Q&A" which is invalid XML (bare ampersand).
+        # This safely converts "Q&A" → "Q&amp;A" without double-escaping
+        # existing entities like &amp; &lt; &gt; &quot; &apos; or &#NNN;
+        xml_cleaned = re.sub( r'&(?!amp;|lt;|gt;|quot;|apos;|#)', '&amp;', xml_cleaned )
 
         try:
             # Parse XML to dictionary

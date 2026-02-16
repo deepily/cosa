@@ -1,5 +1,6 @@
 import cosa.utils.util as du
 from cosa.memory.embedding_manager import EmbeddingManager
+from cosa.memory.embedding_provider import get_embedding_provider
 
 from cosa.config.configuration_manager import ConfigurationManager
 from cosa.utils.util_stopwatch import Stopwatch
@@ -53,11 +54,18 @@ class QuestionEmbeddingsTable():
         self.debug          = debug
         self.verbose        = verbose
         self._config_mgr    = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-        self._embedding_mgr = EmbeddingManager( debug=debug, verbose=verbose )
-        
+        self._embedding_mgr      = EmbeddingManager( debug=debug, verbose=verbose )
+        self._embedding_provider = get_embedding_provider( debug=debug, verbose=verbose )
+
+        # Get standardized embedding dimension from config
+        self._embedding_dim = int( self._config_mgr.get( "embedding dimensions", default="768" ) )
+
         uri = du.get_project_root() + self._config_mgr.get( "database_path_wo_root" )
 
         db = lancedb.connect( uri )
+
+        # Validate existing table dimensions match config before creating/opening
+        self._validate_embedding_dimensions( db, "question_embeddings_tbl", "embedding" )
 
         # Create table if it doesn't exist
         self._create_table_if_needed( db )
@@ -65,6 +73,38 @@ class QuestionEmbeddingsTable():
         self._question_embeddings_tbl = db.open_table( "question_embeddings_tbl" )
         
         print( f"Opened question_embeddings_tbl w/ [{self._question_embeddings_tbl.count_rows()}] rows" )
+
+    def _validate_embedding_dimensions( self, db, table_name, embedding_field_name ):
+        """
+        Validate that existing table's embedding dimensions match current config.
+
+        Requires:
+            - db is a valid lancedb connection
+            - table_name is a string
+            - embedding_field_name is the name of an embedding column in the table
+
+        Ensures:
+            - No-op if table doesn't exist (will be created fresh)
+            - No-op if dimensions match
+            - Drops table if dimensions mismatch (will be recreated by caller)
+        """
+        if table_name not in db.table_names():
+            return
+
+        table        = db.open_table( table_name )
+        schema       = table.schema
+        field        = schema.field( embedding_field_name )
+        existing_dim = field.type.list_size
+
+        if existing_dim == self._embedding_dim:
+            return
+
+        du.print_banner( f"EMBEDDING DIMENSION MISMATCH: {table_name}" )
+        print( f"  Table schema expects: {existing_dim} dims" )
+        print( f"  Current config has:   {self._embedding_dim} dims" )
+        print( f"  Action: Dropping table (will be recreated with correct dimensions)" )
+
+        db.drop_table( table_name )
 
     def _create_table_if_needed( self, db ) -> None:
         """
@@ -88,7 +128,7 @@ class QuestionEmbeddingsTable():
 
             schema = pa.schema( [
                 pa.field( "question", pa.string() ),
-                pa.field( "embedding", pa.list_( pa.float32(), 1536 ) )
+                pa.field( "embedding", pa.list_( pa.float32(), self._embedding_dim ) )
             ] )
 
             self._question_embeddings_tbl = db.create_table( "question_embeddings_tbl", schema=schema, mode="overwrite" )
@@ -151,7 +191,7 @@ class QuestionEmbeddingsTable():
         if self.debug: timer.print( f"Done! w/ {len( rows_returned )} rows returned", use_millis=True )
         
         if not rows_returned:
-            return self._embedding_mgr.generate_embedding( question, normalize_for_cache=True )
+            return self._embedding_provider.generate_embedding( question, content_type="prose" )
         else:
             return rows_returned[ 0 ][ "embedding"]
         

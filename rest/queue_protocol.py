@@ -1,5 +1,5 @@
 """
-Unified protocol for all queueable job objects.
+Unified protocol for all queueable job objects in CJ Flow (COSA Jobs Flow).
 
 All job types (AgentBase, SolutionSnapshot, AgenticJobBase) must implement
 this interface for consistent queue system handling. This protocol documents

@@ -1,3 +1,4 @@
+import gc
 import sys
 import os
 
@@ -64,8 +65,15 @@ class Quantizer:
         self.symmetrical     = sym
         
         if quantize_method == "autoround":
+            # NOTE: enable_torch_compile must be disabled for 8-bit quantization due to a Triton
+            # compilation bug in auto_round<=0.9.7. The upstream int.py has `2 ** (bits - 1)` in
+            # quant_tensor_sym/quant_tensor_rtn_sym, which Triton compiles to
+            # libdevice.pow(int32, int32) — but libdevice.pow requires a float first arg.
+            # 4-bit quantization uses a different code path and works fine with torch.compile.
+            # Re-enable for 8-bit when auto_round ships a complete fix (PR #1120 was partial).
+            enable_torch_compile = ( bits <= 4 )
             self.autoround = AutoRound( self.model, self.tokenizer, nsamples=128, iters=512, low_gpu_mem_usage=True, batch_size=batch_size,
-                gradient_accumulation_steps=8, bits=self.bits, group_size=group_size, sym=sym, enable_torch_compile=True  # Enable torch.compile optimizations
+                gradient_accumulation_steps=8, bits=self.bits, group_size=group_size, sym=sym, enable_torch_compile=enable_torch_compile
             )
         else:
             raise Exception( f"Unsupported quantization method: {quantize_method}" )
@@ -116,9 +124,55 @@ class Quantizer:
         print( f"Saving quantized model to [{full_path}]..." )
         self.autoround.save_quantized( full_path, format=format, inplace=inplace )
         print( f"Saving quantized model to [{full_path}]... Done!" )
-        
+
         return full_path
 
+    def release_gpu_memory( self ):
+        """
+        Explicitly release all GPU memory held by this Quantizer instance.
+
+        Dismantles the autoround → model reference web, moves the model off GPU,
+        then forces garbage collection and CUDA cache clearing. This ensures
+        reserved GPU memory is actually freed, not just dereferenced.
+
+        Requires:
+            - Instance has been initialized (model and tokenizer loaded)
+
+        Ensures:
+            - AutoRound internal references broken first (model, tokenizer)
+            - Model moved to CPU before deletion (physically frees GPU blocks)
+            - All internal references (model, tokenizer, autoround) set to None
+            - gc.collect() and torch.cuda.empty_cache() called
+            - GPU reserved memory drops to near zero
+        """
+        # Step 1: Break AutoRound's reference to the model FIRST
+        # AutoRound stores its own reference to self.model — if we del self.model
+        # first, AutoRound's reference keeps the model alive on GPU
+        if hasattr( self, "autoround" ) and self.autoround is not None:
+            if hasattr( self.autoround, "model" ):
+                del self.autoround.model
+            if hasattr( self.autoround, "tokenizer" ):
+                del self.autoround.tokenizer
+            del self.autoround
+            self.autoround = None
+
+        # Step 2: Move model to CPU (physically frees GPU memory blocks)
+        # Unlike del which just drops the Python reference, model.cpu() forces
+        # CUDA to release the underlying blocks. Then del frees CPU memory (cheap).
+        if self.model is not None:
+            self.model.cpu()
+            del self.model
+            self.model = None
+
+        # Step 3: Delete tokenizer (CPU-only, but clean up references)
+        if self.tokenizer is not None:
+            del self.tokenizer
+            self.tokenizer = None
+
+        # Step 4: Force garbage collection + CUDA cache clear
+        gc.collect()
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
 
 
 def quick_smoke_test():
@@ -144,7 +198,7 @@ def quick_smoke_test():
         print( "Testing core Quantizer structure..." )
         
         # Test that Quantizer class exists and basic methods are present
-        expected_methods = [ "quantize_model", "save" ]
+        expected_methods = [ "quantize_model", "save", "release_gpu_memory" ]
         
         methods_found = 0
         for method_name in expected_methods:

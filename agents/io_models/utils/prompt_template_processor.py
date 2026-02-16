@@ -17,6 +17,10 @@ from cosa.agents.io_models.xml_models import (
     VoxCommandResponse, AgentRouterResponse, GistResponse, ConfirmationResponse,
     FuzzyFileMatchResponse
 )
+from cosa.agents.runtime_argument_expeditor.xml_models import ExpeditorResponse, ArgConfirmationResponse
+from cosa.agents.notification_proxy.xml_models import ScriptMatcherResponse, BatchScriptMatcherResponse, VerificationResponse
+from cosa.crud_for_dataframes.xml_models import CRUDIntent
+from cosa.agents.calculator.xml_models import CalcIntent
 
 
 class PromptTemplateProcessor:
@@ -30,9 +34,9 @@ class PromptTemplateProcessor:
     # Clean mapping of routing commands to model classes
     MODEL_MAPPING = {
         'agent router go to math': CodeBrainstormResponse,
-        'agent router go to date and time': CodeBrainstormResponse,
+        'agent router go to datetime': CodeBrainstormResponse,
         'agent router go to calendar': CalendarResponse,
-        'agent router go to todo list': CodeResponse,
+        'agent router go to todo': CodeResponse,
         'agent router go to debugger': IterativeDebuggingFullResponse,
         'agent router go to debugger minimalist': IterativeDebuggingMinimalistResponse,
         'agent router go to bug injector': BugInjectionResponse,
@@ -43,7 +47,15 @@ class PromptTemplateProcessor:
         'vox command': VoxCommandResponse,
         'gist generation': GistResponse,
         'confirmation dialog': ConfirmationResponse,
-        'fuzzy file matching': FuzzyFileMatchResponse,
+        'fuzzy file matching'          : FuzzyFileMatchResponse,
+        'runtime argument expeditor'              : ExpeditorResponse,
+        'argument confirmation'                   : ArgConfirmationResponse,
+        'agent router go to crud for dataframes'  : CRUDIntent,
+        'agent router go to calculator'            : CalcIntent,
+        # Notification proxy models
+        'notification proxy script matcher'        : ScriptMatcherResponse,
+        'notification proxy batch script matcher'  : BatchScriptMatcherResponse,
+        'notification proxy answer verifier'       : VerificationResponse,
     }
     
     def __init__( self, debug: bool = False, verbose: bool = False ):
@@ -139,13 +151,19 @@ class PromptTemplateProcessor:
                 print( "  - Testing XML generation using model example methods..." )
             agents_to_test = list( cls.MODEL_MAPPING.keys() )
             
+            # Agents that use a non-standard root tag
+            custom_root_tags = {
+                'agent router go to crud for dataframes': 'intent',
+            }
+
             for agent in agents_to_test:
                 xml = processor.get_example_for_agent( agent )
                 if xml:
-                    assert '<response>' in xml, f"Missing response tag for {agent}"
-                    assert '</response>' in xml, f"Missing closing response tag for {agent}"
+                    root_tag = custom_root_tags.get( agent, 'response' )
+                    assert f'<{root_tag}>' in xml, f"Missing <{root_tag}> tag for {agent}"
+                    assert f'</{root_tag}>' in xml, f"Missing </{root_tag}> tag for {agent}"
                     if debug:
-                        print( f"    ✓ {agent}: {len(xml)} chars" )
+                        print( f"    ✓ {agent}: {len(xml)} chars (root: <{root_tag}>)" )
                 else:
                     if debug:
                         print( f"    ✗ {agent}: No XML generated" )

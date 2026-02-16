@@ -1,5 +1,5 @@
 """
-Podcast Generator API router for queue-based podcast generation.
+Podcast Generator API router for CJ Flow queue-based podcast generation.
 
 Provides smart input parsing that handles both direct file paths and
 natural language descriptions with LLM-powered fuzzy matching.
@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from cosa.rest.auth import get_current_user
 from cosa.rest.queue_extensions import user_job_tracker
+from cosa.rest.agentic_job_factory import create_agentic_job
 from cosa.agents.podcast_generator.job import PodcastGeneratorJob
 import cosa.utils.util as cu
 
@@ -46,6 +47,8 @@ class PodcastSubmitRequest( BaseModel ):
     target_languages  : Optional[ List[ str ] ] = None
     max_segments      : Optional[ int ]         = None
     dry_run           : bool                    = False
+    audience          : Optional[ str ]         = None
+    audience_context  : Optional[ str ]         = None
 
 
 class PodcastSubmitResponse( BaseModel ):
@@ -342,17 +345,32 @@ async def submit_podcast_job(
                 detail=f"Research file not found: {research_source}"
             )
 
-        # Create job
-        job = PodcastGeneratorJob(
-            research_path    = full_path,
-            user_id          = user_id,
-            user_email       = user_email,
-            session_id       = session_id,
-            target_languages = request.target_languages,
-            max_segments     = request.max_segments,
-            dry_run          = request.dry_run,
-            debug            = debug
+        # Create job using shared factory
+        args_dict = { "research": full_path }
+        if request.target_languages:
+            args_dict[ "languages" ] = ",".join( request.target_languages )
+        if request.dry_run:
+            args_dict[ "dry_run" ] = True
+        if request.audience:
+            args_dict[ "audience" ] = request.audience
+        if request.audience_context:
+            args_dict[ "audience_context" ] = request.audience_context
+
+        job = create_agentic_job(
+            command    = "agent router go to podcast generator",
+            args_dict  = args_dict,
+            user_id    = user_id,
+            user_email = user_email,
+            session_id = session_id,
+            debug      = debug
         )
+
+        if job is None:
+            raise HTTPException( status_code=500, detail="Failed to create podcast job" )
+
+        # Apply max_segments if specified (factory doesn't handle this)
+        if request.max_segments:
+            job.max_segments = request.max_segments
 
         # Associate BEFORE push to prevent race condition
         # The consumer thread may grab the job immediately after push(), so user mapping must exist first
@@ -413,17 +431,32 @@ async def submit_podcast_job(
                 detail=f"Selected research file not found: {selected_filename}"
             )
 
-        # Create job
-        job = PodcastGeneratorJob(
-            research_path    = full_path,
-            user_id          = user_id,
-            user_email       = user_email,
-            session_id       = session_id,
-            target_languages = request.target_languages,
-            max_segments     = request.max_segments,
-            dry_run          = request.dry_run,
-            debug            = debug
+        # Create job using shared factory
+        args_dict = { "research": full_path }
+        if request.target_languages:
+            args_dict[ "languages" ] = ",".join( request.target_languages )
+        if request.dry_run:
+            args_dict[ "dry_run" ] = True
+        if request.audience:
+            args_dict[ "audience" ] = request.audience
+        if request.audience_context:
+            args_dict[ "audience_context" ] = request.audience_context
+
+        job = create_agentic_job(
+            command    = "agent router go to podcast generator",
+            args_dict  = args_dict,
+            user_id    = user_id,
+            user_email = user_email,
+            session_id = session_id,
+            debug      = debug
         )
+
+        if job is None:
+            raise HTTPException( status_code=500, detail="Failed to create podcast job" )
+
+        # Apply max_segments if specified
+        if request.max_segments:
+            job.max_segments = request.max_segments
 
         # Associate BEFORE push to prevent race condition
         user_job_tracker.associate_job_with_user( job.id_hash, user_id )

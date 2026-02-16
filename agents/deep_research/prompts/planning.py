@@ -228,7 +228,7 @@ def get_planning_prompt(
     query: str,
     clarified_query: Optional[ str ] = None,
     max_subagents: int = 10,
-    target_audience: Literal[ "beginner", "general", "expert", "academic" ] = "expert",
+    audience: Literal[ "beginner", "general", "expert", "academic" ] = "academic",
     audience_context: Optional[ str ] = None
 ) -> str:
     """
@@ -236,7 +236,7 @@ def get_planning_prompt(
 
     Requires:
         - query is a non-empty string
-        - target_audience is one of: beginner, general, expert, academic
+        - audience is one of: beginner, general, expert, academic
 
     Ensures:
         - Returns formatted prompt with query, constraints, and audience guidelines
@@ -246,7 +246,7 @@ def get_planning_prompt(
         query: The original research query
         clarified_query: The clarified version (if clarification was done)
         max_subagents: Maximum number of subagents to suggest
-        target_audience: Expertise level of the audience (default: expert)
+        audience: Expertise level of the audience (default: academic)
         audience_context: Optional custom audience description
 
     Returns:
@@ -260,7 +260,7 @@ def get_planning_prompt(
         message += f"\n\n(Original query: \"{query}\")"
 
     # Add audience-specific guidelines
-    audience_guidelines = AUDIENCE_GUIDELINES.get( target_audience, AUDIENCE_GUIDELINES[ "expert" ] )
+    audience_guidelines = AUDIENCE_GUIDELINES.get( audience, AUDIENCE_GUIDELINES[ "academic" ] )
     message += f"\n\n{audience_guidelines}"
 
     if audience_context:
@@ -343,7 +343,7 @@ def quick_smoke_test():
         print( "Testing audience injection..." )
         prompt_expert = get_planning_prompt(
             query="LLM fine-tuning",
-            target_audience="expert"
+            audience="expert"
         )
         assert "Target Audience: Expert" in prompt_expert
         assert "Skip foundational" in prompt_expert
@@ -351,7 +351,7 @@ def quick_smoke_test():
 
         prompt_beginner = get_planning_prompt(
             query="LLM fine-tuning",
-            target_audience="beginner"
+            audience="beginner"
         )
         assert "Target Audience: Beginner" in prompt_beginner
         assert "do not assume prior knowledge" in prompt_beginner
@@ -359,7 +359,7 @@ def quick_smoke_test():
 
         prompt_context = get_planning_prompt(
             query="LLM fine-tuning",
-            target_audience="expert",
+            audience="expert",
             audience_context="AI architect with ML background"
         )
         assert "AI architect with ML background" in prompt_context

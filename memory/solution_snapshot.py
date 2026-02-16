@@ -16,6 +16,7 @@ from cosa.agents.raw_output_formatter import RawOutputFormatter
 
 import numpy as np
 from cosa.memory.embedding_manager import EmbeddingManager
+from cosa.memory.embedding_provider import get_embedding_provider
 from cosa.memory.normalizer import Normalizer
 
 class SolutionSnapshot( RunnableCode ):
@@ -205,8 +206,9 @@ class SolutionSnapshot( RunnableCode ):
         
         super().__init__( debug=debug, verbose=verbose )
 
-        # Initialize embedding manager
+        # Initialize embedding provider (routes to OpenAI or local GPU engines)
         self._embedding_mgr = EmbeddingManager( debug=debug, verbose=verbose )
+        self._embedding_provider = get_embedding_provider( debug=debug, verbose=verbose )
 
         # Initialize normalizer for consistent question normalization
         from cosa.memory.normalizer import Normalizer
@@ -306,49 +308,49 @@ class SolutionSnapshot( RunnableCode ):
         
         # If the question embedding is empty, generate it
         if question != "" and not question_embedding:
-            self.question_embedding = self._embedding_mgr.generate_embedding( question, normalize_for_cache=True )
+            self.question_embedding = self._embedding_provider.generate_embedding( question, content_type="prose" )
             dirty = True
         else:
             self.question_embedding = question_embedding
 
         # If the normalized embedding is empty, generate it
         if question_normalized != "" and not question_normalized_embedding:
-            self.question_normalized_embedding = self._embedding_mgr.generate_embedding( question_normalized, normalize_for_cache=False )
+            self.question_normalized_embedding = self._embedding_provider.generate_embedding( question_normalized, content_type="prose" )
             dirty = True
         else:
             self.question_normalized_embedding = question_normalized_embedding
 
         # If the gist embedding is empty, generate it
         if question_gist != "" and not question_gist_embedding:
-            self.question_gist_embedding = self._embedding_mgr.generate_embedding( question_gist, normalize_for_cache=False )
+            self.question_gist_embedding = self._embedding_provider.generate_embedding( question_gist, content_type="prose" )
             dirty = True
         else:
             self.question_gist_embedding = question_gist_embedding
-        
+
         # If the code embedding is empty, generate it
         if len( code ) > 0 and not code_embedding:
-            self.code_embedding = self._embedding_mgr.generate_embedding( " ".join( code ), normalize_for_cache=False )
+            self.code_embedding = self._embedding_provider.generate_embedding( " ".join( code ), content_type="code" )
             dirty = True
         else:
             self.code_embedding = code_embedding
-    
+
         # If the solution embedding is empty, generate it
         if solution_summary and not solution_embedding:
-            self.solution_embedding = self._embedding_mgr.generate_embedding( solution_summary, normalize_for_cache=True )
+            self.solution_embedding = self._embedding_provider.generate_embedding( solution_summary, content_type="prose" )
             dirty = True
         else:
             self.solution_embedding = solution_embedding
 
         # If the thoughts embedding is empty, generate it
         if thoughts and not thoughts_embedding:
-            self.thoughts_embedding = self._embedding_mgr.generate_embedding( thoughts, normalize_for_cache=True )
+            self.thoughts_embedding = self._embedding_provider.generate_embedding( thoughts, content_type="prose" )
             dirty = True
         else:
             self.thoughts_embedding = thoughts_embedding
 
         # If the solution gist embedding is empty, generate it
         if solution_summary_gist and not solution_gist_embedding:
-            self.solution_gist_embedding = self._embedding_mgr.generate_embedding( solution_summary_gist, normalize_for_cache=False )
+            self.solution_gist_embedding = self._embedding_provider.generate_embedding( solution_summary_gist, content_type="prose" )
             dirty = True
         else:
             self.solution_gist_embedding = solution_gist_embedding
@@ -441,11 +443,11 @@ class SolutionSnapshot( RunnableCode ):
         synonymous_question_gists=OrderedDict( { agent.question_gist: 100.0 } ),
                             error=agent.prompt_response_dict.get( "error", "" ),
                  solution_summary=agent.prompt_response_dict.get( "explanation", "N/A" ),
-                             code=agent.prompt_response_dict.get( "code", "N/A" ),
+                             code=agent.prompt_response_dict.get( "code", [ "" ] ),
                      code_returns=agent.prompt_response_dict.get( "returns", "N/A" ),
                      code_example=agent.prompt_response_dict.get( "example", "N/A" ),
                          thoughts=agent.prompt_response_dict.get( "thoughts", "N/A" ),
-                           answer=agent.code_response_dict.get( "output", "N/A" ),
+                           answer=str( agent.code_response_dict.get( "output", "N/A" ) ),
             answer_conversational=agent.answer_conversational,
             # User context pass-through from agent (AgentBase guarantees these attributes)
                           user_id=agent.user_id,
@@ -538,7 +540,7 @@ class SolutionSnapshot( RunnableCode ):
             - None
         """
         self.solution_summary = solution_summary
-        self.solution_embedding = self._embedding_mgr.generate_embedding( solution_summary, normalize_for_cache=True )
+        self.solution_embedding = self._embedding_provider.generate_embedding( solution_summary, content_type="prose" )
         self.updated_date = self.get_timestamp()
 
     def set_code( self, code: list[str] ) -> None:
@@ -558,7 +560,7 @@ class SolutionSnapshot( RunnableCode ):
         """
         # ¡OJO! code is a list of strings, not a string!
         self.code           = code
-        self.code_embedding = self._embedding_mgr.generate_embedding( " ".join( code ), normalize_for_cache=False )
+        self.code_embedding = self._embedding_provider.generate_embedding( " ".join( code ), content_type="code" )
         self.updated_date   = self.get_timestamp()
 
     def set_solution_summary_gist( self, solution_summary_gist: str ) -> None:
@@ -577,7 +579,7 @@ class SolutionSnapshot( RunnableCode ):
             - None
         """
         self.solution_summary_gist   = solution_summary_gist
-        self.solution_gist_embedding = self._embedding_mgr.generate_embedding( solution_summary_gist, normalize_for_cache=False )
+        self.solution_gist_embedding = self._embedding_provider.generate_embedding( solution_summary_gist, content_type="prose" )
         self.updated_date            = self.get_timestamp()
 
     def get_question_similarity( self, other_snapshot: 'SolutionSnapshot' ) -> float:
@@ -672,7 +674,7 @@ class SolutionSnapshot( RunnableCode ):
         # Original method logic continues (keeping functionality for now)
         # TODO: decide what we're going to exclude from serialization, and why or why not!
         # Right now I'm just doing this for the sake of expediency as I'm playing with class inheritance for agents
-        fields_to_exclude = [ "prompt_response", "prompt_response_dict", "code_response_dict", "phind_tgi_url", "config_mgr", "_embedding_mgr", "websocket_id", "user_id", "user_email" ]
+        fields_to_exclude = [ "prompt_response", "prompt_response_dict", "code_response_dict", "phind_tgi_url", "config_mgr", "_embedding_mgr", "_embedding_provider", "websocket_id", "user_id", "user_email" ]
         data = { field: value for field, value in self.__dict__.items() if field not in fields_to_exclude }
         return json.dumps( data )
         
@@ -896,6 +898,10 @@ class SolutionSnapshot( RunnableCode ):
         Raises:
             - Code execution errors propagated
         """
+        # Guard: Reject empty code lists — nothing to execute
+        if not self.code or all( line.strip() == "" for line in self.code ):
+            raise ValueError( "Cannot execute empty code list — snapshot has no executable code" )
+
         if self.routing_command == "agent router go to todo list":
             path_to_df = "/src/conf/long-term-memory/todo.csv"
         elif self.routing_command == "agent router go to calendar":
@@ -970,6 +976,18 @@ class SolutionSnapshot( RunnableCode ):
                 if self.debug:
                     print( f"⚠ Failed to apply MathAgent formatting: {e}" )
                     print( "  Falling back to default LLM formatter" )
+
+        # CalculatorAgent: already formatted during agent pipeline — no LLM reformatting needed
+        if self.agent_class_name == "CalculatorAgent":
+            if self.answer_conversational:
+                if self.debug and self.verbose:
+                    print( f"SolutionSnapshot: CalculatorAgent already formatted. Result: [{self.answer_conversational}]" )
+                return self.answer_conversational
+            # Fallback: return raw answer if conversational not set
+            if self.debug:
+                print( "SolutionSnapshot: CalculatorAgent has no answer_conversational, using raw answer" )
+            self.answer_conversational = self.answer if self.answer else "N/A"
+            return self.answer_conversational
 
         # Default LLM formatter (for unknown agents, non-terse mode, or errors)
         formatter = RawOutputFormatter(

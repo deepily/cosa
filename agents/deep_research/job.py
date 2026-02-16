@@ -55,6 +55,8 @@ class DeepResearchJob( AgenticJobBase ):
         lead_model: Optional[ str ] = None,
         no_confirm: bool = True,  # Default to auto-approve in queue mode
         dry_run: bool = False,
+        audience: Optional[ str ] = None,
+        audience_context: Optional[ str ] = None,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -80,6 +82,8 @@ class DeepResearchJob( AgenticJobBase ):
             lead_model: Model for lead agent (None = use default)
             no_confirm: Skip confirmation prompts (default True for queue)
             dry_run: Simulate execution without API calls
+            audience: Target audience level (beginner/general/expert/academic)
+            audience_context: Custom audience description
             debug: Enable debug output
             verbose: Enable verbose output
         """
@@ -92,11 +96,13 @@ class DeepResearchJob( AgenticJobBase ):
         )
 
         # Research parameters
-        self.query      = query
-        self.budget     = budget
-        self.lead_model = lead_model
-        self.no_confirm = no_confirm
-        self.dry_run    = dry_run
+        self.query            = query
+        self.budget           = budget
+        self.lead_model       = lead_model
+        self.no_confirm       = no_confirm
+        self.dry_run          = dry_run
+        self.audience         = audience
+        self.audience_context = audience_context
 
         # Results (populated after execution)
         self.report_path  = None
@@ -242,6 +248,14 @@ class DeepResearchJob( AgenticJobBase ):
                 default="claude-sonnet-4-20250514"
             ),
         )
+
+        # Target audience configuration (job arg overrides config file)
+        config.audience = self.audience or config_mgr.get(
+            "deep research audience",
+            default="academic"
+        )
+        audience_context_from_config = config_mgr.get( "deep research audience context", default="" )
+        config.audience_context = self.audience_context or audience_context_from_config or None
 
         # Create cost tracker
         cost_tracker = CostTracker( budget_limit=self.budget )

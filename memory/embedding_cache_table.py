@@ -40,11 +40,17 @@ class EmbeddingCacheTable:
         self.debug       = debug
         self.verbose     = verbose
         self._config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-        
+
+        # Get standardized embedding dimension from config
+        self._embedding_dim = int( self._config_mgr.get( "embedding dimensions", default="768" ) )
+
         uri = du.get_project_root() + self._config_mgr.get( "database_path_wo_root" )
-        
+
         db = lancedb.connect( uri )
-        
+
+        # Validate existing table dimensions match config before creating/opening
+        self._validate_embedding_dimensions( db, "embedding_cache_tbl", "embedding" )
+
         # Check if table exists, create if it doesn't
         if "embedding_cache_tbl" not in db.table_names():
             if self.debug:
@@ -98,6 +104,38 @@ class EmbeddingCacheTable:
             # Re-raise unexpected errors
             raise
 
+    def _validate_embedding_dimensions( self, db, table_name, embedding_field_name ):
+        """
+        Validate that existing table's embedding dimensions match current config.
+
+        Requires:
+            - db is a valid lancedb connection
+            - table_name is a string
+            - embedding_field_name is the name of an embedding column in the table
+
+        Ensures:
+            - No-op if table doesn't exist (will be created fresh)
+            - No-op if dimensions match
+            - Drops table if dimensions mismatch (will be recreated by caller)
+        """
+        if table_name not in db.table_names():
+            return
+
+        table        = db.open_table( table_name )
+        schema       = table.schema
+        field        = schema.field( embedding_field_name )
+        existing_dim = field.type.list_size
+
+        if existing_dim == self._embedding_dim:
+            return
+
+        du.print_banner( f"EMBEDDING DIMENSION MISMATCH: {table_name}" )
+        print( f"  Table schema expects: {existing_dim} dims" )
+        print( f"  Current config has:   {self._embedding_dim} dims" )
+        print( f"  Action: Dropping table (will be recreated with correct dimensions)" )
+
+        db.drop_table( table_name )
+
     def _create_table_if_needed( self, db ) -> None:
         """
         Create the embedding cache table with proper schema.
@@ -120,16 +158,16 @@ class EmbeddingCacheTable:
         
         schema = pa.schema( [
             pa.field( "normalized_text", pa.string() ),
-            pa.field( "embedding", pa.list_( pa.float32(), 1536 ) )
+            pa.field( "embedding", pa.list_( pa.float32(), self._embedding_dim ) )
         ] )
-        
+
         self._embedding_cache_tbl = db.create_table( "embedding_cache_tbl", schema=schema, mode="overwrite" )
         self._embedding_cache_tbl.create_fts_index( "normalized_text", replace=True )
-        
+
         if self.debug:
             print( f"✓ Created embedding_cache_tbl with schema: {schema}" )
             print( f"✓ Created FTS index on normalized_text field" )
-        
+
     def has_cached_embedding( self, normalized_text: str ) -> bool:
         """
         Check if a normalized text has cached embedding.
@@ -252,12 +290,12 @@ class EmbeddingCacheTable:
         
         schema = pa.schema( [
             pa.field( "normalized_text", pa.string() ),
-            pa.field( "embedding", pa.list_( pa.float32(), 1536 ) )
+            pa.field( "embedding", pa.list_( pa.float32(), self._embedding_dim ) )
         ] )
-        
+
         self._embedding_cache_tbl = db.create_table( "embedding_cache_tbl", schema=schema, mode="overwrite" )
         self._embedding_cache_tbl.create_fts_index( "normalized_text", replace=True )
-        
+
         print( f"✓ Created embedding_cache_tbl with schema: {schema}" )
         print( f"✓ Created FTS index on normalized_text field" )
         print( f"✓ Table initialized with {self._embedding_cache_tbl.count_rows()} rows" )
@@ -281,7 +319,7 @@ def quick_smoke_test():
         
         # Test 3: Cache an embedding (simulate with dummy data)
         print( f"\nTest 3: Caching dummy embedding for '{test_text}'..." )
-        dummy_embedding = [ 0.1 ] * 1536  # Create 1536-dimension dummy embedding
+        dummy_embedding = [ 0.1 ] * cache_table._embedding_dim  # Create 1536-dimension dummy embedding
         cache_table.cache_embedding( test_text, dummy_embedding )
         print( "✓ Embedding cached successfully" )
         
@@ -294,7 +332,7 @@ def quick_smoke_test():
             # Test 5: Retrieve cached embedding
             print( f"\nTest 5: Retrieving cached embedding..." )
             retrieved_embedding = cache_table.get_cached_embedding( test_text )
-            if retrieved_embedding and len( retrieved_embedding ) == 1536:
+            if retrieved_embedding and len( retrieved_embedding ) == cache_table._embedding_dim:
                 print( f"✓ Retrieved embedding with {len( retrieved_embedding )} dimensions" )
                 print( f"  First 5 values: {retrieved_embedding[ :5 ]}" )
             else:
@@ -329,12 +367,12 @@ def quick_smoke_test():
             import pyarrow as pa
             schema = pa.schema( [
                 pa.field( "normalized_text", pa.string() ),
-                pa.field( "embedding", pa.list_( pa.float32(), 1536 ) )
+                pa.field( "embedding", pa.list_( pa.float32(), cache_table._embedding_dim ) )
             ] )
             temp_table = temp_db.create_table( "test_tbl", schema=schema )
 
             # Add some data
-            temp_table.add( [ { "normalized_text": "test", "embedding": [ 0.1 ] * 1536 } ] )
+            temp_table.add( [ { "normalized_text": "test", "embedding": [ 0.1 ] * cache_table._embedding_dim } ] )
             initial_count = temp_table.count_rows()
             print( f"  Created temp table with {initial_count} row(s)" )
 

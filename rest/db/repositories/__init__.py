@@ -15,6 +15,7 @@ from cosa.rest.db.repositories.email_verification_token_repository import EmailV
 from cosa.rest.db.repositories.password_reset_token_repository import PasswordResetTokenRepository
 from cosa.rest.db.repositories.failed_login_attempt_repository import FailedLoginAttemptRepository
 from cosa.rest.db.repositories.auth_audit_log_repository import AuthAuditLogRepository
+from cosa.rest.db.repositories.proxy_decision_repository import ProxyDecisionRepository, TrustStateRepository
 
 __all__ = [
     "BaseRepository",
@@ -25,4 +26,6 @@ __all__ = [
     "PasswordResetTokenRepository",
     "FailedLoginAttemptRepository",
     "AuthAuditLogRepository",
+    "ProxyDecisionRepository",
+    "TrustStateRepository",
 ]
