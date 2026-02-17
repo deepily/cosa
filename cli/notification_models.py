@@ -645,6 +645,12 @@ class AsyncNotificationRequest(BaseModel):
         description="Queue where job is running (run/todo/done/dead). Used for provisional job card registration when notifications arrive before job is fetched."
     )
 
+    progress_group_id: Optional[str] = Field(
+        default=None,
+        pattern=r'^pg-[a-f0-9]{8}$',
+        description="Progress group ID for in-place DOM updates. Notifications sharing this ID update a single element instead of appending new ones."
+    )
+
     @field_validator( 'message' )
     @classmethod
     def message_not_whitespace( cls, v: str ) -> str:
@@ -717,6 +723,10 @@ class AsyncNotificationRequest(BaseModel):
         # Add queue_name for provisional job card registration
         if self.queue_name is not None:
             params["queue_name"] = self.queue_name
+
+        # Add progress_group_id for in-place DOM updates
+        if self.progress_group_id is not None:
+            params["progress_group_id"] = self.progress_group_id
 
         return params
 

@@ -39,6 +39,8 @@ Examples:
 
     parser.add_argument(
         "task",
+        nargs="?",
+        default=None,
         help="Task description for the SWE Team to execute",
     )
     parser.add_argument(
@@ -81,8 +83,24 @@ Examples:
         default=None,
         help="Override wall-clock timeout in seconds (default: 1800)",
     )
+    parser.add_argument(
+        "--user-visible-args",
+        action="store_true",
+        default=False,
+        help="Print user-visible args as JSON and exit (for expeditor)",
+    )
 
     args = parser.parse_args()
+
+    # Handle --user-visible-args early exit
+    if args.user_visible_args:
+        import json
+        print( json.dumps( [ "task", "budget", "timeout" ] ) )
+        sys.exit( 0 )
+
+    # Guard: task is required for normal execution
+    if not args.task:
+        parser.error( "task is required" )
 
     # Build config from arguments
     config_kwargs = { "dry_run": args.dry_run }

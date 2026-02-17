@@ -2098,6 +2098,19 @@ class PeftTrainer:
 
         if resume_from_merged:
             # Resume mode: skip training and merge, jump to validation/quantization
+            #
+            # KNOWN ISSUE (WILL NOT FIX): --post-quantization-stats causes OOM on the resume
+            # path when vLLM starts after 8-bit quantization. Root cause: quantization is the
+            # first GPU operation in this process, so PyTorch's CUDA caching allocator creates
+            # a monolithic ~16 GB segment. After cleanup, a ~62 MB residual allocation pins
+            # the entire segment — empty_cache() cannot release it. The subsequent vLLM
+            # subprocess sees only ~10 GB free on GPU 0 and fails with "No available memory
+            # for the cache blocks." The happy path avoids this because prior training/merge
+            # cycles warm the allocator into a granular block structure. This is intractable
+            # at the application level (PyTorch allocator internals).
+            # Workaround: skip --post-quantization-stats when resuming, validate manually.
+            # See: src/rnd/2026.02.16-peft-resume-oom-cold-allocator-analysis.md
+            #
             du.print_banner( f"RESUME MODE: Using existing merged adapter at {resume_from_merged}" )
             if not os.path.isdir( resume_from_merged ):
                 raise ValueError( f"Merged adapter directory does not exist: {resume_from_merged}" )

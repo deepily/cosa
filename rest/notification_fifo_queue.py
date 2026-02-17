@@ -19,7 +19,8 @@ class NotificationItem:
                  response_default: Optional[str] = None, response_options: Optional[dict] = None,
                  timeout_seconds: Optional[int] = None, sender_id: Optional[str] = None,
                  abstract: Optional[str] = None, suppress_ding: bool = False,
-                 job_id: Optional[str] = None, queue_name: Optional[str] = None ) -> None:
+                 job_id: Optional[str] = None, queue_name: Optional[str] = None,
+                 progress_group_id: Optional[str] = None ) -> None:
         """
         Initialize a notification item.
 
@@ -75,6 +76,9 @@ class NotificationItem:
 
         # Queue where job is running (run/todo/done) - for provisional job card registration
         self.queue_name         = queue_name
+
+        # Progress group ID for in-place DOM updates (notifications sharing this ID update a single element)
+        self.progress_group_id  = progress_group_id
 
     def _get_local_timestamp( self ) -> str:
         """Get timezone-aware timestamp using configured timezone from ConfigurationManager"""
@@ -153,7 +157,9 @@ class NotificationItem:
             # Agentic job ID for routing to job cards
             "job_id"             : self.job_id,
             # Queue where job is running (for provisional job card registration)
-            "queue_name"         : self.queue_name
+            "queue_name"         : self.queue_name,
+            # Progress group ID for in-place DOM updates
+            "progress_group_id"  : self.progress_group_id
         }
 
 
@@ -245,7 +251,8 @@ class NotificationFifoQueue( FifoQueue ):
                          response_default: Optional[str] = None, response_options: Optional[dict] = None,
                          timeout_seconds: Optional[int] = None, sender_id: Optional[str] = None,
                          abstract: Optional[str] = None, suppress_ding: bool = False,
-                         job_id: Optional[str] = None, queue_name: Optional[str] = None ) -> NotificationItem:
+                         job_id: Optional[str] = None, queue_name: Optional[str] = None,
+                         progress_group_id: Optional[str] = None ) -> NotificationItem:
         """
         Push a notification with priority handling and io_tbl logging.
 
@@ -284,7 +291,8 @@ class NotificationFifoQueue( FifoQueue ):
             abstract           = abstract,
             suppress_ding      = suppress_ding,
             job_id             = job_id,
-            queue_name         = queue_name
+            queue_name         = queue_name,
+            progress_group_id  = progress_group_id
         )
         
         # Priority handling - urgent/high go to front, but after other urgent/high

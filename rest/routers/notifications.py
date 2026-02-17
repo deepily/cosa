@@ -228,6 +228,7 @@ async def notify_user(
     job_id: Optional[str] = Query(None, description="Agentic job ID for routing to job cards (e.g., dr-a1b2c3d4, mock-12345678)"),
     queue_name: Optional[str] = Query(None, description="Queue where job is running (run/todo/done). Used for provisional job card registration when notifications arrive before job is fetched."),
     suppress_ding: bool = Query(False, description="Suppress notification sound (ding) while still speaking message via TTS. Used for conversational TTS from queue operations."),
+    progress_group_id: Optional[str] = Query(None, description="Progress group ID for in-place DOM updates. Notifications sharing this ID update a single element instead of appending new ones."),
     notification_queue: NotificationFifoQueue = Depends(get_notification_queue),
     ws_manager: WebSocketManager = Depends(get_websocket_manager)
 ):
@@ -394,17 +395,18 @@ async def notify_user(
         if not response_requested:
             # Add to notification queue with state tracking and io_tbl logging
             notification_item = notification_queue.push_notification(
-                message       = message.strip(),
-                type          = type,
-                priority      = priority,
-                source        = "claude_code",
-                user_id       = target_system_id,
-                title         = title,  # Phase 2.2 - include title for consistency
-                sender_id     = resolved_sender_id,  # Sender-aware notification system
-                abstract      = abstract,  # Supplementary context for action-required cards
-                suppress_ding = suppress_ding,  # Skip notification sound (conversational TTS)
-                job_id        = job_id,  # Agentic job ID for routing to job cards
-                queue_name    = queue_name  # Queue for provisional job card registration
+                message           = message.strip(),
+                type              = type,
+                priority          = priority,
+                source            = "claude_code",
+                user_id           = target_system_id,
+                title             = title,  # Phase 2.2 - include title for consistency
+                sender_id         = resolved_sender_id,  # Sender-aware notification system
+                abstract          = abstract,  # Supplementary context for action-required cards
+                suppress_ding     = suppress_ding,  # Skip notification sound (conversational TTS)
+                job_id            = job_id,  # Agentic job ID for routing to job cards
+                queue_name        = queue_name,  # Queue for provisional job card registration
+                progress_group_id = progress_group_id  # In-place DOM update grouping
             )
 
             # Persist to PostgreSQL for history loading
@@ -577,7 +579,8 @@ async def notify_user(
             abstract           = abstract,  # Supplementary context for action-required cards
             suppress_ding      = suppress_ding,  # Skip notification sound (conversational TTS)
             job_id             = job_id,  # Agentic job ID for routing to job cards
-            queue_name         = queue_name  # Queue for provisional job card registration
+            queue_name         = queue_name,  # Queue for provisional job card registration
+            progress_group_id  = progress_group_id  # In-place DOM update grouping
         )
 
         # DEBUG: Log the notification_item after creation

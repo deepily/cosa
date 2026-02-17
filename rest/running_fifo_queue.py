@@ -15,10 +15,18 @@ import cosa.utils.util as du
 import cosa.utils.util_stopwatch as sw
 import time
 
+import threading
 import traceback
 import pprint
 from datetime import datetime
 from typing import Optional, Any
+
+# Notification service imports for async correctness verification
+from cosa.cli.notify_user_sync import notify_user_sync
+from cosa.cli.notification_models import (
+    NotificationRequest,
+    ResponseType
+)
 
 class RunningFifoQueue( FifoQueue ):
     """
@@ -571,7 +579,14 @@ class RunningFifoQueue( FifoQueue ):
                 print( f"Saving job [{truncated_question}] to snapshot manager..." )
                 self.snapshot_mgr.save_snapshot( running_job )
                 print( f"Saving job [{truncated_question}] to snapshot manager... Done!" )
-                
+
+                # Fire async correctness verification (non-blocking)
+                self._fire_correctness_check_async(
+                    running_job,
+                    truncated_question,
+                    du.truncate_string( running_job.answer_conversational or running_job.answer, 120 )
+                )
+
                 du.print_banner( "running_job.runtime_stats", prepend_nl=True )
                 pprint.pprint( running_job.runtime_stats )
             else:
@@ -611,10 +626,11 @@ class RunningFifoQueue( FifoQueue ):
                 # Session 107: Fix field parity between WebSocket and server-fetched cards
                 'status'          : 'completed',
                 'has_interactions': bool( running_job.session_id ),
-                'is_cache_hit'    : running_job.is_cache_hit,
-                'started_at'      : started_at,
-                'completed_at'    : completed_at,
-                'duration_seconds': duration_seconds
+                'is_cache_hit'       : running_job.is_cache_hit,
+                'answer_is_correct'  : running_job.answer_is_correct if isinstance( running_job, SolutionSnapshot ) else None,
+                'started_at'         : started_at,
+                'completed_at'       : completed_at,
+                'duration_seconds'   : duration_seconds
             }
             emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'done', user_id, metadata )
 
@@ -625,11 +641,11 @@ class RunningFifoQueue( FifoQueue ):
             self.io_tbl.insert_io_row( input_type=running_job.routing_command, input=running_job.last_question_asked, output_raw=running_job.answer, output_final=running_job.answer_conversational )
 
         else:
-            
+
             running_job = self._handle_error_case( code_response, running_job, truncated_question )
-        
+
         return running_job
-    
+
     def _handle_solution_snapshot( self, running_job: SolutionSnapshot, truncated_question: str, run_timer: sw.Stopwatch ) -> SolutionSnapshot:
         """
         Handle execution of SolutionSnapshot instances.
@@ -691,11 +707,12 @@ class RunningFifoQueue( FifoQueue ):
             'timestamp'       : running_job.created_date,
             # Session 107: Fix field parity between WebSocket and server-fetched cards
             'status'          : 'completed',
-            'has_interactions': bool( running_job.session_id ),
-            'is_cache_hit'    : False,
-            'started_at'      : started_at,
-            'completed_at'    : completed_at,
-            'duration_seconds': duration_seconds
+            'has_interactions'  : bool( running_job.session_id ),
+            'is_cache_hit'      : False,
+            'answer_is_correct' : running_job.answer_is_correct,
+            'started_at'        : started_at,
+            'completed_at'      : completed_at,
+            'duration_seconds'  : duration_seconds
         }
         emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'done', user_id, metadata )
 
@@ -733,6 +750,67 @@ class RunningFifoQueue( FifoQueue ):
         self.io_tbl.insert_io_row( input_type=running_job.routing_command, input=running_job.last_question_asked, output_raw=running_job.answer, output_final=running_job.answer_conversational )
         
         return running_job
+
+    def _fire_correctness_check_async( self, snapshot: SolutionSnapshot, truncated_question: str, truncated_answer: str ) -> None:
+        """
+        Spawn a daemon thread that asks the user whether the answer was correct.
+
+        Non-blocking: the job has already moved to the done queue before this fires.
+        On response, updates snapshot.answer_is_correct and persists via save_snapshot().
+        On timeout or error, leaves answer_is_correct as None (unverified).
+
+        Requires:
+            - snapshot is a SolutionSnapshot that has been saved to LanceDB
+            - truncated_question is a short string for the prompt
+            - truncated_answer is a short string for the prompt
+
+        Ensures:
+            - Does NOT block the pipeline
+            - Thread-safe via LanceDBSolutionManager._save_lock
+            - Updates snapshot in LanceDB on yes/no response
+        """
+        def _ask_and_update():
+            try:
+                msg = f"Was this answer correct? Question: '{truncated_question}' Answer: '{truncated_answer}'"
+
+                request = NotificationRequest(
+                    message          = msg,
+                    response_type    = ResponseType.YES_NO,
+                    response_default = "no",
+                    timeout_seconds  = 60,
+                    priority         = "high",
+                    suppress_ding    = True,
+                    target_user      = snapshot.user_email,
+                    sender_id        = f"queue.correctness@lupin.deepily.ai"
+                )
+
+                response = notify_user_sync( request )
+
+                if response.status == "responded":
+                    snapshot.answer_is_correct = ( response.response_value == "yes" )
+                    self.snapshot_mgr.save_snapshot( snapshot )
+                    if self.debug: print( f"[CORRECTNESS] Recorded answer_is_correct={snapshot.answer_is_correct} for [{truncated_question}]" )
+
+                    # Emit WebSocket event so UI can update the card
+                    job_id  = snapshot.id_hash
+                    user_id = self.user_job_tracker.get_user_for_job( job_id )
+                    if self.websocket_mgr:
+                        self.websocket_mgr.emit(
+                            "answer_verified",
+                            {
+                                "job_id"            : job_id,
+                                "answer_is_correct" : snapshot.answer_is_correct,
+                                "user_id"           : user_id
+                            }
+                        )
+                else:
+                    if self.debug: print( f"[CORRECTNESS] No response for [{truncated_question}] (status={response.status}), leaving as None" )
+
+            except Exception as e:
+                if self.debug: print( f"[CORRECTNESS] Error during verification for [{truncated_question}]: {e}" )
+
+        thread = threading.Thread( target=_ask_and_update, daemon=True, name=f"correctness-{snapshot.id_hash[:8]}" )
+        thread.start()
 
     def _format_cached_result( self, cached_snapshot: Any, original_job: Any, truncated_question: str, run_timer: sw.Stopwatch ) -> Any:
         """
@@ -841,13 +919,14 @@ class RunningFifoQueue( FifoQueue ):
             'question_text'   : cached_snapshot.last_question_asked,
             'agent_type'      : cached_snapshot.job_type,
             'timestamp'       : cached_snapshot.created_date,
-            'is_cache_hit'    : True,
+            'is_cache_hit'      : True,
+            'answer_is_correct' : cached_snapshot.answer_is_correct,
             # Session 107: Fix field parity between WebSocket and server-fetched cards
-            'status'          : 'completed',
-            'has_interactions': bool( original_job.session_id ),
-            'started_at'      : started_at,
-            'completed_at'    : completed_at,
-            'duration_seconds': duration_seconds
+            'status'            : 'completed',
+            'has_interactions'  : bool( original_job.session_id ),
+            'started_at'        : started_at,
+            'completed_at'      : completed_at,
+            'duration_seconds'  : duration_seconds
         }
         emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'done', user_id, metadata )
 

@@ -3,9 +3,9 @@
 CalculatorAgent — Intent-dispatched deterministic calculations.
 
 Connects the COSA voice pipeline to pure Python calculator operations via
-LLM-based intent extraction. Overrides run_prompt(), run_code(), and
-run_formatter() while leaving do_all() untouched so
-RunningFifoQueue._handle_base_agent() works unchanged.
+LLM-based intent extraction. Overrides run_prompt(), run_code(),
+run_formatter(), and do_all() for graceful MathAgent delegation on
+unsupported operations.
 
 Architecture:
     - run_prompt(): Calls LLM, extracts <calc_intent> XML, parses into CalcIntent
@@ -21,6 +21,7 @@ from cosa.agents.math_agent import MathAgent
 
 from cosa.agents.calculator.xml_models import CalcIntent
 from cosa.agents.calculator.dispatcher import dispatch, format_result_for_voice, extract_calc_intent_xml
+from cosa.agents.calculator.conversion_tables import resolve_alias, find_category
 
 
 class CalculatorAgent( AgentBase ):
@@ -79,8 +80,9 @@ class CalculatorAgent( AgentBase ):
         )
 
         # CalcIntent parsed from LLM response (set in run_prompt)
-        self.calc_intent        = None
-        self._fallback_to_math  = False
+        self.calc_intent          = None
+        self._fallback_to_math    = False
+        self._delegated_to_math   = False
 
         if self.debug: print( f"CalculatorAgent: prompt length={len( self.prompt )}, user={user_email}" )
 
@@ -169,6 +171,25 @@ class CalculatorAgent( AgentBase ):
         if self._fallback_to_math:
             return self._delegate_to_math_agent()
 
+        # Guard: unsupported operation → delegate to MathAgent
+        if self.calc_intent and self.calc_intent.operation.strip().lower() == "unsupported":
+            if self.debug: print( "CalculatorAgent: unsupported operation detected, delegating to MathAgent" )
+            return self._delegate_to_math_agent()
+
+        # Guard: convert with empty or unrecognized units → plain arithmetic, delegate to MathAgent
+        if self.calc_intent and self.calc_intent.operation == "convert":
+            from_u = self.calc_intent.from_unit.strip().lower()
+            to_u   = self.calc_intent.to_unit.strip().lower()
+            # Empty units → plain arithmetic, delegate to MathAgent
+            if not from_u or not to_u:
+                if self.debug: print( "CalculatorAgent: empty units detected, falling back to MathAgent" )
+                return self._delegate_to_math_agent()
+            from_cat, _ = find_category( resolve_alias( from_u ) )
+            to_cat, _   = find_category( resolve_alias( to_u ) )
+            if from_cat is None or to_cat is None:
+                if self.debug: print( f"CalculatorAgent: unknown unit(s) '{from_u}'/'{to_u}', falling back to MathAgent" )
+                return self._delegate_to_math_agent()
+
         try:
             result = dispatch( self.calc_intent, debug=self.debug )
 
@@ -199,10 +220,12 @@ class CalculatorAgent( AgentBase ):
             - self._fallback_to_math is True
 
         Ensures:
-            - self.answer_conversational, self.answer, self.code_response_dict
-              are all set from MathAgent's results
+            - self.answer_conversational, self.answer, self.code_response_dict,
+              and self.prompt_response_dict are all set from MathAgent's results
             - Returns self.code_response_dict
         """
+        self._delegated_to_math = True
+
         if self.debug: print( f"CalculatorAgent: delegating to MathAgent for: {self.last_question_asked}" )
 
         math_agent = MathAgent(
@@ -222,10 +245,32 @@ class CalculatorAgent( AgentBase ):
         self.answer_conversational = math_agent.answer_conversational
         self.answer                = math_agent.answer
         self.code_response_dict    = math_agent.code_response_dict
+        self.prompt_response_dict  = math_agent.prompt_response_dict
 
         if self.debug: print( f"CalculatorAgent: MathAgent fallback result: {self.answer_conversational}" )
 
         return self.code_response_dict
+
+    def do_all( self ):
+        """
+        Execute full agent pipeline with graceful fallback.
+
+        Overrides AgentBase.do_all() to use run_prompt_with_fallback() instead
+        of run_prompt(), and to skip run_formatter() when MathAgent already
+        handled the entire pipeline via delegation.
+
+        Requires:
+            - self.prompt is set to a valid prompt string
+
+        Ensures:
+            - self.answer_conversational is set
+            - Returns self.answer_conversational
+        """
+        self.run_prompt_with_fallback()
+        self.run_code()
+        if not self._delegated_to_math:
+            self.run_formatter()
+        return self.answer_conversational
 
     def run_formatter( self ):
         """
@@ -283,8 +328,9 @@ def quick_smoke_test():
         assert hasattr( CalculatorAgent, "run_prompt_with_fallback" )
         assert hasattr( CalculatorAgent, "run_code" )
         assert hasattr( CalculatorAgent, "run_formatter" )
+        assert hasattr( CalculatorAgent, "do_all" )
         assert hasattr( CalculatorAgent, "_delegate_to_math_agent" )
-        print( "  ✓ Required override methods exist (including fallback)" )
+        print( "  ✓ Required override methods exist (including do_all and fallback)" )
 
         print( "  ○ Full agent pipeline: requires config + LLM (tested in integration)" )
 

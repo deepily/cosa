@@ -137,6 +137,9 @@ class EmbeddingProvider:
         timer = sw.Stopwatch( silent=True )
 
         if self._provider == "openai":
+            if content_type == "code":
+                print( "WARNING: OpenAI provider does not support code-specific embeddings. "
+                       "Using text-embedding-3-small for code content." )
             embedding = self._get_openai_engine().generate_embedding( text, normalize_for_cache=normalize_for_cache )
         elif content_type == "code":
             embedding = self._get_code_engine().encode_code( [ text ] )[ 0 ]
@@ -174,6 +177,9 @@ class EmbeddingProvider:
         timer = sw.Stopwatch( silent=True )
 
         if self._provider == "openai":
+            if content_type == "code":
+                print( "WARNING: OpenAI provider does not support code-specific embeddings. "
+                       "Using text-embedding-3-small for code content." )
             # OpenAI engine doesn't support batch - loop
             embeddings = [ self._get_openai_engine().generate_embedding( t ) for t in texts ]
         elif content_type == "code":

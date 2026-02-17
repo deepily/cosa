@@ -106,7 +106,9 @@ def _format_convert_for_voice( result ):
     converted  = result[ "result" ]
 
     # Smart rounding for display
-    if abs( converted ) >= 100:
+    if converted == int( converted ):
+        display_value = f"{int( converted ):,}"
+    elif abs( converted ) >= 100:
         display_value = f"{converted:,.0f}"
     elif abs( converted ) >= 10:
         display_value = f"{converted:,.1f}"

@@ -46,6 +46,9 @@ class SweTeamConfig:
     feedback_timeout_seconds : int  = 300
     narrate_progress         : bool = True
 
+    # === Decision Proxy ===
+    trust_mode : str = "disabled"  # "disabled", "shadow", "suggest", "active"
+
     # === Feature Flags ===
     enabled  : bool = False
     dry_run  : bool = False

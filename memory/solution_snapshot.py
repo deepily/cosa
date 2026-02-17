@@ -181,6 +181,7 @@ class SolutionSnapshot( RunnableCode ):
                   question_embedding: list[float]=[ ], question_normalized_embedding: list[float]=[ ], question_gist_embedding: list[float]=[ ], solution_embedding: list[float]=[ ], code_embedding: list[float]=[ ], thoughts_embedding: list[float]=[ ], solution_gist_embedding: list[float]=[ ],
                   solution_directory: str="/src/conf/long-term-memory/solutions/", solution_file: Optional[str]=None, user_id: str="ricardo_felipe_ruiz_6bdc", user_email: str="", session_id: str="",
                   replay_history: list=None, replay_stats: dict=None, is_cache_hit: bool=False,
+                  answer_is_correct: bool=None,
                   debug: bool=False, verbose: bool=False
                   ) -> None:
         """
@@ -246,6 +247,7 @@ class SolutionSnapshot( RunnableCode ):
             "last_replayed"       : None
         }
         self.is_cache_hit          = is_cache_hit
+        self.answer_is_correct     = answer_is_correct
 
         # QueueableJob protocol compliance - status tracking attributes
         self.status                = "pending"
@@ -1132,6 +1134,22 @@ def quick_smoke_test():
         print( f"✓ QueueableJob protocol check: {is_valid}" )
     except ImportError:
         print( "⚠ Could not import queue_protocol for protocol check (skipped)" )
+
+    # Test answer_is_correct tri-state field
+    print( "\nTesting answer_is_correct tri-state field..." )
+    snap_none  = SolutionSnapshot( question="test", answer_is_correct=None )
+    snap_true  = SolutionSnapshot( question="test", answer_is_correct=True )
+    snap_false = SolutionSnapshot( question="test", answer_is_correct=False )
+    assert snap_none.answer_is_correct is None, "Default should be None"
+    assert snap_true.answer_is_correct is True, "Should accept True"
+    assert snap_false.answer_is_correct is False, "Should accept False"
+    print( f"✓ answer_is_correct: None={snap_none.answer_is_correct}, True={snap_true.answer_is_correct}, False={snap_false.answer_is_correct}" )
+
+    # Verify for_current_user preserves answer_is_correct
+    snap_verified = SolutionSnapshot( question="test", answer_is_correct=True )
+    user_copy = snap_verified.for_current_user( user_id="other_user", session_id="other_session" )
+    assert user_copy.answer_is_correct is True, "for_current_user should preserve answer_is_correct"
+    print( "✓ for_current_user preserves answer_is_correct" )
 
     print( "\n✓ SolutionSnapshot smoke test completed" )
 

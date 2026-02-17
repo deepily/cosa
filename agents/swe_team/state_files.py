@@ -205,12 +205,13 @@ class ProgressLog:
 
     FILENAME = "claude-progress.txt"
 
-    def __init__( self, storage_dir=None ):
+    def __init__( self, storage_dir=None, on_log=None ):
         """
         Initialize ProgressLog with storage directory.
 
         Args:
             storage_dir: Directory for log file. Uses tempdir if None.
+            on_log: Optional callback( message, role ) invoked after each log entry.
         """
         if storage_dir is None:
             self._tmpdir     = tempfile.TemporaryDirectory()
@@ -221,6 +222,7 @@ class ProgressLog:
             os.makedirs( storage_dir, exist_ok=True )
 
         self.file_path = os.path.join( self.storage_dir, self.FILENAME )
+        self._on_log   = on_log
 
     def log( self, message, role="lead" ):
         """
@@ -231,6 +233,7 @@ class ProgressLog:
 
         Ensures:
             - Entry appended with ISO timestamp and role tag
+            - on_log callback invoked if provided (never raises)
 
         Args:
             message: Progress message
@@ -244,6 +247,12 @@ class ProgressLog:
                 f.write( entry )
         except IOError as e:
             logger.error( f"Failed to write progress log: {e}" )
+
+        if self._on_log:
+            try:
+                self._on_log( message, role )
+            except Exception as e:
+                logger.warning( f"on_log callback failed: {e}" )
 
     def read_recent( self, n=10 ):
         """

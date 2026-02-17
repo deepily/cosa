@@ -51,7 +51,7 @@ class CalcIntent( BaseXMLModel ):
         raw_query: Original natural language query
     """
 
-    operation   : str = Field( ..., description="Calculation type: convert, compare_prices, mortgage" )
+    operation   : str = Field( ..., description="Calculation type: convert, compare_prices, mortgage, unsupported" )
     value       : str = Field( default="", description="Primary numeric value" )
     value_2     : str = Field( default="", description="Secondary numeric value (reserved)" )
     from_unit   : str = Field( default="", description="Source unit for conversion" )
@@ -79,7 +79,7 @@ class CalcIntent( BaseXMLModel ):
 
     # Valid operations (ClassVar to avoid Pydantic treating as fields)
     VALID_OPERATIONS: ClassVar[ List[ str ] ] = [
-        "convert", "compare_prices", "mortgage"
+        "convert", "compare_prices", "mortgage", "unsupported"
     ]
 
     def get_confidence_float( self ):
@@ -228,7 +228,7 @@ class CalcIntent( BaseXMLModel ):
             - Placeholders are descriptive but clearly not real data
         """
         return cls(
-            operation    = "[operation: convert, compare_prices, or mortgage]",
+            operation    = "[operation: convert, compare_prices, mortgage, or unsupported]",
             value        = "[numeric value to convert]",
             value_2      = "[secondary value if needed]",
             from_unit    = "[source unit name]",
@@ -307,6 +307,17 @@ class CalcIntent( BaseXMLModel ):
             assert parsed.value == "10"
             assert parsed.from_unit == "km"
             if debug: print( "  ✓ XML round-trip" )
+
+            # Test unsupported operation XML round-trip
+            unsupported_intent = cls( operation="unsupported", confidence="0.95", raw_query="What is 2 plus 2?" )
+            assert unsupported_intent.operation == "unsupported"
+            xml_str = unsupported_intent.to_xml()
+            assert "<operation>unsupported</operation>" in xml_str
+            parsed = cls.from_xml( xml_str, root_tag="calc_intent" )
+            assert parsed.operation == "unsupported"
+            assert parsed.confidence == "0.95"
+            assert parsed.raw_query == "What is 2 plus 2?"
+            if debug: print( "  ✓ Unsupported operation XML round-trip" )
 
             if debug: print( f"✓ {cls.__name__} smoke test PASSED" )
             return True

@@ -253,7 +253,16 @@ class AgenticJobBase( ABC ):
         """
         return self.answer_conversational is not None
 
-    def notify_progress( self, message: str, priority: str = "low", job_id: str = None ) -> None:
+    def create_progress_group( self ) -> str:
+        """
+        Generate unique progress group ID for in-place DOM updates.
+
+        Returns:
+            str: Progress group ID in format "pg-{8_hex_chars}" (e.g., "pg-a1b2c3d4")
+        """
+        return f"pg-{uuid.uuid4().hex[ :8 ]}"
+
+    def notify_progress( self, message: str, priority: str = "low", job_id: str = None, progress_group_id: str = None ) -> None:
         """
         Send progress notification via cosa-voice.
 
@@ -261,6 +270,7 @@ class AgenticJobBase( ABC ):
             message: Progress message to send
             priority: Notification priority (low, medium, high, urgent)
             job_id: Job ID for routing to job card (defaults to self.id_hash)
+            progress_group_id: Optional progress group ID for in-place DOM updates
         """
         if job_id is None:
             job_id = self.id_hash
@@ -274,10 +284,10 @@ class AgenticJobBase( ABC ):
             try:
                 loop = asyncio.get_running_loop()
                 # Already in async context - create task
-                asyncio.create_task( voice_io.notify( message, priority=priority, job_id=job_id ) )
+                asyncio.create_task( voice_io.notify( message, priority=priority, job_id=job_id, progress_group_id=progress_group_id ) )
             except RuntimeError:
                 # No running loop - use asyncio.run()
-                asyncio.run( voice_io.notify( message, priority=priority, job_id=job_id ) )
+                asyncio.run( voice_io.notify( message, priority=priority, job_id=job_id, progress_group_id=progress_group_id ) )
 
         except ImportError as e:
             if self.debug:

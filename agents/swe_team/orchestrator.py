@@ -40,7 +40,7 @@ from .agent_definitions import (
 )
 from .test_runner import run_pytest, TestRunResult
 from .mock_clients import MockAgentSDKSession
-from .hooks import build_can_use_tool, post_tool_hook
+from .hooks import build_can_use_tool, post_tool_hook, notification_hook
 from .state_files import FeatureList, ProgressLog
 
 # SDK imports — graceful fallback
@@ -90,17 +90,21 @@ class SweTeamOrchestrator:
 
     def __init__(
         self,
-        task_description : str,
-        config           : SweTeamConfig = None,
-        session_id       : str = None,
-        debug            : bool = False,
-        verbose          : bool = False,
+        task_description  : str,
+        config            : SweTeamConfig = None,
+        session_id        : str = None,
+        job_id            : str = None,
+        on_state_change   = None,
+        debug             : bool = False,
+        verbose           : bool = False,
     ):
-        self.task_description = task_description
-        self.config           = config or SweTeamConfig()
-        self.session_id       = session_id or f"st-{uuid.uuid4().hex[ :8 ]}"
-        self.debug            = debug
-        self.verbose          = verbose
+        self.task_description  = task_description
+        self.config            = config or SweTeamConfig()
+        self.session_id        = session_id or f"st-{uuid.uuid4().hex[ :8 ]}"
+        self.job_id            = job_id
+        self._on_state_change  = on_state_change
+        self.debug             = debug
+        self.verbose           = verbose
 
         # State
         self.state          = create_initial_state( task_description )
@@ -114,10 +118,109 @@ class SweTeamOrchestrator:
             timeout_secs   = self.config.wall_clock_timeout_secs,
         )
 
+        # Decision proxy (Phase 4)
+        self.proxy = None
+        if self.config.trust_mode != "disabled":
+            try:
+                from .proxy import EngineeringStrategy
+                self.proxy = EngineeringStrategy(
+                    trust_mode = self.config.trust_mode,
+                    debug      = self.debug,
+                )
+            except ImportError:
+                logger.warning( "Decision proxy requested but proxy module unavailable" )
+
         # Metrics
         self.start_time   = None
         self.end_time     = None
         self.tokens_used  = 0
+
+    async def _notify( self, team_io, message, role="lead", priority="medium", abstract=None ):
+        """
+        Send a notification with automatic job_id/queue_name passthrough.
+
+        Requires:
+            - team_io is the cosa_interface module
+            - message is a non-empty string
+
+        Ensures:
+            - Passes job_id and queue_name when orchestrator has a job_id
+            - Omits job_id/queue_name in standalone CLI mode (job_id=None)
+        """
+        await team_io.notify_progress(
+            message    = message,
+            role       = role,
+            priority   = priority,
+            abstract   = abstract,
+            job_id     = self.job_id,
+            queue_name = "run" if self.job_id else None,
+        )
+
+    async def _emit_state( self, from_state, to_state, metadata=None ):
+        """
+        Emit a state transition event via the on_state_change callback.
+
+        Requires:
+            - from_state and to_state are OrchestratorState values
+
+        Ensures:
+            - Calls on_state_change callback if provided
+            - Never raises — logs warning on failure
+        """
+        if self._on_state_change:
+            try:
+                await self._on_state_change( from_state, to_state, metadata )
+            except Exception as e:
+                logger.warning( f"on_state_change callback failed: {e}" )
+
+    async def _gated_confirmation( self, question, role, default, timeout, abstract, team_io ):
+        """
+        Route confirmation through decision proxy when trust mode is active.
+
+        When the proxy is configured and not in shadow mode, it evaluates the
+        question and may auto-approve without blocking the user.
+
+        Requires:
+            - question is a non-empty string
+            - team_io is the cosa_interface module
+
+        Ensures:
+            - Returns bool (True if approved, False otherwise)
+            - Falls through to ask_confirmation when proxy is disabled or in shadow mode
+            - Logs auto-approval when proxy acts autonomously
+
+        Args:
+            question: The yes/no question to ask
+            role: Agent role asking the question
+            default: Default answer if timeout ("yes" or "no")
+            timeout: Seconds to wait for response
+            abstract: Optional supplementary context
+            team_io: cosa_interface module
+
+        Returns:
+            bool: True if approved, False otherwise
+        """
+        if self.proxy and self.proxy.trust_mode != "shadow":
+            try:
+                result = self.proxy.evaluate( question, get_sender_id( role, self.session_id ) )
+
+                if result.action == "act":
+                    await self._notify( team_io,
+                        message  = f"[Auto-approved by proxy] {question[ :80 ]}",
+                        role     = role,
+                        priority = "low",
+                    )
+                    return result.value == "approved"
+
+                if result.action == "suggest" and result.value:
+                    # Present suggestion but still ask user
+                    suggestion_note = f"\n\n**Proxy suggestion**: {result.value} (confidence: {result.confidence:.0%})"
+                    abstract = ( abstract or "" ) + suggestion_note
+
+            except Exception as e:
+                logger.warning( f"Decision proxy evaluation failed: {e}" )
+
+        return await team_io.ask_confirmation( question, role, default, timeout, abstract )
 
     async def run( self ) -> Optional[ str ]:
         """
@@ -146,9 +249,11 @@ class SweTeamOrchestrator:
             # Set session context for notifications
             team_io.SESSION_ID = self.session_id
 
+            prev_state = self.current_state
             self.current_state = OrchestratorState.INITIALIZING
+            await self._emit_state( prev_state, self.current_state )
 
-            await team_io.notify_progress(
+            await self._notify( team_io,
                 message  = f"Starting SWE Team task: {self.task_description[ :100 ]}",
                 role     = "lead",
                 priority = "medium",
@@ -161,14 +266,29 @@ class SweTeamOrchestrator:
                 result = await self._execute_live( team_io )
 
             self.end_time = time.time()
+            prev_state = self.current_state
             self.current_state = OrchestratorState.COMPLETED
+            await self._emit_state( prev_state, self.current_state )
 
             elapsed = self.end_time - self.start_time
-            await team_io.notify_progress(
+
+            # Build rich summary for completion notification
+            summary = self.state.get( "final_summary", "" )
+            files_changed = self.state.get( "files_changed", [] )
+            files_list = "\n".join( f"  - `{f}`" for f in files_changed[ :20 ] ) if files_changed else "  None"
+
+            rich_abstract = (
+                f"**Task**: {self.task_description[ :100 ]}\n"
+                f"**Duration**: {elapsed:.1f}s\n\n"
+                f"{summary}\n\n"
+                f"**Files Changed**:\n{files_list}"
+            )
+
+            await self._notify( team_io,
                 message  = f"SWE Team task complete ({elapsed:.1f}s)",
                 role     = "lead",
                 priority = "medium",
-                abstract = f"**Task**: {self.task_description[ :80 ]}\n**Duration**: {elapsed:.1f}s",
+                abstract = rich_abstract,
             )
 
             return result
@@ -178,7 +298,7 @@ class SweTeamOrchestrator:
             self.end_time = time.time()
 
             from . import cosa_interface as team_io
-            await team_io.notify_progress(
+            await self._notify( team_io,
                 message  = f"SWE Team task stopped: {e}",
                 role     = "lead",
                 priority = "urgent",
@@ -192,7 +312,7 @@ class SweTeamOrchestrator:
             self.end_time = time.time()
 
             from . import cosa_interface as team_io
-            await team_io.notify_progress(
+            await self._notify( team_io,
                 message  = f"SWE Team task failed: {str( e )[ :200 ]}",
                 role     = "lead",
                 priority = "urgent",
@@ -220,11 +340,13 @@ class SweTeamOrchestrator:
         # Override our session_id with the mock's
         self.session_id = mock_session.session_id
 
+        prev_state = self.current_state
         self.current_state = OrchestratorState.DELEGATING
+        await self._emit_state( prev_state, self.current_state )
 
         async for msg in mock_session.query():
             # Send each phase as a notification
-            await team_io.notify_progress(
+            await self._notify( team_io,
                 message  = f"[{msg.agent_name}] {msg.content[ :200 ]}",
                 role     = msg.agent_name,
                 priority = "low",
@@ -273,9 +395,11 @@ class SweTeamOrchestrator:
         if self.debug: print( "[Orchestrator] Entering live execution mode" )
 
         # --- Phase: DECOMPOSING ---
+        prev_state = self.current_state
         self.current_state = OrchestratorState.DECOMPOSING
+        await self._emit_state( prev_state, self.current_state )
 
-        await team_io.notify_progress(
+        await self._notify( team_io,
             message  = "Decomposing task into subtasks...",
             role     = "lead",
             priority = "medium",
@@ -287,19 +411,22 @@ class SweTeamOrchestrator:
         if self.debug: print( f"[Orchestrator] Decomposed into {len( task_specs )} tasks" )
 
         # --- Confirmation ---
+        prev_state = self.current_state
         self.current_state = OrchestratorState.WAITING_CONFIRMATION
+        await self._emit_state( prev_state, self.current_state )
 
         task_summary = "\n".join(
             f"  {i + 1}. {spec.title} → {spec.assigned_role}"
             for i, spec in enumerate( task_specs )
         )
 
-        approved = await team_io.ask_confirmation(
+        approved = await self._gated_confirmation(
             question = f"SWE Team decomposed the task into {len( task_specs )} subtasks. Proceed?",
             role     = "lead",
             default  = "yes",
             timeout  = 120,
             abstract = f"**Task**: {self.task_description[ :100 ]}\n\n**Subtasks**:\n{task_summary}",
+            team_io  = team_io,
         )
 
         if not approved:
@@ -307,12 +434,22 @@ class SweTeamOrchestrator:
             return self.state[ "final_summary" ]
 
         # --- Phase: DELEGATING ---
+        prev_state = self.current_state
         self.current_state = OrchestratorState.DELEGATING
+        await self._emit_state( prev_state, self.current_state )
         results = []
 
         # Initialize state files for progress tracking
         storage_dir = os.path.join( cu.get_project_root(), "io", "swe_team", self.session_id )
-        progress_log = ProgressLog( storage_dir=storage_dir )
+
+        # Wire on_log callback for live progress narration
+        on_log = None
+        if self.config.narrate_progress:
+            def _narrate( msg, role ):
+                asyncio.ensure_future( self._notify( team_io, msg, role=role, priority="low" ) )
+            on_log = _narrate
+
+        progress_log = ProgressLog( storage_dir=storage_dir, on_log=on_log )
         feature_list = FeatureList( storage_dir=storage_dir )
 
         for spec in task_specs:
@@ -325,7 +462,7 @@ class SweTeamOrchestrator:
             self.guard.check_timeout()
             self.state[ "current_task_index" ] = i
 
-            await team_io.notify_progress(
+            await self._notify( team_io,
                 message  = f"Delegating task {i + 1}/{len( task_specs )}: {spec.title}",
                 role     = "lead",
                 priority = "low",
@@ -352,6 +489,24 @@ class SweTeamOrchestrator:
                             result.test_results = verification.tester_output[ :1000 ]
                             self.guard.record_success()
                             feature_list.mark_complete( i )
+
+                            # Build test summary for abstract
+                            test_abstract = None
+                            if verification.test_run_result:
+                                tr = verification.test_run_result
+                                test_abstract = (
+                                    f"**Passed**: {tr.get( 'passed_count', 0 )} | "
+                                    f"**Failed**: {tr.get( 'failed_count', 0 )} | "
+                                    f"**Errors**: {tr.get( 'error_count', 0 )}"
+                                )
+
+                            await self._notify( team_io,
+                                message  = f"Task {i + 1} verified (iteration {verification_iteration}): {spec.title}",
+                                role     = "tester",
+                                priority = "low",
+                                abstract = test_abstract,
+                            )
+
                             progress_log.log(
                                 f"Task {i + 1} verified (iteration {verification_iteration}): {spec.title}",
                                 role="tester",
@@ -359,8 +514,52 @@ class SweTeamOrchestrator:
                             break  # Tests pass — done
 
                         if verification_iteration >= MAX_VERIFICATION_ITERATIONS:
-                            # Max retries exhausted — mark task failed
+                            # Max retries exhausted — escalate to user
                             self.guard.record_failure( "verification failed after max iterations" )
+
+                            await self._notify( team_io,
+                                message  = f"Task {i + 1} failed after {MAX_VERIFICATION_ITERATIONS} verification attempts: {spec.title}",
+                                role     = "lead",
+                                priority = "high",
+                            )
+
+                            # Escalation decision
+                            escalation = await team_io.request_decision(
+                                question = f"Task {i + 1} tests keep failing after {MAX_VERIFICATION_ITERATIONS} attempts. How should I proceed?",
+                                options  = [ {
+                                    "question"    : f"Task '{spec.title}' failed verification {MAX_VERIFICATION_ITERATIONS} times. What next?",
+                                    "header"      : "Escalation",
+                                    "multiSelect" : False,
+                                    "options"     : [
+                                        { "label": "Continue to next task", "description": "Skip this task and move on" },
+                                        { "label": "Skip tests for this task", "description": "Accept implementation without passing tests" },
+                                        { "label": "Stop and get help", "description": "Halt execution for manual intervention" },
+                                    ],
+                                } ],
+                                role     = "lead",
+                                timeout  = 300,
+                                abstract = f"**Task**: {spec.title}\n**Attempts**: {MAX_VERIFICATION_ITERATIONS}\n**Last failure**:\n{verification.tester_output[ :500 ]}",
+                            )
+
+                            # Process escalation response
+                            escalation_choice = escalation.get( "answers", {} ).get( "Escalation", "Continue to next task" )
+
+                            if escalation_choice == "Stop and get help":
+                                self._stop_requested = True
+
+                            elif escalation_choice == "Skip tests for this task":
+                                # Accept implementation without tests
+                                result.status = "success"
+                                result.errors = [ "Tests skipped by user escalation" ]
+                                self.guard.record_success()
+                                feature_list.mark_complete( i )
+                                progress_log.log(
+                                    f"Task {i + 1} accepted without tests (user escalation): {spec.title}",
+                                    role="lead",
+                                )
+                                break
+
+                            # Default: "Continue to next task" — mark failed and move on
                             result = DelegationResult(
                                 task_index    = i,
                                 task_title    = spec.title,
@@ -386,6 +585,13 @@ class SweTeamOrchestrator:
 
                         if result.status != "success":
                             self.guard.record_failure( "coder re-implementation failed" )
+
+                            await self._notify( team_io,
+                                message  = f"Task {i + 1} re-implementation failed: {spec.title}",
+                                role     = "coder",
+                                priority = "medium",
+                            )
+
                             progress_log.log(
                                 f"Task {i + 1} re-implementation failed: {spec.title}",
                                 role="coder",
@@ -414,6 +620,12 @@ class SweTeamOrchestrator:
                 logger.error( f"Delegation failed for task {i + 1}: {e}" )
                 self.guard.record_failure( str( e ) )
 
+                await self._notify( team_io,
+                    message  = f"Task {i + 1} delegation error: {str( e )[ :100 ]}",
+                    role     = "lead",
+                    priority = "high",
+                )
+
                 results.append( DelegationResult(
                     task_index    = i,
                     task_title    = spec.title,
@@ -431,17 +643,26 @@ class SweTeamOrchestrator:
         verification_passed  = sum( 1 for v in self.state[ "verification_results" ] if v.passed )
         total_v_iterations   = self.state[ "total_verification_iterations" ]
 
-        self.state[ "final_summary" ] = (
+        summary_markdown = (
             f"SWE Team completed {success_count}/{len( task_specs )} tasks.\n"
             f"Files changed: {total_files}\n"
             f"Verifications: {verification_passed}/{verification_count} passed"
             f" ({total_v_iterations} total iterations)\n"
             f"Session: {self.session_id}"
         )
+        self.state[ "final_summary" ] = summary_markdown
 
-        progress_log.log( self.state[ "final_summary" ], role="lead" )
+        # Package CJ Flow-compatible artifacts
+        self.state[ "artifacts" ] = {
+            "abstract"      : summary_markdown,
+            "report_path"   : progress_log.file_path,
+            "cost_summary"  : f"${self.tokens_used * 0.000015:.4f} est.",
+            "files_changed" : self.state[ "files_changed" ],
+        }
 
-        return self.state[ "final_summary" ]
+        progress_log.log( summary_markdown, role="lead" )
+
+        return summary_markdown
 
     async def _decompose_task( self, team_io ):
         """
@@ -615,7 +836,9 @@ Complete this task. When done, summarize what you did and list all files changed
             collected_text  = []
             files_changed   = []
 
+            prev_state = self.current_state
             self.current_state = OrchestratorState.CODING
+            await self._emit_state( prev_state, self.current_state, { "task_index": task_index } )
 
             async for message in sdk_query( prompt=delegation_prompt, options=options ):
                 self.guard.check_timeout()
@@ -634,6 +857,13 @@ Complete this task. When done, summarize what you did and list all files changed
 
                 elif isinstance( message, TextBlock ):
                     collected_text.append( message.text )
+
+                elif isinstance( message, ResultMessage ):
+                    # Forward SDK notification events through notification_hook
+                    await notification_hook(
+                        { "message": getattr( message, "text", str( message ) ) },
+                        team_io, role="coder",
+                    )
 
                 if self._stop_requested:
                     break
@@ -694,9 +924,11 @@ Complete this task. When done, summarize what you did and list all files changed
         Returns:
             VerificationResult: Test verification outcome
         """
+        prev_state = self.current_state
         self.current_state = OrchestratorState.TESTING
+        await self._emit_state( prev_state, self.current_state, { "task_index": task_index } )
 
-        await team_io.notify_progress(
+        await self._notify( team_io,
             message  = f"Verifying task {task_index + 1}: {task_spec.title}",
             role     = "tester",
             priority = "low",
@@ -748,6 +980,12 @@ IMPORTANT:
 
                 elif isinstance( message, TextBlock ):
                     collected_text.append( message.text )
+
+                elif isinstance( message, ResultMessage ):
+                    await notification_hook(
+                        { "message": getattr( message, "text", str( message ) ) },
+                        team_io, role="tester",
+                    )
 
                 if self._stop_requested:
                     break
@@ -837,7 +1075,7 @@ IMPORTANT:
         Returns:
             DelegationResult: New coder execution result
         """
-        await team_io.notify_progress(
+        await self._notify( team_io,
             message  = f"Re-delegating task {task_index + 1} (iteration {iteration}): {task_spec.title}",
             role     = "lead",
             priority = "low",
@@ -868,7 +1106,9 @@ INSTRUCTIONS:
             collected_text  = []
             files_changed   = []
 
+            prev_state = self.current_state
             self.current_state = OrchestratorState.CODING
+            await self._emit_state( prev_state, self.current_state, { "task_index": task_index, "iteration": iteration } )
 
             async for message in sdk_query( prompt=redelegation_prompt, options=options ):
                 self.guard.check_timeout()
@@ -886,6 +1126,12 @@ INSTRUCTIONS:
 
                 elif isinstance( message, TextBlock ):
                     collected_text.append( message.text )
+
+                elif isinstance( message, ResultMessage ):
+                    await notification_hook(
+                        { "message": getattr( message, "text", str( message ) ) },
+                        team_io, role="coder",
+                    )
 
                 if self._stop_requested:
                     break

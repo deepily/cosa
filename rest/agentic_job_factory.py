@@ -121,6 +121,22 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             verbose         = verbose
         )
 
+    elif command == "agent router go to swe team":
+        from cosa.agents.swe_team.job import SweTeamJob
+        return SweTeamJob(
+            task         = args_dict.get( "task", args_dict.get( "prompt", "" ) ),
+            user_id      = user_id,
+            user_email   = user_email,
+            session_id   = session_id,
+            dry_run      = args_dict.get( "dry_run", False ),
+            lead_model   = args_dict.get( "lead_model" ),
+            worker_model = args_dict.get( "worker_model" ),
+            budget       = float( args_dict[ "budget" ] ) if args_dict.get( "budget" ) else None,
+            timeout      = int( args_dict[ "timeout" ] ) if args_dict.get( "timeout" ) else None,
+            debug        = debug,
+            verbose      = verbose
+        )
+
     else:
         print( f"[agentic_job_factory] Unknown command: {command}" )
         return None

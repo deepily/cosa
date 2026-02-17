@@ -82,7 +82,8 @@ async def notify_progress(
     abstract: Optional[str] = None,
     session_name: Optional[str] = None,
     job_id: Optional[str] = None,
-    queue_name: Optional[str] = None
+    queue_name: Optional[str] = None,
+    progress_group_id: Optional[str] = None
 ) -> None:
     """
     Send fire-and-forget progress notification.
@@ -119,6 +120,7 @@ async def notify_progress(
             session_name      = resolved_session_name,
             job_id            = job_id,
             queue_name        = queue_name,
+            progress_group_id = progress_group_id,
         )
 
         # Run blocking call in thread pool

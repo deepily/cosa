@@ -472,13 +472,15 @@ class TodoFifoQueue( FifoQueue ):
                 # question_gist = self.get_gist( question )
 
                 du.print_banner( f"push_job( '{( salutations + ' ' + question ).strip()}' )", prepend_nl=True )
-                threshold_question = self.config_mgr.get( "similarity_threshold_question",      default=98.0, return_type="float" )
-                threshold_gist     = self.config_mgr.get( "similarity_threshold_question_gist", default=95.0, return_type="float" )
-                print( f"push_job(): Using snapshot similarity threshold of [{threshold_question}] and gist similarity threshold of [{threshold_gist}]" )
+                # Top-1 + confirm strategy: no threshold filtering — all results returned by manager
+                # threshold_question = self.config_mgr.get( "similarity_threshold_question",      default=98.0, return_type="float" )  # OBSOLETE
+                # threshold_gist     = self.config_mgr.get( "similarity_threshold_question_gist", default=95.0, return_type="float" )  # OBSOLETE
+                threshold_confirmation = self.config_mgr.get( "similarity_threshold_confirmation", default=90.0, return_type="float" )
+                print( f"push_job(): Top-1 + confirm strategy (ask floor: {threshold_confirmation}%)" )
 
                 # We're searching for similar snapshots without any salutations prepended to the question.
                 # The snapshot manager internally handles hierarchical search (exact matches first, then similarity)
-                similar_snapshots = self.snapshot_mgr.get_snapshots_by_question( parsed_question, question_gist=question_gist, threshold_question=threshold_question, threshold_gist=threshold_gist )
+                similar_snapshots = self.snapshot_mgr.get_snapshots_by_question( parsed_question, question_gist=question_gist )
                 print()
             else:
                 print( "push_job(): Skipping snapshot search..." )
@@ -487,25 +489,44 @@ class TodoFifoQueue( FifoQueue ):
         # Flag to track if we need LLM routing (set when no cache match or user declines confirmation)
         needs_llm_routing = False
 
-        # if we've got a set of similar snapshot candidates, then check its score before pushing it onto the queue
+        # Top-1 + confirm strategy: 3-tier decision on best match
         if len( similar_snapshots ) > 0:
 
             best_score    = similar_snapshots[ 0 ][ 0 ]
             best_snapshot = similar_snapshots[ 0 ][ 1 ]
 
-            # verify that this is what they were looking for, according to the similarity threshold for confirmation
-            if best_score < self.config_mgr.get( "similarity_threshold_confirmation", default=98.0, return_type="float" ):
+            if best_score >= 100.0:
+                # Perfect match (L1/L2 exact or L4 at 100%) — auto-accept, no prompt
+                print( f"push_job(): Perfect match (score: {best_score:.1f}%) — auto-accepting" )
+                best_snapshot.last_question_asked = ( salutations + ' ' + question ).strip()
+                self._dump_code( best_snapshot )
 
-                # Check if similarity confirmation is enabled (default: true)
+                match_result = {
+                    'snapshot_id' : best_snapshot.id_hash,
+                    'type'        : 'exact_match',
+                    'confidence'  : best_score
+                }
+                embeddings = {
+                    'verbatim'   : embedding_verbatim,
+                    'normalized' : embedding_normalized,
+                    'gist'       : embedding_gist
+                }
+                self._log_query_with_results(
+                    query_verbatim, query_normalized, query_gist,
+                    user_id, websocket_id, embeddings, cache_hits, match_result
+                )
+
+                return self._queue_best_snapshot( best_snapshot, best_score, user_id, user_email )
+
+            elif best_score >= threshold_confirmation:
+                # Good enough to ask — confirm with user (score >= 90%)
                 confirmation_enabled = self.config_mgr.get( "similarity_confirmation_enabled", default=True, return_type="boolean" )
 
                 if confirmation_enabled:
 
-                    # TTS Migration (Session 97): Use notification service blocking query instead of _emit_speech
-                    # This replaces the legacy push_blocking_object() pattern with a proper blocking query
                     msg = f"Is that the same as: {best_snapshot.question}?"
                     du.print_banner( msg )
-                    print( "Asking user for confirmation via notification service..." )
+                    print( f"Asking user for confirmation (score: {best_score:.1f}%)..." )
 
                     request = NotificationRequest(
                         message          = msg,
@@ -526,22 +547,19 @@ class TodoFifoQueue( FifoQueue ):
                     )
 
                     if response.status == "responded" and response.response_value == "yes":
-                        # User confirmed - use cached result
-                        print( f"User confirmed cached result match (score: {best_score}%)" )
-                        # Update last question asked before we throw it on the queue
+                        print( f"User confirmed cached result match (score: {best_score:.1f}%)" )
                         best_snapshot.last_question_asked = ( salutations + ' ' + question ).strip()
                         self._dump_code( best_snapshot )
 
-                        # Log query with match results (snapshot found)
                         match_result = {
-                            'snapshot_id': best_snapshot.id_hash,
-                            'type': 'user_confirmed_similarity_match',
-                            'confidence': best_score
+                            'snapshot_id' : best_snapshot.id_hash,
+                            'type'        : 'user_confirmed_similarity_match',
+                            'confidence'  : best_score
                         }
                         embeddings = {
-                            'verbatim': embedding_verbatim,
-                            'normalized': embedding_normalized,
-                            'gist': embedding_gist
+                            'verbatim'   : embedding_verbatim,
+                            'normalized' : embedding_normalized,
+                            'gist'       : embedding_gist
                         }
                         self._log_query_with_results(
                             query_verbatim, query_normalized, query_gist,
@@ -550,13 +568,12 @@ class TodoFifoQueue( FifoQueue ):
 
                         return self._queue_best_snapshot( best_snapshot, best_score, user_id, user_email )
                     else:
-                        # User declined, timeout, or offline - fall through to LLM routing
                         print( f"User response: '{response.status}:{response.response_value}' - routing as new question..." )
                         needs_llm_routing = True
 
                 else:
-                    # Confirmation disabled - auto-accept the best semantic match
-                    print( f"Similarity confirmation disabled, auto-accepting match (score: {best_score}%)" )
+                    # Confirmation disabled — auto-accept the best semantic match
+                    print( f"Similarity confirmation disabled, auto-accepting match (score: {best_score:.1f}%)" )
                     best_snapshot.last_question_asked = ( salutations + ' ' + question ).strip()
                     self._dump_code( best_snapshot )
 
@@ -577,30 +594,10 @@ class TodoFifoQueue( FifoQueue ):
 
                     return self._queue_best_snapshot( best_snapshot, best_score, user_id, user_email )
 
-            # This is an exact match (high confidence), so queue it up
             else:
-
-                # update last question asked before we throw it on the queue
-                best_snapshot.last_question_asked = ( salutations + ' ' + question ).strip()
-                self._dump_code( best_snapshot )
-
-                # Log query with match results (snapshot found)
-                match_result = {
-                    'snapshot_id': best_snapshot.id_hash,
-                    'type': 'similarity_match',
-                    'confidence': best_score
-                }
-                embeddings = {
-                    'verbatim': embedding_verbatim,
-                    'normalized': embedding_normalized,
-                    'gist': embedding_gist
-                }
-                self._log_query_with_results(
-                    query_verbatim, query_normalized, query_gist,
-                    user_id, websocket_id, embeddings, cache_hits, match_result
-                )
-
-                return self._queue_best_snapshot( best_snapshot, best_score, user_id, user_email )
+                # Below ask threshold — log and skip, route to LLM
+                print( f"push_job(): Ignoring low-similarity match (score: {best_score:.1f}%) for: '{best_snapshot.question}'" )
+                needs_llm_routing = True
         else:
             # No similar snapshots found
             needs_llm_routing = True
@@ -925,6 +922,7 @@ class TodoFifoQueue( FifoQueue ):
         "agent router go to podcast generator"   : "PodMaker (create a podcast from a topic)",
         "agent router go to research to podcast" : "Doc-to-Pod (convert existing research to podcast)",
         "agent router go to claude code"         : "Claude Code (run a coding task)",
+        "agent router go to swe team"            : "SWE Team (multi-agent engineering team)",
     }
 
     def _confirm_agentic_routing( self, command, args, user_id, user_email, original_question ):

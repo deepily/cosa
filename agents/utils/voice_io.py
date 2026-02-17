@@ -199,7 +199,8 @@ async def notify(
     abstract: Optional[ str ] = None,
     session_name: Optional[ str ] = None,
     job_id: Optional[ str ] = None,
-    queue_name: Optional[ str ] = None
+    queue_name: Optional[ str ] = None,
+    progress_group_id: Optional[ str ] = None
 ) -> None:
     """
     Send a progress notification (voice-first).
@@ -231,10 +232,12 @@ async def notify(
         return
 
     try:
-        # Check if cosa_interface.notify_progress supports job_id and queue_name parameters
+        # Check if cosa_interface.notify_progress supports newer parameters
         import inspect
         sig = inspect.signature( _cosa_interface.notify_progress )
-        if "queue_name" in sig.parameters:
+        if "progress_group_id" in sig.parameters:
+            await _cosa_interface.notify_progress( message, priority, abstract, session_name, job_id, queue_name, progress_group_id )
+        elif "queue_name" in sig.parameters:
             await _cosa_interface.notify_progress( message, priority, abstract, session_name, job_id, queue_name )
         elif "job_id" in sig.parameters:
             await _cosa_interface.notify_progress( message, priority, abstract, session_name, job_id )

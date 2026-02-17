@@ -10,6 +10,24 @@ Priority Order:
     1. Voice I/O (cosa_interface functions) - PRIMARY
     2. CLI fallback (print/input) - when voice unavailable
     3. --cli-mode flag - forces CLI regardless of voice availability
+
+CONTRACT:
+    This module is for standalone/CLI usage when the orchestrator is
+    NOT involved. It provides a simplified voice-first interface:
+    - notify(), ask_yes_no(), get_input(), choose(), present_choices()
+    - Automatic voice availability detection with CLI fallback
+    - No role-aware sender IDs (uses the configured cosa_interface internally)
+
+    Use this module when:
+    - Building standalone CLI tools or scripts
+    - Working outside the orchestrator's execution loop
+    - You want automatic voice/CLI mode switching
+
+    Do NOT use this module for:
+    - Orchestrator-internal notifications (use cosa_interface.py instead)
+    - Anything that needs role-specific sender IDs or job_id routing
+
+    See also: cosa_interface.py — orchestrator notification layer with role-aware routing
 """
 
 import asyncio

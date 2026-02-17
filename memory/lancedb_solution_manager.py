@@ -279,6 +279,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             pa.field( "replay_history", pa.string() ),   # JSON serialized list
             pa.field( "replay_stats", pa.string() ),     # JSON serialized dict
             pa.field( "is_cache_hit", pa.bool_() ),
+            pa.field( "answer_is_correct", pa.string() ),  # JSON tri-state: "true", "false", "null"
 
             # Vector embeddings (configurable dimensions: 768 for local, 1536 for openai)
             pa.field( "question_embedding", pa.list_( pa.float32(), self._embedding_dim ) ),
@@ -376,6 +377,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             "replay_history": json.dumps( getattr( snapshot, 'replay_history', [] ) ),
             "replay_stats": json.dumps( getattr( snapshot, 'replay_stats', {} ) ),
             "is_cache_hit": getattr( snapshot, 'is_cache_hit', False ),
+            "answer_is_correct": json.dumps( snapshot.answer_is_correct ),
 
             # Vector embeddings
             "question_embedding": normalize_embedding( getattr( snapshot, 'question_embedding', [] ) ),
@@ -471,6 +473,11 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
 
         is_cache_hit = record.get( "is_cache_hit", False )
 
+        try:
+            answer_is_correct = json.loads( record.get( "answer_is_correct", "null" ) )
+        except:
+            answer_is_correct = None
+
         # Create SolutionSnapshot with ALL fields INCLUDING embeddings
         # CRITICAL: Passing embeddings to constructor prevents 977ms regeneration
         snapshot = SolutionSnapshot(
@@ -511,7 +518,8 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             # Replay tracking for Time Saved Dashboard
             replay_history=replay_history,
             replay_stats=replay_stats,
-            is_cache_hit=is_cache_hit
+            is_cache_hit=is_cache_hit,
+            answer_is_correct=answer_is_correct
         )
 
         return snapshot
@@ -1304,16 +1312,17 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                             monitor.stop()
                             return [(100.0, snapshot)]
 
-                # Level 3: Exact gist match
-                if question_gist:
-                    snapshot_id = self._canonical_synonyms.find_exact_gist( question_gist )
-                    if snapshot_id:
-                        if self.debug:
-                            print( f"✓ LEVEL 3: Exact gist match found for snapshot: {snapshot_id}" )
-                        snapshot = self.get_snapshot_by_id( snapshot_id )
-                        if snapshot:
-                            monitor.stop()
-                            return [(95.0, snapshot)]
+                # Level 3: Exact gist match — DISABLED (top-1 + confirm strategy)
+                # Gist text still generated for display/logging, but not used for matching
+                # if question_gist:
+                #     snapshot_id = self._canonical_synonyms.find_exact_gist( question_gist )
+                #     if snapshot_id:
+                #         if self.debug:
+                #             print( f"✓ LEVEL 3: Exact gist match found for snapshot: {snapshot_id}" )
+                #         snapshot = self.get_snapshot_by_id( snapshot_id )
+                #         if snapshot:
+                #             monitor.stop()
+                #             return [(95.0, snapshot)]
 
             # Check for exact match in local cache (backward compatibility)
             # NOTE: Cache stores VERBATIM questions, so use verbatim lookup for consistency
@@ -1374,14 +1383,13 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                 # similarity = 1 - distance, matching file-based np.dot() * 100 formula
                 similarity_percent = ( 1.0 - distance ) * 100
 
-                # Apply threshold filter
-                if similarity_percent >= threshold_question:
-                    snapshot = self._record_to_snapshot( record )
-                    similar_snapshots.append( ( similarity_percent, snapshot ) )
+                # Top-1 + confirm strategy: return ALL results, let caller decide
+                snapshot = self._record_to_snapshot( record )
+                similar_snapshots.append( ( similarity_percent, snapshot ) )
 
-            # Point 3: Top 10 results logging (regardless of threshold)
+            # Point 3: Top 10 results logging (no threshold — all returned to caller)
             if self.debug and self.verbose and search_results:
-                print( f"[SIMILARITY-DEBUG] Top 10 results (threshold={threshold_question}%):" )
+                print( f"[SIMILARITY-DEBUG] Top 10 results (no threshold — top-1 + confirm strategy):" )
                 for i, record in enumerate( search_results[:10] ):
                     distance       = record.get( "_distance", 0.0 )
                     score          = ( 1.0 - distance ) * 100
@@ -1389,15 +1397,13 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                     created_date   = record.get( "created_date", "?" )[:10]  # Just date part
                     answer_preview = du.truncate_string( record.get( "answer", "?" ), 20 )
                     q_preview      = du.truncate_string( record.get( "question", "?" ), 40 )
-                    pass_fail      = "✓" if score >= threshold_question else "✗"
-                    print( f"[SIMILARITY-DEBUG]   {i+1}. {pass_fail} {score:.1f}% [{id_hash}] {created_date} - '{q_preview}' → '{answer_preview}'" )
+                    rank_marker    = "→" if i == 0 else " "
+                    print( f"[SIMILARITY-DEBUG]   {i+1}. {rank_marker} {score:.1f}% [{id_hash}] {created_date} - '{q_preview}' → '{answer_preview}'" )
 
             # Point 4: Summary
             if self.debug:
-                total    = len( search_results )
-                passed   = len( similar_snapshots )
-                filtered = total - passed
-                print( f"[SIMILARITY-DEBUG] Vector search: {total} total, {passed} above {threshold_question}%, {filtered} filtered out" )
+                total = len( search_results )
+                print( f"[SIMILARITY-DEBUG] Vector search: {total} results returned (no threshold filter)" )
                 if self.verbose and similar_snapshots:
                     print( f"[SIMILARITY-DEBUG] Top result: {similar_snapshots[0][0]:.1f}% - '{du.truncate_string( similar_snapshots[0][1].question, 50 )}'" )
 

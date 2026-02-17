@@ -7,6 +7,24 @@ with the blocking notification API. Each notification carries a
 role-specific sender_id for routing and display.
 
 Uses asyncio.to_thread() to run blocking calls without blocking the event loop.
+
+CONTRACT:
+    This module is the orchestrator's notification layer. It provides:
+    - Role-aware sender IDs (swe.lead@, swe.coder@, swe.tester@)
+    - job_id routing for CJ Flow integration
+    - Blocking confirmations and decisions (ask_confirmation, request_decision)
+    - Fire-and-forget progress notifications (notify_progress)
+
+    Use this module when:
+    - Inside the orchestrator or any component called by the orchestrator
+    - You need role-specific sender identity for notification routing
+    - You need job_id passthrough for CJ Flow job card routing
+
+    Do NOT use this module for:
+    - Standalone CLI usage outside the orchestrator context
+    - Simple one-off notifications (use voice_io.py instead)
+
+    See also: voice_io.py — standalone/CLI wrapper for voice-first I/O
 """
 
 import asyncio

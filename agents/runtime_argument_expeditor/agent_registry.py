@@ -120,6 +120,28 @@ AGENTIC_AGENTS = {
             "task_type"        : "BOUNDED",
         },
     },
+    "agent router go to swe team" : {
+        "cli_module"         : "cosa.agents.swe_team",
+        "job_class_path"     : "cosa.agents.swe_team.job.SweTeamJob",
+        "display_name"       : "SWE Team",
+        "required_user_args" : [ "task" ],
+        "system_provided"    : [ "user_id", "user_email", "session_id" ],
+        "arg_mapping"        : {
+            "task"             : "task",
+            "prompt"           : "task",
+            "budget"           : "budget",
+            "timeout"          : "timeout",
+        },
+        "fallback_questions" : {
+            "task"             : "What engineering task should the SWE Team work on?",
+            "budget"           : "Would you like to set a budget limit in dollars? Say a dollar amount, or 'no limit'.",
+            "timeout"          : "Would you like to set a timeout? Say a number of seconds, or 'default'.",
+        },
+        "fallback_defaults" : {
+            "budget"           : "no limit",
+            "timeout"          : "default",
+        },
+    },
 }
 
 
@@ -244,7 +266,7 @@ def quick_smoke_test():
     # Test 1: Registry structure
     print( "\n1. Testing registry structure..." )
     try:
-        assert len( AGENTIC_AGENTS ) == 4, f"Expected 4 agents, got {len( AGENTIC_AGENTS )}"
+        assert len( AGENTIC_AGENTS ) == 5, f"Expected 5 agents, got {len( AGENTIC_AGENTS )}"
         for key, entry in AGENTIC_AGENTS.items():
             assert "cli_module" in entry, f"Missing cli_module in {key}"
             assert "required_user_args" in entry, f"Missing required_user_args in {key}"
@@ -277,6 +299,12 @@ def quick_smoke_test():
         assert rp is not None
         assert rp[ "required_user_args" ] == [ "query" ]
         print( "   ✓ Research to podcast lookup works" )
+
+        st = AGENTIC_AGENTS.get( "agent router go to swe team" )
+        assert st is not None
+        assert st[ "required_user_args" ] == [ "task" ]
+        assert st[ "display_name" ] == "SWE Team"
+        print( "   ✓ SWE Team lookup works" )
 
         missing = AGENTIC_AGENTS.get( "nonexistent command" )
         assert missing is None
