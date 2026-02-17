@@ -28,7 +28,7 @@ logger = logging.getLogger( __name__ )
 # Notification Hook
 # =============================================================================
 
-async def notification_hook( event, team_io, role="lead" ):
+async def notification_hook( event, team_io, role="lead", progress_group_id=None ):
     """
     Fire notify_progress() on SDK notification events.
 
@@ -42,12 +42,14 @@ async def notification_hook( event, team_io, role="lead" ):
 
     Ensures:
         - Calls team_io.notify_progress() with the event message
+        - Passes progress_group_id for in-place DOM updates when provided
         - Logs warning on failure (never raises)
 
     Args:
         event: SDK notification event (NotificationHookInput)
         team_io: cosa_interface module for notifications
         role: Agent role name for sender ID construction
+        progress_group_id: Optional progress group ID (pg-{8 hex chars}) for in-place DOM updates
     """
     try:
         message = event.get( "message", "" )
@@ -55,9 +57,10 @@ async def notification_hook( event, team_io, role="lead" ):
             return
 
         await team_io.notify_progress(
-            message  = f"[{role}] {message}",
-            role     = role,
-            priority = "low",
+            message           = f"[{role}] {message}",
+            role              = role,
+            priority          = "low",
+            progress_group_id = progress_group_id,
         )
 
     except Exception as e:

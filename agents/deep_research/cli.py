@@ -518,17 +518,20 @@ async def run_research(
         rate_limit_hit = False
         cache_hits = 0
 
+        # Progress group ID for in-place DOM updates across all subquery notifications
+        research_group_id = f"pg-{uuid.uuid4().hex[ :8 ]}"
+
         try:
             for i, sq in enumerate( subqueries ):
                 topic = sq.get( "topic", "Unknown" )
-                await voice_io.notify( f"Researching topic {i + 1} of {len( subqueries )}: {topic}", priority="low" )
+                await voice_io.notify( f"Researching topic {i + 1} of {len( subqueries )}: {topic}", priority="low", progress_group_id=research_group_id )
 
                 # Check cache first
                 cached_result = search_cache.load_cached_result( user_email, topic )
                 if cached_result:
                     cache_hits += 1
                     if debug: print( f"  [Cache hit] Using cached result for: {topic[:50]}..." )
-                    await voice_io.notify( f"Using cached result for topic {i + 1}", priority="low" )
+                    await voice_io.notify( f"Using cached result for topic {i + 1}", priority="low", progress_group_id=research_group_id )
 
                     # Use cached content directly
                     content = cached_result.get( "results", {} ).get( "content", "" )
@@ -589,7 +592,8 @@ async def run_research(
                     await voice_io.notify(
                         f"Topic {i + 1}/{len( subqueries )} complete{cache_note} ({tokens_used:,} tokens). "
                         f"{remaining} remaining." + ( f" Next search in ~{next_wait:.0f} seconds." if next_wait > 0 else "" ),
-                        priority="low"
+                        priority="low",
+                        progress_group_id=research_group_id,
                     )
 
         except anthropic.RateLimitError:

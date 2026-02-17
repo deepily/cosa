@@ -136,6 +136,7 @@ async def notify_progress(
     session_name: Optional[ str ] = None,
     job_id: Optional[ str ] = None,
     queue_name: Optional[ str ] = None,
+    progress_group_id: Optional[ str ] = None,
 ) -> None:
     """
     Send fire-and-forget progress notification from a specific agent role.
@@ -158,6 +159,7 @@ async def notify_progress(
         session_name: Optional human-readable session name
         job_id: Optional agentic job ID for routing to job cards
         queue_name: Optional queue where job is running
+        progress_group_id: Optional progress group ID (pg-{8 hex chars}) for in-place DOM updates
     """
     try:
         resolved_session_name = session_name if session_name is not None else SESSION_NAME
@@ -171,6 +173,7 @@ async def notify_progress(
             session_name      = resolved_session_name,
             job_id            = job_id,
             queue_name        = queue_name,
+            progress_group_id = progress_group_id,
         )
 
         await asyncio.to_thread( _notify_user_async, request )

@@ -136,6 +136,9 @@ class PodcastOrchestratorAgent:
         # Track original script path for revisions (to preserve filename)
         self._original_script_path: Optional[ str ] = None
 
+        # Progress group IDs for in-place DOM updates
+        self._audio_progress_group_id = None
+
         # Metrics
         self.metrics = {
             "start_time"  : None,
@@ -559,12 +562,17 @@ class PodcastOrchestratorAgent:
                 lang_name = LANGUAGE_NAMES.get( lang, lang )
 
                 # Initialize progress milestone tracking (for 10% increment notifications)
-                self._reported_milestones = set()
+                self._reported_milestones         = set()
+                self._audio_progress_group_id     = f"pg-{uuid.uuid4().hex[ :8 ]}"
+
+                # Per-language progress group for start/stitch/complete notifications
+                lang_audio_group_id = f"pg-{uuid.uuid4().hex[ :8 ]}"
 
                 segment_count = lang_script.get_segment_count()
                 await voice_io.notify(
                     f"Starting {lang_name} audio generation ({segment_count} segments)...",
-                    priority = "medium" if lang == "en" else "low"
+                    priority          = "medium" if lang == "en" else "low",
+                    progress_group_id = lang_audio_group_id,
                 )
 
                 tts_results, failed_indices = await self._generate_audio_async( lang_script, language=lang )
@@ -587,14 +595,18 @@ class PodcastOrchestratorAgent:
                 # Phase 6: Stitch Audio (Per Language)
                 # =================================================================
                 self.state = OrchestratorState.STITCHING_AUDIO
-                await voice_io.notify( f"Stitching {lang_name} audio segments..." )
+                await voice_io.notify(
+                    f"Stitching {lang_name} audio segments...",
+                    progress_group_id = lang_audio_group_id,
+                )
 
                 audio_path = await self._stitch_audio_async( tts_results, lang_script, language=lang )
                 audio_paths_by_language[ lang ] = audio_path
 
                 await voice_io.notify(
                     f"{lang_name} podcast complete!",
-                    priority = "low"
+                    priority          = "low",
+                    progress_group_id = lang_audio_group_id,
                 )
 
                 if self._check_stop(): return await self._handle_stop()
@@ -911,7 +923,8 @@ class PodcastOrchestratorAgent:
             self.state = OrchestratorState.GENERATING_AUDIO
 
             # Initialize progress milestone tracking (for 10% increment notifications)
-            self._reported_milestones = set()
+            self._reported_milestones         = set()
+            self._audio_progress_group_id     = f"pg-{uuid.uuid4().hex[ :8 ]}"
 
             segment_count = script.get_segment_count()
             await voice_io.notify(
@@ -1748,7 +1761,8 @@ Generate the {language_name} script in JSON format with the same structure:
 
             await voice_io.notify(
                 f"Audio progress: {pct}% ({current}/{total} segments){eta_str}",
-                priority = "low"
+                priority          = "low",
+                progress_group_id = self._audio_progress_group_id,
             )
 
     async def _audio_retry_callback(

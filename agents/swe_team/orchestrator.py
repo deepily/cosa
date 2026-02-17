@@ -135,7 +135,7 @@ class SweTeamOrchestrator:
         self.end_time     = None
         self.tokens_used  = 0
 
-    async def _notify( self, team_io, message, role="lead", priority="medium", abstract=None ):
+    async def _notify( self, team_io, message, role="lead", priority="medium", abstract=None, progress_group_id=None ):
         """
         Send a notification with automatic job_id/queue_name passthrough.
 
@@ -146,14 +146,16 @@ class SweTeamOrchestrator:
         Ensures:
             - Passes job_id and queue_name when orchestrator has a job_id
             - Omits job_id/queue_name in standalone CLI mode (job_id=None)
+            - Passes progress_group_id for in-place DOM updates when provided
         """
         await team_io.notify_progress(
-            message    = message,
-            role       = role,
-            priority   = priority,
-            abstract   = abstract,
-            job_id     = self.job_id,
-            queue_name = "run" if self.job_id else None,
+            message           = message,
+            role              = role,
+            priority          = priority,
+            abstract          = abstract,
+            job_id            = self.job_id,
+            queue_name        = "run" if self.job_id else None,
+            progress_group_id = progress_group_id,
         )
 
     async def _emit_state( self, from_state, to_state, metadata=None ):
@@ -455,6 +457,9 @@ class SweTeamOrchestrator:
         for spec in task_specs:
             feature_list.add_task( spec )
 
+        # Progress group IDs for in-place DOM updates
+        delegation_group_id = f"pg-{uuid.uuid4().hex[ :8 ]}"
+
         for i, spec in enumerate( task_specs ):
             if self._stop_requested:
                 break
@@ -463,9 +468,10 @@ class SweTeamOrchestrator:
             self.state[ "current_task_index" ] = i
 
             await self._notify( team_io,
-                message  = f"Delegating task {i + 1}/{len( task_specs )}: {spec.title}",
-                role     = "lead",
-                priority = "low",
+                message           = f"Delegating task {i + 1}/{len( task_specs )}: {spec.title}",
+                role              = "lead",
+                priority          = "low",
+                progress_group_id = delegation_group_id,
             )
 
             progress_log.log( f"Starting task {i + 1}: {spec.title}", role="lead" )
@@ -477,6 +483,7 @@ class SweTeamOrchestrator:
 
                 if result.status == "success" and self.config.require_test_pass:
                     # --- Coder-Tester Verification Loop ---
+                    verify_group_id = f"pg-{uuid.uuid4().hex[ :8 ]}"
                     verification_iteration = 0
                     while verification_iteration < MAX_VERIFICATION_ITERATIONS:
                         verification_iteration += 1
@@ -501,10 +508,11 @@ class SweTeamOrchestrator:
                                 )
 
                             await self._notify( team_io,
-                                message  = f"Task {i + 1} verified (iteration {verification_iteration}): {spec.title}",
-                                role     = "tester",
-                                priority = "low",
-                                abstract = test_abstract,
+                                message           = f"Task {i + 1} verified (iteration {verification_iteration}): {spec.title}",
+                                role              = "tester",
+                                priority          = "low",
+                                abstract          = test_abstract,
+                                progress_group_id = verify_group_id,
                             )
 
                             progress_log.log(
@@ -518,9 +526,10 @@ class SweTeamOrchestrator:
                             self.guard.record_failure( "verification failed after max iterations" )
 
                             await self._notify( team_io,
-                                message  = f"Task {i + 1} failed after {MAX_VERIFICATION_ITERATIONS} verification attempts: {spec.title}",
-                                role     = "lead",
-                                priority = "high",
+                                message           = f"Task {i + 1} failed after {MAX_VERIFICATION_ITERATIONS} verification attempts: {spec.title}",
+                                role              = "lead",
+                                priority          = "high",
+                                progress_group_id = verify_group_id,
                             )
 
                             # Escalation decision
@@ -587,9 +596,10 @@ class SweTeamOrchestrator:
                             self.guard.record_failure( "coder re-implementation failed" )
 
                             await self._notify( team_io,
-                                message  = f"Task {i + 1} re-implementation failed: {spec.title}",
-                                role     = "coder",
-                                priority = "medium",
+                                message           = f"Task {i + 1} re-implementation failed: {spec.title}",
+                                role              = "coder",
+                                priority          = "medium",
+                                progress_group_id = verify_group_id,
                             )
 
                             progress_log.log(
@@ -836,6 +846,9 @@ Complete this task. When done, summarize what you did and list all files changed
             collected_text  = []
             files_changed   = []
 
+            # Progress group ID for in-place DOM updates of coder SDK stream messages
+            coder_group_id = f"pg-{uuid.uuid4().hex[ :8 ]}"
+
             prev_state = self.current_state
             self.current_state = OrchestratorState.CODING
             await self._emit_state( prev_state, self.current_state, { "task_index": task_index } )
@@ -862,7 +875,7 @@ Complete this task. When done, summarize what you did and list all files changed
                     # Forward SDK notification events through notification_hook
                     await notification_hook(
                         { "message": getattr( message, "text", str( message ) ) },
-                        team_io, role="coder",
+                        team_io, role="coder", progress_group_id=coder_group_id,
                     )
 
                 if self._stop_requested:
@@ -963,6 +976,9 @@ IMPORTANT:
             collected_text  = []
             test_files      = []
 
+            # Progress group ID for in-place DOM updates of tester SDK stream messages
+            tester_group_id = f"pg-{uuid.uuid4().hex[ :8 ]}"
+
             async for message in sdk_query( prompt=verification_prompt, options=options ):
                 self.guard.check_timeout()
 
@@ -984,7 +1000,7 @@ IMPORTANT:
                 elif isinstance( message, ResultMessage ):
                     await notification_hook(
                         { "message": getattr( message, "text", str( message ) ) },
-                        team_io, role="tester",
+                        team_io, role="tester", progress_group_id=tester_group_id,
                     )
 
                 if self._stop_requested:
@@ -1106,6 +1122,9 @@ INSTRUCTIONS:
             collected_text  = []
             files_changed   = []
 
+            # Progress group ID for in-place DOM updates of re-delegation SDK stream messages
+            redelegate_group_id = f"pg-{uuid.uuid4().hex[ :8 ]}"
+
             prev_state = self.current_state
             self.current_state = OrchestratorState.CODING
             await self._emit_state( prev_state, self.current_state, { "task_index": task_index, "iteration": iteration } )
@@ -1130,7 +1149,7 @@ INSTRUCTIONS:
                 elif isinstance( message, ResultMessage ):
                     await notification_hook(
                         { "message": getattr( message, "text", str( message ) ) },
-                        team_io, role="coder",
+                        team_io, role="coder", progress_group_id=redelegate_group_id,
                     )
 
                 if self._stop_requested:
