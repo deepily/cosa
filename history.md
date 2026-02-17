@@ -1,5 +1,38 @@
 # COSA Development History
 
+> **✅ SESSIONS 214-218 COMMIT**: SWE Team notifications/Surface 3, answer_is_correct, semantic match, Calculator bugs, PEFT OOM (2026.02.16)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Committed accumulated work from Lupin sessions 214-218** (28 files, +1,268/-174 lines):
+>
+> **SWE Team Notifications & Surface 3 (Sessions 214-218)**:
+> - 3-tier notification gap analysis (20 gaps): progress, escalation, job_id, artifacts, ResultMessage, state emission, contracts, decision proxy, ProgressLog
+> - Surface 2A/2B: SWE Team Job class, factory registration, FastAPI router, 22 tests + 6 mock scenarios
+> - Surface 3: Registered SWE Team in AGENTIC_AGENTS (5th agent), added `--user-visible-args` to CLI, created proxy profile
+>
+> **answer_is_correct Tri-State Field (Session 215)**:
+> - Added `answer_is_correct` (True/False/None) to SolutionSnapshot + LanceDB schema
+> - Non-blocking async verification via `_fire_correctness_check_async()` in RunningFifoQueue
+> - Cache hits inherit stored value
+>
+> **Semantic Match Simplification (Session 215)**:
+> - Removed 95% hard threshold floor, 3-tier decision (100% auto-accept, >=90% ask user, <90% skip to LLM)
+> - Commented out L3 gist match block, removed L4 threshold filter
+>
+> **Calculator Bug Fixes (Session 214)**:
+> - MathAgent snapshot replay: missing `prompt_response_dict` copy-back
+> - "unitless" bug: prompt rule 6, unit validation guard, whole-number format check
+>
+> **PEFT Resume OOM (Session 216)**: Documented as WILL NOT FIX (cold allocator, 16GB monolithic segment)
+>
+> **PR #16 merged** → v0.1.4 tag created → new branch `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> **Commit**: 96606c8
+
+---
+
 > **✅ SESSIONS 206-213 COMMIT**: SWE Team Delegation/Verification/Decision Proxy + PEFT Resume-from-Merged + GPU Memory Release (2026.02.14)
 > **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
 >
