@@ -650,44 +650,61 @@ class XmlCoordinator:
 
         return simple_agent_router_qna_df
 
+    def _load_agentic_commands_config( self ):
+        """
+        Load agentic job command config from external JSON file.
+
+        Requires:
+            - JSON file exists at /src/conf/training/agent-router-agentic-commands.json
+
+        Ensures:
+            - Returns dict mapping command names to config dicts with template_file, placeholders, args_key
+        """
+        import json
+        config_path = self.path_prefix + "/src/conf/training/agent-router-agentic-commands.json"
+        with open( config_path, "r" ) as f:
+            return json.load( f )
+
+    def _get_placeholder_values_by_name( self, getter_name, requested_length=None ):
+        """
+        Dispatch placeholder getter by name string from config.
+
+        Requires:
+            - getter_name is a string matching a known getter
+
+        Ensures:
+            - Returns list of placeholder values
+
+        Raises:
+            - ValueError if getter_name is unknown
+        """
+        dispatch = {
+            "research_topics"   : self.prompt_generator.get_research_topics,
+            "document_paths"    : self.prompt_generator.get_document_paths,
+            "claude_code_tasks" : self.prompt_generator.get_claude_code_tasks,
+        }
+        getter = dispatch.get( getter_name )
+        if getter is None:
+            raise ValueError( f"Unknown placeholder getter: '{getter_name}'. Available: {list( dispatch.keys() )}" )
+        return getter( requested_length=requested_length )
+
     def build_agentic_job_training_prompts( self, sample_size_per_command: int=100 ) -> pd.DataFrame:
         """
-        Builds training prompts for agentic job commands (deep research, podcast generator, research to podcast).
+        Builds training prompts for agentic job commands from external config.
 
         Requires:
             - sample_size_per_command is positive integer
+            - External config JSON exists at /src/conf/training/agent-router-agentic-commands.json
 
         Ensures:
-            - Generates prompts for 3 agentic job commands
+            - Generates prompts for all agentic job commands defined in config
             - Returns DataFrame with prompts
             - DataFrame contains expected columns (command, instruction, input, output, prompt)
         """
         instructions, inputs, outputs, prompts, commands = self._get_5_empty_lists()
 
-        # Define the agentic job commands and their characteristics
-        # Templates are loaded from external files (65+ templates each) instead of hardcoded lists
-        agentic_commands = {
-            "agent router go to deep research" : {
-                "template_file" : "/src/ephemera/prompts/data/synthetic-data-agent-routing-deep-research.txt",
-                "placeholders"  : {"RESEARCH_TOPIC": "research_topics"},
-                "args_key"      : "topic"
-            },
-            "agent router go to podcast generator" : {
-                "template_file" : "/src/ephemera/prompts/data/synthetic-data-agent-routing-podcast-generator.txt",
-                "placeholders"  : {"RESEARCH_TOPIC": "research_topics"},
-                "args_key"      : "topic"
-            },
-            "agent router go to research to podcast" : {
-                "template_file" : "/src/ephemera/prompts/data/synthetic-data-agent-routing-research-to-podcast.txt",
-                "placeholders"  : {"DOCUMENT_PATH": "document_paths"},
-                "args_key"      : "document_path"
-            },
-            "agent router go to claude code" : {
-                "template_file" : "/src/ephemera/prompts/data/synthetic-data-agent-routing-claude-code.txt",
-                "placeholders"  : {"TASK": "claude_code_tasks"},
-                "args_key"      : "prompt"
-            }
-        }
+        # Load agentic job commands from external config (single source of truth)
+        agentic_commands = self._load_agentic_commands_config()
 
         # Use the shared agent router instruction template with ALL agent router commands
         # This integrates agentic jobs into the unified training pipeline
@@ -696,15 +713,10 @@ class XmlCoordinator:
             du.print_banner( f"Building prompts for AGENTIC JOB command [{command_name}]", prepend_nl=True, end="\n" )
             counter = 1
 
-            # Get placeholder values based on which placeholders are used
+            # Get placeholder values via config-driven dispatch
             placeholder_values = {}
             for placeholder, getter_name in config[ "placeholders" ].items():
-                if getter_name == "research_topics":
-                    placeholder_values[ placeholder ] = self.prompt_generator.get_research_topics( requested_length=None )
-                elif getter_name == "document_paths":
-                    placeholder_values[ placeholder ] = self.prompt_generator.get_document_paths( requested_length=None )
-                elif getter_name == "claude_code_tasks":
-                    placeholder_values[ placeholder ] = self.prompt_generator.get_claude_code_tasks( requested_length=None )
+                placeholder_values[ placeholder ] = self._get_placeholder_values_by_name( getter_name )
 
             # Load templates from external file
             template_path    = self.path_prefix + config[ "template_file" ]
@@ -1039,67 +1051,6 @@ class XmlCoordinator:
         path = self.path_prefix + "/src/ephemera/prompts/data/voice-commands-xml-validate.jsonl"
         validate_df.to_json( path, orient="records", lines=True )
         os.chmod( path, 0o666 )
-
-    def write_agentic_job_ttv_split_to_jsonl( self, train_df: pd.DataFrame, test_df: pd.DataFrame, validate_df: pd.DataFrame ) -> None:
-        """
-        Writes agentic job train/test/validate splits to JSONL files.
-
-        Requires:
-            - All DataFrames contain expected columns (command, instruction, input, output, prompt)
-            - Write permissions for output directory
-
-        Ensures:
-            - Creates JSONL files for each split with agentic-job prefix
-            - Sets appropriate file permissions
-        """
-        import os
-
-        du.print_banner( "Writing agentic job train, test, validate splits to jsonl...", prepend_nl=True )
-        print( f"   train_df.shape: {train_df.shape[ 0 ]:,} x {train_df.shape[ 1 ]}" )
-        print( f"    test_df.shape: {test_df.shape[ 0 ]:,} x {test_df.shape[ 1 ]}" )
-        print( f"validate_df.shape: {validate_df.shape[ 0 ]:,} x {validate_df.shape[ 1 ]}" )
-
-        path = self.path_prefix + "/src/ephemera/prompts/data/agentic-job-xml-train.jsonl"
-        train_df.to_json( path, orient="records", lines=True )
-        os.chmod( path, 0o666 )
-
-        path = self.path_prefix + "/src/ephemera/prompts/data/agentic-job-xml-test.jsonl"
-        test_df.to_json( path, orient="records", lines=True )
-        os.chmod( path, 0o666 )
-
-        path = self.path_prefix + "/src/ephemera/prompts/data/agentic-job-xml-validate.jsonl"
-        validate_df.to_json( path, orient="records", lines=True )
-        os.chmod( path, 0o666 )
-
-    def get_agentic_job_train_test_validate_split( self, df: pd.DataFrame, sample_size: int=300, test_size: float=0.2, test_validate_size: float=0.5, stratify: str="command" ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        """
-        Splits an agentic job DataFrame into training, testing, and validation sets.
-
-        Requires:
-            - df contains expected columns
-            - sample_size is positive integer
-            - test_size is between 0.0 and 1.0
-            - test_validate_size is between 0.0 and 1.0
-            - stratify column exists in df
-
-        Ensures:
-            - Creates stratified splits (80/10/10)
-            - Returns three DataFrames
-            - Total samples match sample_size
-        """
-        from sklearn.model_selection import train_test_split
-
-        # Use available rows if sample_size exceeds DataFrame size
-        actual_sample_size = min( sample_size, df.shape[ 0 ] )
-        sampled_df = df[ [ "command", "instruction", "input", "output", "prompt" ] ].sample( actual_sample_size, random_state=42 ).copy()
-
-        # Split the dataframe into train and (test+validate)
-        train_df, test_validate_df = train_test_split( sampled_df, test_size=test_size, random_state=42, stratify=sampled_df[ stratify ] )
-
-        # Then split (test+validate) into test and validate
-        test_df, validate_df = train_test_split( test_validate_df, test_size=test_validate_size, random_state=42, stratify=test_validate_df[ stratify ] )
-
-        return train_df, test_df, validate_df
 
     def compare_validation_results( self, before_df: pd.DataFrame, after_df: pd.DataFrame, title: str="Validation Comparison" ) -> pd.DataFrame:
         """

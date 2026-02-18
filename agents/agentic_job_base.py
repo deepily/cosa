@@ -275,10 +275,10 @@ class AgenticJobBase( ABC ):
         if job_id is None:
             job_id = self.id_hash
 
-        # Import here to avoid circular imports
+        # Import core voice_io to avoid coupling to any specific agent's identity
         try:
             import asyncio
-            from cosa.agents.deep_research import voice_io
+            from cosa.agents.utils import voice_io
 
             # Use asyncio.run() if not in async context, otherwise schedule
             try:
@@ -308,9 +308,10 @@ class AgenticJobBase( ABC ):
         if job_id is None:
             job_id = self.id_hash
 
+        # Import core voice_io to avoid coupling to any specific agent's identity
         try:
             import asyncio
-            from cosa.agents.deep_research import voice_io
+            from cosa.agents.utils import voice_io
 
             try:
                 loop = asyncio.get_running_loop()

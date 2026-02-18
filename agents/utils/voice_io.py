@@ -149,7 +149,7 @@ async def is_voice_available() -> bool:
     # Try to ping the voice service
     try:
         # Send a silent/minimal notification to test connectivity
-        await _cosa_interface.notify_progress( "Initializing...", priority="low" )
+        await _cosa_interface.notify_progress( message="Initializing...", priority="low" )
         _voice_available = True
         logger.info( "Voice service available - using voice-first mode" )
 
@@ -232,18 +232,32 @@ async def notify(
         return
 
     try:
-        # Check if cosa_interface.notify_progress supports newer parameters
+        # Use keyword args to avoid positional mismatch when interfaces
+        # have extra parameters (e.g., SWE Team's 'role' parameter)
         import inspect
         sig = inspect.signature( _cosa_interface.notify_progress )
         if "progress_group_id" in sig.parameters:
-            await _cosa_interface.notify_progress( message, priority, abstract, session_name, job_id, queue_name, progress_group_id )
+            await _cosa_interface.notify_progress(
+                message=message, priority=priority, abstract=abstract,
+                session_name=session_name, job_id=job_id, queue_name=queue_name,
+                progress_group_id=progress_group_id
+            )
         elif "queue_name" in sig.parameters:
-            await _cosa_interface.notify_progress( message, priority, abstract, session_name, job_id, queue_name )
+            await _cosa_interface.notify_progress(
+                message=message, priority=priority, abstract=abstract,
+                session_name=session_name, job_id=job_id, queue_name=queue_name
+            )
         elif "job_id" in sig.parameters:
-            await _cosa_interface.notify_progress( message, priority, abstract, session_name, job_id )
+            await _cosa_interface.notify_progress(
+                message=message, priority=priority, abstract=abstract,
+                session_name=session_name, job_id=job_id
+            )
         else:
             # Fallback for interfaces that don't support job_id yet
-            await _cosa_interface.notify_progress( message, priority, abstract, session_name )
+            await _cosa_interface.notify_progress(
+                message=message, priority=priority, abstract=abstract,
+                session_name=session_name
+            )
     except Exception as e:
         logger.warning( f"Voice notification failed: {e}" )
         print( f"  {message}" )  # Fallback to print

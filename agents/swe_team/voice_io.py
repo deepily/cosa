@@ -111,7 +111,8 @@ async def notify(
     abstract: Optional[ str ] = None,
     session_name: Optional[ str ] = None,
     job_id: Optional[ str ] = None,
-    queue_name: Optional[ str ] = None
+    queue_name: Optional[ str ] = None,
+    progress_group_id: Optional[ str ] = None
 ) -> None:
     """
     Send a progress notification (voice-first).
@@ -131,8 +132,9 @@ async def notify(
         session_name: Optional session name for UI
         job_id: Optional agentic job ID for job cards
         queue_name: Optional queue name
+        progress_group_id: Optional progress group ID for in-place DOM updates
     """
-    await _core_voice_io.notify( message, priority, abstract, session_name, job_id, queue_name )
+    await _core_voice_io.notify( message, priority, abstract, session_name, job_id, queue_name, progress_group_id )
 
 
 async def ask_yes_no(

@@ -234,7 +234,7 @@ class RuntimeArgumentExpeditor:
                     return None
                 for arg_name, value in batch_answers.items():
                     # Handle special "no limit" / "none" answers for optional args
-                    if arg_name in ( "budget", "languages" ) and value.lower().strip() in ( "no limit", "none", "skip", "no" ):
+                    if arg_name in ( "budget", "languages", "timeout" ) and value.lower().strip() in ( "no limit", "none", "skip", "no", "default" ):
                         continue
                     final_args[ arg_name ] = value
             elif len( batchable ) == 1:
@@ -248,7 +248,7 @@ class RuntimeArgumentExpeditor:
                 if value is None:
                     print( f"[Expeditor] User cancelled at arg '{arg_name}'" )
                     return None
-                if arg_name in ( "budget", "languages" ) and value.lower().strip() in ( "no limit", "none", "skip", "no" ):
+                if arg_name in ( "budget", "languages", "timeout" ) and value.lower().strip() in ( "no limit", "none", "skip", "no", "default" ):
                     pass  # Skip optional
                 else:
                     final_args[ arg_name ] = value

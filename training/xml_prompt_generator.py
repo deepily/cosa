@@ -162,19 +162,23 @@ class XmlPromptGenerator:
     
     def _get_agentic_job_commands( self ) -> dict:
         """
-        Returns dictionary of agentic job commands and their corresponding file paths.
+        Returns dictionary of agentic job commands loaded from enriched JSON config.
 
         Requires:
             - JSON config file exists at src/conf/training/agent-router-agentic-commands.json
+            - Each entry has a "template_file" key with a valid path
 
         Ensures:
-            - Returns command name to file path mapping loaded from JSON config
-            - All file paths are tested for existence
+            - Returns enriched config dict (command name -> {template_file, placeholders, args_key})
+            - All template_file paths are tested for existence
         """
         config_path = self.path_prefix + "/src/conf/training/agent-router-agentic-commands.json"
         with open( config_path, "r" ) as f:
             agentic_commands = json.load( f )
-        self._test_command_paths( agentic_commands )
+
+        # Validate template files exist (enriched format: value is dict with "template_file" key)
+        flat_paths = { cmd: entry[ "template_file" ] for cmd, entry in agentic_commands.items() }
+        self._test_command_paths( flat_paths )
 
         return agentic_commands
 

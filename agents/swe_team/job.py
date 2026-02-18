@@ -178,6 +178,10 @@ class SweTeamJob( AgenticJobBase ):
         if self.dry_run:
             return await self._execute_dry_run( voice_io )
 
+        # Set SESSION_ID so sender_id includes job hash suffix for routing
+        from cosa.agents.swe_team import cosa_interface
+        cosa_interface.SESSION_ID = self.id_hash
+
         # Live execution: build config and delegate to orchestrator
         from cosa.agents.swe_team.config import SweTeamConfig
         from cosa.agents.swe_team.orchestrator import SweTeamOrchestrator
@@ -225,6 +229,10 @@ class SweTeamJob( AgenticJobBase ):
         """
         if self.debug:
             print( f"[SweTeamJob] DRY RUN MODE for: {self.task[ :50 ]}..." )
+
+        # Set SESSION_ID so sender_id includes job hash suffix for routing
+        from cosa.agents.swe_team import cosa_interface
+        cosa_interface.SESSION_ID = self.id_hash
 
         # Breadcrumb: Starting
         await voice_io.notify( "Dry run: Starting SWE Team simulation", priority="low", job_id=self.id_hash, queue_name="run" )

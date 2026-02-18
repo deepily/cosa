@@ -421,8 +421,9 @@ async def notify_user(
                         priority         = priority,
                         title            = title,
                         abstract         = abstract,
-                        response_options = parsed_response_options,
-                        job_id           = job_id
+                        response_options   = parsed_response_options,
+                        job_id             = job_id,
+                        progress_group_id  = progress_group_id
                     )
                     # Update state to delivered if user is connected
                     if is_connected:
@@ -493,7 +494,8 @@ async def notify_user(
                         response_options   = parsed_response_options,
                         timeout_seconds    = timeout_seconds,
                         expires_at         = expires_at,
-                        job_id             = job_id
+                        job_id             = job_id,
+                        progress_group_id  = progress_group_id
                     )
                     repo.update_state( db_notification.id, "expired" )
                     notification_id = str( db_notification.id )
@@ -529,7 +531,8 @@ async def notify_user(
                 response_options   = parsed_response_options,
                 timeout_seconds    = timeout_seconds,
                 expires_at         = expires_at,
-                job_id             = job_id
+                job_id             = job_id,
+                progress_group_id  = progress_group_id
             )
             # Mark as delivered since user is connected
             repo.update_state( db_notification.id, "delivered" )
@@ -1311,6 +1314,8 @@ async def get_sender_conversation(
                     "response_requested" : notif.response_requested,
                     "response_type"      : notif.response_type,
                     "response_value"     : notif.response_value,
+                    "job_id"             : notif.job_id,
+                    "progress_group_id"  : notif.progress_group_id,
                     "timestamp"          : format_ts( notif.created_at ),
                     "time_display"       : format_time_display( notif.created_at )
                 } )
@@ -1505,6 +1510,8 @@ async def get_sender_conversation_by_date(
                         "response_requested" : notif.response_requested,
                         "response_type"      : notif.response_type,
                         "response_value"     : notif.response_value,
+                        "job_id"             : notif.job_id,
+                        "progress_group_id"  : notif.progress_group_id,
                         "timestamp"          : format_ts( notif.created_at ),
                         "time_display"       : format_time_display( notif.created_at )
                     } )

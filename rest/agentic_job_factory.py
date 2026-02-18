@@ -15,6 +15,46 @@ Used by:
 
 from typing import Optional
 
+_SEMANTIC_NONE = { "default", "no limit", "none", "skip", "no", "" }
+
+
+def _parse_optional_int( value, default=None ):
+    """
+    Safely parse a value to int, treating semantic strings as None.
+
+    Requires:
+        - value is a string, int, None, or other type
+
+    Ensures:
+        - Returns int if value is a valid numeric string or int
+        - Returns default if value is None, empty, a semantic skip word, or unparseable
+    """
+    if not value or str( value ).strip().lower() in _SEMANTIC_NONE:
+        return default
+    try:
+        return int( value )
+    except ( ValueError, TypeError ):
+        return default
+
+
+def _parse_optional_float( value, default=None ):
+    """
+    Safely parse a value to float, treating semantic strings as None.
+
+    Requires:
+        - value is a string, float, int, None, or other type
+
+    Ensures:
+        - Returns float if value is a valid numeric string or number
+        - Returns default if value is None, empty, a semantic skip word, or unparseable
+    """
+    if not value or str( value ).strip().lower() in _SEMANTIC_NONE:
+        return default
+    try:
+        return float( value )
+    except ( ValueError, TypeError ):
+        return default
+
 
 def create_agentic_job( command, args_dict, user_id, user_email, session_id, debug=False, verbose=False ):
     """
@@ -52,7 +92,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             user_id          = user_id,
             user_email       = user_email,
             session_id       = session_id,
-            budget           = float( args_dict[ "budget" ] ) if args_dict.get( "budget" ) else None,
+            budget           = _parse_optional_float( args_dict.get( "budget" ) ),
             no_confirm       = True,
             dry_run          = args_dict.get( "dry_run", False ),
             audience         = args_dict.get( "audience" ),
@@ -97,7 +137,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             user_id          = user_id,
             user_email       = user_email,
             session_id       = session_id,
-            budget           = float( args_dict[ "budget" ] ) if args_dict.get( "budget" ) else None,
+            budget           = _parse_optional_float( args_dict.get( "budget" ) ),
             target_languages = languages,
             dry_run          = args_dict.get( "dry_run", False ),
             audience         = args_dict.get( "audience" ),
@@ -114,8 +154,8 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             user_email      = user_email,
             session_id      = session_id,
             task_type       = args_dict.get( "task_type", "BOUNDED" ),
-            max_turns       = int( args_dict[ "max_turns" ] ) if args_dict.get( "max_turns" ) else None,
-            timeout_seconds = int( args_dict[ "timeout_seconds" ] ) if args_dict.get( "timeout_seconds" ) else None,
+            max_turns       = _parse_optional_int( args_dict.get( "max_turns" ) ),
+            timeout_seconds = _parse_optional_int( args_dict.get( "timeout_seconds" ) ),
             dry_run         = args_dict.get( "dry_run", False ),
             debug           = debug,
             verbose         = verbose
@@ -131,8 +171,8 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             dry_run      = args_dict.get( "dry_run", False ),
             lead_model   = args_dict.get( "lead_model" ),
             worker_model = args_dict.get( "worker_model" ),
-            budget       = float( args_dict[ "budget" ] ) if args_dict.get( "budget" ) else None,
-            timeout      = int( args_dict[ "timeout" ] ) if args_dict.get( "timeout" ) else None,
+            budget       = _parse_optional_float( args_dict.get( "budget" ) ),
+            timeout      = _parse_optional_int( args_dict.get( "timeout" ) ),
             debug        = debug,
             verbose      = verbose
         )
