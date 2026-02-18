@@ -1,5 +1,37 @@
 # COSA Development History
 
+> **✅ SESSIONS 219-225 COMMIT**: Factory safe parsing, progress_group_id persistence, training cleanup, SWE Team routing (2026.02.18)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Committed accumulated work from Lupin sessions 219-225** (11 files, +156/-122 lines):
+>
+> **Factory ValueError Fix (Session 219)**:
+> - Added `_SEMANTIC_NONE` set + `_parse_optional_int()`/`_parse_optional_float()` safe parsing helpers in `agentic_job_factory.py`
+> - Replaced 6 raw `int()`/`float()` casts across all 5 agentic job types (deep research, podcast, research-to-podcast, claude code, swe team)
+> - Added `"timeout"` + `"default"` to expeditor skip guards at both batch and single paths
+>
+> **progress_group_id Backend Persistence (Session 220 Checkpoint 3)**:
+> - Added `progress_group_id` column to `Notification` model (String(12), nullable, indexed)
+> - Wired `progress_group_id` through all 3 `create_notification()` call sites in notifications router
+> - Added `progress_group_id` + `job_id` to both serialization dicts (`get_sender_conversation` + `get_sender_conversation_by_date`)
+>
+> **Training Pipeline Cleanup (Session 222)**:
+> - Deleted `write_agentic_job_ttv_split_to_jsonl()` + `get_agentic_job_train_test_validate_split()` (stale, unused)
+> - Refactored `build_agentic_job_training_prompts()` to config-driven dispatch via `_load_agentic_commands_config()` + `_get_placeholder_values_by_name()`
+> - Updated `xml_prompt_generator.py` to use enriched JSON config format
+>
+> **SWE Team Notification Routing Fix (Session 225)**:
+> - Changed `agentic_job_base.py` `notify_progress()`/`notify_completion()` to import core `voice_io` instead of deep research `voice_io`
+> - Added `SESSION_ID = self.id_hash` in SWE Team job `_execute()` and `_execute_dry_run()` paths
+> - Added `progress_group_id` parameter to SWE Team `voice_io.notify()` wrapper
+> - Converted all 4 dispatch branches in `utils/voice_io.py` from positional to keyword arguments
+>
+> **Commit**: 7a7ea21
+
+---
+
 > **✅ SESSIONS 214-218 COMMIT**: SWE Team notifications/Surface 3, answer_is_correct, semantic match, Calculator bugs, PEFT OOM (2026.02.16)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >
