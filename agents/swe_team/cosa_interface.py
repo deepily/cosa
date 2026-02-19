@@ -110,7 +110,9 @@ def get_sender_id( role: str = "lead", session_id: str = None ) -> str:
     """
     base = f"swe.{role}@{PROJECT}.deepily.ai"
     if session_id:
-        return f"{base}#{session_id}"
+        # Strip user-scope suffix (::user_id) — only the base hash is needed for routing
+        base_id = session_id.split( "::" )[ 0 ] if "::" in session_id else session_id
+        return f"{base}#{base_id}"
     return base
 
 
@@ -435,7 +437,11 @@ def quick_smoke_test():
         assert ".deepily.ai" in sid
         sid_session = get_sender_id( "coder", "abc123" )
         assert sid_session.endswith( "#abc123" )
-        print( f"✓ Sender IDs: {sid}, {sid_session}" )
+        # Test compound hash stripping (Bug F fix)
+        sid_compound = get_sender_id( "lead", "swe-4637f1cd::0cf47e2d-d5a1-4cd4-addf-79810fd32b15" )
+        assert sid_compound.endswith( "#swe-4637f1cd" ), f"Expected stripped hash, got: {sid_compound}"
+        assert "::" not in sid_compound, f"Compound hash not stripped: {sid_compound}"
+        print( f"✓ Sender IDs: {sid}, {sid_session}, {sid_compound}" )
 
         # Test 3: is_approval
         print( "Testing is_approval..." )

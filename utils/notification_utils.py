@@ -95,17 +95,18 @@ def format_open_ended_batch_for_tts( questions: list ) -> str:
     """
     Format open-ended batch questions for TTS playback.
 
-    Builds a spoken message like: "I have 3 questions for you.
-    Question 1 of 3: What topic? Question 2 of 3: What budget?"
+    For a single question, speaks the question text directly.
+    For multiple questions, speaks only the count preamble — individual
+    questions are already displayed in the UI batch form and should NOT
+    be read aloud (too verbose for voice UX).
 
     Requires:
         - questions is a non-empty list of question dicts
         - Each dict should have 'question' key
 
     Ensures:
-        - Returns TTS-friendly string with numbered questions
-        - Single question: just the question text (no "I have 1 question" preamble)
-        - Multiple questions: preamble + numbered questions
+        - Single question: just the question text (no preamble)
+        - Multiple questions: count-only preamble ("I have N questions for you.")
 
     Args:
         questions: List of question objects with 'question' and 'header' keys
@@ -114,19 +115,11 @@ def format_open_ended_batch_for_tts( questions: list ) -> str:
         str: TTS-friendly message
     """
     total = len( questions )
-    parts = []
-
-    if total > 1:
-        parts.append( f"I have {total} questions for you." )
-
-    for i, q in enumerate( questions, 1 ):
-        question_text = q.get( "question", "Please provide a value" )
-        if total > 1:
-            parts.append( f"Question {i} of {total}: {question_text}" )
-        else:
-            parts.append( question_text )
-
-    return " ".join( parts )
+    if total == 0:
+        return ""
+    if total == 1:
+        return questions[ 0 ].get( "question", "Please provide a value" )
+    return f"I have {total} questions for you."
 
 
 def convert_open_ended_batch_for_api( questions: list ) -> dict:
@@ -228,7 +221,7 @@ def quick_smoke_test():
         assert "I have" not in tts
         print( f"✓ Result: '{tts}'" )
 
-        # Test 6: format_open_ended_batch_for_tts (multiple questions)
+        # Test 6: format_open_ended_batch_for_tts (multiple questions — count-only preamble)
         print( "Testing format_open_ended_batch_for_tts (multiple questions)..." )
         questions = [
             { "question": "What topic?", "header": "Topic" },
@@ -236,11 +229,9 @@ def quick_smoke_test():
             { "question": "Who is the audience?", "header": "Audience" }
         ]
         tts = format_open_ended_batch_for_tts( questions )
-        assert "I have 3 questions for you" in tts
-        assert "Question 1 of 3" in tts
-        assert "Question 2 of 3" in tts
-        assert "Question 3 of 3" in tts
-        print( f"✓ Result: '{tts[ :80 ]}...'" )
+        assert tts == "I have 3 questions for you."
+        assert "Question 1 of 3" not in tts  # Individual questions NOT spoken
+        print( f"✓ Result: '{tts}'" )
 
         # Test 7: convert_open_ended_batch_for_api
         print( "Testing convert_open_ended_batch_for_api..." )

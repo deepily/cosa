@@ -208,6 +208,13 @@ class RuntimeArgumentExpeditor:
         # Missing = user-visible args not yet in final_args
         missing = [ arg for arg in user_visible if arg not in final_args ]
 
+        # Pre-populate fallback defaults for required args that have no default.
+        # The user's original question is the best default for "task" or "query" fields.
+        required_args = agent_entry[ "required_user_args" ]
+        for arg_name in required_args:
+            if arg_name in missing and arg_name not in fallback_defaults:
+                fallback_defaults[ arg_name ] = original_question
+
         if self.debug: print( f"[Expeditor] Missing user-visible args: {missing}" )
 
         if missing:
@@ -403,11 +410,11 @@ class RuntimeArgumentExpeditor:
             system_args = set( agent_entry.get( "system_provided", [] ) )
             current_args_str = ", ".join(
                 f"{k}={v}" for k, v in args_dict.items()
-                if k not in system_args and k != "dry_run" and k != "no_confirm"
+                if k not in system_args and k != "no_confirm"
             )
             arg_names_str = ", ".join(
                 k for k in args_dict.keys()
-                if k not in system_args and k != "dry_run" and k != "no_confirm"
+                if k not in system_args and k != "no_confirm"
             )
 
             # Also include fallback question keys as valid arg names
@@ -575,7 +582,7 @@ class RuntimeArgumentExpeditor:
         visible_present = {
             k: v for k, v in final_args.items()
             if k not in system_args
-            and k not in ( "dry_run", "no_confirm" )
+            and k != "no_confirm"
             and ( user_visible is None or k in user_visible )
         }
 

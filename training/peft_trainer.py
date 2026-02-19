@@ -282,6 +282,104 @@ class PeftTrainer:
         #     print(f"Warning: Model '{self.model_name}' not in self.supported_model_names. Updating supported_model_names.")
         #     self.supported_model_names = list(MODEL_CONFIG_MAP.keys())
     
+    # Maps model base names to their environment variable names in ~/.lora_env
+    LORA_ENV_VAR_MAP = {
+        "Ministral-8B-Instruct-2410" : "LUPIN_ROUTER_LORA_MINISTRAL_8B_PATH",
+        "Qwen3-4B-Base"              : "LUPIN_ROUTER_LORA_QWEN3_4B_PATH",
+        "Llama-3.2-3B-Instruct"     : "LUPIN_ROUTER_LORA_LLAMA_3B_PATH",
+    }
+
+    def _update_lora_env( self, env_file_path=None ):
+        """
+        Update ~/.lora_env with the latest quantized model path for this model.
+
+        Requires:
+            - self.model_name is set
+            - self.quantized_model_dirs is populated with {bits: path}
+            - model_name exists in LORA_ENV_VAR_MAP
+
+        Ensures:
+            - ~/.lora_env is updated with new path for this model
+            - Other model entries are preserved
+            - Header comments and timestamp are updated
+            - Prefers 8-bit path if available, falls back to 4-bit
+
+        Raises:
+            - IOError if file cannot be written
+        """
+        from datetime import datetime
+
+        if env_file_path is None:
+            env_file_path = os.path.expanduser( "~/.lora_env" )
+
+        # Look up this model's env var name
+        env_var_name = self.LORA_ENV_VAR_MAP.get( self.model_name )
+        if env_var_name is None:
+            print( f"Warning: Model '{self.model_name}' not in LORA_ENV_VAR_MAP, skipping env update" )
+            return
+
+        # Pick preferred quantized path: 8-bit > 4-bit
+        new_path = self.quantized_model_dirs.get( 8 ) or self.quantized_model_dirs.get( 4 )
+        if new_path is None:
+            print( f"Warning: No quantized model dirs available for {self.model_name}, skipping env update" )
+            return
+
+        # Read existing env file → parse into dict of {VAR_NAME: (value, comment)}
+        existing_vars    = {}
+        existing_comments = {}
+        if os.path.exists( env_file_path ):
+            with open( env_file_path, "r" ) as f:
+                lines = f.readlines()
+            pending_comment = None
+            for line in lines:
+                stripped = line.strip()
+                if stripped.startswith( "#" ) and "export" not in stripped:
+                    # Collect comment lines that precede an export
+                    pending_comment = stripped
+                elif stripped.startswith( "export " ):
+                    # Parse: export VAR_NAME="value"
+                    rest = stripped[ len( "export " ): ]
+                    eq_idx = rest.find( "=" )
+                    if eq_idx > 0:
+                        var_name = rest[ :eq_idx ]
+                        var_val  = rest[ eq_idx + 1: ].strip( '"' )
+                        existing_vars[ var_name ] = var_val
+                        if pending_comment:
+                            existing_comments[ var_name ] = pending_comment
+                    pending_comment = None
+                else:
+                    pending_comment = None
+
+        # Update the dict with new path
+        existing_vars[ env_var_name ] = new_path
+
+        # Default comments for known models
+        default_comments = {
+            "LUPIN_ROUTER_LORA_MINISTRAL_8B_PATH" : "# Ministral 8B — production router",
+            "LUPIN_ROUTER_LORA_QWEN3_4B_PATH"     : "# Qwen3 4B — backup router",
+            "LUPIN_ROUTER_LORA_LLAMA_3B_PATH"      : "# Llama 3.2 3B — experimental",
+        }
+
+        # Write back with header, per-model comments, and timestamp
+        timestamp = datetime.now().strftime( "%Y-%m-%d" )
+        out_lines = []
+        out_lines.append( "# LoRA model paths — auto-updated by peft_trainer.py after successful training runs" )
+        out_lines.append( "# Sourced by ~/.bashrc — changes take effect on next shell or `source ~/.bashrc`" )
+        out_lines.append( f"# Last updated: {timestamp}" )
+        out_lines.append( "" )
+
+        for var_name, var_val in existing_vars.items():
+            comment = existing_comments.get( var_name ) or default_comments.get( var_name )
+            if comment:
+                out_lines.append( comment )
+            out_lines.append( f'export {var_name}="{var_val}"' )
+            out_lines.append( "" )
+
+        with open( env_file_path, "w" ) as f:
+            f.write( "\n".join( out_lines ) )
+
+        if self.debug: print( f"Updated {env_file_path}: {env_var_name}={new_path}" )
+
     def login_to_hf( self ) -> None:
         """
         Authenticate with Hugging Face API.
@@ -2298,6 +2396,14 @@ class PeftTrainer:
         except Exception as e:
             print( f"Warning: Failed to write training results file: {e}" )
 
+        # Update ~/.lora_env with the latest quantized model path
+        try:
+            self._update_lora_env()
+            du.print_banner( f"Updated ~/.lora_env with new {self.model_name} path" )
+            print( "Run 'source ~/.bashrc' or open a new terminal for the changes to take effect." )
+        except Exception as e:
+            print( f"Warning: Failed to update ~/.lora_env: {e}" )
+
 
 def check_env() -> str:
     """
@@ -2410,6 +2516,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument( "--quantize-bits",           type=str,            help="Quantization bits: both, 4, or 8",                            default="both",
                                                       choices=[ "both", "4", "8" ] )
     parser.add_argument( "--resume-from-merged",      type=str,            help="Path to existing merged adapter dir; skips training and merge phases", default=None )
+    parser.add_argument( "--update-lora-env",         type=str, metavar="RESULTS_FILE",
+                                                      help="Update ~/.lora_env from a training results file (skips training entirely)", default=None )
 
     return parser.parse_args()
 
@@ -2716,25 +2824,76 @@ if __name__ == "__main__":
         sys.exit( 0 )
     
     # Otherwise run normal training pipeline
-    
+
     # Check for required environment variables
     lupin_root = check_env()
-    
+
     # Validate command line arguments
     args = parse_arguments()
-    
+
+    # Standalone env update mode: parse results file, update ~/.lora_env, exit
+    if args.update_lora_env:
+        import yaml
+        results_file = args.update_lora_env
+        if not os.path.exists( results_file ):
+            print( f"Error: Results file not found: {results_file}" )
+            sys.exit( 1 )
+
+        # Parse YAML frontmatter from the results file
+        with open( results_file, "r" ) as f:
+            content = f.read()
+        if not content.startswith( "---" ):
+            print( f"Error: Results file does not contain YAML frontmatter: {results_file}" )
+            sys.exit( 1 )
+
+        # Extract frontmatter between first and second ---
+        parts      = content.split( "---", 2 )
+        # Note: yaml.unsafe_load needed because training results contain numpy-serialized scalars
+        frontmatter = yaml.unsafe_load( parts[ 1 ] )
+
+        model_name           = frontmatter[ "model_name" ]
+        quantized_model_dirs = {}
+        for bits_str, path in frontmatter.get( "quantized_model_dirs", {} ).items():
+            quantized_model_dirs[ int( bits_str ) ] = path
+
+        if not quantized_model_dirs:
+            print( f"Error: No quantized_model_dirs found in results file" )
+            sys.exit( 1 )
+
+        du.print_banner( f"Updating ~/.lora_env from results file: {results_file}" )
+        print( f"Model: {model_name}" )
+        for bits, path in sorted( quantized_model_dirs.items() ):
+            print( f"  {bits}-bit: {path}" )
+
+        # Create a minimal trainer-like object to call _update_lora_env
+        # We use __new__ to avoid __init__'s GPU/model validation
+        trainer                      = object.__new__( PeftTrainer )
+        trainer.model_name           = model_name
+        trainer.quantized_model_dirs = quantized_model_dirs
+        trainer.debug                = args.debug if hasattr( args, "debug" ) else False
+        trainer._update_lora_env()
+
+        # Print the updated env vars
+        env_file = os.path.expanduser( "~/.lora_env" )
+        if os.path.exists( env_file ):
+            print()
+            with open( env_file, "r" ) as f:
+                print( f.read() )
+        print( "Run 'source ~/.bashrc' or open a new terminal for the changes to take effect." )
+        sys.exit( 0 )
+
     # Check for nuclear_kill_button + elevated privileges
     if args.nuclear_kill_button:
         if args.debug: print( "Nuclear kill button is enabled..." )
         check_privileges( debug=args.debug )
     else:
         if args.debug: print( "Nuclear kill button is disabled..." )
-        
+
     # instantiate a trainer...
     trainer = PeftTrainer(
         args.model, args.model_name, args.test_train_path, lora_dir=args.lora_dir, debug=args.debug, verbose=args.verbose
     )
-    
+
     # ... And you're off to the races!
     trainer.run_pipeline(
         pre_training_stats=args.pre_training_stats,

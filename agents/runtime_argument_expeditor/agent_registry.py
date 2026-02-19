@@ -21,6 +21,7 @@ from typing import Optional
 
 AGENTIC_AGENTS = {
     "agent router go to deep research" : {
+        "job_prefix"         : "dr",
         "cli_module"         : "cosa.agents.deep_research.cli",
         "job_class_path"     : "cosa.agents.deep_research.job.DeepResearchJob",
         "display_name"       : "Deep Research",
@@ -46,6 +47,7 @@ AGENTIC_AGENTS = {
         },
     },
     "agent router go to podcast generator" : {
+        "job_prefix"         : "pg",
         "cli_module"         : "cosa.agents.podcast_generator",
         "job_class_path"     : "cosa.agents.podcast_generator.job.PodcastGeneratorJob",
         "display_name"       : "Podcast Generator",
@@ -74,6 +76,7 @@ AGENTIC_AGENTS = {
         },
     },
     "agent router go to research to podcast" : {
+        "job_prefix"         : "rp",
         "cli_module"         : "cosa.agents.deep_research_to_podcast",
         "job_class_path"     : "cosa.agents.deep_research_to_podcast.job.DeepResearchToPodcastJob",
         "display_name"       : "Research to Podcast",
@@ -101,6 +104,7 @@ AGENTIC_AGENTS = {
         },
     },
     "agent router go to claude code" : {
+        "job_prefix"         : "cc",
         "cli_module"         : "cosa.agents.claude_code",
         "job_class_path"     : "cosa.agents.claude_code.job.ClaudeCodeJob",
         "display_name"       : "Claude Code",
@@ -121,6 +125,7 @@ AGENTIC_AGENTS = {
         },
     },
     "agent router go to swe team" : {
+        "job_prefix"         : "swe",
         "cli_module"         : "cosa.agents.swe_team",
         "job_class_path"     : "cosa.agents.swe_team.job.SweTeamJob",
         "display_name"       : "SWE Team",
@@ -131,15 +136,18 @@ AGENTIC_AGENTS = {
             "prompt"           : "task",
             "budget"           : "budget",
             "timeout"          : "timeout",
+            "dry_run"          : "dry_run",
         },
         "fallback_questions" : {
             "task"             : "What engineering task should the SWE Team work on?",
             "budget"           : "Would you like to set a budget limit in dollars? Say a dollar amount, or 'no limit'.",
             "timeout"          : "Would you like to set a timeout? Say a number of seconds, or 'default'.",
+            "dry_run"          : "Would you like to enable dry run mode? Say 'yes' or 'no'.",
         },
         "fallback_defaults" : {
             "budget"           : "no limit",
             "timeout"          : "default",
+            "dry_run"          : "no",
         },
     },
 }
@@ -275,7 +283,8 @@ def quick_smoke_test():
             assert "fallback_questions" in entry, f"Missing fallback_questions in {key}"
             assert "fallback_defaults" in entry, f"Missing fallback_defaults in {key}"
             assert "display_name" in entry, f"Missing display_name in {key}"
-            print( f"   ✓ {key}: structure valid (has fallback_defaults, display_name={entry[ 'display_name' ]})" )
+            assert "job_prefix" in entry, f"Missing job_prefix in {key}"
+            print( f"   ✓ {key}: structure valid (job_prefix={entry[ 'job_prefix' ]}, display_name={entry[ 'display_name' ]})" )
         tests_passed += 1
     except Exception as e:
         print( f"   ✗ Failed: {e}" )

@@ -95,7 +95,7 @@ Examples:
     # Handle --user-visible-args early exit
     if args.user_visible_args:
         import json
-        print( json.dumps( [ "task", "budget", "timeout" ] ) )
+        print( json.dumps( [ "task", "budget", "timeout", "dry_run" ] ) )
         sys.exit( 0 )
 
     # Guard: task is required for normal execution

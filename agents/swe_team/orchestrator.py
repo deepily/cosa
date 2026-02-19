@@ -224,6 +224,55 @@ class SweTeamOrchestrator:
 
         return await team_io.ask_confirmation( question, role, default, timeout, abstract )
 
+    async def _check_in_with_user( self, team_io, prompt, timeout=None ):
+        """
+        Pause for user input at a natural break point between tasks.
+
+        Enters WAITING_FEEDBACK state, calls get_feedback() with a short
+        timeout, then classifies the response as approval (continue) or
+        substantive feedback (inject into next task context).
+
+        Requires:
+            - team_io is the cosa_interface module
+            - prompt is a non-empty string
+
+        Ensures:
+            - Returns None if check-ins disabled, timeout, or user approves
+            - Returns feedback string if user provides substantive input
+            - State transitions: current -> WAITING_FEEDBACK -> DELEGATING
+
+        Args:
+            team_io: cosa_interface module
+            prompt: Text to present to user
+            timeout: Override for checkin_timeout (seconds)
+
+        Returns:
+            str or None: User's substantive feedback, or None
+        """
+        if not self.config.enable_checkins:
+            return None
+
+        prev_state = self.current_state
+        self.current_state = OrchestratorState.WAITING_FEEDBACK
+        await self._emit_state( prev_state, self.current_state )
+
+        resolved_timeout = timeout or self.config.checkin_timeout
+
+        feedback = await team_io.get_feedback(
+            prompt  = prompt,
+            role    = "lead",
+            timeout = resolved_timeout,
+        )
+
+        # Restore to DELEGATING state
+        self.current_state = OrchestratorState.DELEGATING
+        await self._emit_state( OrchestratorState.WAITING_FEEDBACK, self.current_state )
+
+        if feedback and not team_io.is_approval( feedback ):
+            return feedback  # Substantive input
+
+        return None  # Approval, dismissal, or timeout
+
     async def run( self ) -> Optional[ str ]:
         """
         Execute the SWE Team task.
@@ -477,6 +526,20 @@ class SweTeamOrchestrator:
             progress_log.log( f"Starting task {i + 1}: {spec.title}", role="lead" )
 
             try:
+                # Inject user feedback from previous check-in into task spec context
+                if self.state.get( "user_feedback" ):
+                    spec = TaskSpec(
+                        title          = spec.title,
+                        objective      = spec.objective + f"\n\nUSER FEEDBACK:\n{self.state[ 'user_feedback' ]}\nIncorporate this guidance.",
+                        output_format  = spec.output_format,
+                        tool_guidance  = spec.tool_guidance,
+                        scope_boundary = spec.scope_boundary,
+                        assigned_role  = spec.assigned_role,
+                        priority       = spec.priority,
+                        depends_on     = spec.depends_on,
+                    )
+                    self.state[ "user_feedback" ] = None  # Clear after use
+
                 result = await self._delegate_task( spec, i, team_io )
                 results.append( result )
                 self.state[ "delegation_results" ].append( result )
@@ -623,6 +686,16 @@ class SweTeamOrchestrator:
                     if f not in self.state[ "files_changed" ]:
                         self.state[ "files_changed" ].append( f )
 
+                # --- Between-task check-in ---
+                if i < len( task_specs ) - 1:
+                    feedback = await self._check_in_with_user(
+                        team_io,
+                        prompt = f"Task {i + 1}/{len( task_specs )} done: {spec.title}. Any input before the next task?",
+                    )
+                    if feedback:
+                        self.state[ "user_feedback" ] = feedback
+                        progress_log.log( f"User feedback received: {feedback[ :200 ]}", role="user" )
+
             except SafetyLimitError:
                 raise  # Let outer handler catch
 
@@ -645,6 +718,16 @@ class SweTeamOrchestrator:
                     confidence    = 0.0,
                 ) )
                 progress_log.log( f"Task {i + 1} exception: {e}", role="lead" )
+
+        # --- Post-completion check-in ---
+        success_count = sum( 1 for r in results if r.status == "success" )
+        feedback = await self._check_in_with_user(
+            team_io,
+            prompt  = f"All {len( task_specs )} tasks complete ({success_count} successful). Any final input before summary?",
+            timeout = 60,
+        )
+        if feedback:
+            progress_log.log( f"User final feedback: {feedback[ :200 ]}", role="user" )
 
         # --- Summary ---
         success_count        = sum( 1 for r in results if r.status == "success" )

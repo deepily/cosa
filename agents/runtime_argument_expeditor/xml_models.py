@@ -9,7 +9,7 @@ fallback questions.
 """
 
 from typing import List
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from cosa.agents.io_models.utils.util_xml_pydantic import BaseXMLModel
 
@@ -45,6 +45,14 @@ class ExpeditorResponse( BaseXMLModel ):
         ...,
         description="Comma-separated list of missing required argument names, or empty string if none"
     )
+
+    @field_validator( "*", mode="before" )
+    @classmethod
+    def coerce_none_to_empty_str( cls, v ):
+        """Coerce None (from empty XML tags like <foo></foo>) to empty string."""
+        if v is None:
+            return ""
+        return v
 
     def is_complete( self ):
         """
@@ -184,6 +192,18 @@ class ExpeditorResponse( BaseXMLModel ):
             assert parsed.all_required_met == response.all_required_met
             assert parsed.args_present == response.args_present
 
+            # Test None coercion (empty XML tags like <args_missing></args_missing>)
+            none_response = cls(
+                all_required_met = "true",
+                args_present     = None,
+                args_missing     = None
+            )
+            assert none_response.args_present == ""
+            assert none_response.args_missing == ""
+            assert none_response.is_complete()
+            assert none_response.get_missing_list() == []
+            assert none_response.get_present_dict() == {}
+
             # Test template example
             example = cls.get_example_for_template()
             assert "biodiversity" in example.args_present
@@ -216,6 +236,14 @@ class ArgConfirmationResponse( BaseXMLModel ):
     action    : str = Field( ..., description="User intent: 'approve', 'modify', or 'cancel'" )
     arg_name  : str = Field( ..., description="Argument to modify (empty if approve/cancel)" )
     new_value : str = Field( ..., description="New value for the argument (empty if approve/cancel)" )
+
+    @field_validator( "*", mode="before" )
+    @classmethod
+    def coerce_none_to_empty_str( cls, v ):
+        """Coerce None (from empty XML tags like <foo></foo>) to empty string."""
+        if v is None:
+            return ""
+        return v
 
     def is_approval( self ):
         """
@@ -317,6 +345,12 @@ class ArgConfirmationResponse( BaseXMLModel ):
             assert parsed.action == response.action
             assert parsed.arg_name == response.arg_name
             assert parsed.new_value == response.new_value
+
+            # Test None coercion (empty XML tags like <arg_name></arg_name>)
+            none_response = cls( action="approve", arg_name=None, new_value=None )
+            assert none_response.arg_name == ""
+            assert none_response.new_value == ""
+            assert none_response.is_approval()
 
             # Test template example
             example = cls.get_example_for_template()

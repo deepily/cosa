@@ -676,6 +676,19 @@ class XmlPromptGenerator:
         """
         return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-claude-code-tasks.txt", requested_length=requested_length )
 
+    def get_swe_team_tasks( self, requested_length: Optional[int]=None ) -> list:
+        """
+        Gets placeholder feature/project descriptions for SWE team job training.
+
+        Requires:
+            - requested_length is None or positive integer
+
+        Ensures:
+            - Returns list of feature-oriented task descriptions
+            - Length matches requested_length if specified
+        """
+        return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-swe-team-tasks.txt", requested_length=requested_length )
+
     def get_audience_levels( self, requested_length: Optional[int]=None ) -> list:
         """
         Gets placeholder audience levels for podcast generation.

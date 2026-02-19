@@ -235,8 +235,8 @@ class NotificationRequest(BaseModel):
 
     job_id: Optional[str] = Field(
         default=None,
-        pattern=r'^([a-z]+-[a-f0-9]{8}|[a-f0-9]{64}(::[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})?)$',
-        description="Agentic job ID for routing notifications to job cards. Accepts short format (e.g., 'dr-a1b2c3d4'), SHA256 hash (64 hex chars), or compound hash (64 hex chars::UUID)."
+        pattern=r'^([a-z]+-[a-f0-9]{8}(::[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})?|[a-f0-9]{64}(::[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})?)$',
+        description="Agentic job ID for routing notifications to job cards. Accepts short format (e.g., 'dr-a1b2c3d4'), compound short format (e.g., 'cc-e0b063cc::UUID'), SHA256 hash (64 hex chars), or compound hash (64 hex chars::UUID)."
     )
 
     suppress_ding: bool = Field(
@@ -630,8 +630,8 @@ class AsyncNotificationRequest(BaseModel):
 
     job_id: Optional[str] = Field(
         default=None,
-        pattern=r'^([a-z]+-[a-f0-9]{8}|[a-f0-9]{64}(::[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})?)$',
-        description="Agentic job ID for routing notifications to job cards. Accepts short format (e.g., 'dr-a1b2c3d4'), SHA256 hash (64 hex chars), or compound hash (64 hex chars::UUID)."
+        pattern=r'^([a-z]+-[a-f0-9]{8}(::[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})?|[a-f0-9]{64}(::[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})?)$',
+        description="Agentic job ID for routing notifications to job cards. Accepts short format (e.g., 'dr-a1b2c3d4'), compound short format (e.g., 'cc-e0b063cc::UUID'), SHA256 hash (64 hex chars), or compound hash (64 hex chars::UUID)."
     )
 
     suppress_ding: bool = Field(
@@ -884,6 +884,10 @@ def quick_smoke_test():
         "61d021320bed364e82d50af9128ddf8e1a63d8680d76ec06b1b03e27d8dee435",  # SHA256 hash (queue job format)
         "0" * 64,           # All zeros SHA256 (edge case)
         "f" * 64,           # All f's SHA256 (edge case)
+        # Compound short format (prefix-hex8::UUID) - Session 230 speculative job IDs
+        "cc-e0b063cc::0cf47e2d-d5a1-4cd4-addf-79810fd32b15",
+        "swe-abcd1234::a1b2c3d4-e5f6-7890-abcd-ef0123456789",
+        "dr-12345678::00000000-0000-0000-0000-000000000000",
         # Compound hash format (SHA256::UUID) - Session 108 user-scoped job IDs
         "2cd3847c0e234a8077b7ed28f9a5c3e1b4d6a7890abcdef0123456789ab4b7c4::0cf47e2d-d5a1-4cd4-addf-79810fd32b15",
         "61d021320bed364e82d50af9128ddf8e1a63d8680d76ec06b1b03e27d8dee435::a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
@@ -925,6 +929,10 @@ def quick_smoke_test():
         "a" * 65,           # SHA256 too long (65 chars)
         "A" * 64,           # SHA256 uppercase (invalid)
         "g" * 64,           # SHA256 non-hex characters
+        # Invalid compound short formats
+        "dr-a1b2c3d4:a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",   # Single colon in short compound
+        "dr-a1b2c3d4::a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",      # UUID without hyphens in short compound
+        "dr-a1b2c3d4::a1b2c3d4-e5f6-a7b8-c9d0",                # Truncated UUID in short compound
         # Invalid compound hash formats
         "a" * 64 + ":a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",   # Single colon (should be ::)
         "a" * 64 + "::a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",      # UUID without hyphens

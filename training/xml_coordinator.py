@@ -682,6 +682,7 @@ class XmlCoordinator:
             "research_topics"   : self.prompt_generator.get_research_topics,
             "document_paths"    : self.prompt_generator.get_document_paths,
             "claude_code_tasks" : self.prompt_generator.get_claude_code_tasks,
+            "swe_team_tasks"    : self.prompt_generator.get_swe_team_tasks,
         }
         getter = dispatch.get( getter_name )
         if getter is None:

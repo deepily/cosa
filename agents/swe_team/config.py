@@ -46,6 +46,10 @@ class SweTeamConfig:
     feedback_timeout_seconds : int  = 300
     narrate_progress         : bool = True
 
+    # === User Check-In ===
+    enable_checkins : bool = True   # Pause between tasks for user input
+    checkin_timeout : int  = 30     # Seconds before auto-continue
+
     # === Decision Proxy ===
     trust_mode : str = "disabled"  # "disabled", "shadow", "suggest", "active"
 

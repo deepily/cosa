@@ -37,6 +37,25 @@ def _parse_optional_int( value, default=None ):
         return default
 
 
+def _parse_boolean( value, default=False ):
+    """
+    Safely parse a value to bool, treating semantic strings appropriately.
+
+    Requires:
+        - value is a string, bool, None, or other type
+
+    Ensures:
+        - Returns True for "yes", "true", "1", "enable", "enabled"
+        - Returns False for all other strings including "no", "false", "0"
+        - Returns default if value is None
+        - Passes through bool values unchanged
+    """
+    if value is None: return default
+    if isinstance( value, bool ): return value
+    s = str( value ).lower().strip()
+    return s in ( "yes", "true", "1", "enable", "enabled" )
+
+
 def _parse_optional_float( value, default=None ):
     """
     Safely parse a value to float, treating semantic strings as None.
@@ -94,7 +113,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             session_id       = session_id,
             budget           = _parse_optional_float( args_dict.get( "budget" ) ),
             no_confirm       = True,
-            dry_run          = args_dict.get( "dry_run", False ),
+            dry_run          = _parse_boolean( args_dict.get( "dry_run" ) ),
             audience         = args_dict.get( "audience" ),
             audience_context = args_dict.get( "audience_context" ),
             debug            = debug,
@@ -116,7 +135,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             user_email       = user_email,
             session_id       = session_id,
             target_languages = languages,
-            dry_run          = args_dict.get( "dry_run", False ),
+            dry_run          = _parse_boolean( args_dict.get( "dry_run" ) ),
             audience         = args_dict.get( "audience" ),
             audience_context = args_dict.get( "audience_context" ),
             debug            = debug,
@@ -139,7 +158,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             session_id       = session_id,
             budget           = _parse_optional_float( args_dict.get( "budget" ) ),
             target_languages = languages,
-            dry_run          = args_dict.get( "dry_run", False ),
+            dry_run          = _parse_boolean( args_dict.get( "dry_run" ) ),
             audience         = args_dict.get( "audience" ),
             audience_context = args_dict.get( "audience_context" ),
             debug            = debug,
@@ -156,7 +175,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             task_type       = args_dict.get( "task_type", "BOUNDED" ),
             max_turns       = _parse_optional_int( args_dict.get( "max_turns" ) ),
             timeout_seconds = _parse_optional_int( args_dict.get( "timeout_seconds" ) ),
-            dry_run         = args_dict.get( "dry_run", False ),
+            dry_run         = _parse_boolean( args_dict.get( "dry_run" ) ),
             debug           = debug,
             verbose         = verbose
         )
@@ -168,7 +187,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             user_id      = user_id,
             user_email   = user_email,
             session_id   = session_id,
-            dry_run      = args_dict.get( "dry_run", False ),
+            dry_run      = _parse_boolean( args_dict.get( "dry_run" ) ),
             lead_model   = args_dict.get( "lead_model" ),
             worker_model = args_dict.get( "worker_model" ),
             budget       = _parse_optional_float( args_dict.get( "budget" ) ),
