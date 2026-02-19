@@ -1,5 +1,53 @@
 # COSA Development History
 
+> **✅ SESSIONS 226-234 COMMIT**: Voice-driven SWE factory, _parse_boolean, agentic modes, expeditor UX, speculative job ID, LoRA env resolution, check-in MVP, sender_id fix (2026.02.18)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Committed accumulated work from Lupin sessions 226-234** (16 files, +474/-145 lines):
+>
+> **Voice-Driven SWE Team + _parse_boolean (Session 226)**:
+> - Wired canonical `create_agentic_job()` factory into voice path in `todo_fifo_queue.py` (deleted 75 lines inline factory)
+> - Added `_parse_boolean()` to `agentic_job_factory.py` — fixes string `"no"` truthy bug on all 5 `dry_run` lines
+> - Added `dry_run` to SWE Team registry entry, CLI `--user-visible-args`, proxy TEST_PROFILES
+> - Removed 3 hardcoded `dry_run` exclusions in `expeditor.py` (now whitelist-controlled)
+>
+> **LoRA Env Var Resolution (Session 227)**:
+> - Added `os.path.expandvars()` in `ConfigurationManager.get()` for `${ENV_VAR}` pattern resolution
+> - Added `_update_lora_env()` to `PeftTrainer` — auto-updates `~/.lora_env` after successful training runs
+>
+> **Agentic Mode Switches (Session 229)**:
+> - Added `AGENTIC_MODE_MAP` (5 entries) + `MODE_METADATA` entries for UI dropdown in `todo_fifo_queue.py`
+> - Agentic modes bypass LoRA router, routing directly to disambiguation → expeditor → factory
+>
+> **Expeditor UX + Speculative Job ID (Session 230)**:
+> - Truncated batch TTS to count-only preamble in `notification_utils.py`
+> - Added fallback default pre-population in `expeditor.py` (original_question → default_value)
+> - Added `job_prefix` to all 5 AGENTIC_AGENTS registry entries
+> - Speculative job ID generation before expeditor runs in `todo_fifo_queue.py`
+> - Added None→empty-string coercion `field_validator` to `ExpeditorResponse` + `ArgConfirmationResponse`
+> - Extended `job_id` regex to accept compound short format (`prefix-hex8::UUID`) in `notification_models.py`
+>
+> **Duplicate Notification Fix (Session 231)**:
+> - Added early return after AGENTIC_AGENTS branch in `push_job()` to prevent fallthrough double-notify
+>
+> **SWE Team Training Data Routing (Session 232)**:
+> - Added `get_swe_team_tasks()` to `xml_prompt_generator.py`
+> - Registered `swe_team_tasks` in `xml_coordinator.py` dispatch dict
+>
+> **User-Initiated Check-In MVP (Session 233)**:
+> - Added `_check_in_with_user()` to `orchestrator.py` with WAITING_FEEDBACK state + configurable timeout
+> - 2 check-in call sites: between-task (with feedback injection) and post-completion
+> - Added `enable_checkins` + `checkin_timeout` config fields in `swe_team/config.py`
+>
+> **Bug F: sender_id Validation (Session 234)**:
+> - Fixed `get_sender_id()` in `cosa_interface.py` to strip `::user_id` suffix from compound session IDs
+>
+> **Commit**: 4510eb7
+
+---
+
 > **✅ SESSIONS 219-225 COMMIT**: Factory safe parsing, progress_group_id persistence, training cleanup, SWE Team routing (2026.02.18)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >
