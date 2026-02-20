@@ -80,3 +80,43 @@ DEFAULT_TIMEZONE           = "America/Chicago"
 
 # Audit sampling rate at L4
 DEFAULT_L4_AUDIT_SAMPLE_RATE = 0.10  # 10%
+
+
+# ============================================================================
+# Factory: INI Config → Runtime Config Dict
+# ============================================================================
+
+def trust_proxy_config_from_config_mgr( config_mgr ):
+    """
+    Read all generic trust proxy INI keys into a config dict.
+
+    Requires:
+        - config_mgr is a ConfigurationManager instance with LUPIN_CONFIG_MGR_CLI_ARGS
+
+    Ensures:
+        - Returns dict with all 14 generic trust proxy config values
+        - Falls back to module-level defaults for any missing keys
+
+    Args:
+        config_mgr: ConfigurationManager instance
+
+    Returns:
+        dict: Config values keyed by runtime parameter names
+    """
+    return {
+        "enabled"                        : config_mgr.get( "decision proxy enabled",                                   default=False,                                    return_type="boolean" ),
+        "active_hours_start"             : config_mgr.get( "decision proxy active hours start",                         default=DEFAULT_ACTIVE_HOURS_START,                return_type="int" ),
+        "active_hours_end"               : config_mgr.get( "decision proxy active hours end",                           default=DEFAULT_ACTIVE_HOURS_END,                  return_type="int" ),
+        "timezone"                       : config_mgr.get( "decision proxy timezone",                                   default=DEFAULT_TIMEZONE ),
+        "l2_threshold"                   : config_mgr.get( "trust proxy l2 threshold",                                  default=DEFAULT_L2_THRESHOLD,                     return_type="int" ),
+        "l3_threshold"                   : config_mgr.get( "trust proxy l3 threshold",                                  default=DEFAULT_L3_THRESHOLD,                     return_type="int" ),
+        "l4_threshold"                   : config_mgr.get( "trust proxy l4 threshold",                                  default=DEFAULT_L4_THRESHOLD,                     return_type="int" ),
+        "l5_threshold"                   : config_mgr.get( "trust proxy l5 threshold",                                  default=DEFAULT_L5_THRESHOLD,                     return_type="int" ),
+        "decay_half_life_days"           : config_mgr.get( "trust proxy decay half life days",                           default=DEFAULT_DECAY_HALF_LIFE_DAYS,             return_type="int" ),
+        "rolling_window_days"            : config_mgr.get( "trust proxy rolling window days",                            default=DEFAULT_ROLLING_WINDOW_DAYS,              return_type="int" ),
+        "cb_error_rate_threshold"        : config_mgr.get( "trust proxy circuit breaker error rate threshold",           default=DEFAULT_CB_ERROR_RATE_THRESHOLD,           return_type="float" ),
+        "cb_confidence_collapse_threshold" : config_mgr.get( "trust proxy circuit breaker confidence collapse threshold", default=DEFAULT_CB_CONFIDENCE_COLLAPSE_THRESHOLD, return_type="float" ),
+        "cb_auto_demotion_levels"        : config_mgr.get( "trust proxy circuit breaker auto demotion levels",           default=DEFAULT_CB_AUTO_DEMOTION_LEVELS,          return_type="int" ),
+        "cb_recovery_cooldown_seconds"   : config_mgr.get( "trust proxy circuit breaker recovery cooldown seconds",     default=DEFAULT_CB_RECOVERY_COOLDOWN_SECONDS,     return_type="int" ),
+        "l4_audit_sample_rate"           : config_mgr.get( "trust proxy l4 audit sample rate",                           default=DEFAULT_L4_AUDIT_SAMPLE_RATE,             return_type="float" ),
+    }

@@ -183,17 +183,19 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
     elif command == "agent router go to swe team":
         from cosa.agents.swe_team.job import SweTeamJob
         return SweTeamJob(
-            task         = args_dict.get( "task", args_dict.get( "prompt", "" ) ),
-            user_id      = user_id,
-            user_email   = user_email,
-            session_id   = session_id,
-            dry_run      = _parse_boolean( args_dict.get( "dry_run" ) ),
-            lead_model   = args_dict.get( "lead_model" ),
-            worker_model = args_dict.get( "worker_model" ),
-            budget       = _parse_optional_float( args_dict.get( "budget" ) ),
-            timeout      = _parse_optional_int( args_dict.get( "timeout" ) ),
-            debug        = debug,
-            verbose      = verbose
+            task           = args_dict.get( "task", args_dict.get( "prompt", "" ) ),
+            user_id        = user_id,
+            user_email     = user_email,
+            session_id     = session_id,
+            dry_run        = _parse_boolean( args_dict.get( "dry_run" ) ),
+            dry_run_phases = _parse_optional_int( args_dict.get( "dry_run_phases" ) ) or 10,
+            dry_run_delay  = _parse_optional_float( args_dict.get( "dry_run_delay" ) ) or 1.5,
+            lead_model     = args_dict.get( "lead_model" ),
+            worker_model   = args_dict.get( "worker_model" ),
+            budget         = _parse_optional_float( args_dict.get( "budget" ) ),
+            timeout        = _parse_optional_int( args_dict.get( "timeout" ) ),
+            debug          = debug,
+            verbose        = verbose
         )
 
     else:

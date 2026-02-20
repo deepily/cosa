@@ -200,17 +200,19 @@ class DecisionResponder( BaseResponder ):
 
         if result.action == "shadow":
             self.stats[ "decisions_shadowed" ] += 1
+            self._persist_decision( notification_id, result, message )
             if self.debug:
                 print( f"{self.LOG_PREFIX} SHADOW: {result.category} (L{result.trust_level}, {result.confidence:.2f})" )
 
         elif result.action == "suggest":
             self.stats[ "decisions_suggested" ] += 1
+            self._persist_decision( notification_id, result, message, requires_ratification=True )
             if self.debug:
                 print( f"{self.LOG_PREFIX} SUGGEST: {result.category} -> {result.value}" )
-            # TODO: Store as pending ratification in decision store
 
         elif result.action == "act":
             self.stats[ "decisions_acted" ] += 1
+            self._persist_decision( notification_id, result, message, requires_ratification=False )
             if result.value is not None:
                 success = self.submit_response( notification_id, result.value )
                 if success:
@@ -221,8 +223,66 @@ class DecisionResponder( BaseResponder ):
 
         elif result.action == "defer":
             self.stats[ "decisions_deferred" ] += 1
+            self._persist_decision( notification_id, result, message )
             if self.debug:
                 print( f"{self.LOG_PREFIX} DEFER: {result.category} — {result.reason}" )
+
+    def _persist_decision( self, notification_id, result, question, requires_ratification=None ):
+        """
+        Persist a decision to the database (non-fatal).
+
+        Wraps DB writes in try/except so the in-memory tracker remains
+        source of truth. DB persistence is best-effort.
+
+        Requires:
+            - notification_id is a string
+            - result is a DecisionResult with category, action, confidence, trust_level, reason
+
+        Ensures:
+            - Decision logged to proxy_decisions table on success
+            - Failure logged but never propagates
+
+        Args:
+            notification_id: UUID string of original notification
+            result: DecisionResult from domain strategy
+            question: Original question text
+            requires_ratification: Override for ratification state (None = infer from action)
+        """
+        try:
+            from cosa.rest.db.database import get_db
+            from cosa.rest.db.repositories.proxy_decision_repository import ProxyDecisionRepository
+
+            with get_db() as session:
+                repo = ProxyDecisionRepository( session )
+
+                if result.action == "shadow":
+                    repo.log_shadow(
+                        notification_id = notification_id,
+                        domain          = getattr( self.domain_strategy, "name", "unknown" ),
+                        category        = result.category,
+                        question        = question[ :500 ],
+                        sender_id       = "",
+                        confidence      = result.confidence,
+                        trust_level     = result.trust_level,
+                        reason          = result.reason or "shadow mode",
+                    )
+                else:
+                    repo.log_decision(
+                        notification_id      = notification_id,
+                        domain               = getattr( self.domain_strategy, "name", "unknown" ),
+                        category             = result.category,
+                        question             = question[ :500 ],
+                        action               = result.action,
+                        decision_value       = result.value,
+                        confidence           = result.confidence,
+                        trust_level          = result.trust_level,
+                        reason               = result.reason or "",
+                        requires_ratification = requires_ratification if requires_ratification is not None else ( result.action == "suggest" ),
+                    )
+
+        except Exception as e:
+            if self.debug:
+                print( f"{self.LOG_PREFIX} DB persistence failed (non-fatal): {e}" )
 
     def print_stats( self ):
         """Print decision proxy statistics."""

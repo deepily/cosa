@@ -559,9 +559,9 @@ async def send_job_message(
     """
     Send a user message to a running SWE Team job.
 
-    Creates a notification with type="user_message" targeting the specified
-    job_id. The job's orchestrator notification client receives this via
-    WebSocket and queues it for consumption at the next check-in point.
+    Creates a notification with type="user_initiated_message" targeting the
+    specified job_id. The job's orchestrator notification client receives this
+    via WebSocket and queues it for consumption at the next check-in point.
 
     Requires:
         - job_id identifies a currently running job
@@ -569,7 +569,7 @@ async def send_job_message(
         - current_user is authenticated
 
     Ensures:
-        - Notification created in database with user_message type
+        - Notification created in database with user_initiated_message type
         - WebSocket event emitted to job owner for delivery
         - Returns notification_id on success
 
@@ -634,7 +634,7 @@ async def send_job_message(
                 sender_id          = f"user@{current_user[ 'email' ]}",
                 recipient_id       = user.id,
                 message            = message_text,
-                type               = "user_message",
+                type               = "user_initiated_message",
                 priority           = priority,
                 response_requested = False,
                 job_id             = job_id,
@@ -660,8 +660,9 @@ async def send_job_message(
             data    = {
                 "notification": {
                     "id"                : notification_id,
-                    "type"              : "user_message",
-                    "notification_type" : "user_message",
+                    "id_hash"           : notification_id,
+                    "type"              : "user_initiated_message",
+                    "notification_type" : "user_initiated_message",
                     "message"           : message_text,
                     "priority"          : priority,
                     "job_id"            : job_id,
@@ -670,6 +671,24 @@ async def send_job_message(
                 },
             },
         )
+
+        # Echo acknowledgment back to user as a progress notification
+        truncated = message_text[ :120 ] + ( "..." if len( message_text ) > 120 else "" )
+        echo_data = {
+            "notification": {
+                "id"                : f"echo-{notification_id}",
+                "id_hash"           : f"echo-{notification_id}",
+                "type"              : "progress",
+                "notification_type" : "progress",
+                "message"           : f'📨 Message received: "{truncated}"',
+                "priority"          : "low",
+                "job_id"            : job_id,
+                "sender_id"         : f"swe.lead@lupin",
+                "timestamp"         : datetime.now().isoformat(),
+            },
+        }
+        ws_manager.emit_to_user_sync( user_id=user_id, event="notification_queue_update", data=echo_data )
+
     except Exception as e:
         print( f"[API] Warning: WebSocket emission failed (message still persisted): {e}" )
 

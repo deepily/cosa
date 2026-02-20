@@ -8,8 +8,9 @@ BaseWebSocketListener with key differences:
 
     - Proxy processes immediately → this client QUEUES for later drain
     - Auth: generates JWT in-process via JwtService (no REST login)
-    - Filter: only queues messages where notification_type == "user_message"
+    - Filter: only queues messages where notification_type == "user_initiated_message"
               AND job_id matches the target job
+              (renamed from "user_message" for semantic clarity)
     - Urgent: if priority == "urgent", sets a threading.Event for interrupt
 
 Dependency Rule:
@@ -34,10 +35,10 @@ logger = logging.getLogger( __name__ )
 
 class OrchestratorNotificationClient( BaseWebSocketListener ):
     """
-    WebSocket client that filters and queues user messages for the orchestrator.
+    WebSocket client that filters and queues user-initiated messages for the orchestrator.
 
     Runs in a daemon thread with its own asyncio event loop. Messages matching
-    the target job_id with notification_type="user_message" are placed onto a
+    the target job_id with notification_type="user_initiated_message" are placed onto a
     shared threading.Queue for the orchestrator to drain at check-in points.
 
     Requires:
@@ -47,7 +48,7 @@ class OrchestratorNotificationClient( BaseWebSocketListener ):
         - urgent_event is a threading.Event shared with orchestrator
 
     Ensures:
-        - Only user_message notifications for this job_id are queued
+        - Only user_initiated_message notifications for this job_id are queued
         - Urgent priority messages set the urgent_event for immediate check-in
         - Runs as a daemon thread (dies with parent process)
         - Reconnects with exponential backoff on disconnection
@@ -161,7 +162,7 @@ class OrchestratorNotificationClient( BaseWebSocketListener ):
         Filter incoming events and queue matching user messages.
 
         Only processes notification_queue_update events that contain a
-        notification with notification_type="user_message" and a matching job_id.
+        notification with type="user_initiated_message" and a matching job_id.
 
         Requires:
             - event_type is a string
@@ -177,16 +178,16 @@ class OrchestratorNotificationClient( BaseWebSocketListener ):
 
         notification = data.get( "notification", {} )
 
-        # Filter: must be a user_message for our job
+        # Filter: must be a user_initiated_message for our job
         notif_type = notification.get( "type" ) or notification.get( "notification_type" )
         notif_job_id = notification.get( "job_id" )
 
-        if notif_type != "user_message":
+        if notif_type != "user_initiated_message":
             return
 
         if notif_job_id != self._target_job_id:
             if self.debug:
-                print( f"{self.LOG_PREFIX} Ignoring user_message for different job: {notif_job_id}" )
+                print( f"{self.LOG_PREFIX} Ignoring user_initiated_message for different job: {notif_job_id}" )
             return
 
         # Extract message content
@@ -304,7 +305,7 @@ def quick_smoke_test():
         print( "Testing event filtering (matching)..." )
         asyncio.run( client._on_event( "notification_queue_update", {
             "notification": {
-                "type"     : "user_message",
+                "type"     : "user_initiated_message",
                 "job_id"   : "swe-test123",
                 "message"  : "Use the existing auth module",
                 "priority" : "normal",
@@ -320,7 +321,7 @@ def quick_smoke_test():
         print( "Testing event filtering (wrong job_id)..." )
         asyncio.run( client._on_event( "notification_queue_update", {
             "notification": {
-                "type"     : "user_message",
+                "type"     : "user_initiated_message",
                 "job_id"   : "swe-other456",
                 "message"  : "This should be ignored",
                 "priority" : "normal",
@@ -347,7 +348,7 @@ def quick_smoke_test():
         assert not urgent_evt.is_set()
         asyncio.run( client._on_event( "notification_queue_update", {
             "notification": {
-                "type"     : "user_message",
+                "type"     : "user_initiated_message",
                 "job_id"   : "swe-test123",
                 "message"  : "URGENT: Stop using deprecated API",
                 "priority" : "urgent",

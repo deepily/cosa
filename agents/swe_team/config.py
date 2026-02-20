@@ -52,7 +52,7 @@ class SweTeamConfig:
     enable_user_messages : bool = True   # Accept user messages via WebSocket during execution
 
     # === Decision Proxy ===
-    trust_mode : str = "disabled"  # "disabled", "shadow", "suggest", "active"
+    trust_mode : str = "shadow"    # "disabled", "shadow", "suggest", "active"
 
     # === Feature Flags ===
     enabled  : bool = False

@@ -1,5 +1,38 @@
 # COSA Development History
 
+> **✅ SESSIONS 239-242 COMMIT**: Proxy INI integration, trust feedback persistence, configurable dry-run, user_initiated_message rename, conditional LoRA args (2026.02.20)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Committed accumulated work from Lupin sessions 239-242** (10 files, +406/-90 lines):
+>
+> **Decision Proxy INI Integration + DB Persistence (Sessions 241+)**:
+> - Added `trust_proxy_config_from_config_mgr()` factory in `decision_proxy/config.py` — reads 14 generic trust proxy INI keys with defaults
+> - Added `swe_proxy_config_from_config_mgr()` factory in `swe_team/proxy/config.py` — reads 4 SWE-specific proxy INI keys (accepted_senders as comma-separated list)
+> - Added `_persist_decision()` to `DecisionResponder` — DB persistence for all 4 action branches (shadow, suggest, act, defer), non-fatal best-effort
+> - Rewired `SweTeamOrchestrator.__init__()` proxy initialization to build TrustTracker + CircuitBreaker from INI config via factory functions
+> - Restructured `_gated_confirmation()`: always evaluates proxy (shadow/suggest/active), records trust feedback after every user decision, persists to DB via `_persist_trust_feedback()`
+> - Added proxy status fields to `get_status()` (trust_mode, trust_levels, trust_stats, circuit_breaker)
+> - Changed SWE Team default `trust_mode` from `"disabled"` to `"shadow"` in `swe_team/config.py`
+> - Added INI-driven `trust_mode` read in `SweTeamJob._execute()` with fallback to shadow
+>
+> **Approach D Rename + Configurable Dry-Run (Session 242)**:
+> - Renamed notification type `"user_message"` → `"user_initiated_message"` in `notification_client.py`, `queues.py` (filter, docstrings, smoke test dicts)
+> - Added echo acknowledgment WebSocket emission in `queues.py` — progress notification echoed back to sender after job message persisted
+> - Added `id_hash` field to WebSocket notification payloads in `queues.py`
+> - Added `dry_run_phases` (default 10) and `dry_run_delay` (default 1.5s) params to `SweTeamJob`
+> - Replaced 6 hardcoded sleep/notify blocks with loop over `DRY_RUN_PHASE_LABELS` list
+> - Mock cost summary now uses actual simulated duration; artifacts stored for queue pickup
+> - Wired `dry_run_phases`/`dry_run_delay` through `agentic_job_factory.py`
+>
+> **Training Data Conditional Args (Session 240)**:
+> - Added conditional_args detection in `xml_coordinator.py` `build_agentic_job_training_prompts()` — scans voice commands for trigger phrases, appends matching arg values to output
+>
+> **Commit**: (pending)
+
+---
+
 > **✅ SESSIONS 235-236 COMMIT**: Unified job-user association (Bug #5) + Approach D user-initiated messaging (2026.02.20)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >

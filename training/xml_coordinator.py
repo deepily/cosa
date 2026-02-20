@@ -738,6 +738,15 @@ class XmlCoordinator:
                         has_placeholder_in_template = placeholder in template
                         args_value = f'{args_key}="{value}"' if args_key and has_placeholder_in_template else ""
 
+                        # Append conditional args when trigger patterns match the voice command
+                        conditional_args = config.get( "conditional_args", {} )
+                        for cond_arg_name, cond_config in conditional_args.items():
+                            cond_value  = cond_config[ "value" ]
+                            triggers    = cond_config[ "triggers" ]
+                            voice_lower = voice_command.lower()
+                            if any( trigger in voice_lower for trigger in triggers ):
+                                args_value += f' {cond_arg_name}="{cond_value}"'
+
                         # Add natural language variation
                         _, voice_command = self.prompt_generator.insert_interjection( voice_command, self.prompt_generator.interjections )
                         _, voice_command = self.prompt_generator.prepend_salutation( voice_command, self.prompt_generator.salutations )

@@ -124,14 +124,55 @@ class SweTeamOrchestrator:
             timeout_secs   = self.config.wall_clock_timeout_secs,
         )
 
-        # Decision proxy (Phase 4)
+        # Decision proxy (Phase 4 + Phase 5 INI integration)
         self.proxy = None
         if self.config.trust_mode != "disabled":
             try:
                 from .proxy import EngineeringStrategy
+                from cosa.agents.decision_proxy.trust_tracker import TrustTracker
+                from cosa.agents.decision_proxy.circuit_breaker import CircuitBreaker
+
+                # Read INI config via factory functions (non-fatal fallback to defaults)
+                proxy_cfg = {}
+                swe_cfg   = {}
+                try:
+                    from cosa.config.configuration_manager import ConfigurationManager
+                    from cosa.agents.decision_proxy.config import trust_proxy_config_from_config_mgr
+                    from cosa.agents.swe_team.proxy.config import swe_proxy_config_from_config_mgr
+
+                    cfg_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+                    proxy_cfg = trust_proxy_config_from_config_mgr( cfg_mgr )
+                    swe_cfg   = swe_proxy_config_from_config_mgr( cfg_mgr )
+                except Exception as e:
+                    logger.warning( f"INI config read failed, using defaults: {e}" )
+
+                # Build TrustTracker with INI values
+                trust_tracker = TrustTracker(
+                    rolling_window_days  = proxy_cfg.get( "rolling_window_days", 30 ),
+                    decay_half_life_days = proxy_cfg.get( "decay_half_life_days", 14 ),
+                    l2_threshold         = proxy_cfg.get( "l2_threshold", 50 ),
+                    l3_threshold         = proxy_cfg.get( "l3_threshold", 200 ),
+                    l4_threshold         = proxy_cfg.get( "l4_threshold", 500 ),
+                    l5_threshold         = proxy_cfg.get( "l5_threshold", 1000 ),
+                    debug                = self.debug,
+                )
+
+                # Build CircuitBreaker with INI values
+                circuit_breaker = CircuitBreaker(
+                    trust_tracker                 = trust_tracker,
+                    error_rate_threshold          = proxy_cfg.get( "cb_error_rate_threshold", 0.15 ),
+                    confidence_collapse_threshold = proxy_cfg.get( "cb_confidence_collapse_threshold", 0.3 ),
+                    auto_demotion_levels          = proxy_cfg.get( "cb_auto_demotion_levels", 2 ),
+                    recovery_cooldown_seconds     = proxy_cfg.get( "cb_recovery_cooldown_seconds", 3600 ),
+                    debug                         = self.debug,
+                )
+
                 self.proxy = EngineeringStrategy(
-                    trust_mode = self.config.trust_mode,
-                    debug      = self.debug,
+                    trust_tracker    = trust_tracker,
+                    circuit_breaker  = circuit_breaker,
+                    accepted_senders = swe_cfg.get( "accepted_senders" ),
+                    trust_mode       = self.config.trust_mode,
+                    debug            = self.debug,
                 )
             except ImportError:
                 logger.warning( "Decision proxy requested but proxy module unavailable" )
@@ -183,10 +224,12 @@ class SweTeamOrchestrator:
 
     async def _gated_confirmation( self, question, role, default, timeout, abstract, team_io ):
         """
-        Route confirmation through decision proxy when trust mode is active.
+        Route confirmation through decision proxy with trust feedback recording.
 
-        When the proxy is configured and not in shadow mode, it evaluates the
-        question and may auto-approve without blocking the user.
+        Always evaluates the proxy (shadow, suggest, active modes) to build
+        trust data. In active mode, may auto-approve. In suggest mode, appends
+        suggestions. In shadow mode, observes only. After user answers, records
+        agreement/disagreement in trust tracker.
 
         Requires:
             - question is a non-empty string
@@ -194,8 +237,9 @@ class SweTeamOrchestrator:
 
         Ensures:
             - Returns bool (True if approved, False otherwise)
-            - Falls through to ask_confirmation when proxy is disabled or in shadow mode
-            - Logs auto-approval when proxy acts autonomously
+            - Proxy evaluate() called for all non-disabled modes
+            - Trust feedback recorded after every user decision
+            - Falls through to ask_confirmation when proxy is None
 
         Args:
             question: The yes/no question to ask
@@ -208,27 +252,83 @@ class SweTeamOrchestrator:
         Returns:
             bool: True if approved, False otherwise
         """
-        if self.proxy and self.proxy.trust_mode != "shadow":
+        proxy_result = None
+
+        # Step 1: Always evaluate if proxy exists (shadow, suggest, active all classify)
+        if self.proxy:
             try:
-                result = self.proxy.evaluate( question, get_sender_id( role, self.session_id ) )
-
-                if result.action == "act":
-                    await self._notify( team_io,
-                        message  = f"[Auto-approved by proxy] {question[ :80 ]}",
-                        role     = role,
-                        priority = "low",
-                    )
-                    return result.value == "approved"
-
-                if result.action == "suggest" and result.value:
-                    # Present suggestion but still ask user
-                    suggestion_note = f"\n\n**Proxy suggestion**: {result.value} (confidence: {result.confidence:.0%})"
-                    abstract = ( abstract or "" ) + suggestion_note
-
+                proxy_result = self.proxy.evaluate( question, get_sender_id( role, self.session_id ) )
             except Exception as e:
                 logger.warning( f"Decision proxy evaluation failed: {e}" )
 
-        return await team_io.ask_confirmation( question, role, default, timeout, abstract )
+        # Step 2: Act autonomously in active mode at sufficient trust
+        if proxy_result and self.proxy.trust_mode not in ( "shadow", "disabled" ):
+
+            if proxy_result.action == "act":
+                await self._notify( team_io,
+                    message  = f"[Auto-approved by proxy] {question[ :80 ]}",
+                    role     = role,
+                    priority = "low",
+                )
+                self.proxy.trust_tracker.record_decision( proxy_result.category, success=True )
+                return proxy_result.value == "approved"
+
+            if proxy_result.action == "suggest" and proxy_result.value:
+                suggestion_note = f"\n\n**Proxy suggestion**: {proxy_result.value} (confidence: {proxy_result.confidence:.0%})"
+                abstract = ( abstract or "" ) + suggestion_note
+
+        # Step 3: Fall through to user confirmation
+        user_answer = await team_io.ask_confirmation( question, role, default, timeout, abstract )
+
+        # Step 4: Record trust feedback (shadow observes, suggest tracks follow-through)
+        if proxy_result and self.proxy:
+            try:
+                proxy_would_approve = ( proxy_result.value == "approved" )
+                agreement           = ( proxy_would_approve == user_answer )
+                self.proxy.trust_tracker.record_decision( proxy_result.category, success=agreement )
+                if self.debug:
+                    print( f"[Proxy Feedback] mode={self.proxy.trust_mode}, cat={proxy_result.category}, proxy={'approve' if proxy_would_approve else 'review'}, user={'yes' if user_answer else 'no'}, agree={agreement}" )
+
+                # Persist trust state to DB (non-fatal)
+                self._persist_trust_feedback( proxy_result.category, agreement )
+
+            except Exception as e:
+                logger.warning( f"Trust feedback recording failed: {e}" )
+
+        return user_answer
+
+    def _persist_trust_feedback( self, category, approved ):
+        """
+        Persist trust feedback to the database (non-fatal best-effort).
+
+        In-memory TrustTracker is source of truth. DB is the persistence
+        layer for cross-session trust survival.
+
+        Requires:
+            - category is a string (decision category)
+            - approved is a bool (True if user agreed with proxy)
+
+        Ensures:
+            - Trust state updated in DB on success
+            - Failure logged but never propagates
+        """
+        try:
+            from cosa.rest.db.database import get_db
+            from cosa.rest.db.repositories.proxy_decision_repository import TrustStateRepository
+
+            # Use job user_email if available, fallback to session_id
+            user_email = getattr( self, '_user_email', None ) or f"{self.session_id}@swe.deepily.ai"
+
+            with get_db() as session:
+                repo = TrustStateRepository( session )
+                repo.update_after_ratification(
+                    user_email = user_email,
+                    domain     = "swe",
+                    category   = category,
+                    approved   = approved,
+                )
+        except Exception as e:
+            logger.warning( f"Trust state DB persistence failed (non-fatal): {e}" )
 
     async def _check_in_with_user( self, team_io, prompt, timeout=None ):
         """
@@ -1464,9 +1564,9 @@ INSTRUCTIONS:
         Get current orchestrator state for external monitoring.
 
         Returns:
-            dict: Current state, progress, and guard status
+            dict: Current state, progress, guard status, and proxy status
         """
-        return {
+        state = {
             "orchestrator_state" : self.current_state.value,
             "session_id"         : self.session_id,
             "task"               : self.task_description[ :100 ],
@@ -1474,6 +1574,20 @@ INSTRUCTIONS:
             "tokens_used"        : self.tokens_used,
             "dry_run"            : self.config.dry_run,
         }
+
+        # Decision proxy fields (Phase 4 light-up)
+        if self.proxy is not None:
+            state[ "proxy_trust_mode" ]     = self.proxy.trust_mode
+            state[ "proxy_trust_levels" ]   = self.proxy.trust_tracker.get_all_levels()
+            state[ "proxy_trust_stats" ]    = self.proxy.trust_tracker.get_stats()
+            state[ "proxy_circuit_breaker" ] = self.proxy.circuit_breaker.get_status()
+        else:
+            state[ "proxy_trust_mode" ]     = "disabled"
+            state[ "proxy_trust_levels" ]   = {}
+            state[ "proxy_trust_stats" ]    = {}
+            state[ "proxy_circuit_breaker" ] = {}
+
+        return state
 
     async def stop( self ) -> dict:
         """

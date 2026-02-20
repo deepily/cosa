@@ -46,6 +46,20 @@ class SweTeamJob( AgenticJobBase ):
     JOB_TYPE   = "swe_team"
     JOB_PREFIX = "swe"
 
+    # Phase labels for dry-run simulation loop
+    DRY_RUN_PHASE_LABELS = [
+        "Starting SWE Team simulation",
+        "Analyzing task requirements",
+        "Decomposing task into subtasks",
+        "Planning implementation strategy",
+        "Delegating subtask 1 to coder agent",
+        "Verifying coder output with tester agent",
+        "Delegating subtask 2 to coder agent",
+        "Running integration tests",
+        "Reviewing implementation quality",
+        "Generating final summary",
+    ]
+
     def __init__(
         self,
         task,
@@ -53,6 +67,8 @@ class SweTeamJob( AgenticJobBase ):
         user_email,
         session_id,
         dry_run=False,
+        dry_run_phases=10,
+        dry_run_delay=1.5,
         lead_model=None,
         worker_model=None,
         budget=None,
@@ -79,6 +95,8 @@ class SweTeamJob( AgenticJobBase ):
             user_email: Email address for notifications
             session_id: WebSocket session for notifications
             dry_run: Simulate execution without API calls
+            dry_run_phases: Number of simulation phases (default 10)
+            dry_run_delay: Seconds to sleep per phase (default 1.5)
             lead_model: Model for lead agent (None = use default)
             worker_model: Model for worker agents (None = use default)
             budget: Maximum budget in USD (None = use default)
@@ -95,12 +113,14 @@ class SweTeamJob( AgenticJobBase ):
         )
 
         # Task parameters
-        self.task         = task
-        self.dry_run      = dry_run
-        self.lead_model   = lead_model
-        self.worker_model = worker_model
-        self.budget       = budget
-        self.timeout      = timeout
+        self.task           = task
+        self.dry_run        = dry_run
+        self.dry_run_phases = dry_run_phases
+        self.dry_run_delay  = dry_run_delay
+        self.lead_model     = lead_model
+        self.worker_model   = worker_model
+        self.budget         = budget
+        self.timeout        = timeout
 
         # Results (populated after execution)
         self.cost_summary = None
@@ -186,8 +206,18 @@ class SweTeamJob( AgenticJobBase ):
         from cosa.agents.swe_team.config import SweTeamConfig
         from cosa.agents.swe_team.orchestrator import SweTeamOrchestrator
 
+        # Read trust_mode from INI config (falls back to SweTeamConfig default)
+        trust_mode = "shadow"
+        try:
+            from cosa.config.configuration_manager import ConfigurationManager
+            cfg = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+            trust_mode = cfg.get( "swe team trust mode", default="shadow" )
+        except Exception:
+            pass
+
         config = SweTeamConfig(
-            dry_run = False,
+            dry_run    = False,
+            trust_mode = trust_mode,
         )
 
         if self.lead_model:
@@ -277,7 +307,18 @@ class SweTeamJob( AgenticJobBase ):
         Execute dry-run mode with breadcrumb notifications.
 
         Simulates the SWE Team workflow without making API calls.
-        Sends low-priority notifications at each phase and returns mock results.
+        Loops through DRY_RUN_PHASE_LABELS with configurable phase count
+        and delay, sending low-priority notifications at each phase.
+
+        Requires:
+            - voice_io is the voice I/O module
+            - self.dry_run_phases > 0
+            - self.dry_run_delay >= 0
+
+        Ensures:
+            - Runs min( dry_run_phases, len( DRY_RUN_PHASE_LABELS ) ) phases
+            - Each phase sleeps for dry_run_delay seconds
+            - Sets self.cost_summary with simulated metrics
 
         Args:
             voice_io: Voice I/O module for notifications
@@ -287,38 +328,28 @@ class SweTeamJob( AgenticJobBase ):
         """
         if self.debug:
             print( f"[SweTeamJob] DRY RUN MODE for: {self.task[ :50 ]}..." )
+            print( f"[SweTeamJob] Phases: {self.dry_run_phases}, delay: {self.dry_run_delay}s" )
 
         # Set SESSION_ID so sender_id includes job hash suffix for routing
         from cosa.agents.swe_team import cosa_interface
         cosa_interface.SESSION_ID = self.id_hash
 
-        # Breadcrumb: Starting
-        await voice_io.notify( "Dry run: Starting SWE Team simulation", priority="low", job_id=self.id_hash, queue_name="run" )
-        await asyncio.sleep( 1.0 )
+        # Loop through simulation phases
+        num_phases = min( self.dry_run_phases, len( self.DRY_RUN_PHASE_LABELS ) )
+        for i in range( num_phases ):
+            label = self.DRY_RUN_PHASE_LABELS[ i ]
+            await voice_io.notify(
+                f"Dry run: {label}",
+                priority="low",
+                job_id=self.id_hash,
+                queue_name="run"
+            )
+            await asyncio.sleep( self.dry_run_delay )
 
-        # Breadcrumb: Task decomposition
-        await voice_io.notify( "Dry run: Decomposing task into subtasks", priority="low", job_id=self.id_hash, queue_name="run" )
-        await asyncio.sleep( 1.0 )
-
-        # Breadcrumb: Coder delegation
-        await voice_io.notify( "Dry run: Delegating subtask 1 to coder agent", priority="low", job_id=self.id_hash, queue_name="run" )
-        await asyncio.sleep( 1.0 )
-
-        # Breadcrumb: Test verification
-        await voice_io.notify( "Dry run: Verifying coder output with tester agent", priority="low", job_id=self.id_hash, queue_name="run" )
-        await asyncio.sleep( 1.0 )
-
-        # Breadcrumb: Review
-        await voice_io.notify( "Dry run: Reviewing implementation quality", priority="low", job_id=self.id_hash, queue_name="run" )
-        await asyncio.sleep( 1.0 )
-
-        # Breadcrumb: Summary
-        await voice_io.notify( "Dry run: Generating final summary", priority="low", job_id=self.id_hash, queue_name="run" )
-        await asyncio.sleep( 1.0 )
-
-        # Mock cost summary
+        # Mock cost summary with actual simulated duration
+        total_duration = num_phases * self.dry_run_delay
         self.cost_summary = {
-            "duration_seconds"    : 6.0,
+            "duration_seconds"    : total_duration,
             "total_cost_usd"      : 0.0,
             "total_input_tokens"  : 0,
             "total_output_tokens" : 0,
@@ -330,7 +361,11 @@ class SweTeamJob( AgenticJobBase ):
 
 **Subtasks**: 1 simulated (0 real API calls)
 
-**Stats**: $0.00 | 0 tokens | 6.0s (simulated)"""
+**Stats**: $0.00 | 0 tokens | {total_duration:.1f}s (simulated)"""
+
+        # Store artifacts so the queue picks them up at completion
+        self.artifacts[ "abstract" ]     = completion_abstract
+        self.artifacts[ "cost_summary" ] = self.cost_summary
 
         # Notify completion
         await voice_io.notify(
