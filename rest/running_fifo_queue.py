@@ -205,7 +205,7 @@ class RunningFifoQueue( FifoQueue ):
             failed_job = self.head()
             if failed_job:
                 job_id  = failed_job.id_hash
-                user_id = self.user_job_tracker.get_user_for_job( job_id )
+                user_id = failed_job.user_id
 
                 # TTS notification for the error
                 self._notify( f"Job failed: {e}", job=failed_job, priority="urgent" )
@@ -273,7 +273,7 @@ class RunningFifoQueue( FifoQueue ):
 
         # Emit job state transition (run -> dead) with error metadata
         job_id  = running_job.id_hash
-        user_id = self.user_job_tracker.get_user_for_job( job_id )
+        user_id = running_job.user_id
 
         completed_at = datetime.now().isoformat()
         started_at   = running_job.started_at
@@ -345,9 +345,8 @@ class RunningFifoQueue( FifoQueue ):
                 self._notify( running_job.answer_conversational, job=running_job )
 
                 # Emit job state transition (run -> done) with completion metadata
-                # Phase 2: Direct attribute access - Protocol guarantees these exist
                 job_id  = running_job.id_hash
-                user_id = self.user_job_tracker.get_user_for_job( job_id )
+                user_id = running_job.user_id
                 # Calculate completed_at timestamp for duration calculation
                 completed_at = datetime.now().isoformat()
                 started_at   = running_job.started_at
@@ -372,7 +371,6 @@ class RunningFifoQueue( FifoQueue ):
                     'question_text'   : running_job.last_question_asked,
                     'agent_type'      : running_job.job_type,
                     'timestamp'       : running_job.created_date,
-                    # Session 107: Fix field parity between WebSocket and server-fetched cards
                     'status'          : 'completed',
                     'has_interactions': bool( running_job.session_id ),
                     'is_cache_hit'    : running_job.is_cache_hit,
@@ -410,9 +408,8 @@ class RunningFifoQueue( FifoQueue ):
                 )
 
                 # Emit job state transition (run -> dead) with error metadata
-                # Phase 2: Direct attribute access - Protocol guarantees these exist
                 job_id  = running_job.id_hash
-                user_id = self.user_job_tracker.get_user_for_job( job_id )
+                user_id = running_job.user_id
 
                 # Calculate timestamps for error case
                 completed_at = datetime.now().isoformat()
@@ -465,9 +462,9 @@ class RunningFifoQueue( FifoQueue ):
             )
 
             # Emit job state transition (run -> dead) with error metadata
-            # Phase 2: Direct attribute access - Protocol guarantees these exist
+            # Emit job state transition (run -> dead) with error metadata
             job_id  = running_job.id_hash
-            user_id = self.user_job_tracker.get_user_for_job( job_id )
+            user_id = running_job.user_id
 
             # Calculate timestamps for crash case
             completed_at = datetime.now().isoformat()
@@ -597,7 +594,7 @@ class RunningFifoQueue( FifoQueue ):
 
             # Emit job state transition (run -> done) with completion metadata for ALL agents
             job_id  = running_job.id_hash
-            user_id = self.user_job_tracker.get_user_for_job( job_id )
+            user_id = running_job.user_id
 
             # Calculate completed_at timestamp for duration calculation
             completed_at = datetime.now().isoformat()
@@ -677,9 +674,8 @@ class RunningFifoQueue( FifoQueue ):
         self._notify( running_job.answer_conversational, job=running_job )
 
         # Emit job state transition (run -> done) with completion metadata
-        # Phase 2: Direct attribute access - Protocol guarantees these exist
         job_id  = running_job.id_hash
-        user_id = self.user_job_tracker.get_user_for_job( job_id )
+        user_id = running_job.user_id
 
         # Calculate completed_at timestamp for duration calculation
         completed_at = datetime.now().isoformat()
@@ -793,7 +789,7 @@ class RunningFifoQueue( FifoQueue ):
 
                     # Emit WebSocket event so UI can update the card
                     job_id  = snapshot.id_hash
-                    user_id = self.user_job_tracker.get_user_for_job( job_id )
+                    user_id = snapshot.user_id
                     if self.websocket_mgr:
                         self.websocket_mgr.emit(
                             "answer_verified",
@@ -891,9 +887,8 @@ class RunningFifoQueue( FifoQueue ):
         self._notify( cached_snapshot.answer_conversational, job=done_queue_entry )
 
         # Emit job state transition (run -> done) with completion metadata (cache hit)
-        # Phase 2: Direct attribute access - Protocol guarantees these exist
         job_id  = done_queue_entry.id_hash
-        user_id = self.user_job_tracker.get_user_for_job( job_id )
+        user_id = done_queue_entry.user_id
 
         # Calculate completed_at timestamp for duration calculation (cache retrieval time)
         completed_at = datetime.now().isoformat()

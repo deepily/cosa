@@ -749,10 +749,8 @@ class TodoFifoQueue( FifoQueue ):
             if ding_for_new_job:
                 self.websocket_mgr.emit( 'notification_sound_update', { 'soundFile': '/static/gentle-gong.mp3' } )
             if agent is not None:
-                # Session 108: Generate compound hash AND associate BEFORE push to prevent race condition
-                # The consumer thread may grab the job immediately after push(), so user mapping must exist first
-                agent.id_hash = self.user_job_tracker.generate_user_scoped_hash( agent.id_hash, user_id )
-                self.user_job_tracker.associate_job_with_user( agent.id_hash, user_id )
+                # Atomic: scope ID + index for user filtering BEFORE push (race condition prevention)
+                agent.id_hash = self.user_job_tracker.register_scoped_job( agent.id_hash, user_id, websocket_id )
                 self.push( agent )
             
             # TTS Migration (Session 98): Use notification service instead of emit_speech_callback
@@ -869,11 +867,8 @@ class TodoFifoQueue( FifoQueue ):
         job.run_date     = du.get_current_datetime()
         job.push_counter = self.push_counter + 1
 
-        # Session 108: Use compound hash (base_hash + user_id) for user-scoped job identification
-        # This ensures: 1) Same user, same question = same hash (idempotent)
-        #               2) Different users = different hashes (no collision)
-        #               3) Database can extract base hash for persistence
-        job.id_hash = self.user_job_tracker.generate_user_scoped_hash( best_snapshot.id_hash, user_id )
+        # Atomic: scope ID + index for user filtering
+        job.id_hash = self.user_job_tracker.register_scoped_job( best_snapshot.id_hash, user_id )
 
         print()
 
@@ -883,11 +878,6 @@ class TodoFifoQueue( FifoQueue ):
             self._notify( f"{self.size()} job{suffix} ahead of this one", job=job )
         else:
             print( "No jobs ahead of this one in the todo Q" )
-
-        # Session 108: Associate BEFORE push to prevent race condition
-        # The consumer thread may grab the job immediately after push(), so user mapping must exist first
-        if user_id and hasattr( job, 'id_hash' ):
-            self.user_job_tracker.associate_job_with_user( job.id_hash, user_id )
 
         self.push( job )  # Auto-emits 'todo_update' via parent class
 
@@ -1077,8 +1067,7 @@ class TodoFifoQueue( FifoQueue ):
         agent_entry = AGENTIC_AGENTS.get( command, {} )
         job_prefix  = agent_entry.get( "job_prefix", "aj" )
         spec_id     = f"{job_prefix}-{uuid.uuid4().hex[ :8 ]}"
-        spec_id     = self.user_job_tracker.generate_user_scoped_hash( spec_id, user_id )
-        self.user_job_tracker.associate_job_with_user( spec_id, user_id )
+        spec_id     = self.user_job_tracker.register_scoped_job( spec_id, user_id, session_id )
 
         # ── Step 2: Emit speculative pending→todo with expediting flag ───
         display_name = agent_entry.get( "display_name", command.replace( "agent router go to ", "" ) )
@@ -1170,8 +1159,7 @@ class TodoFifoQueue( FifoQueue ):
             self.condition.notify()
 
         # Emit pending → todo state transition for UI rendering
-        # Phase 2: Direct attribute access - Protocol guarantees these exist
-        user_id = item.user_id or self.user_job_tracker.get_user_for_job( item.id_hash )
+        user_id = item.user_id
 
         metadata = {
             'question_text' : item.last_question_asked,

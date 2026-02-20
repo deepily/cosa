@@ -203,16 +203,74 @@ class SweTeamJob( AgenticJobBase ):
             task_description = self.task,
             config           = config,
             session_id       = self.id_hash,
+            job_id           = self.id_hash,
             debug            = self.debug,
             verbose          = self.verbose
         )
 
-        result = await orchestrator.run()
+        # Start notification client for user-initiated messages (Approach D)
+        notification_client = None
+        if config.enable_user_messages:
+            notification_client = self._start_notification_client( orchestrator )
 
-        if result is None:
-            return "SWE Team task failed or was cancelled."
+        try:
+            result = await orchestrator.run()
 
-        return result
+            if result is None:
+                return "SWE Team task failed or was cancelled."
+
+            return result
+
+        finally:
+            # Always clean up notification client
+            if notification_client:
+                notification_client.stop_sync()
+                if self.debug:
+                    print( f"[SweTeamJob] Notification client stopped for {self.id_hash}" )
+
+    def _start_notification_client( self, orchestrator ):
+        """
+        Create and start an OrchestratorNotificationClient.
+
+        Shares the orchestrator's _user_messages queue and _urgent_interrupt
+        event so user messages flow from WebSocket → queue → orchestrator.
+
+        Requires:
+            - orchestrator has _user_messages and _urgent_interrupt attributes
+            - self.user_email is set
+
+        Ensures:
+            - Returns started client, or None on failure
+            - Client runs in a daemon thread
+            - Never raises (logs warning on failure)
+
+        Args:
+            orchestrator: SweTeamOrchestrator instance
+
+        Returns:
+            OrchestratorNotificationClient or None
+        """
+        try:
+            from cosa.agents.swe_team.notification_client import OrchestratorNotificationClient
+
+            client = OrchestratorNotificationClient(
+                user_email    = self.user_email,
+                job_id        = self.id_hash,
+                message_queue = orchestrator._user_messages,
+                urgent_event  = orchestrator._urgent_interrupt,
+                debug         = self.debug,
+                verbose       = self.verbose,
+            )
+            client.start()
+
+            if self.debug:
+                print( f"[SweTeamJob] Notification client started for {self.id_hash}" )
+
+            return client
+
+        except Exception as e:
+            print( f"[SweTeamJob] Warning: Failed to start notification client: {e}" )
+            return None
 
     async def _execute_dry_run( self, voice_io ):
         """

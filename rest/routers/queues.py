@@ -476,7 +476,6 @@ async def get_job_interactions(
         dict: {job_id, session_id, job_metadata, interactions: [...]}
     """
     from datetime import timezone, timedelta
-    from cosa.rest.queue_extensions import user_job_tracker
     from cosa.rest.db.database import get_db
     from cosa.rest.db.repositories.notification_repository import NotificationRepository
     from cosa.rest.db.repositories.user_repository import UserRepository
@@ -484,12 +483,7 @@ async def get_job_interactions(
 
     print( f"[API] /api/get-job-interactions/{job_id} called by user: {current_user['uid']}" )
 
-    # Extract base hash from compound job_id format ({hash}::{session_id})
-    # The frontend sends compound IDs, but snapshot.id_hash is just the base hash
-    base_job_id = user_job_tracker.extract_base_hash( job_id )
-
-    # Find job in done queue
-    # Compare full compound IDs - jobs in done_queue have compound id_hash ({hash}::{user_id})
+    # Find job in done queue by compound ID
     job = None
     for snapshot in done_queue.get_all_jobs():
         if snapshot.id_hash == job_id:
@@ -497,11 +491,11 @@ async def get_job_interactions(
             break
 
     if not job:
-        print( f"[API] Job not found: {job_id} (base: {base_job_id})" )
+        print( f"[API] Job not found: {job_id}" )
         raise HTTPException( status_code=404, detail=f"Job not found: {job_id}" )
 
-    # Authorization check (use base_job_id for tracker lookup)
-    job_owner = user_job_tracker.get_user_for_job( base_job_id )
+    # Authorization check — job.user_id is the single source of truth
+    job_owner = job.user_id
     if job_owner and job_owner != current_user["uid"] and not is_admin( current_user ):
         print( f"[API] Unauthorized access to job {job_id} by {current_user['uid']}" )
         raise HTTPException( status_code=403, detail="Not authorized to view this job" )
@@ -553,3 +547,136 @@ async def get_job_interactions(
         pass
 
     return response
+
+
+@router.post( "/jobs/{job_id}/message" )
+async def send_job_message(
+    job_id: str,
+    request: Request,
+    current_user: dict = Depends( get_current_user ),
+    running_queue = Depends( get_running_queue ),
+):
+    """
+    Send a user message to a running SWE Team job.
+
+    Creates a notification with type="user_message" targeting the specified
+    job_id. The job's orchestrator notification client receives this via
+    WebSocket and queues it for consumption at the next check-in point.
+
+    Requires:
+        - job_id identifies a currently running job
+        - request body contains {"message": str, "priority": "normal"|"urgent"}
+        - current_user is authenticated
+
+    Ensures:
+        - Notification created in database with user_message type
+        - WebSocket event emitted to job owner for delivery
+        - Returns notification_id on success
+
+    Raises:
+        - HTTPException 400: Missing or invalid request body
+        - HTTPException 404: Job not found in running queue
+        - HTTPException 403: User does not own this job
+
+    Args:
+        job_id: Target running job ID
+        request: FastAPI request with JSON body
+        current_user: Authenticated user info
+        running_queue: Running queue dependency
+
+    Returns:
+        dict: {status, notification_id, job_id}
+    """
+    # Parse request body
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException( status_code=400, detail=f"Invalid JSON: {e}" )
+
+    message_text = body.get( "message", "" ).strip()
+    priority     = body.get( "priority", "normal" )
+
+    if not message_text:
+        raise HTTPException( status_code=400, detail="Message cannot be empty" )
+
+    if priority not in ( "normal", "urgent" ):
+        raise HTTPException( status_code=400, detail="Priority must be 'normal' or 'urgent'" )
+
+    user_id = current_user[ "uid" ]
+
+    print( f"[API] POST /api/jobs/{job_id}/message - user: {user_id}, priority: {priority}" )
+
+    # Validate job exists and is running
+    try:
+        job = running_queue.get_by_id_hash( job_id )
+    except KeyError:
+        raise HTTPException( status_code=404, detail=f"Job not found or not running: {job_id}" )
+
+    # Validate user owns this job
+    if job.user_id != user_id and not is_admin( current_user ):
+        raise HTTPException( status_code=403, detail="Not authorized to message this job" )
+
+    # Create notification record
+    try:
+        from cosa.rest.db.database import get_db
+        from cosa.rest.db.repositories.notification_repository import NotificationRepository
+        from cosa.rest.db.repositories.user_repository import UserRepository
+
+        with get_db() as db:
+            user_repo = UserRepository( db )
+            user = user_repo.get_by_email( current_user[ "email" ] )
+
+            if not user:
+                raise HTTPException( status_code=404, detail="User not found" )
+
+            notif_repo = NotificationRepository( db )
+            notification = notif_repo.create_notification(
+                sender_id          = f"user@{current_user[ 'email' ]}",
+                recipient_id       = user.id,
+                message            = message_text,
+                type               = "user_message",
+                priority           = priority,
+                response_requested = False,
+                job_id             = job_id,
+            )
+            db.commit()
+
+            notification_id = str( notification.id )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print( f"[API] Error creating notification: {e}" )
+        raise HTTPException( status_code=500, detail=f"Failed to create notification: {e}" )
+
+    # Emit WebSocket event to deliver to orchestrator's notification client
+    try:
+        import fastapi_app.main as main_module
+        ws_manager = main_module.websocket_manager
+
+        ws_manager.emit_to_user_sync(
+            user_id = user_id,
+            event   = "notification_queue_update",
+            data    = {
+                "notification": {
+                    "id"                : notification_id,
+                    "type"              : "user_message",
+                    "notification_type" : "user_message",
+                    "message"           : message_text,
+                    "priority"          : priority,
+                    "job_id"            : job_id,
+                    "sender_id"         : f"user@{current_user[ 'email' ]}",
+                    "timestamp"         : datetime.now().isoformat(),
+                },
+            },
+        )
+    except Exception as e:
+        print( f"[API] Warning: WebSocket emission failed (message still persisted): {e}" )
+
+    print( f"[API] User message delivered to job {job_id}: {message_text[ :80 ]}" )
+
+    return {
+        "status"          : "delivered",
+        "notification_id" : notification_id,
+        "job_id"          : job_id,
+    }

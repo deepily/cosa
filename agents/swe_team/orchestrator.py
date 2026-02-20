@@ -13,6 +13,8 @@ import asyncio
 import json
 import logging
 import os
+import queue
+import threading
 import time
 import uuid
 from typing import Optional
@@ -110,6 +112,10 @@ class SweTeamOrchestrator:
         self.state          = create_initial_state( task_description )
         self.current_state  = OrchestratorState.INITIALIZING
         self._stop_requested = False
+
+        # User message queue (Phase: Approach D - user-initiated communication)
+        self._user_messages    = queue.Queue()
+        self._urgent_interrupt = threading.Event()
 
         # Safety
         self.guard = SafetyGuard(
@@ -256,6 +262,38 @@ class SweTeamOrchestrator:
         self.current_state = OrchestratorState.WAITING_FEEDBACK
         await self._emit_state( prev_state, self.current_state )
 
+        # --- Drain queued user messages (Approach D) ---
+        queued_messages = self._drain_user_messages()
+        if queued_messages:
+            analysis = await self._analyze_user_messages( queued_messages, team_io )
+
+            await self._notify( team_io,
+                message  = f"User sent {len( queued_messages )} message(s) during execution",
+                role     = "lead",
+                priority = "medium",
+                abstract = analysis,
+            )
+
+            # Present analysis and ask if user approves incorporating it
+            approved = await self._gated_confirmation(
+                question = f"Incorporate {len( queued_messages )} queued message(s) into the next task?",
+                role     = "lead",
+                default  = "yes",
+                timeout  = 60,
+                abstract = f"**User Message Analysis**:\n{analysis}",
+                team_io  = team_io,
+            )
+
+            self._urgent_interrupt.clear()
+
+            if approved:
+                # Restore to DELEGATING state
+                self.current_state = OrchestratorState.DELEGATING
+                await self._emit_state( OrchestratorState.WAITING_FEEDBACK, self.current_state )
+                return analysis  # Treated as substantive feedback
+
+        self._urgent_interrupt.clear()
+
         resolved_timeout = timeout or self.config.checkin_timeout
 
         feedback = await team_io.get_feedback(
@@ -272,6 +310,101 @@ class SweTeamOrchestrator:
             return feedback  # Substantive input
 
         return None  # Approval, dismissal, or timeout
+
+    def _drain_user_messages( self ):
+        """
+        Drain all pending user messages from the shared queue.
+
+        Requires:
+            - self._user_messages is a threading.Queue
+
+        Ensures:
+            - Returns list of message dicts (may be empty)
+            - Queue is empty after call
+            - Never raises
+
+        Returns:
+            list[dict]: Accumulated user messages
+        """
+        messages = []
+        while True:
+            try:
+                msg = self._user_messages.get_nowait()
+                messages.append( msg )
+            except queue.Empty:
+                break
+        return messages
+
+    async def _analyze_user_messages( self, messages, team_io ):
+        """
+        Analyze accumulated user messages using the lead model via SDK.
+
+        Builds a prompt with the accumulated messages and current task context,
+        calls the lead model to produce a concise analysis, and returns the
+        analysis text to be presented at check-in.
+
+        Requires:
+            - messages is a non-empty list of message dicts
+            - team_io is the cosa_interface module
+
+        Ensures:
+            - Returns analysis string from lead model
+            - Falls back to raw concatenation if SDK call fails
+
+        Args:
+            messages: List of user message dicts with "message" and "priority" keys
+            team_io: cosa_interface module
+
+        Returns:
+            str: Analysis text summarizing user messages and suggested actions
+        """
+        # Build message summary
+        msg_lines = []
+        for i, msg in enumerate( messages, 1 ):
+            priority_tag = f" [URGENT]" if msg.get( "priority" ) == "urgent" else ""
+            msg_lines.append( f"  {i}. {msg[ 'message' ]}{priority_tag}" )
+        messages_text = "\n".join( msg_lines )
+
+        # Current task context
+        current_task_idx = self.state.get( "current_task_index", 0 )
+        task_specs = self.state.get( "task_specs", [] )
+        current_task = task_specs[ current_task_idx ].title if current_task_idx < len( task_specs ) else "unknown"
+
+        analysis_prompt = f"""The user sent {len( messages )} message(s) during SWE Team execution.
+
+CURRENT TASK: {current_task} (task {current_task_idx + 1}/{len( task_specs )})
+
+USER MESSAGES:
+{messages_text}
+
+Analyze these messages and provide:
+1. A brief summary of what the user wants
+2. Concrete actions to take (modify approach, skip task, use specific module, etc.)
+3. Any messages that can be safely acknowledged without action
+
+Keep your response concise (3-5 sentences). Output ONLY the analysis, no preamble."""
+
+        if not SDK_AVAILABLE:
+            # Fallback: just concatenate messages
+            return f"User sent {len( messages )} message(s):\n{messages_text}"
+
+        try:
+            options = self._build_agent_options( "lead" )
+            collected_text = []
+
+            async for message in sdk_query( prompt=analysis_prompt, options=options ):
+                if isinstance( message, AssistantMessage ):
+                    for block in message.content:
+                        if isinstance( block, TextBlock ):
+                            collected_text.append( block.text )
+                elif isinstance( message, TextBlock ):
+                    collected_text.append( message.text )
+
+            return "".join( collected_text ).strip() or f"User messages:\n{messages_text}"
+
+        except Exception as e:
+            logger.warning( f"User message analysis failed: {e}" )
+            return f"User sent {len( messages )} message(s):\n{messages_text}"
 
     async def run( self ) -> Optional[ str ]:
         """
@@ -512,6 +645,17 @@ class SweTeamOrchestrator:
         for i, spec in enumerate( task_specs ):
             if self._stop_requested:
                 break
+
+            # --- Urgent interrupt check (Approach D) ---
+            if self.config.enable_user_messages and self._urgent_interrupt.is_set():
+                if self.debug: print( "[Orchestrator] Urgent interrupt — triggering immediate check-in" )
+                urgent_feedback = await self._check_in_with_user(
+                    team_io,
+                    prompt = f"Urgent message received before task {i + 1}: {spec.title}. Reviewing...",
+                )
+                if urgent_feedback:
+                    self.state[ "user_feedback" ] = urgent_feedback
+                    progress_log.log( f"Urgent user feedback received: {urgent_feedback[ :200 ]}", role="user" )
 
             self.guard.check_timeout()
             self.state[ "current_task_index" ] = i

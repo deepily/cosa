@@ -139,10 +139,8 @@ async def submit_swe_team_task(
         if job is None:
             raise HTTPException( status_code=500, detail="Failed to create SWE Team job" )
 
-        # Associate BEFORE push to prevent race condition
-        # The consumer thread may grab the job immediately after push()
-        user_job_tracker.associate_job_with_user( job.id_hash, user_id )
-        user_job_tracker.associate_job_with_session( job.id_hash, session_id )
+        # Atomic: scope ID + index for user filtering BEFORE push (race condition prevention)
+        job.id_hash = user_job_tracker.register_scoped_job( job.id_hash, user_id, session_id )
 
         # Push to todo queue
         todo_queue.push( job )

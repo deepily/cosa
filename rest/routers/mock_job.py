@@ -168,10 +168,8 @@ async def submit_mock_job(
             verbose             = False
         )
 
-        # Session 108: Associate BEFORE push to prevent race condition
-        # The consumer thread may grab the job immediately after push(), so user mapping must exist first
-        user_job_tracker.associate_job_with_user( job.id_hash, user_id )
-        user_job_tracker.associate_job_with_session( job.id_hash, session_id )
+        # Atomic: scope ID + index for user filtering BEFORE push (race condition prevention)
+        job.id_hash = user_job_tracker.register_scoped_job( job.id_hash, user_id, session_id )
 
         # Push to todo queue
         todo_queue.push( job )
@@ -313,8 +311,7 @@ async def _handle_expeditor_test( voice_command, current_user, todo_queue, beare
 
     # Associate and push if job was created
     if job:
-        user_job_tracker.associate_job_with_user( job.id_hash, user_id or "test-user" )
-        user_job_tracker.associate_job_with_session( job.id_hash, session_id )
+        job.id_hash = user_job_tracker.register_scoped_job( job.id_hash, user_id or "test-user", session_id )
         todo_queue.push( job )
 
     return MockJobSubmitResponse(
