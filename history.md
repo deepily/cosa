@@ -1,5 +1,33 @@
 # COSA Development History
 
+> **✅ SESSIONS 235-236 COMMIT**: Unified job-user association (Bug #5) + Approach D user-initiated messaging (2026.02.20)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Committed accumulated work from Lupin sessions 235-236** (15 files, +828/-214 lines):
+>
+> **Bug #5 — Unify Job-User-Session Association (Session 235)**:
+> - Added `register_scoped_job()` atomic operation to `UserJobTracker` — combines `generate_user_scoped_hash()` + `associate_job_with_user()` into single call
+> - Replaced 2-call pattern with `register_scoped_job()` across all 6 agentic routers + 3 `todo_fifo_queue` call sites
+> - Replaced 8 `user_job_tracker.get_user_for_job()` lookups with direct `job.user_id` in `running_fifo_queue.py`
+> - Replaced tracker lookup with `job.user_id` in `queue_consumer.py` and `queues.py` router
+> - Removed dead code: session tracking (`associate_job_with_session`, `get_session_for_job`, `get_jobs_for_session`), `get_user_for_job()`, `extract_base_hash()`
+> - Fixed `user_id` key `"user_id"` → `"uid"` in `deep_research_to_podcast.py` and `podcast_generator.py`
+>
+> **Approach D — User-Initiated Messaging (Session 236)**:
+> - NEW: `agents/swe_team/notification_client.py` (381 lines) — `OrchestratorNotificationClient` WebSocket listener for user messages → `threading.Queue`
+> - Added `_user_messages` queue + `_urgent_interrupt` event to orchestrator
+> - Extended `_check_in_with_user()` to drain messages, analyze via lead model, present with gated confirmation
+> - Added urgent interrupt check in `_execute_live()` loop for immediate check-in on urgent messages
+> - Added `_start_notification_client()` to `SweTeamJob._execute()` with try/finally cleanup
+> - Added `enable_user_messages` config field + `job_id` param to orchestrator constructor
+> - New REST endpoint: `POST /api/jobs/{job_id}/message` in `queues.py` router
+>
+> **Commit**: ab88631
+
+---
+
 > **✅ SESSIONS 226-234 COMMIT**: Voice-driven SWE factory, _parse_boolean, agentic modes, expeditor UX, speculative job ID, LoRA env resolution, check-in MVP, sender_id fix (2026.02.18)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >
