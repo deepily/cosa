@@ -32,6 +32,7 @@ class SweTeamSubmitRequest( BaseModel ):
     worker_model  : Optional[ str ] = Field( None, description="Model for worker agents (None = use default)" )
     budget        : Optional[ float ] = Field( None, ge=0, description="Maximum budget in USD (None = use default)" )
     timeout       : Optional[ int ]   = Field( None, gt=0, description="Wall-clock timeout in seconds (None = use default)" )
+    trust_mode    : Optional[ str ] = Field( None, description="Trust mode: disabled, shadow, suggest, active (None = use server default)" )
 
 
 class SweTeamSubmitResponse( BaseModel ):
@@ -127,6 +128,8 @@ async def submit_swe_team_task(
             args_dict[ "budget" ] = str( request_body.budget )
         if request_body.timeout is not None:
             args_dict[ "timeout" ] = str( request_body.timeout )
+        if request_body.trust_mode:
+            args_dict[ "trust_mode" ] = request_body.trust_mode
 
         job = create_agentic_job(
             command    = "agent router go to swe team",

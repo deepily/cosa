@@ -73,6 +73,7 @@ class SweTeamJob( AgenticJobBase ):
         worker_model=None,
         budget=None,
         timeout=None,
+        trust_mode=None,
         debug=False,
         verbose=False
     ):
@@ -101,6 +102,7 @@ class SweTeamJob( AgenticJobBase ):
             worker_model: Model for worker agents (None = use default)
             budget: Maximum budget in USD (None = use default)
             timeout: Wall-clock timeout in seconds (None = use default)
+            trust_mode: Override trust mode (None = use server default from INI)
             debug: Enable debug output
             verbose: Enable verbose output
         """
@@ -121,6 +123,13 @@ class SweTeamJob( AgenticJobBase ):
         self.worker_model   = worker_model
         self.budget         = budget
         self.timeout        = timeout
+
+        # Per-job trust mode override (None = use server default from INI)
+        self._trust_mode_override = trust_mode
+
+        # Live orchestrator reference (set during _execute, cleared after)
+        # Enables hot-reload of trust mode via REST endpoint
+        self._orchestrator = None
 
         # Results (populated after execution)
         self.cost_summary = None
@@ -206,14 +215,17 @@ class SweTeamJob( AgenticJobBase ):
         from cosa.agents.swe_team.config import SweTeamConfig
         from cosa.agents.swe_team.orchestrator import SweTeamOrchestrator
 
-        # Read trust_mode from INI config (falls back to SweTeamConfig default)
-        trust_mode = "shadow"
-        try:
-            from cosa.config.configuration_manager import ConfigurationManager
-            cfg = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-            trust_mode = cfg.get( "swe team trust mode", default="shadow" )
-        except Exception:
-            pass
+        # Per-job override takes priority, then INI config, then fallback to "shadow"
+        if self._trust_mode_override:
+            trust_mode = self._trust_mode_override
+        else:
+            trust_mode = "shadow"
+            try:
+                from cosa.config.configuration_manager import ConfigurationManager
+                cfg = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+                trust_mode = cfg.get( "swe team trust mode", default="shadow" )
+            except Exception:
+                pass
 
         config = SweTeamConfig(
             dry_run    = False,
@@ -238,6 +250,9 @@ class SweTeamJob( AgenticJobBase ):
             verbose          = self.verbose
         )
 
+        # Expose for hot-reload via run queue (Phase 8)
+        self._orchestrator = orchestrator
+
         # Start notification client for user-initiated messages (Approach D)
         notification_client = None
         if config.enable_user_messages:
@@ -252,6 +267,9 @@ class SweTeamJob( AgenticJobBase ):
             return result
 
         finally:
+            # Clear orchestrator reference after execution
+            self._orchestrator = None
+
             # Always clean up notification client
             if notification_client:
                 notification_client.stop_sync()

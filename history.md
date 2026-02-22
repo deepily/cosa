@@ -1,5 +1,42 @@
 # COSA Development History
 
+> **✅ SESSIONS 246-248 COMMIT**: Phase 7+8 proxy notifications, trust mode hot-reload, batch lifecycle, echo persistence, pages router, bug fixes (2026.02.22)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Committed accumulated work from Lupin sessions 246-248** (9 files, +455/-17 lines):
+>
+> **Phase 7 — Proxy Summary Notifications + Circuit Breaker (Session 248)**:
+> - Added `_proxy_pending_count` / `_user_email` state to `SweTeamOrchestrator` for proxy notification tracking
+> - Added `_emit_proxy_summary_notification()` — fetches batch ID from proxy endpoint, sends progress notification with trust details + WebSocket broadcast for ratify page
+> - Added `_on_circuit_breaker_trip()` callback — high-priority alert via HTTP POST when circuit breaker trips
+> - Wired `on_trip_callback` into CircuitBreaker construction in orchestrator `__init__`
+> - Added proxy summary emission in `_gated_confirmation()` for `suggest`/`defer` actions
+> - In-memory proxy batch state in `decision_proxy.py` — `get_current_batch_id()`, `acknowledge_batch()`
+> - `POST /api/proxy/acknowledge` + `GET /api/proxy/batch-id` REST endpoints
+> - Relaxed `progress_group_id` regex to accept `pr-{hex}-{N}` batch format alongside `pg-{hex}`
+> - Widened `progress_group_id` DB column from String(12) to String(24)
+>
+> **Phase 8 — Trust Mode Hot-Reload (Session 248)**:
+> - Added `_orchestrator` reference on `SweTeamJob` (set during `_execute`, cleared in `finally`)
+> - Added per-job `trust_mode` override param to `SweTeamJob`, `SweTeamSubmitRequest`, `agentic_job_factory`
+> - `PUT /api/proxy/mode` endpoint — hot-reloads running orchestrator's trust_mode, falls back to INI config
+> - `GET /api/proxy/mode` endpoint — returns INI mode, running mode, effective mode, has_running_job flag
+> - `TrustModeUpdateRequest` model, `_find_running_swe_job()` helper, `get_run_queue()`/`get_config_mgr()` dependencies
+>
+> **Bug Fixes + UX (Session 246)**:
+> - Echo acknowledgment persisted to DB in `queues.py` — visible in job interaction history
+> - Simplified echo message to "📨 Your message has been queued"
+> - Added `abstract` field to `get_job_interactions` API response
+>
+> **Central Navigation Hub (Session 247)**:
+> - NEW: `rest/routers/pages.py` (108 lines) — clean `/app/*` URL router mapping 12 routes to static HTML via FileResponse
+>
+> **Commit**: (pending)
+
+---
+
 > **✅ SESSIONS 239-242 COMMIT**: Proxy INI integration, trust feedback persistence, configurable dry-run, user_initiated_message rename, conditional LoRA args (2026.02.20)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >

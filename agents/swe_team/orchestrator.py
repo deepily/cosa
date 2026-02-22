@@ -124,6 +124,10 @@ class SweTeamOrchestrator:
             timeout_secs   = self.config.wall_clock_timeout_secs,
         )
 
+        # Proxy notification state (Phase 7)
+        self._proxy_pending_count = 0
+        self._user_email          = None    # Set from job context when available
+
         # Decision proxy (Phase 4 + Phase 5 INI integration)
         self.proxy = None
         if self.config.trust_mode != "disabled":
@@ -164,6 +168,7 @@ class SweTeamOrchestrator:
                     confidence_collapse_threshold = proxy_cfg.get( "cb_confidence_collapse_threshold", 0.3 ),
                     auto_demotion_levels          = proxy_cfg.get( "cb_auto_demotion_levels", 2 ),
                     recovery_cooldown_seconds     = proxy_cfg.get( "cb_recovery_cooldown_seconds", 3600 ),
+                    on_trip_callback              = self._on_circuit_breaker_trip,
                     debug                         = self.debug,
                 )
 
@@ -292,6 +297,20 @@ class SweTeamOrchestrator:
                 # Persist trust state to DB (non-fatal)
                 self._persist_trust_feedback( proxy_result.category, agreement )
 
+                # Phase 7: Emit proxy summary notification for pending ratification decisions
+                # "suggest" and "defer" actions produce pending ratification decisions;
+                # "shadow" (not_required) and "act" (auto-approved) do NOT.
+                if proxy_result.action in ( "suggest", "defer" ):
+                    self._proxy_pending_count += 1
+                    self._emit_proxy_summary_notification(
+                        category    = proxy_result.category,
+                        action      = proxy_result.action,
+                        trust_level = proxy_result.trust_level,
+                        confidence  = proxy_result.confidence,
+                        question    = question,
+                        team_io     = team_io,
+                    )
+
             except Exception as e:
                 logger.warning( f"Trust feedback recording failed: {e}" )
 
@@ -329,6 +348,113 @@ class SweTeamOrchestrator:
                 )
         except Exception as e:
             logger.warning( f"Trust state DB persistence failed (non-fatal): {e}" )
+
+    def _on_circuit_breaker_trip( self, category, reason ):
+        """
+        Callback fired when the circuit breaker trips for a category.
+
+        Emits a high-priority alert notification (one-time, no progress group).
+
+        Requires:
+            - category is a string identifying the decision category
+            - reason is a human-readable string
+
+        Ensures:
+            - Sends one alert notification with high priority
+            - Non-fatal: logs warning on failure, never raises
+        """
+        try:
+            import requests as http_requests
+
+            base_url = f"http://localhost:{os.environ.get( 'LUPIN_PORT', '7999' )}"
+            message  = f"Circuit breaker TRIPPED for {category} — trust demoted to L1"
+            abstract = (
+                f"**Circuit Breaker Alert**\n"
+                f"- **Category**: {category}\n"
+                f"- **Reason**: {reason}\n"
+                f"- **Action**: Trust level demoted, proxy paused for cooldown"
+            )
+
+            # Use direct HTTP POST to notification API (synchronous callback context)
+            http_requests.post( f"{base_url}/api/notify", json={
+                "message"           : message,
+                "notification_type" : "alert",
+                "priority"          : "high",
+                "abstract"          : abstract,
+                "sender_id"         : f"claude.code@swe-team#{self.job_id}" if self.job_id else "claude.code@swe-team",
+                "target_user"       : self._user_email,
+            }, timeout=5 )
+
+        except Exception as e:
+            logger.warning( f"Circuit breaker alert notification failed (non-fatal): {e}" )
+
+    def _emit_proxy_summary_notification( self, category, action, trust_level, confidence, question, team_io ):
+        """
+        Emit a progress notification summarizing pending proxy decisions.
+
+        Uses progress_group_id with proxy batch format (pr-{hex}-{N}) for
+        in-place DOM updates. Each new decision updates the same notification
+        element with an incremented count.
+
+        Requires:
+            - self._proxy_pending_count is a positive integer
+            - team_io is the cosa_interface module
+
+        Ensures:
+            - Fetches current batch ID from the proxy batch-id endpoint
+            - Sends progress notification with proxy summary message
+            - Non-fatal: logs warning on failure, never raises
+        """
+        try:
+            import requests as http_requests
+
+            # Fetch current batch ID from the proxy batch-id endpoint
+            base_url = f"http://localhost:{os.environ.get( 'LUPIN_PORT', '7999' )}"
+            batch_resp = http_requests.get( f"{base_url}/api/proxy/batch-id", timeout=5 )
+            batch_data = batch_resp.json()
+            batch_id   = batch_data.get( "batch_id", None )
+
+            count = self._proxy_pending_count
+            plural = "s" if count != 1 else ""
+            message = f"🛡️ {count} proxy decision{plural} pending ratification"
+
+            abstract = (
+                f"**Latest Decision**\n"
+                f"- **Category**: {category}\n"
+                f"- **Action**: {action}\n"
+                f"- **Trust Level**: L{trust_level}\n"
+                f"- **Confidence**: {confidence:.0%}\n"
+                f"- **Question**: {question[ :100 ]}"
+            )
+
+            import asyncio
+            asyncio.ensure_future( self._notify(
+                team_io,
+                message           = message,
+                role              = "lead",
+                priority          = "medium",
+                abstract          = abstract,
+                progress_group_id = batch_id,
+            ) )
+
+            # Also broadcast WebSocket event for ratify page real-time updates
+            try:
+                http_requests.post( f"{base_url}/api/ws/emit", json={
+                    "event" : "proxy_decision_new",
+                    "data"  : {
+                        "category"      : category,
+                        "action"        : action,
+                        "trust_level"   : trust_level,
+                        "confidence"    : confidence,
+                        "question"      : question[ :100 ],
+                        "pending_count" : count,
+                    }
+                }, timeout=5 )
+            except Exception:
+                pass  # WebSocket broadcast is best-effort
+
+        except Exception as e:
+            logger.warning( f"Proxy summary notification failed (non-fatal): {e}" )
 
     async def _check_in_with_user( self, team_io, prompt, timeout=None ):
         """

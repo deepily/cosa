@@ -194,6 +194,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             worker_model   = args_dict.get( "worker_model" ),
             budget         = _parse_optional_float( args_dict.get( "budget" ) ),
             timeout        = _parse_optional_int( args_dict.get( "timeout" ) ),
+            trust_mode     = args_dict.get( "trust_mode" ),
             debug          = debug,
             verbose        = verbose
         )

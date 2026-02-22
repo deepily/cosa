@@ -533,7 +533,8 @@ async def get_job_interactions(
                     "timestamp"          : n.created_at.isoformat(),
                     "response_requested" : n.response_requested,
                     "response_value"     : n.response_value,
-                    "priority"           : n.priority
+                    "priority"           : n.priority,
+                    "abstract"           : n.abstract
                 }
                 for n in notifications
             ]
@@ -673,14 +674,34 @@ async def send_job_message(
         )
 
         # Echo acknowledgment back to user as a progress notification
-        truncated = message_text[ :120 ] + ( "..." if len( message_text ) > 120 else "" )
+        # Persist to database so it appears in job interaction history
+        echo_message = "📨 Your message has been queued"
+
+        try:
+            with get_db() as db2:
+                notif_repo2 = NotificationRepository( db2 )
+                echo_notif  = notif_repo2.create_notification(
+                    sender_id          = f"swe.lead@lupin",
+                    recipient_id       = user.id,
+                    message            = echo_message,
+                    type               = "progress",
+                    priority           = "low",
+                    response_requested = False,
+                    job_id             = job_id,
+                )
+                db2.commit()
+                echo_id = str( echo_notif.id )
+        except Exception as echo_err:
+            print( f"[API] Warning: Echo persistence failed (non-fatal): {echo_err}" )
+            echo_id = f"echo-{notification_id}"
+
         echo_data = {
             "notification": {
-                "id"                : f"echo-{notification_id}",
-                "id_hash"           : f"echo-{notification_id}",
+                "id"                : echo_id,
+                "id_hash"           : echo_id,
                 "type"              : "progress",
                 "notification_type" : "progress",
-                "message"           : f'📨 Message received: "{truncated}"',
+                "message"           : echo_message,
                 "priority"          : "low",
                 "job_id"            : job_id,
                 "sender_id"         : f"swe.lead@lupin",

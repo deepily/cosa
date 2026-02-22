@@ -522,10 +522,10 @@ class Notification( Base ):
         index=True
     )  # Agentic job ID for routing - compound IDs: SHA256(64) + '::' + UUID(36) = 102+ chars
     progress_group_id: Mapped[Optional[str]] = mapped_column(
-        String( 12 ),
+        String( 24 ),
         nullable=True,
         index=True
-    )  # Progress group ID for in-place DOM updates (format: pg-[a-f0-9]{8})
+    )  # Progress group ID for in-place DOM updates (format: pg-{hex} or pr-{hex}-{batch})
 
     # Content
     title: Mapped[Optional[str]] = mapped_column(

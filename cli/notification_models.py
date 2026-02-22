@@ -647,8 +647,8 @@ class AsyncNotificationRequest(BaseModel):
 
     progress_group_id: Optional[str] = Field(
         default=None,
-        pattern=r'^pg-[a-f0-9]{8}$',
-        description="Progress group ID for in-place DOM updates. Notifications sharing this ID update a single element instead of appending new ones."
+        pattern=r'^[a-z]{2,3}-[a-f0-9]{6,8}(-\d+)?$',
+        description="Progress group ID for in-place DOM updates. Format: {prefix}-{hex} or {prefix}-{hex}-{batch}. Supports pg-XXXXXXXX (existing) and pr-XXXXXXXX-N+ (proxy batches, unbounded)."
     )
 
     @field_validator( 'message' )
