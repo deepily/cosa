@@ -18,6 +18,7 @@ Example:
 """
 
 import asyncio
+import uuid
 from datetime import datetime
 from typing import Optional
 
@@ -393,6 +394,62 @@ class SweTeamJob( AgenticJobBase ):
             job_id=self.id_hash,
             queue_name="run"
         )
+
+        # Insert mock proxy decisions for UI testing
+        try:
+            from cosa.rest.db.database import get_db
+            from cosa.rest.db.repositories.proxy_decision_repository import ProxyDecisionRepository
+
+            mock_decisions = [
+                {
+                    "category"       : "testing",
+                    "question"       : "Run the test suite before merging? (dry-run mock)",
+                    "decision_value" : "approved",
+                    "confidence"     : 0.85,
+                    "trust_level"    : 2,
+                    "reason"         : "Dry-run mock: testing decisions are low-risk",
+                },
+                {
+                    "category"       : "deployment",
+                    "question"       : "Deploy changes to staging environment? (dry-run mock)",
+                    "decision_value" : "requires_review",
+                    "confidence"     : 0.62,
+                    "trust_level"    : 1,
+                    "reason"         : "Dry-run mock: deployment requires human review at L1",
+                },
+                {
+                    "category"       : "destructive",
+                    "question"       : "Delete old cache files from build directory? (dry-run mock)",
+                    "decision_value" : "requires_review",
+                    "confidence"     : 0.45,
+                    "trust_level"    : 1,
+                    "reason"         : "Dry-run mock: destructive ops always require review at L1",
+                },
+            ]
+
+            with get_db() as db_session:
+                repo = ProxyDecisionRepository( db_session )
+                for mock in mock_decisions:
+                    repo.log_decision(
+                        notification_id       = str( uuid.uuid4() ),
+                        domain                = "swe",
+                        category              = mock[ "category" ],
+                        question              = mock[ "question" ],
+                        action                = "suggest",
+                        decision_value        = mock[ "decision_value" ],
+                        sender_id             = f"swe.lead@dry-run#{self.id_hash}",
+                        confidence            = mock[ "confidence" ],
+                        trust_level           = mock[ "trust_level" ],
+                        reason                = mock[ "reason" ],
+                        requires_ratification = True,
+                        metadata_json         = { "dry_run": True, "job_id": self.id_hash },
+                    )
+                db_session.commit()
+
+            if self.debug: print( f"[SweTeamJob] Inserted {len( mock_decisions )} mock proxy decisions for dry-run" )
+
+        except Exception as e:
+            if self.debug: print( f"[SweTeamJob] Warning: Mock proxy decision insertion failed: {e}" )
 
         return "Dry run complete. SWE Team simulation finished."
 

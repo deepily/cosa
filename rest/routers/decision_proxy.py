@@ -257,6 +257,73 @@ async def ratify_decision(
         )
 
 
+@router.delete( "/decision/{decision_id}" )
+async def delete_decision(
+    decision_id: str,
+    user_email: str = Query( ..., description="Email of the user performing deletion (audit)" )
+):
+    """
+    Delete a pending decision permanently.
+
+    Only decisions in "pending" state can be deleted. Approved/rejected
+    decisions are protected. Does not affect trust state counters.
+
+    Requires:
+        - decision_id is a valid UUID
+        - user_email is a valid email address
+
+    Ensures:
+        - Decision is hard-deleted from the database
+        - Returns success with decision_id and deleted_by
+
+    Raises:
+        - HTTPException with 404 if decision not found
+        - HTTPException with 400 if decision is not pending
+        - HTTPException with 500 for unexpected failures
+
+    Args:
+        decision_id: UUID of the decision to delete
+        user_email: Email of the user (for audit logging)
+
+    Returns:
+        Dict with deletion result
+    """
+    try:
+        with get_db() as session:
+            repo = ProxyDecisionRepository( session )
+
+            result = repo.delete_pending( uuid.UUID( decision_id ) )
+
+            if not result:
+                raise HTTPException(
+                    status_code = 404,
+                    detail      = f"Decision {decision_id} not found"
+                )
+
+            print( f"[DECISION PROXY] Decision {decision_id} deleted by {user_email}" )
+
+            return {
+                "status"      : "success",
+                "decision_id" : decision_id,
+                "deleted_by"  : user_email,
+            }
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        print( f"[DECISION PROXY] Cannot delete decision {decision_id}: {str( e )}" )
+        raise HTTPException(
+            status_code = 400,
+            detail      = str( e )
+        )
+    except Exception as e:
+        print( f"[DECISION PROXY] Error deleting decision {decision_id}: {str( e )}" )
+        raise HTTPException(
+            status_code = 500,
+            detail      = f"Failed to delete decision: {str( e )}"
+        )
+
+
 @router.get( "/trust/{user_email}" )
 async def get_trust_state(
     user_email: str,

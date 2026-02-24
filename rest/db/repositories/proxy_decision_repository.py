@@ -216,6 +216,43 @@ class ProxyDecisionRepository( BaseRepository[ProxyDecision] ):
         self.session.flush()
         return decision
 
+    def delete_pending( self, decision_id ):
+        """
+        Delete a pending decision permanently.
+
+        Only decisions with ratification_state="pending" can be deleted.
+        Approved/rejected decisions are protected from deletion.
+
+        Requires:
+            - decision_id: UUID of the decision to delete
+
+        Ensures:
+            - Decision is hard-deleted from the database if pending
+            - Returns True on success, False if not found
+            - Does NOT modify trust state counters
+
+        Raises:
+            - ValueError if decision exists but is not in "pending" state
+
+        Args:
+            decision_id: UUID of the decision
+
+        Returns:
+            True if deleted, False if not found
+        """
+        decision = self.get_by_id( decision_id )
+        if not decision:
+            return False
+
+        if decision.ratification_state != "pending":
+            raise ValueError(
+                f"Cannot delete decision with state '{decision.ratification_state}' — only pending decisions can be deleted"
+            )
+
+        self.session.delete( decision )
+        self.session.flush()
+        return True
+
     def get_by_domain_category( self, domain, category, limit=50 ):
         """
         Get decisions for a specific domain and category.

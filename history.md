@@ -1,5 +1,26 @@
 # COSA Development History
 
+> **✅ SESSION 255 COMMIT**: Proxy decision delete endpoint + SWE dry-run mock decisions (2026.02.23)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Committed accumulated work from Lupin session 255** (3 files, +161/-0 lines):
+>
+> **Proxy Decision Delete Endpoint (Session 255)**:
+> - Added `delete_pending()` method to `ProxyDecisionRepository` — hard-deletes pending decisions only, raises ValueError for non-pending states
+> - Added `DELETE /api/proxy/decision/{decision_id}` REST endpoint in `decision_proxy.py` — audit-logged deletion with user_email query param, 404/400/500 error handling
+> - Safety guard: only `ratification_state="pending"` decisions can be deleted — approved/rejected protected
+>
+> **SWE Team Dry-Run Mock Proxy Decisions (Session 255)**:
+> - Added mock proxy decision insertion at end of `_execute_dry_run()` in `SweTeamJob` — 3 mock decisions (testing/deployment/destructive categories) with realistic confidence, trust levels, and reasons
+> - Enables UI testing of Trust Dashboard ratification page without running a full SWE team job
+> - Non-fatal: wrapped in try/except, debug-logged on failure
+>
+> **Commit**: (pending)
+
+---
+
 > **✅ SESSIONS 246-248 COMMIT**: Phase 7+8 proxy notifications, trust mode hot-reload, batch lifecycle, echo persistence, pages router, bug fixes (2026.02.22)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >
