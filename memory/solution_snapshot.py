@@ -322,12 +322,8 @@ class SolutionSnapshot( RunnableCode ):
         else:
             self.question_normalized_embedding = question_normalized_embedding
 
-        # If the gist embedding is empty, generate it
-        if question_gist != "" and not question_gist_embedding:
-            self.question_gist_embedding = self._embedding_provider.generate_embedding( question_gist, content_type="prose" )
-            dirty = True
-        else:
-            self.question_gist_embedding = question_gist_embedding
+        # Gist embedding generation removed (dead code — gist text still used for L3 matching)
+        self.question_gist_embedding = question_gist_embedding if question_gist_embedding else []
 
         # If the code embedding is empty, generate it
         if len( code ) > 0 and not code_embedding:
@@ -350,12 +346,8 @@ class SolutionSnapshot( RunnableCode ):
         else:
             self.thoughts_embedding = thoughts_embedding
 
-        # If the solution gist embedding is empty, generate it
-        if solution_summary_gist and not solution_gist_embedding:
-            self.solution_gist_embedding = self._embedding_provider.generate_embedding( solution_summary_gist, content_type="prose" )
-            dirty = True
-        else:
-            self.solution_gist_embedding = solution_gist_embedding
+        # Solution gist embedding generation removed (dead code — gist text still used for display)
+        self.solution_gist_embedding = solution_gist_embedding if solution_gist_embedding else []
 
         # Note: Auto-save removed - serialization is now handled by managers
         # If embeddings were generated during loading, they will be persisted
@@ -565,25 +557,6 @@ class SolutionSnapshot( RunnableCode ):
         self.code_embedding = self._embedding_provider.generate_embedding( " ".join( code ), content_type="code" )
         self.updated_date   = self.get_timestamp()
 
-    def set_solution_summary_gist( self, solution_summary_gist: str ) -> None:
-        """
-        Set solution summary gist and generate embedding.
-
-        Requires:
-            - solution_summary_gist is a string
-
-        Ensures:
-            - Updates solution_summary_gist field
-            - Generates new embedding
-            - Updates timestamp
-
-        Raises:
-            - None
-        """
-        self.solution_summary_gist   = solution_summary_gist
-        self.solution_gist_embedding = self._embedding_provider.generate_embedding( solution_summary_gist, content_type="prose" )
-        self.updated_date            = self.get_timestamp()
-
     def get_question_similarity( self, other_snapshot: 'SolutionSnapshot' ) -> float:
         """
         Calculate question similarity with another snapshot.
@@ -601,25 +574,6 @@ class SolutionSnapshot( RunnableCode ):
         if not self.question_embedding or not other_snapshot.question_embedding:
             raise ValueError( "Both snapshots must have a question embedding to compare." )
         return np.dot( self.question_embedding, other_snapshot.question_embedding ) * 100
-    
-    def get_question_gist_similarity( self, other_snapshot: 'SolutionSnapshot' ) -> float:
-        """
-        Calculate question gist similarity with another snapshot.
-        
-        Requires:
-            - Both snapshots have question gist embeddings
-            
-        Ensures:
-            - Returns similarity score as percentage (0-100)
-            - Uses dot product calculation
-            
-        Raises:
-            - ValueError if either embedding is missing
-        """
-        if not self.question_gist_embedding or not other_snapshot.question_gist_embedding:
-            raise ValueError( "Both snapshots must have a question gist embedding to compare." )
-        
-        return np.dot( self.question_gist_embedding, other_snapshot.question_gist_embedding ) * 100
     
     def get_solution_summary_similarity( self, other_snapshot: 'SolutionSnapshot' ) -> float:
         """

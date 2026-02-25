@@ -338,47 +338,25 @@ class SolutionSnapshotManager:
             print( f"Embedding for question [{question}] already exists!" )
             question_embedding = self._question_embeddings_tbl.get_embedding( question )
             
-        # generate the embedding for the question gist if it doesn't already exist
-        question_gist_embedding = [ ]
-        if question_gist is not None and not self._question_embeddings_tbl.has( question_gist ):
-            question_gist_embedding = self._embedding_mgr.generate_embedding( question_gist, normalize_for_cache=True )
-            self._question_embeddings_tbl.add_embedding( question_gist, question_gist_embedding )
-        else:
-            print( f"Embedding for question gist [{question_gist}] already exists!" )
-            question_gist_embedding = self._question_embeddings_tbl.get_embedding( question_gist )
-        if self.debug and self.verbose: print( f"question_gist_embedding: {question_gist_embedding[0:16]}" )
-            
         similar_snapshots  = [ ]
-        
+
         # Iterate the snapshots and compare the question embeddings
         for snapshot in self._snapshots_by_question.values():
-            
+
             if exclude_non_synonymous_questions and question in snapshot.non_synonymous_questions:
                 if self.debug:
                     du.print_banner( f"Snapshot [{question}] is in the NON synonymous list!", prepend_nl=True)
                     print( f"Snapshot [{question}] has been blacklisted by [{snapshot.question}]" )
                     print( "Continuing to next snapshot..." )
                 continue
-                
+
             similarity_score = ss.SolutionSnapshot.get_embedding_similarity( question_embedding, snapshot.question_embedding )
-            
+
             if similarity_score >= threshold_question:
                 similar_snapshots.append( ( similarity_score, snapshot ) )
                 if self.debug: print( f"Score [{similarity_score:.2f}]% for question [{snapshot.question}] IS similar enough to [{question}]" )
             else:
                 if self.debug and self.verbose: print( f"Score [{similarity_score:.2f}]% for question [{snapshot.question}] is NOT similar enough to [{question}]" )
-        
-        # Iterate snapshots by question gist and compare the embeddings
-        if question_gist is not None:
-            for snapshot in self._snapshots_by_question_gist.values():
-                similarity_score = ss.SolutionSnapshot.get_embedding_similarity( question_gist_embedding, snapshot[ 1 ].question_embedding )
-                if similarity_score >= threshold_gist:
-                    similar_snapshots.append( ( similarity_score, snapshot[ 1 ] ) )
-                    if self.debug:
-                        print( f"Score [{similarity_score:.2f}]% for gist [{snapshot[ 1 ].question_gist}] IS similar enough to [{question_gist}]" )
-                        # print( f"[{question}] ~= [{snapshot[ 1 ].question}]" )
-                else:
-                    if self.debug and self.verbose: print( f"Score [{similarity_score:.2f}]% for gist [{snapshot[ 1 ].question_gist}] is NOT similar enough to [{question_gist}]" )
 
         # Sort by similarity score, descending
         similar_snapshots.sort( key=lambda x: x[ 0 ], reverse=True )

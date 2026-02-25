@@ -1,5 +1,74 @@
 # COSA Development History
 
+> **✅ SESSIONS 260-266 COMMIT**: Voice refactoring, gist jettison, preference learning Phases 0-3, embeddings API, QueryLogTable fix (2026.02.24)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Committed accumulated work from Lupin sessions 260-266** (35 files: 10 new + 25 modified, +2015 new / +1300-2251 modified lines):
+>
+> **Voice Module Refactoring — 5-Phase Deduplication (Session 260)**:
+> - Created shared `AgentNotificationDispatcher`, `sender_id.py`, `feedback_analysis.py`, `sync_notify.py`
+> - Eliminated ~1,548 lines of copy-paste duplication across 16 files
+> - All `cosa_interface.py` files delegate to dispatcher; all `voice_io.py` files reduced to thin re-export wrappers
+> - Removed `inspect.signature()` hacks from core voice_io.py
+>
+> **Jettison Gist Embeddings (Session 261)**:
+> - Removed gist embedding generation from per-query and per-snapshot paths (~30% embedding cost savings)
+> - Removed `get_snapshots_by_solution_gist_similarity()` (~120 lines) from LanceDB manager
+> - Removed 2 dead methods from solution_snapshot.py, gist comparison from deprecated snapshot_mgr
+> - Cleaned admin similarity endpoint: removed gist_threshold, gist search block, gist response fields
+>
+> **Preference Learning Phases 0-2 (Session 262)**:
+> - Phase 0: Created `ProxyDecisionEmbeddings` LanceDB store (768-dim vector index) + `CBRDecisionStore` (retrieve + majority vote + confidence)
+> - Phase 1: Added Beta-Bernoulli trust model to TrustTracker (dual-model dispatch, 95% credible interval)
+> - Phase 2: Created `BayesianLogisticRegression` class (~160 lines) — online Laplace approximation with Sherman-Morrison updates
+> - Thompson Sampling gate in EngineeringStrategy — Beta posterior sampling for act/suggest/shadow
+> - Decision diagnostics in DecisionResponder
+>
+> **QueryLogTable Fix (Session 264)**:
+> - Removed `embedding_gist` and `cache_hit_gist` from schema, row data, analytics, smoke test — fixes ArrowInvalid after gist jettison
+>
+> **CPU Embedding Fallback + Embeddings API (Session 265)**:
+> - Created `POST /api/embeddings/generate`, `POST /api/embeddings/batch`, `GET /api/embeddings/info` endpoints
+> - Added CUDA-not-available fallback to CPU for ProseEmbeddingEngine and CodeEmbeddingEngine
+>
+> **Phase 3: Conformal Guarantees + ICRL (Session 266)**:
+> - Created `ConformalDecisionWrapper` (~80 lines) — split conformal inference with calibration
+> - Created ICRL prompt template package (prompts/) — `ICRL_DECISION_PROMPT`, `format_case_history()`, `build_icrl_prompt()`
+> - Integrated conformal into EngineeringStrategy.gate(), ICRL into decide()
+> - Extended DecisionResponder diagnostics with conformal status
+>
+> **Cache Threshold Confirmation + Snapshot Deletion Support (misc)**:
+> - Added 3-tier cache hit scoring (exact/threshold/reject) in RunningFifoQueue
+> - Added `delete_by_snapshot_id()` to CanonicalSynonymsTable
+>
+> **Files Created (10)**:
+> - `agents/utils/sender_id.py`, `agents/utils/feedback_analysis.py`
+> - `agents/utils/agent_notification_dispatcher.py`, `agents/utils/sync_notify.py`
+> - `agents/decision_proxy/bayesian_trust.py`, `agents/decision_proxy/cbr_decision_store.py`
+> - `agents/decision_proxy/conformal_wrapper.py`, `agents/decision_proxy/proxy_decision_embeddings.py`
+> - `agents/decision_proxy/prompts/__init__.py`, `agents/decision_proxy/prompts/icrl_decision.py`
+> - `rest/routers/embeddings.py`
+>
+> **Files Modified (25)**:
+> - `agents/claude_code/cosa_interface.py`, `agents/deep_research/cosa_interface.py`
+> - `agents/podcast_generator/cosa_interface.py`, `agents/swe_team/cosa_interface.py`
+> - `agents/deep_research/voice_io.py`, `agents/podcast_generator/voice_io.py`
+> - `agents/swe_team/voice_io.py`, `agents/decision_proxy/voice_io.py`
+> - `agents/notification_proxy/voice_io.py`, `agents/utils/voice_io.py`
+> - `agents/utils/__init__.py`, `utils/notification_utils.py`
+> - `agents/decision_proxy/config.py`, `agents/decision_proxy/responder.py`
+> - `agents/decision_proxy/trust_tracker.py`, `agents/swe_team/proxy/engineering_strategy.py`
+> - `memory/query_log_table.py`, `memory/local_embedding_engine.py`
+> - `memory/solution_snapshot.py`, `memory/solution_snapshot_mgr.py`
+> - `memory/lancedb_solution_manager.py`, `memory/canonical_synonyms_table.py`
+> - `rest/routers/admin.py`, `rest/running_fifo_queue.py`, `rest/todo_fifo_queue.py`
+>
+> **Commit**: (pending)
+
+---
+
 > **✅ SESSION 255 COMMIT**: Proxy decision delete endpoint + SWE dry-run mock decisions (2026.02.23)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >

@@ -160,10 +160,8 @@ class SimilarSnapshotsResponse( BaseModel ):
     source_question: str = Field( ..., description="Question from source snapshot" )
     code_similar: List[CodeSimilarityResult] = Field( default=[], description="Snapshots with similar code" )
     explanation_similar: List[CodeSimilarityResult] = Field( default=[], description="Snapshots with similar explanations" )
-    solution_gist_similar: List[CodeSimilarityResult] = Field( default=[], description="Snapshots with similar solution gists" )
     total_code_matches: int = Field( default=0, description="Count of code-similar snapshots" )
     total_explanation_matches: int = Field( default=0, description="Count of explanation-similar snapshots" )
-    total_solution_gist_matches: int = Field( default=0, description="Count of gist-similar snapshots" )
 
 
 class SnapshotPreviewResponse( BaseModel ):
@@ -845,14 +843,13 @@ async def get_similar_snapshots(
     id_hash: str,
     code_threshold: float = 85.0,
     explanation_threshold: float = 85.0,
-    gist_threshold: float = 85.0,
     limit: int = 20,
     ensure_top_result: bool = True,
     admin_user: Dict = Depends( require_admin ),
     snapshot_mgr = Depends( get_snapshot_manager )
 ) -> SimilarSnapshotsResponse:
     """
-    Find snapshots with similar code, explanation, or solution gist using vector similarity.
+    Find snapshots with similar code or explanation using vector similarity.
 
     Requires:
         - Admin role authorization
@@ -862,7 +859,6 @@ async def get_similar_snapshots(
     Ensures:
         - Returns list of code-similar snapshots
         - Returns list of explanation-similar snapshots
-        - Returns list of gist-similar snapshots
         - Excludes source snapshot from results
         - If ensure_top_result=True, always returns at least 1 result per category
         - Returns 404 if source snapshot not found
@@ -873,7 +869,6 @@ async def get_similar_snapshots(
     Query Parameters:
         - code_threshold: Min code similarity % (default 85.0)
         - explanation_threshold: Min explanation similarity % (default 85.0)
-        - gist_threshold: Min solution gist similarity % (default 85.0)
         - limit: Max results per category (default 20)
         - ensure_top_result: Always return best match even if below threshold (default True)
 
@@ -959,49 +954,16 @@ async def get_similar_snapshots(
         except Exception as e:
             if debug: print( f"[ADMIN-SIMILAR] Explanation similarity search failed: {e}" )
 
-        # Find gist-similar snapshots
-        solution_gist_similar_results = []
-        try:
-            gist_matches = snapshot_mgr.get_snapshots_by_solution_gist_similarity(
-                exemplar_snapshot  = source_snapshot,
-                threshold          = gist_threshold,
-                limit              = limit,
-                exclude_self       = True,
-                ensure_top_result  = ensure_top_result,
-                debug              = debug
-            )
-
-            for score, snap in gist_matches:
-                # Build previews for all content types
-                code_text         = "\n".join( snap.code ) if snap.code else ""
-                code_preview      = code_text[:400] + ( "..." if len( code_text ) > 400 else "" )
-                solution_text     = snap.solution_summary or ""
-                solution_preview  = solution_text[:200] + ( "..." if len( solution_text ) > 200 else "" )
-
-                solution_gist_similar_results.append( CodeSimilarityResult(
-                    id_hash                  = snap.id_hash,
-                    question_preview         = ( snap.question[:100] + "..." ) if len( snap.question ) > 100 else snap.question,
-                    code_preview             = code_preview,
-                    solution_summary_preview = solution_preview,
-                    solution_summary_gist    = snap.solution_summary_gist or "",
-                    similarity               = round( score, 1 ),
-                    created_date             = snap.created_date or ""
-                ) )
-        except Exception as e:
-            if debug: print( f"[ADMIN-SIMILAR] Gist similarity search failed: {e}" )
-
         if debug:
-            print( f"[ADMIN-SIMILAR] Found {len( code_similar_results )} code, {len( explanation_similar_results )} explanation, {len( solution_gist_similar_results )} gist matches" )
+            print( f"[ADMIN-SIMILAR] Found {len( code_similar_results )} code, {len( explanation_similar_results )} explanation matches" )
 
         return SimilarSnapshotsResponse(
-            source_id_hash              = id_hash,
-            source_question             = source_snapshot.question or "",
-            code_similar                = code_similar_results,
-            explanation_similar         = explanation_similar_results,
-            solution_gist_similar       = solution_gist_similar_results,
-            total_code_matches          = len( code_similar_results ),
-            total_explanation_matches   = len( explanation_similar_results ),
-            total_solution_gist_matches = len( solution_gist_similar_results )
+            source_id_hash            = id_hash,
+            source_question           = source_snapshot.question or "",
+            code_similar              = code_similar_results,
+            explanation_similar       = explanation_similar_results,
+            total_code_matches        = len( code_similar_results ),
+            total_explanation_matches = len( explanation_similar_results )
         )
 
     except HTTPException:

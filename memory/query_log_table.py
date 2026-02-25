@@ -1,10 +1,12 @@
 """
-QueryLog Table for LanceDB storage - Three-Level Question Representation Architecture.
+QueryLog Table for LanceDB storage - Two-Level Question Representation Architecture.
 
-Manages append-only logging of all user queries with three-level representation:
+Manages append-only logging of all user queries with two-level representation:
 - Verbatim: Exactly what the user typed/spoke
 - Normalized: Standardized form for reliable matching
-- Gist: LLM-extracted semantic essence
+
+Note: query_gist (text field) is still populated by the normalizer but gist
+embeddings were removed in commit 38f9704 ("Jettison gist embeddings").
 
 This table supports the hierarchical search algorithm and provides analytics
 for understanding user query patterns and system performance.
@@ -21,11 +23,12 @@ from cosa.utils.util_stopwatch import Stopwatch
 
 class QueryLogTable:
     """
-    Manages query logging in LanceDB with three-level question representation.
+    Manages query logging in LanceDB with two-level question representation.
 
     This table is append-only and captures every query attempt with full context,
-    match results, and performance metrics. Supports the three-level architecture
-    by storing verbatim, normalized, and gist representations with their embeddings.
+    match results, and performance metrics. Supports the two-level architecture
+    by storing verbatim and normalized representations with their embeddings.
+    The query_gist text field is retained but no longer has a corresponding embedding.
     """
 
     def __init__( self, debug: bool = False, verbose: bool = False ) -> None:
@@ -109,14 +112,14 @@ class QueryLogTable:
 
     def _create_table_if_needed( self, db ) -> None:
         """
-        Create the query log table with proper three-level schema.
+        Create the query log table with proper two-level schema.
 
         Requires:
             - db is a valid LanceDB connection
 
         Ensures:
-            - Creates table with three-level question representation
-            - Sets up embedding fields for all three levels
+            - Creates table with two-level question representation
+            - Sets up embedding fields for verbatim and normalized levels
             - Includes user context and performance metrics
             - Creates appropriate indexes
 
@@ -134,7 +137,6 @@ class QueryLogTable:
         try:
             self._query_log_table.create_fts_index( "query_verbatim", replace=True )
             self._query_log_table.create_fts_index( "query_normalized", replace=True )
-            self._query_log_table.create_fts_index( "query_gist", replace=True )
 
             if self.debug:
                 print( "✓ Created FTS indexes on query fields" )
@@ -153,7 +155,7 @@ class QueryLogTable:
             - Nothing
 
         Ensures:
-            - Returns complete schema for three-level query logging
+            - Returns complete schema for two-level query logging
             - Includes all necessary fields for analytics
             - Optimizes embedding fields for LanceDB
 
@@ -167,15 +169,14 @@ class QueryLogTable:
             pa.field( "user_id", pa.string() ),
             pa.field( "session_id", pa.string() ),
 
-            # Three-level question representation
+            # Question representation (text fields)
             pa.field( "query_verbatim", pa.string() ),         # Exactly what user asked
             pa.field( "query_normalized", pa.string() ),       # Normalized version
-            pa.field( "query_gist", pa.string() ),             # LLM-extracted gist
+            pa.field( "query_gist", pa.string() ),             # LLM-extracted gist (text only, no embedding)
 
-            # Embeddings for all three levels (configurable: 768 for local, 1536 for openai)
+            # Embeddings for two levels (configurable: 768 for local, 1536 for openai)
             pa.field( "embedding_verbatim", pa.list_( pa.float32(), self._embedding_dim ) ),
             pa.field( "embedding_normalized", pa.list_( pa.float32(), self._embedding_dim ) ),
-            pa.field( "embedding_gist", pa.list_( pa.float32(), self._embedding_dim ) ),
 
             # Match results and performance
             pa.field( "matched_snapshot_id", pa.string() ),    # What solution was returned
@@ -192,7 +193,6 @@ class QueryLogTable:
             # Cache performance metrics
             pa.field( "cache_hit_verbatim", pa.bool_() ),      # Was verbatim embedding cached
             pa.field( "cache_hit_normalized", pa.bool_() ),    # Was normalized embedding cached
-            pa.field( "cache_hit_gist", pa.bool_() ),          # Was gist embedding cached
         ] )
 
     def log_query( self,
@@ -207,17 +207,17 @@ class QueryLogTable:
                   processing_time_ms: int = 0,
                   cache_hits: Optional[Dict[str, bool]] = None ) -> str:
         """
-        Log a query with three-level representation.
+        Log a query with two-level representation.
 
         Requires:
             - query_verbatim is a non-empty string (exact user input)
             - query_normalized is the normalized version
-            - query_gist is the LLM-extracted gist
+            - query_gist is the LLM-extracted gist (text only, no embedding)
             - user_id is a valid system ID
             - Table is initialized
 
         Ensures:
-            - Adds row to table with all three representations
+            - Adds row to table with text fields and verbatim/normalized embeddings
             - Includes embeddings if provided
             - Records match results and performance metrics
             - Returns unique query log ID
@@ -229,7 +229,7 @@ class QueryLogTable:
             user_id: User identifier
             session_id: Session identifier
             input_type: Source of input ('voice', 'text', 'api')
-            embeddings: Dict with 'verbatim', 'normalized', 'gist' embeddings
+            embeddings: Dict with 'verbatim', 'normalized' embeddings
             match_result: Dict with 'snapshot_id', 'type', 'confidence'
             processing_time_ms: Processing time in milliseconds
             cache_hits: Dict with cache hit status for each level
@@ -254,7 +254,7 @@ class QueryLogTable:
                 "user_id": user_id,
                 "session_id": session_id,
 
-                # Three-level representation
+                # Question text fields
                 "query_verbatim": query_verbatim,
                 "query_normalized": query_normalized,
                 "query_gist": query_gist,
@@ -262,7 +262,6 @@ class QueryLogTable:
                 # Embeddings (use empty lists if not provided)
                 "embedding_verbatim": embeddings.get( 'verbatim', [] ) if embeddings else [],
                 "embedding_normalized": embeddings.get( 'normalized', [] ) if embeddings else [],
-                "embedding_gist": embeddings.get( 'gist', [] ) if embeddings else [],
 
                 # Match results
                 "matched_snapshot_id": match_result.get( 'snapshot_id', '' ) if match_result else '',
@@ -279,7 +278,6 @@ class QueryLogTable:
                 # Cache performance
                 "cache_hit_verbatim": cache_hits.get( 'verbatim', False ) if cache_hits else False,
                 "cache_hit_normalized": cache_hits.get( 'normalized', False ) if cache_hits else False,
-                "cache_hit_gist": cache_hits.get( 'gist', False ) if cache_hits else False,
             }
 
             # Add to table
@@ -363,25 +361,23 @@ class QueryLogTable:
             results = query.to_list()
 
             if not results:
-                return { "verbatim": 0.0, "normalized": 0.0, "gist": 0.0 }
+                return { "verbatim": 0.0, "normalized": 0.0 }
 
             # Calculate hit rates
             total = len( results )
             verbatim_hits = sum( 1 for r in results if r.get( 'cache_hit_verbatim', False ) )
             normalized_hits = sum( 1 for r in results if r.get( 'cache_hit_normalized', False ) )
-            gist_hits = sum( 1 for r in results if r.get( 'cache_hit_gist', False ) )
 
             return {
                 "verbatim": ( verbatim_hits / total ) * 100.0,
                 "normalized": ( normalized_hits / total ) * 100.0,
-                "gist": ( gist_hits / total ) * 100.0,
                 "total_queries": total
             }
 
         except Exception as e:
             if self.debug:
                 print( f"Error calculating cache hit stats: {e}" )
-            return { "verbatim": 0.0, "normalized": 0.0, "gist": 0.0 }
+            return { "verbatim": 0.0, "normalized": 0.0 }
 
 
 def quick_smoke_test():
@@ -398,8 +394,7 @@ def quick_smoke_test():
         print( "\nTest 2: Logging a test query..." )
         test_embeddings = {
             'verbatim': [0.1] * query_log._embedding_dim,
-            'normalized': [0.2] * query_log._embedding_dim,
-            'gist': [0.3] * query_log._embedding_dim
+            'normalized': [0.2] * query_log._embedding_dim
         }
         test_match = {
             'snapshot_id': 'test_snapshot_123',
@@ -408,8 +403,7 @@ def quick_smoke_test():
         }
         test_cache_hits = {
             'verbatim': False,
-            'normalized': True,
-            'gist': True
+            'normalized': True
         }
 
         query_id = query_log.log_query(
@@ -440,8 +434,7 @@ def quick_smoke_test():
             print( f"  Latest query: '{latest.get( 'query_verbatim', 'N/A' )}'" )
             print( f"  Match type: {latest.get( 'match_type', 'N/A' )}" )
             print( f"  Cache hits: V={latest.get( 'cache_hit_verbatim', False )} "
-                  f"N={latest.get( 'cache_hit_normalized', False )} "
-                  f"G={latest.get( 'cache_hit_gist', False )}" )
+                  f"N={latest.get( 'cache_hit_normalized', False )}" )
 
         # Test 4: Get cache hit statistics
         print( "\nTest 4: Getting cache hit statistics..." )

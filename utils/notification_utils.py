@@ -7,6 +7,28 @@ and the MCP server. Handles TTS message formatting and API format conversion.
 """
 
 
+def normalize_abstract( abstract ) -> str:
+    """
+    Convert literal \\n to actual newlines in abstract text.
+
+    Requires:
+        - abstract is None or a string
+
+    Ensures:
+        - Returns None if input is None
+        - Returns string with literal \\\\n converted to newlines
+
+    Args:
+        abstract: Abstract text from MCP tool call (may contain escaped newlines)
+
+    Returns:
+        str or None: Normalized abstract text
+    """
+    if abstract is None:
+        return None
+    return abstract.replace( '\\n', '\n' )
+
+
 def format_questions_for_tts( questions: list ) -> str:
     """
     Format questions for TTS playback.

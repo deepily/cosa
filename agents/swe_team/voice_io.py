@@ -6,194 +6,35 @@ Thin wrapper around the consolidated voice_io module in
 cosa.agents.utils.voice_io, configured with the SWE Team
 cosa_interface for proper sender identity.
 
-Priority Order:
-    1. Voice I/O (cosa_interface functions) - PRIMARY
-    2. CLI fallback (print/input) - when voice unavailable
-    3. --cli-mode flag - forces CLI regardless of voice availability
-
 CONTRACT:
     This module is for standalone/CLI usage when the orchestrator is
-    NOT involved. It provides a simplified voice-first interface:
-    - notify(), ask_yes_no(), get_input(), choose(), present_choices()
-    - Automatic voice availability detection with CLI fallback
-    - No role-aware sender IDs (uses the configured cosa_interface internally)
-
-    Use this module when:
-    - Building standalone CLI tools or scripts
-    - Working outside the orchestrator's execution loop
-    - You want automatic voice/CLI mode switching
-
-    Do NOT use this module for:
-    - Orchestrator-internal notifications (use cosa_interface.py instead)
-    - Anything that needs role-specific sender IDs or job_id routing
-
-    See also: cosa_interface.py — orchestrator notification layer with role-aware routing
+    NOT involved. For orchestrator-internal notifications with role-aware
+    sender IDs and job_id routing, use cosa_interface.py instead.
 """
 
-import asyncio
-import logging
-from typing import Optional, List, Union
-
-# Import the consolidated voice_io module
+# Import the consolidated voice_io module and configure it
 from cosa.agents.utils import voice_io as _core_voice_io
-
-# Import this agent's cosa_interface for configuration
 from . import cosa_interface as _cosa_interface
-
-logger = logging.getLogger( __name__ )
-
-
-# =============================================================================
-# Module Initialization
-# =============================================================================
 
 # Configure the core voice_io with our cosa_interface
 _core_voice_io.configure( _cosa_interface )
 
-
 # =============================================================================
-# Re-export Configuration Functions
-# =============================================================================
-
-def set_cli_mode( enabled: bool ) -> None:
-    """
-    Enable or disable forced CLI mode.
-
-    Requires:
-        - enabled is a boolean
-
-    Ensures:
-        - Subsequent calls use appropriate mode
-
-    Args:
-        enabled: True to force CLI mode, False for voice-first
-    """
-    _core_voice_io.set_cli_mode( enabled )
-
-
-def reset_voice_check() -> None:
-    """
-    Reset the cached voice availability check.
-
-    Ensures:
-        - Next call to is_voice_available() will re-check
-    """
-    _core_voice_io.reset_voice_check()
-
-
-async def is_voice_available() -> bool:
-    """
-    Check if voice service is available (result cached).
-
-    Returns:
-        bool: True if voice service is available
-    """
-    return await _core_voice_io.is_voice_available()
-
-
-def get_mode_description() -> str:
-    """
-    Get a human-readable description of the current I/O mode.
-
-    Returns:
-        str: Description of current mode
-    """
-    return _core_voice_io.get_mode_description()
-
-
-# =============================================================================
-# Re-export Voice-First I/O Functions
+# Re-export all public functions from core voice_io
 # =============================================================================
 
-async def notify(
-    message: str,
-    priority: str = "medium",
-    abstract: Optional[ str ] = None,
-    session_name: Optional[ str ] = None,
-    job_id: Optional[ str ] = None,
-    queue_name: Optional[ str ] = None,
-    progress_group_id: Optional[ str ] = None
-) -> None:
-    """
-    Send a progress notification (voice-first).
+set_cli_mode       = _core_voice_io.set_cli_mode
+reset_voice_check  = _core_voice_io.reset_voice_check
+is_voice_available = _core_voice_io.is_voice_available
+get_mode_description = _core_voice_io.get_mode_description
+is_cli_mode        = _core_voice_io.is_cli_mode
 
-    Requires:
-        - message is a non-empty string
-        - priority is "low", "medium", "high", or "urgent"
-
-    Ensures:
-        - Message is communicated via appropriate channel
-        - Never raises
-
-    Args:
-        message: The message to announce
-        priority: Notification priority level
-        abstract: Optional supplementary context
-        session_name: Optional session name for UI
-        job_id: Optional agentic job ID for job cards
-        queue_name: Optional queue name
-        progress_group_id: Optional progress group ID for in-place DOM updates
-    """
-    await _core_voice_io.notify( message, priority, abstract, session_name, job_id, queue_name, progress_group_id )
-
-
-async def ask_yes_no(
-    question: str,
-    default: str = "no",
-    timeout: int = 60,
-    abstract: Optional[ str ] = None
-) -> bool:
-    """
-    Ask a yes/no question (voice-first).
-
-    Returns:
-        bool: True if user approved, False otherwise
-    """
-    return await _core_voice_io.ask_yes_no( question, default, timeout, abstract )
-
-
-async def get_input(
-    prompt: str,
-    allow_empty: bool = True,
-    timeout: int = 300
-) -> Optional[ str ]:
-    """
-    Get open-ended input from user (voice-first).
-
-    Returns:
-        str or None: User's response, or None on timeout/error
-    """
-    return await _core_voice_io.get_input( prompt, allow_empty, timeout )
-
-
-async def choose(
-    question: str,
-    options: Union[ List[ str ], List[ dict ] ],
-    timeout: int = 120,
-    allow_custom: bool = False
-) -> str:
-    """
-    Present multiple-choice options (voice-first).
-
-    Returns:
-        str: The selected option label
-    """
-    return await _core_voice_io.choose( question, options, timeout, allow_custom )
-
-
-async def present_choices(
-    questions: list,
-    timeout: int = 120,
-    title: Optional[ str ] = None,
-    abstract: Optional[ str ] = None
-) -> dict:
-    """
-    Present multiple-choice questions (voice-first).
-
-    Returns:
-        dict: {"answers": {...}} with selections
-    """
-    return await _core_voice_io.present_choices( questions, timeout, title, abstract )
+# Voice-first I/O functions
+notify             = _core_voice_io.notify
+ask_yes_no         = _core_voice_io.ask_yes_no
+get_input          = _core_voice_io.get_input
+choose             = _core_voice_io.choose
+present_choices    = _core_voice_io.present_choices
 
 
 # =============================================================================
@@ -202,6 +43,7 @@ async def present_choices(
 
 def quick_smoke_test():
     """Quick smoke test for SWE Team voice_io wrapper module."""
+    import inspect
     import cosa.utils.util as cu
 
     cu.print_banner( "SWE Team Voice I/O Wrapper Smoke Test", prepend_nl=True )
@@ -220,25 +62,8 @@ def quick_smoke_test():
         assert _core_voice_io._force_cli_mode is False
         print( "✓ set_cli_mode works correctly" )
 
-        # Test 3: reset_voice_check works
-        print( "Testing reset_voice_check..." )
-        _core_voice_io._voice_available = True
-        reset_voice_check()
-        assert _core_voice_io._voice_available is None
-        print( "✓ reset_voice_check works correctly" )
-
-        # Test 4: get_mode_description works
-        print( "Testing get_mode_description..." )
-        _core_voice_io._voice_available = None
-        set_cli_mode( True )
-        desc = get_mode_description()
-        assert "forced" in desc.lower()
-        set_cli_mode( False )
-        print( "✓ get_mode_description works correctly" )
-
-        # Test 5: Async function signatures
+        # Test 3: Async function signatures
         print( "Testing async function signatures..." )
-        import inspect
         assert inspect.iscoroutinefunction( is_voice_available )
         assert inspect.iscoroutinefunction( notify )
         assert inspect.iscoroutinefunction( ask_yes_no )
@@ -247,7 +72,7 @@ def quick_smoke_test():
         assert inspect.iscoroutinefunction( present_choices )
         print( "✓ All async functions have correct signatures" )
 
-        # Test 6: notify has job_id parameter
+        # Test 4: notify has job_id parameter
         print( "Testing notify() has job_id parameter..." )
         sig = inspect.signature( notify )
         assert "job_id" in sig.parameters

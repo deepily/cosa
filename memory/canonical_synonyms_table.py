@@ -442,6 +442,48 @@ class CanonicalSynonymsTable:
                 timer.print( f"Error: {e}", use_millis=True )
             return None
 
+    def delete_by_snapshot_id( self, snapshot_id: str ) -> int:
+        """
+        Delete all synonym entries associated with a given snapshot_id.
+
+        Requires:
+            - snapshot_id is a non-empty string
+            - Table is initialized
+
+        Ensures:
+            - All rows with matching snapshot_id are deleted
+            - Returns the count of deleted rows
+            - Returns 0 if no matches found or on error
+
+        Args:
+            snapshot_id: The snapshot ID whose synonyms should be removed
+
+        Returns:
+            Number of rows deleted
+        """
+        if self.debug:
+            timer = Stopwatch( msg=f"Deleting synonyms for snapshot: {snapshot_id[:8]}..." )
+
+        try:
+            # Count matching rows before deletion
+            df = self._canonical_synonyms_table.to_pandas()
+            matches = df[ df[ 'snapshot_id' ] == snapshot_id ]
+            count = len( matches )
+
+            if count > 0:
+                self._canonical_synonyms_table.delete( f"snapshot_id = '{snapshot_id}'" )
+
+            if self.debug:
+                timer.print( f"Deleted {count} synonym(s) for snapshot {snapshot_id[:8]}...", use_millis=True )
+
+            return count
+
+        except Exception as e:
+            if self.debug:
+                timer.print( f"Error: {e}", use_millis=True )
+            du.print_stack_trace( e, explanation="delete_by_snapshot_id() failed", caller="CanonicalSynonymsTable.delete_by_snapshot_id()" )
+            return 0
+
     def _update_usage_stats( self, question_verbatim: str ) -> None:
         """
         Update usage statistics for a matched synonym.

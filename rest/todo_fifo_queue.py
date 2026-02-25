@@ -422,15 +422,10 @@ class TodoFifoQueue( FifoQueue ):
         embedding_normalized = self._embedding_provider.generate_embedding(
             query_normalized, content_type="prose"
         )
-        embedding_gist = self._embedding_provider.generate_embedding(
-            query_gist, content_type="prose"
-        )
-
         # Track cache hits for analytics
         cache_hits = {
-            'verbatim': len( embedding_verbatim ) > 0,
-            'normalized': len( embedding_normalized ) > 0,
-            'gist': len( embedding_gist ) > 0
+            'verbatim'   : len( embedding_verbatim ) > 0,
+            'normalized' : len( embedding_normalized ) > 0
         }
 
         if self.debug and self.verbose:
@@ -438,7 +433,7 @@ class TodoFifoQueue( FifoQueue ):
             print( f"  Verbatim:   '{query_verbatim}'" )
             print( f"  Normalized: '{query_normalized}'" )
             print( f"  Gist:       '{query_gist}'" )
-            print( f"Embeddings generated - V:{len( embedding_verbatim )} N:{len( embedding_normalized )} G:{len( embedding_gist )}" )
+            print( f"Embeddings generated - V:{len( embedding_verbatim )} N:{len( embedding_normalized )}" )
 
         # check to see if the queue isn't accepting jobs (because it's waiting for response to a previous request)
         if not self.is_accepting_jobs():
@@ -467,9 +462,8 @@ class TodoFifoQueue( FifoQueue ):
                 'confidence': 100.0
             }
             embeddings = {
-                'verbatim': embedding_verbatim,
-                'normalized': embedding_normalized,
-                'gist': embedding_gist
+                'verbatim'   : embedding_verbatim,
+                'normalized' : embedding_normalized
             }
             self._log_query_with_results(
                 query_verbatim, query_normalized, query_gist,
@@ -527,8 +521,7 @@ class TodoFifoQueue( FifoQueue ):
                 }
                 embeddings = {
                     'verbatim'   : embedding_verbatim,
-                    'normalized' : embedding_normalized,
-                    'gist'       : embedding_gist
+                    'normalized' : embedding_normalized
                 }
                 self._log_query_with_results(
                     query_verbatim, query_normalized, query_gist,
@@ -577,8 +570,7 @@ class TodoFifoQueue( FifoQueue ):
                         }
                         embeddings = {
                             'verbatim'   : embedding_verbatim,
-                            'normalized' : embedding_normalized,
-                            'gist'       : embedding_gist
+                            'normalized' : embedding_normalized
                         }
                         self._log_query_with_results(
                             query_verbatim, query_normalized, query_gist,
@@ -603,8 +595,7 @@ class TodoFifoQueue( FifoQueue ):
                     }
                     embeddings = {
                         'verbatim'   : embedding_verbatim,
-                        'normalized' : embedding_normalized,
-                        'gist'       : embedding_gist
+                        'normalized' : embedding_normalized
                     }
                     self._log_query_with_results(
                         query_verbatim, query_normalized, query_gist,
@@ -763,9 +754,8 @@ class TodoFifoQueue( FifoQueue ):
                 'confidence': 0.0
             }
             embeddings = {
-                'verbatim': embedding_verbatim,
-                'normalized': embedding_normalized,
-                'gist': embedding_gist
+                'verbatim'   : embedding_verbatim,
+                'normalized' : embedding_normalized
             }
             self._log_query_with_results(
                 query_verbatim, query_normalized, query_gist,

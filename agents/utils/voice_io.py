@@ -232,32 +232,11 @@ async def notify(
         return
 
     try:
-        # Use keyword args to avoid positional mismatch when interfaces
-        # have extra parameters (e.g., SWE Team's 'role' parameter)
-        import inspect
-        sig = inspect.signature( _cosa_interface.notify_progress )
-        if "progress_group_id" in sig.parameters:
-            await _cosa_interface.notify_progress(
-                message=message, priority=priority, abstract=abstract,
-                session_name=session_name, job_id=job_id, queue_name=queue_name,
-                progress_group_id=progress_group_id
-            )
-        elif "queue_name" in sig.parameters:
-            await _cosa_interface.notify_progress(
-                message=message, priority=priority, abstract=abstract,
-                session_name=session_name, job_id=job_id, queue_name=queue_name
-            )
-        elif "job_id" in sig.parameters:
-            await _cosa_interface.notify_progress(
-                message=message, priority=priority, abstract=abstract,
-                session_name=session_name, job_id=job_id
-            )
-        else:
-            # Fallback for interfaces that don't support job_id yet
-            await _cosa_interface.notify_progress(
-                message=message, priority=priority, abstract=abstract,
-                session_name=session_name
-            )
+        await _cosa_interface.notify_progress(
+            message=message, priority=priority, abstract=abstract,
+            session_name=session_name, job_id=job_id, queue_name=queue_name,
+            progress_group_id=progress_group_id
+        )
     except Exception as e:
         logger.warning( f"Voice notification failed: {e}" )
         print( f"  {message}" )  # Fallback to print
@@ -543,16 +522,9 @@ async def present_choices(
         return { "answers": answers }
 
     try:
-        # Check if cosa_interface.present_choices supports title/abstract
-        import inspect
-        sig = inspect.signature( _cosa_interface.present_choices )
-        kwargs = { "questions": questions, "timeout": timeout }
-        if "title" in sig.parameters:
-            kwargs[ "title" ] = title
-        if "abstract" in sig.parameters:
-            kwargs[ "abstract" ] = abstract
-
-        return await _cosa_interface.present_choices( **kwargs )
+        return await _cosa_interface.present_choices(
+            questions=questions, timeout=timeout, title=title, abstract=abstract
+        )
     except Exception as e:
         logger.warning( f"Voice present_choices failed: {e}" )
         # Fallback - return first option as default

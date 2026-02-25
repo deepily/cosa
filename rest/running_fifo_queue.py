@@ -65,12 +65,13 @@ class RunningFifoQueue( FifoQueue ):
         self.jobs_dead_queue     = jobs_dead_queue
         self.emit_speech_callback = emit_speech_callback
         
-        self.auto_debug          = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
-        self.inject_bugs         = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
-        self.debug               = False if config_mgr is None else config_mgr.get( "app_debug",   default=False, return_type="boolean" )
-        self.verbose             = False if config_mgr is None else config_mgr.get( "app_verbose", default=False, return_type="boolean" )
-        self.io_tbl              = InputAndOutputTable()
-        self.gist_normalizer     = GistNormalizer( debug=self.debug, verbose=self.verbose )
+        self.auto_debug              = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
+        self.inject_bugs             = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
+        self.debug                   = False if config_mgr is None else config_mgr.get( "app_debug",   default=False, return_type="boolean" )
+        self.verbose                 = False if config_mgr is None else config_mgr.get( "app_verbose", default=False, return_type="boolean" )
+        self.threshold_confirmation  = 90.0  if config_mgr is None else config_mgr.get( "similarity_threshold_confirmation", default=90.0, return_type="float" )
+        self.io_tbl                  = InputAndOutputTable()
+        self.gist_normalizer         = GistNormalizer( debug=self.debug, verbose=self.verbose )
     
     
     def enter_running_loop( self ) -> None:
@@ -180,17 +181,26 @@ class RunningFifoQueue( FifoQueue ):
                     cached_snapshots = self.snapshot_mgr.get_snapshots_by_question( question )
 
                     if cached_snapshots and len( cached_snapshots ) > 0:
-                        # CACHE HIT - Use the cached result
-                        score, cached_snapshot = cached_snapshots[0]  # Unpack (score, snapshot) tuple
+                        # Unpack best match
+                        score, cached_snapshot = cached_snapshots[ 0 ]
 
-                        if self.debug: print( f"[CACHE] 🎯 CACHE HIT: Found cached solution from {cached_snapshot.run_date} (score: {score:.1f}%)" )
+                        if score >= 100.0:
+                            # Exact match — auto-accept
+                            if self.debug: print( f"[CACHE] EXACT HIT: score {score:.1f}% from {cached_snapshot.run_date}" )
+                            running_job = self._format_cached_result( cached_snapshot, running_job, truncated_question, run_timer )
 
-                        # Convert cached snapshot to proper format and use it
-                        # Pass original running_job to get current user context for done queue
-                        running_job = self._format_cached_result( cached_snapshot, running_job, truncated_question, run_timer )
+                        elif score >= self.threshold_confirmation:
+                            # Above floor — accept (push_job already handled user confirmation)
+                            if self.debug: print( f"[CACHE] THRESHOLD ACCEPT: score {score:.1f}% >= {self.threshold_confirmation}% from {cached_snapshot.run_date}" )
+                            running_job = self._format_cached_result( cached_snapshot, running_job, truncated_question, run_timer )
+
+                        else:
+                            # Below threshold — reject, route to agent
+                            print( f"[CACHE] THRESHOLD REJECT: score {score:.1f}% < {self.threshold_confirmation}% floor — routing to agent" )
+                            running_job = self._handle_base_agent( running_job, truncated_question, run_timer )
                     else:
                         # CACHE MISS - Continue with normal agent execution
-                        if self.debug: print( f"[CACHE] ❌ CACHE MISS: Running agent for new question" )
+                        if self.debug: print( f"[CACHE] MISS: Running agent for new question" )
 
                         running_job = self._handle_base_agent( running_job, truncated_question, run_timer )
             else:

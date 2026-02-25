@@ -46,13 +46,14 @@ class DecisionResponder( BaseResponder ):
 
     def __init__(
         self,
-        trust_mode       = DEFAULT_TRUST_MODE,
-        accepted_senders = None,
-        host             = DEFAULT_SERVER_HOST,
-        port             = DEFAULT_SERVER_PORT,
-        dry_run          = False,
-        debug            = False,
-        verbose          = False
+        trust_mode          = DEFAULT_TRUST_MODE,
+        accepted_senders    = None,
+        embedding_provider  = None,
+        host                = DEFAULT_SERVER_HOST,
+        port                = DEFAULT_SERVER_PORT,
+        dry_run             = False,
+        debug               = False,
+        verbose             = False
     ):
         """
         Initialize the decision responder.
@@ -60,6 +61,7 @@ class DecisionResponder( BaseResponder ):
         Args:
             trust_mode: Operating mode ("shadow", "suggest", "active")
             accepted_senders: List of sender IDs this proxy will respond to
+            embedding_provider: Optional EmbeddingProvider for generating question embeddings
             host: Server hostname for REST API
             port: Server port for REST API
             dry_run: Display decisions without acting
@@ -74,10 +76,12 @@ class DecisionResponder( BaseResponder ):
             verbose = verbose
         )
 
-        self.trust_mode       = trust_mode
-        self.accepted_senders = accepted_senders or []
-        self.smart_router     = SmartRouter( debug=debug )
-        self.domain_strategy  = None  # Set by profile loader
+        self.trust_mode         = trust_mode
+        self.accepted_senders   = accepted_senders or []
+        self.smart_router       = SmartRouter( debug=debug )
+        self.domain_strategy    = None  # Set by profile loader
+        self.embedding_provider = embedding_provider
+        self._embedding_store   = None  # Lazy-init on first use
 
         # Extend base stats with decision-specific counters
         self.stats.update( {
@@ -227,12 +231,51 @@ class DecisionResponder( BaseResponder ):
             if self.debug:
                 print( f"{self.LOG_PREFIX} DEFER: {result.category} — {result.reason}" )
 
+    def _get_embedding_store( self ):
+        """
+        Lazily initialize the LanceDB embedding store.
+
+        Ensures:
+            - Returns ProxyDecisionEmbeddings instance or None
+            - Only initializes once per responder lifetime
+        """
+        if self._embedding_store is not None:
+            return self._embedding_store
+
+        if self.embedding_provider is None:
+            return None
+
+        try:
+            from cosa.agents.decision_proxy.proxy_decision_embeddings import ProxyDecisionEmbeddings
+            from cosa.agents.decision_proxy.config import DEFAULT_PROXY_LANCEDB_TABLE
+
+            import cosa.utils.util as cu
+            from cosa.config.configuration_manager import ConfigurationManager
+
+            config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+            db_path    = cu.get_project_root() + config_mgr.get( "solution snapshots lancedb path" )
+            table_name = config_mgr.get( "swe team trust proxy lancedb table", default=DEFAULT_PROXY_LANCEDB_TABLE )
+
+            self._embedding_store = ProxyDecisionEmbeddings(
+                db_path    = db_path,
+                table_name = table_name,
+                debug      = self.debug,
+            )
+
+            if self.debug: print( f"{self.LOG_PREFIX} Initialized embedding store: {table_name}" )
+            return self._embedding_store
+
+        except Exception as e:
+            if self.debug: print( f"{self.LOG_PREFIX} Embedding store init failed (non-fatal): {e}" )
+            return None
+
     def _persist_decision( self, notification_id, result, question, requires_ratification=None ):
         """
         Persist a decision to the database (non-fatal).
 
         Wraps DB writes in try/except so the in-memory tracker remains
-        source of truth. DB persistence is best-effort.
+        source of truth. DB persistence is best-effort. After PostgreSQL
+        write, generates an embedding and writes to LanceDB (also best-effort).
 
         Requires:
             - notification_id is a string
@@ -240,6 +283,7 @@ class DecisionResponder( BaseResponder ):
 
         Ensures:
             - Decision logged to proxy_decisions table on success
+            - Embedding written to LanceDB on success (best-effort)
             - Failure logged but never propagates
 
         Args:
@@ -283,6 +327,75 @@ class DecisionResponder( BaseResponder ):
         except Exception as e:
             if self.debug:
                 print( f"{self.LOG_PREFIX} DB persistence failed (non-fatal): {e}" )
+
+        # Best-effort: generate embedding and write to LanceDB
+        self._persist_embedding( notification_id, result, question, requires_ratification )
+
+    def _persist_embedding( self, notification_id, result, question, requires_ratification ):
+        """
+        Generate a question embedding and write to LanceDB (best-effort).
+
+        Called after PostgreSQL write succeeds. Both embedding generation
+        and LanceDB write are wrapped in try/except — failures are logged
+        but never propagate.
+
+        Args:
+            notification_id: Decision identifier
+            result: DecisionResult from domain strategy
+            question: Original question text
+            requires_ratification: Ratification state flag
+        """
+        try:
+            store = self._get_embedding_store()
+            if store is None:
+                return
+
+            from datetime import datetime, timezone
+
+            embedding = self.embedding_provider.generate_embedding( question[ :500 ], content_type="prose" )
+
+            ratification_state = "shadow"
+            if requires_ratification is True:
+                ratification_state = "pending"
+            elif requires_ratification is False:
+                ratification_state = "autonomous"
+
+            store.add_decision(
+                id                  = notification_id,
+                question            = question[ :500 ],
+                category            = result.category,
+                decision_value      = result.value or "",
+                ratification_state  = ratification_state,
+                question_embedding  = embedding,
+                created_at          = datetime.now( timezone.utc ).isoformat(),
+            )
+
+        except Exception as e:
+            if self.debug:
+                print( f"{self.LOG_PREFIX} Embedding persistence failed (non-fatal): {e}" )
+
+    def get_decision_diagnostics( self ):
+        """
+        Return combined decision diagnostics.
+
+        Ensures:
+            - Returns dict with stats and optional Thompson Sampling diagnostics
+            - Safe to call regardless of strategy configuration
+
+        Returns:
+            Dict with "stats" and optional "thompson_sampling" keys
+        """
+        result = { "stats": dict( self.stats ) }
+
+        if self.domain_strategy and hasattr( self.domain_strategy, "get_thompson_diagnostics" ):
+            result[ "thompson_sampling" ] = self.domain_strategy.get_thompson_diagnostics()
+
+        if self.domain_strategy and hasattr( self.domain_strategy, "_conformal_wrapper" ):
+            wrapper = self.domain_strategy._conformal_wrapper
+            if wrapper is not None:
+                result[ "conformal" ] = wrapper.get_status()
+
+        return result
 
     def print_stats( self ):
         """Print decision proxy statistics."""

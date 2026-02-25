@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 """
-COSA Voice Interface Integration Layer.
+COSA Voice Interface Integration Layer for Deep Research.
 
 This module provides async wrappers for the cosa-voice notification tools,
 bridging the async orchestrator with the blocking notification API.
 
-Uses asyncio.to_thread() to run blocking calls without blocking the event loop.
-This allows other async tasks to continue while waiting for human feedback.
+Uses AgentNotificationDispatcher for shared async dispatch logic.
+Module-level SENDER_ID and SESSION_NAME remain mutable for runtime
+configuration by job.py and cli.py callers.
 """
 
-import asyncio
 import logging
-import os
 from typing import Optional
 
-# Import from cosa.cli (the notification library)
+# Import from cosa.cli for backward-compatible re-exports
 from cosa.cli.notification_models import (
     NotificationRequest,
     AsyncNotificationRequest,
@@ -24,9 +23,15 @@ from cosa.cli.notification_models import (
     NotificationPriority,
     ResponseType
 )
-from cosa.cli.notify_user_sync import notify_user_sync as _notify_user_sync
-from cosa.cli.notify_user_async import notify_user_async as _notify_user_async
 from cosa.utils.notification_utils import format_questions_for_tts, convert_questions_for_api
+
+# Shared utilities
+from cosa.agents.utils.sender_id import build_sender_id
+from cosa.agents.utils.feedback_analysis import (
+    is_approval, is_rejection, extract_feedback_intent,
+    APPROVAL_SIGNALS, REJECTION_SIGNALS
+)
+from cosa.agents.utils.agent_notification_dispatcher import AgentNotificationDispatcher
 
 logger = logging.getLogger( __name__ )
 
@@ -35,6 +40,12 @@ logger = logging.getLogger( __name__ )
 # Sender Identity Configuration
 # =============================================================================
 
+AGENT_TYPE = "deep.research"
+
+# Internal dispatcher instance for shared async dispatch logic
+_dispatcher = AgentNotificationDispatcher( agent_type=AGENT_TYPE )
+
+
 def _get_sender_id() -> str:
     """
     Get sender_id for Deep Research Agent notifications.
@@ -42,34 +53,19 @@ def _get_sender_id() -> str:
     Ensures:
         - Returns sender_id in format: deep.research@{project}.deepily.ai
         - Project is detected from current working directory
-        - Handles nested directory structures correctly
 
     Returns:
         str: Sender ID for notification identity
     """
-    # Project detection - check more specific paths FIRST
-    # (cosa is a subdirectory of lupin, so check cosa before lupin)
-    cwd = os.getcwd()
-
-    if "/cosa" in cwd.lower() and "/lupin" not in cwd.lower():
-        # Standalone cosa repo (not nested in lupin)
-        project = "cosa"
-    elif "/planning-is-prompting" in cwd.lower():
-        project = "plan"
-    elif "/lupin" in cwd.lower():
-        # Lupin project (includes nested cosa subdirectory)
-        project = "lupin"
-    else:
-        project = os.path.basename( cwd ).lower()
-
-    return f"deep.research@{project}.deepily.ai"
+    return _dispatcher.build_sender_id()
 
 
 # Cache sender_id at module load (avoids repeated os.getcwd calls)
+# NOTE: Mutable — job.py and cli.py callers may append suffixes at runtime
 SENDER_ID = _get_sender_id()
 
-# Session name for UI display (set by CLI before notifications)
-SESSION_NAME: Optional[str] = None
+# Session name for UI display (set by CLI/job before notifications)
+SESSION_NAME: Optional[ str ] = None
 
 
 # =============================================================================
@@ -79,127 +75,65 @@ SESSION_NAME: Optional[str] = None
 async def notify_progress(
     message: str,
     priority: str = "medium",
-    abstract: Optional[str] = None,
-    session_name: Optional[str] = None,
-    job_id: Optional[str] = None,
-    queue_name: Optional[str] = None,
-    progress_group_id: Optional[str] = None
+    abstract: Optional[ str ] = None,
+    session_name: Optional[ str ] = None,
+    job_id: Optional[ str ] = None,
+    queue_name: Optional[ str ] = None,
+    progress_group_id: Optional[ str ] = None
 ) -> None:
     """
     Send fire-and-forget progress notification.
 
-    Non-blocking - runs in thread pool to avoid blocking event loop.
-
-    Requires:
-        - message is a non-empty string
-        - priority is "low", "medium", "high", or "urgent"
-
-    Ensures:
-        - Notification is sent asynchronously
-        - Returns immediately (fire-and-forget)
-        - Logs warning on failure (doesn't raise)
+    Non-blocking — runs in thread pool to avoid blocking event loop.
 
     Args:
         message: Progress message to announce
         priority: "low", "medium", "high", or "urgent"
         abstract: Optional supplementary context (markdown, URLs, details)
         session_name: Optional human-readable session name for UI display
-        job_id: Optional agentic job ID for routing to job cards (e.g., "dr-a1b2c3d4")
-        queue_name: Optional queue where job is running (run/todo/done) for provisional job card registration
+        job_id: Optional agentic job ID for routing to job cards
+        queue_name: Optional queue where job is running
+        progress_group_id: Optional progress group ID for in-place DOM updates
     """
-    try:
-        # Use module-level SESSION_NAME if not explicitly provided
-        resolved_session_name = session_name if session_name is not None else SESSION_NAME
-
-        request = AsyncNotificationRequest(
-            message           = message,
-            notification_type = NotificationType.PROGRESS,
-            priority          = NotificationPriority( priority ),
-            sender_id         = SENDER_ID,
-            abstract          = abstract,
-            session_name      = resolved_session_name,
-            job_id            = job_id,
-            queue_name        = queue_name,
-            progress_group_id = progress_group_id,
-        )
-
-        # Run blocking call in thread pool
-        await asyncio.to_thread( _notify_user_async, request )
-
-    except Exception as e:
-        logger.warning( f"Failed to send progress notification: {e}" )
+    _dispatcher.sender_id    = SENDER_ID
+    _dispatcher.session_name = SESSION_NAME
+    await _dispatcher.notify_progress(
+        message, priority=priority, abstract=abstract,
+        session_name=session_name, job_id=job_id,
+        queue_name=queue_name, progress_group_id=progress_group_id
+    )
 
 
 async def ask_confirmation(
     question: str,
     default: str = "no",
     timeout: int = 60,
-    abstract: Optional[str] = None
+    abstract: Optional[ str ] = None
 ) -> bool:
     """
     Ask a yes/no question and return boolean result.
-
-    Requires:
-        - question is a non-empty string
-        - default is "yes" or "no"
-        - timeout is positive integer (1-600)
-
-    Ensures:
-        - Returns True if user said yes
-        - Returns False otherwise
-        - Returns default value on timeout/offline
-        - Logs warning on failure
 
     Args:
         question: The yes/no question to ask
         default: Default answer if timeout ("yes" or "no")
         timeout: Seconds to wait for response
-        abstract: Optional supplementary context (plan details, URLs, markdown)
+        abstract: Optional supplementary context
 
     Returns:
         bool: True if user said yes, False otherwise
     """
-    try:
-        request = NotificationRequest(
-            message           = question,
-            response_type     = ResponseType.YES_NO,
-            notification_type = NotificationType.CUSTOM,
-            priority          = NotificationPriority.MEDIUM,
-            timeout_seconds   = timeout,
-            response_default  = default,
-            sender_id         = SENDER_ID,
-            abstract          = abstract,
-        )
-
-        response: NotificationResponse = await asyncio.to_thread( _notify_user_sync, request )
-
-        if response.exit_code == 0 and response.response_value:
-            return response.response_value.lower().strip() == "yes"
-
-        return default == "yes"
-
-    except Exception as e:
-        logger.warning( f"ask_confirmation failed: {e}" )
-        return default == "yes"
+    _dispatcher.sender_id = SENDER_ID
+    return await _dispatcher.ask_confirmation(
+        question, default=default, timeout=timeout, abstract=abstract
+    )
 
 
 async def get_feedback(
     prompt: str,
     timeout: int = 300
-) -> Optional[str]:
+) -> Optional[ str ]:
     """
     Get open-ended feedback from user via voice.
-
-    Blocking call that speaks prompt via TTS, waits for user voice response.
-
-    Requires:
-        - prompt is a non-empty string
-        - timeout is positive integer (1-600)
-
-    Ensures:
-        - Returns user's transcribed voice response on success
-        - Returns None on timeout, error, or no response
-        - Logs warning on failure
 
     Args:
         prompt: Text to speak to the user
@@ -208,26 +142,8 @@ async def get_feedback(
     Returns:
         str or None: User's transcribed voice response
     """
-    try:
-        request = NotificationRequest(
-            message           = prompt,
-            response_type     = ResponseType.OPEN_ENDED,
-            notification_type = NotificationType.CUSTOM,
-            priority          = NotificationPriority.MEDIUM,
-            timeout_seconds   = timeout,
-            sender_id         = SENDER_ID,
-        )
-
-        response: NotificationResponse = await asyncio.to_thread( _notify_user_sync, request )
-
-        if response.exit_code == 0:
-            return response.response_value
-
-        return None
-
-    except Exception as e:
-        logger.warning( f"get_feedback failed: {e}" )
-        return None
+    _dispatcher.sender_id = SENDER_ID
+    return await _dispatcher.get_feedback( prompt, timeout=timeout )
 
 
 async def present_choices(
@@ -237,16 +153,6 @@ async def present_choices(
     """
     Present multiple-choice questions and get user's selection.
 
-    Requires:
-        - questions is a list of question objects
-        - Each question has: question, header, multiSelect, options
-        - timeout is positive integer (1-600)
-
-    Ensures:
-        - Returns dict with "answers" key containing selections
-        - Answers keyed by question header
-        - Returns empty answers on timeout/failure
-
     Args:
         questions: List of question objects with options
         timeout: Seconds to wait for response
@@ -254,141 +160,16 @@ async def present_choices(
     Returns:
         dict: {"answers": {...}} with selections keyed by header
     """
-    try:
-        # Build TTS-friendly message
-        message = format_questions_for_tts( questions )
-
-        request = NotificationRequest(
-            message           = message,
-            response_type     = ResponseType.MULTIPLE_CHOICE,
-            notification_type = NotificationType.CUSTOM,
-            priority          = NotificationPriority.MEDIUM,
-            timeout_seconds   = timeout,
-            response_options  = convert_questions_for_api( questions ),
-            sender_id         = SENDER_ID,
-        )
-
-        response: NotificationResponse = await asyncio.to_thread( _notify_user_sync, request )
-
-        if response.exit_code == 0 and response.response_value:
-            import json
-            try:
-                return json.loads( response.response_value )
-            except json.JSONDecodeError:
-                return { "answers": { "response": response.response_value } }
-
-        return { "answers": {} }
-
-    except Exception as e:
-        logger.warning( f"present_choices failed: {e}" )
-        return { "answers": {} }
+    _dispatcher.sender_id = SENDER_ID
+    return await _dispatcher.present_choices( questions, timeout=timeout )
 
 
 # =============================================================================
 # Feedback Analysis Utilities
 # =============================================================================
-
-def is_approval( feedback: str ) -> bool:
-    """
-    Determine if user feedback indicates approval.
-
-    Requires:
-        - feedback is a string
-
-    Ensures:
-        - Returns True if feedback contains approval signals
-        - Returns False otherwise
-
-    Args:
-        feedback: User's voice response text
-
-    Returns:
-        bool: True if approval detected
-    """
-    if not feedback:
-        return False
-
-    approval_signals = [
-        "yes", "proceed", "go ahead", "sounds good", "perfect",
-        "do it", "approved", "looks good", "that works", "okay",
-        "ok", "sure", "fine", "great", "excellent", "continue",
-        "start", "begin", "let's go", "go for it"
-    ]
-
-    feedback_lower = feedback.lower().strip()
-
-    for signal in approval_signals:
-        if signal in feedback_lower:
-            return True
-
-    if feedback_lower in [ "y", "yep", "yup", "uh huh", "mm hmm" ]:
-        return True
-
-    return False
-
-
-def is_rejection( feedback: str ) -> bool:
-    """
-    Determine if user feedback indicates rejection/change request.
-
-    Requires:
-        - feedback is a string
-
-    Ensures:
-        - Returns True if feedback contains rejection signals
-        - Returns False otherwise
-
-    Args:
-        feedback: User's voice response text
-
-    Returns:
-        bool: True if rejection/change request detected
-    """
-    if not feedback:
-        return False
-
-    rejection_signals = [
-        "no", "change", "adjust", "modify", "different",
-        "instead", "rather", "stop", "wait", "hold on",
-        "not quite", "actually", "but", "however"
-    ]
-
-    feedback_lower = feedback.lower().strip()
-
-    for signal in rejection_signals:
-        if signal in feedback_lower:
-            return True
-
-    return False
-
-
-def extract_feedback_intent( feedback: str ) -> dict:
-    """
-    Extract structured intent from user feedback.
-
-    Requires:
-        - feedback is a string
-
-    Ensures:
-        - Returns dict with is_approval, is_rejection, raw_feedback, feedback_type
-        - feedback_type is "approval", "change_request", or "additional_context"
-
-    Args:
-        feedback: User's voice response text
-
-    Returns:
-        dict: Structured intent analysis
-    """
-    return {
-        "is_approval"   : is_approval( feedback ),
-        "is_rejection"  : is_rejection( feedback ),
-        "raw_feedback"  : feedback,
-        "feedback_type" : (
-            "approval" if is_approval( feedback )
-            else "change_request" if is_rejection( feedback )
-            else "additional_context"
-        ),
-    }
+# NOTE: is_approval(), is_rejection(), and extract_feedback_intent() are now
+# imported from cosa.agents.utils.feedback_analysis (see imports above).
+# They remain available at module level for backward compatibility.
 
 
 def quick_smoke_test():
@@ -478,6 +259,12 @@ def quick_smoke_test():
         assert inspect.iscoroutinefunction( get_feedback )
         assert inspect.iscoroutinefunction( present_choices )
         print( "✓ Async functions have correct signatures" )
+
+        # Test 8: Dispatcher is properly configured
+        print( "Testing dispatcher configuration..." )
+        assert _dispatcher.agent_type == "deep.research"
+        assert "deep.research@" in _dispatcher.sender_id
+        print( f"✓ Dispatcher sender_id: {_dispatcher.sender_id}" )
 
         print( "\n✓ COSA Interface smoke test completed successfully" )
 
