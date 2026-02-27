@@ -33,7 +33,7 @@ def get_api_config( env: Optional[str] = None ) -> Dict[str, str]:
         - raises ValueError if config invalid or missing
 
     Precedence Order:
-        1. Environment variables (LUPIN_API_URL, LUPIN_API_KEY_FILE, LUPIN_NOTIFICATION_RECIPIENT)
+        1. Environment variables (LUPIN_API_URL, LUPIN_API_KEY_FILE, LUPIN_DEV_EMAIL)
         2. Config file (~/.notifications/config or deprecated ~/.lupin/config) with LUPIN_ENV or 'env' parameter
         3. Hardcoded defaults (localhost:7999, dev key)
 
@@ -53,14 +53,7 @@ def get_api_config( env: Optional[str] = None ) -> Dict[str, str]:
     api_url = os.getenv( 'LUPIN_API_URL' )
     api_key_file = os.getenv( 'LUPIN_API_KEY_FILE' )
 
-    # Support both new and old environment variable names
-    notification_recipient = os.getenv( 'LUPIN_NOTIFICATION_RECIPIENT' )
-    if not notification_recipient:
-        notification_recipient = os.getenv( 'LUPIN_TARGET_USER' )  # Deprecated fallback
-        if notification_recipient:
-            print( f"⚠️  DEPRECATED: LUPIN_TARGET_USER env var is deprecated", file=sys.stderr )
-            print( f"   Please use LUPIN_NOTIFICATION_RECIPIENT instead", file=sys.stderr )
-            print( f"   Support for LUPIN_TARGET_USER will be removed in a future version.", file=sys.stderr )
+    notification_recipient = os.getenv( 'LUPIN_DEV_EMAIL' )
 
     if api_url and api_key_file:
         # Both required env vars set - use them

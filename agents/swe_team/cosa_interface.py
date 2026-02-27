@@ -19,8 +19,8 @@ CONTRACT:
 import logging
 from typing import Optional
 
-# Import from cosa.cli for backward-compatible re-exports
-from cosa.cli.notification_models import (
+# Import from lupin_cli.notifications
+from lupin_cli.notifications.notification_models import (
     NotificationRequest,
     AsyncNotificationRequest,
     NotificationResponse,

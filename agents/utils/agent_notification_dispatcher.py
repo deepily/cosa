@@ -26,7 +26,7 @@ import json
 import logging
 from typing import Optional
 
-from cosa.cli.notification_models import (
+from lupin_cli.notifications.notification_models import (
     NotificationRequest,
     AsyncNotificationRequest,
     NotificationResponse,
@@ -34,8 +34,8 @@ from cosa.cli.notification_models import (
     NotificationPriority,
     ResponseType
 )
-from cosa.cli.notify_user_sync import notify_user_sync as _notify_user_sync
-from cosa.cli.notify_user_async import notify_user_async as _notify_user_async
+from lupin_cli.notifications.notify_user_sync import notify_user_sync as _notify_user_sync
+from lupin_cli.notifications.notify_user_async import notify_user_async as _notify_user_async
 from cosa.utils.notification_utils import format_questions_for_tts, convert_questions_for_api
 from cosa.agents.utils.sender_id import build_sender_id
 

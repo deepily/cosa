@@ -26,8 +26,8 @@ from cosa.agents.runtime_argument_expeditor.agent_registry import (
 from cosa.agents.runtime_argument_expeditor.xml_models import ExpeditorResponse, ArgConfirmationResponse
 from cosa.agents.llm_client_factory import LlmClientFactory
 from cosa.agents.io_models.utils.prompt_template_processor import PromptTemplateProcessor
-from cosa.cli.notify_user_sync import notify_user_sync
-from cosa.cli.notification_models import (
+from lupin_cli.notifications.notify_user_sync import notify_user_sync
+from lupin_cli.notifications.notification_models import (
     NotificationRequest,
     NotificationPriority,
     ResponseType

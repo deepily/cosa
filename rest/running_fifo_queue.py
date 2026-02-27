@@ -22,8 +22,8 @@ from datetime import datetime
 from typing import Optional, Any
 
 # Notification service imports for async correctness verification
-from cosa.cli.notify_user_sync import notify_user_sync
-from cosa.cli.notification_models import (
+from lupin_cli.notifications.notify_user_sync import notify_user_sync
+from lupin_cli.notifications.notification_models import (
     NotificationRequest,
     ResponseType
 )

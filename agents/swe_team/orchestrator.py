@@ -850,7 +850,7 @@ Keep your response concise (3-5 sentences). Output ONLY the analysis, no preambl
         results = []
 
         # Initialize state files for progress tracking
-        storage_dir = os.path.join( cu.get_project_root(), "io", "swe_team", self.session_id )
+        storage_dir = os.path.join( cu.get_project_root(), "io", "swe-team", self.session_id )
 
         # Wire on_log callback for live progress narration
         on_log = None

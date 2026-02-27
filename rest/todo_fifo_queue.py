@@ -38,8 +38,8 @@ from cosa.rest.queue_util import emit_job_state_transition
 from cosa.rest.queue_protocol import is_queueable_job
 
 # Notification service imports for TTS migration (Session 97)
-from cosa.cli.notify_user_sync import notify_user_sync
-from cosa.cli.notification_models import (
+from lupin_cli.notifications.notify_user_sync import notify_user_sync
+from lupin_cli.notifications.notification_models import (
     NotificationRequest,
     ResponseType
 )

@@ -142,6 +142,7 @@ async def get_pending_decisions(
                     "trust_level"         : d.trust_level,
                     "reason"              : d.reason,
                     "ratification_state"  : d.ratification_state,
+                    "data_origin"         : d.data_origin,
                     "metadata_json"       : d.metadata_json,
                     "created_at"          : d.created_at.isoformat() if d.created_at else None,
                 } )

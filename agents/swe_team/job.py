@@ -61,6 +61,42 @@ class SweTeamJob( AgenticJobBase ):
         "Generating final summary",
     ]
 
+    # Questions per phase for realistic proxy decision generation
+    # Each maps to a phase index; questions exercise the classifier pipeline
+    DRY_RUN_PHASE_QUESTIONS = [
+        None,  # Phase 0: no decision needed at start
+        None,  # Phase 1: analysis has no proxy question
+        {
+            "question"  : "Should I create a new API endpoint for this subtask?",
+            "sender_id" : "swe.lead@lupin.deepily.ai",
+        },
+        {
+            "question"  : "Should I refactor the existing module to accommodate the new design?",
+            "sender_id" : "swe.lead@lupin.deepily.ai",
+        },
+        {
+            "question"  : "Can I install the pydantic-settings package as a new dependency?",
+            "sender_id" : "swe.coder@lupin.deepily.ai",
+        },
+        {
+            "question"  : "Run the unit test suite to verify the implementation?",
+            "sender_id" : "swe.tester@lupin.deepily.ai",
+        },
+        {
+            "question"  : "Should I delete the old temporary build artifacts from the output directory?",
+            "sender_id" : "swe.coder@lupin.deepily.ai",
+        },
+        {
+            "question"  : "Run integration tests before merging the changes?",
+            "sender_id" : "swe.tester@lupin.deepily.ai",
+        },
+        None,  # Phase 8: review has no proxy question
+        {
+            "question"  : "Deploy the completed changes to the staging environment?",
+            "sender_id" : "swe.lead@lupin.deepily.ai",
+        },
+    ]
+
     def __init__(
         self,
         task,
@@ -395,61 +431,62 @@ class SweTeamJob( AgenticJobBase ):
             queue_name="run"
         )
 
-        # Insert mock proxy decisions for UI testing
+        # Generate proxy decisions via real classifier pipeline (no LLM cost)
         try:
             from cosa.rest.db.database import get_db
             from cosa.rest.db.repositories.proxy_decision_repository import ProxyDecisionRepository
+            from cosa.agents.swe_team.proxy.engineering_classifier import EngineeringClassifier
 
-            mock_decisions = [
-                {
-                    "category"       : "testing",
-                    "question"       : "Run the test suite before merging? (dry-run mock)",
-                    "decision_value" : "approved",
-                    "confidence"     : 0.85,
-                    "trust_level"    : 2,
-                    "reason"         : "Dry-run mock: testing decisions are low-risk",
-                },
-                {
-                    "category"       : "deployment",
-                    "question"       : "Deploy changes to staging environment? (dry-run mock)",
-                    "decision_value" : "requires_review",
-                    "confidence"     : 0.62,
-                    "trust_level"    : 1,
-                    "reason"         : "Dry-run mock: deployment requires human review at L1",
-                },
-                {
-                    "category"       : "destructive",
-                    "question"       : "Delete old cache files from build directory? (dry-run mock)",
-                    "decision_value" : "requires_review",
-                    "confidence"     : 0.45,
-                    "trust_level"    : 1,
-                    "reason"         : "Dry-run mock: destructive ops always require review at L1",
-                },
-            ]
+            classifier      = EngineeringClassifier( debug=self.debug )
+            decisions_count = 0
 
             with get_db() as db_session:
                 repo = ProxyDecisionRepository( db_session )
-                for mock in mock_decisions:
+
+                for i in range( num_phases ):
+                    if i >= len( self.DRY_RUN_PHASE_QUESTIONS ):
+                        continue
+                    phase_q = self.DRY_RUN_PHASE_QUESTIONS[ i ]
+                    if phase_q is None:
+                        continue
+
+                    question  = phase_q[ "question" ]
+                    sender_id = phase_q[ "sender_id" ]
+
+                    # Run through real keyword classifier (zero LLM cost)
+                    category, confidence = classifier.classify( question, sender_id=sender_id )
+
+                    # Derive decision value from confidence
+                    decision_value = "approved" if confidence >= 0.7 else "requires_review"
+
                     repo.log_decision(
                         notification_id       = str( uuid.uuid4() ),
                         domain                = "swe",
-                        category              = mock[ "category" ],
-                        question              = mock[ "question" ],
+                        category              = category,
+                        question              = question,
                         action                = "suggest",
-                        decision_value        = mock[ "decision_value" ],
-                        sender_id             = f"swe.lead@dry-run#{self.id_hash}",
-                        confidence            = mock[ "confidence" ],
-                        trust_level           = mock[ "trust_level" ],
-                        reason                = mock[ "reason" ],
+                        decision_value        = decision_value,
+                        sender_id             = f"{sender_id}#{self.id_hash}",
+                        confidence            = confidence,
+                        trust_level           = 1,
+                        reason                = f"Dry-run classifier: {category} ({confidence:.2f})",
                         requires_ratification = True,
-                        metadata_json         = { "dry_run": True, "job_id": self.id_hash },
+                        metadata_json         = {
+                            "dry_run"    : True,
+                            "job_id"     : self.id_hash,
+                            "phase"      : i,
+                            "classified" : True,
+                        },
+                        data_origin           = "synthetic_generated",
                     )
+                    decisions_count += 1
+
                 db_session.commit()
 
-            if self.debug: print( f"[SweTeamJob] Inserted {len( mock_decisions )} mock proxy decisions for dry-run" )
+            if self.debug: print( f"[SweTeamJob] Inserted {decisions_count} classified proxy decisions for dry-run" )
 
         except Exception as e:
-            if self.debug: print( f"[SweTeamJob] Warning: Mock proxy decision insertion failed: {e}" )
+            if self.debug: print( f"[SweTeamJob] Warning: Proxy decision generation failed: {e}" )
 
         return "Dry run complete. SWE Team simulation finished."
 

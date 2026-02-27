@@ -6,7 +6,7 @@ Provides FeatureList and ProgressLog classes that persist task decomposition
 and progress data across sessions. Supports multi-step tasks where the
 orchestrator may be interrupted and resumed.
 
-Storage location: {project_root}/io/swe_team/{session_id}/
+Storage location: {project_root}/io/swe-team/{session_id}/
 Default root: tempfile.TemporaryDirectory() (overridable for testing)
 """
 

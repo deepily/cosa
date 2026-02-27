@@ -808,6 +808,15 @@ class ProxyDecision( Base ):
         nullable=True
     )
 
+    # Data provenance (organic, synthetic_seed, synthetic_generated)
+    data_origin: Mapped[str] = mapped_column(
+        String( 50 ),
+        nullable=False,
+        default="organic",
+        server_default="organic",
+        index=True
+    )
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime( timezone=True ),
@@ -824,6 +833,7 @@ class ProxyDecision( Base ):
         Index( 'idx_proxy_decisions_ratification', 'ratification_state' ),
         Index( 'idx_proxy_decisions_created_at', 'created_at' ),
         Index( 'idx_proxy_decisions_domain_category', 'domain', 'category' ),
+        Index( 'idx_proxy_decisions_data_origin', 'data_origin' ),
     )
 
     def __repr__( self ) -> str:

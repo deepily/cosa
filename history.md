@@ -1,5 +1,66 @@
 # COSA Development History
 
+> **✅ SESSIONS 268-276 COMMIT**: CLI→lupin_cli migration, data_origin provenance, interactive dry-run, SWE classifier dry-run, bug fixes (2026.02.26)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Committed accumulated work from Lupin sessions 268-276** (32 files: 1 new + 22 modified + 9 deleted, +440/-4396 lines):
+>
+> **CLI → lupin_cli Migration (Session 275)**:
+> - Deleted entire `cli/` package (7 files, ~3107 lines) — notification infrastructure moved to Lupin-owned `lupin_cli.notifications` package
+> - Deleted 2 unit test files from `tests/unit/cli/` (~1148 lines) — moved to Lupin test suite
+> - Updated imports in 11 consumer files: `cosa.cli.*` → `lupin_cli.notifications.*`
+> - Wired `resolve_target_user()` helper into `sync_notify.py` (replaces hardcoded default email)
+> - Renamed env var `LUPIN_NOTIFICATION_RECIPIENT` → `LUPIN_DEV_EMAIL` in `config_loader.py` (removed deprecation shim)
+>
+> **Data Provenance — `data_origin` Field (Sessions 270-271)**:
+> - Added `data_origin` column to `ProxyDecision` ORM model (String(50), default="organic", indexed)
+> - Added `data_origin` param to `log_shadow()` and `log_decision()` in proxy_decision_repository
+> - Added `data_origin` to LanceDB schema, `add_decision()`, `find_similar()` with optional provenance filter
+> - Added `data_origin` to pending decisions API response
+>
+> **INTERACTIVE Dry-Run for ClaudeCodeJob (Session 269)**:
+> - Split `_execute_dry_run()` into `_execute_dry_run_bounded()` / `_execute_dry_run_interactive()` dispatcher
+> - Interactive mode: 7-phase MessageHistory exercise with multi-turn context prompt validation
+> - Added `dry_run_phases`/`dry_run_delay` constructor params + class-level `DRY_RUN_BOUNDED_LABELS` (5) / `DRY_RUN_INTERACTIVE_LABELS` (7)
+> - Extended smoke test with 3 new test cases
+>
+> **SWE Team Real Classifier Dry-Run (Sessions 270-273)**:
+> - Replaced 3 hardcoded mock proxy decisions with real `EngineeringClassifier` pipeline (zero LLM cost)
+> - Added `DRY_RUN_PHASE_QUESTIONS` (10 entries) with role-specific sender_ids
+> - Decisions tagged `data_origin="synthetic_generated"`
+>
+> **Bug Fix: SWE Team Output Path (Session 274)**:
+> - Fixed `io/swe_team/` → `io/swe-team/` (Lupin naming convention: dashes for non-Python)
+>
+> **CUDA Fallback Removal (Session 268)**:
+> - Removed dead CUDA→CPU fallback from CodeEmbeddingEngine and ProseEmbeddingEngine
+>
+> **Files Created (1)**:
+> - `training/__init__.py`
+>
+> **Files Modified (22)**:
+> - `agents/claude_code/cosa_interface.py`, `agents/claude_code/job.py`
+> - `agents/deep_research/cosa_interface.py`, `agents/podcast_generator/cosa_interface.py`
+> - `agents/runtime_argument_expeditor/expeditor.py`, `agents/swe_team/cosa_interface.py`
+> - `agents/swe_team/job.py`, `agents/swe_team/orchestrator.py`, `agents/swe_team/state_files.py`
+> - `agents/decision_proxy/proxy_decision_embeddings.py`
+> - `agents/utils/agent_notification_dispatcher.py`, `agents/utils/sync_notify.py`
+> - `crud_for_dataframes/agent.py`, `memory/local_embedding_engine.py`
+> - `rest/db/repositories/notification_repository.py`, `rest/db/repositories/proxy_decision_repository.py`
+> - `rest/fifo_queue.py`, `rest/postgres_models.py`, `rest/routers/decision_proxy.py`
+> - `rest/running_fifo_queue.py`, `rest/todo_fifo_queue.py`, `utils/config_loader.py`
+>
+> **Files Deleted (9)**:
+> - `cli/__init__.py`, `cli/notification_models.py`, `cli/notification_types.py`
+> - `cli/notify_user.py`, `cli/notify_user_async.py`, `cli/notify_user_sync.py`, `cli/test_notifications.py`
+> - `tests/unit/cli/test_notification_types.py`, `tests/unit/cli/test_notify_user.py`
+>
+> **Commit**: c0634ab
+
+---
+
 > **✅ SESSIONS 260-266 COMMIT**: Voice refactoring, gist jettison, preference learning Phases 0-3, embeddings API, QueryLogTable fix (2026.02.24)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >
@@ -65,7 +126,7 @@
 > - `memory/lancedb_solution_manager.py`, `memory/canonical_synonyms_table.py`
 > - `rest/routers/admin.py`, `rest/running_fifo_queue.py`, `rest/todo_fifo_queue.py`
 >
-> **Commit**: (pending)
+> **Commit**: 3b565b2
 
 ---
 

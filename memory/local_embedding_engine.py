@@ -76,11 +76,6 @@ class CodeEmbeddingEngine:
         self._query_prefix = self._config_mgr.get( "local embedding code query prefix" )
         self._model        = None
 
-        # Fallback to CPU if CUDA requested but not available
-        if self._device.startswith( "cuda" ) and not torch.cuda.is_available():
-            print( f"WARNING: Config requests device={self._device} but CUDA not available, falling back to cpu" )
-            self._device = "cpu"
-
         if self.debug: print( f"CodeEmbeddingEngine configured: model={self._model_name}, device={self._device}, dims={self._dimensions}" )
 
         self._initialized = True
@@ -264,11 +259,6 @@ class ProseEmbeddingEngine:
         self._document_prefix  = self._config_mgr.get( "local embedding prose document prefix" )
         self._model            = None
         self._tokenizer        = None
-
-        # Fallback to CPU if CUDA requested but not available
-        if self._device.startswith( "cuda" ) and not torch.cuda.is_available():
-            print( f"WARNING: Config requests device={self._device} but CUDA not available, falling back to cpu" )
-            self._device = "cpu"
 
         if self.debug: print( f"ProseEmbeddingEngine configured: model={self._model_name}, device={self._device}, matryoshka_dim={self._matryoshka_dim}" )
 

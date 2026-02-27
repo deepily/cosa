@@ -797,7 +797,7 @@ class NotificationRepository( BaseRepository[Notification] ):
         Returns:
             List of session summaries: [{ session_id, sender_id, last_activity, count, is_active }]
         """
-        from cosa.cli.notification_models import parse_sender_id
+        from lupin_cli.notifications.notification_models import parse_sender_id
 
         # Get all sender activities for this user
         all_activities = self.get_sender_last_activities_visible( recipient_id )

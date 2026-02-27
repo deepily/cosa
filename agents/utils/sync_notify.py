@@ -53,9 +53,9 @@ def notify(
         bool: True if notification was sent successfully
     """
     if target_user is None:
-        target_user = os.environ.get(
-            "LUPIN_TEST_INTERACTIVE_MOCK_JOBS_EMAIL",
-            "ricardo.felipe.ruiz@gmail.com"
+        from lupin_cli.notifications.notification_models import resolve_target_user
+        target_user = resolve_target_user(
+            os.environ.get( "LUPIN_TEST_INTERACTIVE_MOCK_JOBS_EMAIL" )
         )
 
     url = f"http://{host}:{port}/api/notify"
