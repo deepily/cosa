@@ -220,8 +220,9 @@ class DeepResearchJob( AgenticJobBase ):
         # Derive semantic_topic from session_name
         semantic_topic = session_name.replace( " ", "-" )
 
-        # Set sender_id for notifications
-        cosa_interface.SENDER_ID = cosa_interface._get_sender_id() + f"#{self.id_hash}"
+        # Set sender_id, target_user, and session_name for notifications
+        cosa_interface.SENDER_ID    = cosa_interface._get_sender_id() + f"#{self.id_hash}"
+        cosa_interface.TARGET_USER  = self.user_email
         cosa_interface.SESSION_NAME = session_name
 
         if self.debug:
@@ -367,8 +368,9 @@ class DeepResearchJob( AgenticJobBase ):
         """
         import asyncio
 
-        # Set sender_id for notifications
-        cosa_interface.SENDER_ID = cosa_interface._get_sender_id() + f"#{self.id_hash}"
+        # Set sender_id and target_user for notifications
+        cosa_interface.SENDER_ID   = cosa_interface._get_sender_id() + f"#{self.id_hash}"
+        cosa_interface.TARGET_USER = self.user_email
 
         if self.debug:
             print( f"[DeepResearchJob] DRY RUN MODE for: {self.query[ :50 ]}..." )

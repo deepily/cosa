@@ -53,6 +53,9 @@ def _get_sender_id() -> str:
 # Cache sender_id at module load
 SENDER_ID = _get_sender_id()
 
+# Target user email for notification routing (set by job.py at runtime)
+TARGET_USER: Optional[ str ] = None
+
 
 # =============================================================================
 # Primary Interface Functions
@@ -77,7 +80,8 @@ async def notify_progress(
         job_id: Agentic job ID for routing to job cards
         queue_name: Optional queue where job is running
     """
-    _dispatcher.sender_id = SENDER_ID
+    _dispatcher.sender_id   = SENDER_ID
+    _dispatcher.target_user = TARGET_USER
     await _dispatcher.notify_progress(
         message, priority=priority, abstract=abstract,
         session_name=session_name, job_id=job_id, queue_name=queue_name
@@ -104,7 +108,8 @@ async def ask_confirmation(
     Returns:
         bool: True if user said yes, False otherwise
     """
-    _dispatcher.sender_id = SENDER_ID
+    _dispatcher.sender_id   = SENDER_ID
+    _dispatcher.target_user = TARGET_USER
     return await _dispatcher.ask_confirmation(
         question, default=default, timeout=timeout,
         abstract=abstract, job_id=job_id

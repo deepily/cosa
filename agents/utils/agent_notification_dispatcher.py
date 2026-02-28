@@ -89,6 +89,7 @@ class AgentNotificationDispatcher:
         self.sender_id    = build_sender_id( agent_type, suffix=default_suffix )
         self.session_name = None
         self.session_id   = None  # For role-aware agents (SWE Team)
+        self.target_user  = None  # Set by job.py callers at runtime
 
     def build_sender_id( self, suffix: str = None ) -> str:
         """
@@ -164,6 +165,7 @@ class AgentNotificationDispatcher:
                 notification_type = NotificationType.PROGRESS,
                 priority          = NotificationPriority( priority or self.default_priority ),
                 sender_id         = self._resolve_sender_id( role ),
+                target_user       = self.target_user,
                 abstract          = abstract,
                 session_name      = resolved_session_name,
                 job_id            = job_id,
@@ -208,6 +210,7 @@ class AgentNotificationDispatcher:
                 timeout_seconds   = timeout,
                 response_default  = default,
                 sender_id         = self._resolve_sender_id( role ),
+                target_user       = self.target_user,
                 abstract          = abstract,
                 job_id            = job_id,
             )
@@ -248,6 +251,7 @@ class AgentNotificationDispatcher:
                 priority          = NotificationPriority( self.default_priority ),
                 timeout_seconds   = timeout,
                 sender_id         = self._resolve_sender_id( role ),
+                target_user       = self.target_user,
             )
 
             response: NotificationResponse = await asyncio.to_thread( _notify_user_sync, request )
@@ -293,6 +297,7 @@ class AgentNotificationDispatcher:
                 timeout_seconds   = timeout,
                 response_options  = convert_questions_for_api( questions ),
                 sender_id         = self._resolve_sender_id( role ),
+                target_user       = self.target_user,
                 abstract          = abstract,
                 title             = title,
             )
@@ -328,6 +333,18 @@ def quick_smoke_test():
         assert d.supports_role is False
         assert d.default_priority == "medium"
         print( f"  sender_id: {d.sender_id}" )
+
+        # Test 1b: target_user defaults to None
+        print( "Testing target_user default..." )
+        assert d.target_user is None
+        print( "  target_user is None by default" )
+
+        # Test 1c: target_user is mutable
+        print( "Testing target_user mutability..." )
+        d.target_user = "test@example.com"
+        assert d.target_user == "test@example.com"
+        d.target_user = None
+        print( "  target_user can be set and cleared" )
 
         # Test 2: With suffix
         print( "Testing instantiation with suffix..." )

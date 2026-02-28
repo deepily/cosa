@@ -933,6 +933,115 @@ class TrustState( Base ):
         return f"<TrustState(user={self.user_email}, domain='{self.domain}', category='{self.category}', level={self.trust_level})>"
 
 
+class PredictionLog( Base ):
+    """
+    Prediction log — tracks prediction engine predictions alongside actual human responses.
+
+    Each row represents one prediction attempt for a notification. The predicted_value
+    is filled at prediction time; actual_value and accuracy fields are filled when
+    the human responds.
+
+    Requires:
+        - notification_id references a valid notifications row
+        - response_type is a valid response type string
+        - category is a non-empty string
+
+    Ensures:
+        - id is automatically generated UUID
+        - predicted_at defaults to current timestamp
+        - accuracy_match is null until outcome is recorded
+    """
+    __tablename__ = "prediction_log"
+
+    # Primary Key
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID( as_uuid=True ),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid()
+    )
+
+    # Link to notification
+    notification_id: Mapped[uuid.UUID] = mapped_column(
+        UUID( as_uuid=True ),
+        ForeignKey( "notifications.id", ondelete="CASCADE" ),
+        nullable=False,
+        index=True
+    )
+
+    # Classification context
+    response_type: Mapped[str] = mapped_column(
+        String( 50 ),
+        nullable=False,
+        index=True
+    )
+    category: Mapped[str] = mapped_column(
+        String( 100 ),
+        nullable=False,
+        index=True
+    )
+
+    # Prediction output
+    predicted_value: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True
+    )
+    prediction_confidence: Mapped[float] = mapped_column(
+        nullable=False,
+        default=0.0
+    )
+    prediction_strategy: Mapped[str] = mapped_column(
+        String( 50 ),
+        nullable=False
+    )
+    similar_case_count: Mapped[int] = mapped_column(
+        nullable=False,
+        default=0
+    )
+
+    # Actual outcome (filled on response)
+    actual_value: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True
+    )
+    accuracy_match: Mapped[Optional[bool]] = mapped_column(
+        nullable=True,
+        index=True
+    )
+    accuracy_detail: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True
+    )
+
+    # Timestamps
+    predicted_at: Mapped[datetime] = mapped_column(
+        DateTime( timezone=True ),
+        nullable=False,
+        default=func.now(),
+        server_default=func.now()
+    )
+    responded_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime( timezone=True ),
+        nullable=True
+    )
+
+    # Sender context
+    sender_id: Mapped[Optional[str]] = mapped_column(
+        String( 255 ),
+        nullable=True,
+        index=True
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index( 'idx_prediction_log_response_type_category', 'response_type', 'category' ),
+        Index( 'idx_prediction_log_predicted_at', 'predicted_at' ),
+    )
+
+    def __repr__( self ) -> str:
+        return f"<PredictionLog(id={self.id}, type='{self.response_type}', category='{self.category}', match={self.accuracy_match})>"
+
+
 def quick_smoke_test():
     """
     Quick smoke test for postgres_models module - validates PostgreSQL ORM model definitions.
@@ -951,17 +1060,19 @@ def quick_smoke_test():
         # Test 2: Model classes exist
         print( "Testing model class definitions..." )
         models = [User, RefreshToken, ApiKey, EmailVerificationToken,
-                  PasswordResetToken, FailedLoginAttempt, Notification, AuthAuditLog]
+                  PasswordResetToken, FailedLoginAttempt, Notification, AuthAuditLog,
+                  ProxyDecision, TrustState, PredictionLog]
         for model in models:
             assert hasattr( model, '__tablename__' ), f"{model.__name__} missing __tablename__"
-        print( f"✓ All 8 models defined: {', '.join( [m.__name__ for m in models] )}" )
+        print( f"✓ All {len( models )} models defined: {', '.join( [m.__name__ for m in models] )}" )
 
         # Test 3: Base metadata exists
         print( "Testing Base metadata..." )
         assert hasattr( Base, 'metadata' ), "Base missing metadata"
         table_names = list( Base.metadata.tables.keys() )
         expected_tables = ['users', 'refresh_tokens', 'api_keys', 'email_verification_tokens',
-                          'password_reset_tokens', 'failed_login_attempts', 'notifications', 'auth_audit_log']
+                          'password_reset_tokens', 'failed_login_attempts', 'notifications', 'auth_audit_log',
+                          'proxy_decisions', 'trust_states', 'prediction_log']
         assert set( table_names ) == set( expected_tables ), f"Table mismatch: {table_names}"
         print( f"✓ Base metadata contains {len( table_names )} tables" )
 

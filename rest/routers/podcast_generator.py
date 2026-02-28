@@ -115,17 +115,56 @@ def is_research_path( input_text: str, user_email: str ) -> bool:
 
     input_clean = input_text.strip()
 
-    # Check for path patterns
-    return (
+    # Check for deep-research path patterns
+    if (
         input_clean.startswith( expected_prefix ) or
         input_clean.startswith( expected_prefix.lstrip( "/" ) ) or
         ( user_email in input_clean and input_clean.endswith( ".md" ) )
-    )
+    ):
+        return True
+
+    # Check for general file paths: contains "/" AND ends with a document extension
+    if "/" in input_clean and input_clean.endswith( ( ".md", ".txt", ".html" ) ):
+        return True
+
+    return False
 
 
-async def match_research_docs( user_email: str, description: str, debug: bool = False ) -> List[ str ]:
+def validate_source_path( path: str ) -> bool:
     """
-    Match user description against research docs using LLM (kaitchup/phi_4_14b).
+    Validate that a source path stays within the project root (directory traversal prevention).
+
+    Requires:
+        - path is a non-empty string
+
+    Ensures:
+        - Returns True if the resolved path is within cu.get_project_root()
+        - Returns False if the path escapes the project root (e.g., ../../etc/passwd)
+
+    Args:
+        path: The file path to validate (absolute or project-relative)
+
+    Returns:
+        bool: True if path is safe, False otherwise
+    """
+    project_root = os.path.realpath( cu.get_project_root() )
+
+    # Normalize: if relative, prepend project root
+    if path.startswith( "/" ):
+        full_path = cu.get_project_root() + path
+    else:
+        full_path = cu.get_project_root() + "/" + path
+
+    resolved = os.path.realpath( full_path )
+    return resolved.startswith( project_root + "/" ) or resolved == project_root
+
+
+async def match_research_docs( user_email: str, description: str, debug: bool = False ) -> List[ dict ]:
+    """
+    Match user description against docs using LLM (kaitchup/phi_4_14b).
+
+    Searches the user's deep research directory AND additional directories
+    from the 'podcast generator source search paths' config key.
 
     Uses the CoSA XML I/O pattern with PromptTemplateProcessor.
     Response is parsed via FuzzyFileMatchResponse.from_xml() - proper Pydantic XML I/O.
@@ -135,8 +174,8 @@ async def match_research_docs( user_email: str, description: str, debug: bool = 
         - description is a non-empty string
 
     Ensures:
-        - Returns list of 0-5 matching filenames, ordered by relevance
-        - Returns empty list if no research documents found
+        - Returns list of 0-5 matching dicts with 'filename' and 'relative_path' keys
+        - Returns empty list if no documents found
 
     Args:
         user_email: The user's email (determines research directory)
@@ -144,48 +183,68 @@ async def match_research_docs( user_email: str, description: str, debug: bool = 
         debug: Enable debug output
 
     Returns:
-        List[ str ]: Matching document filenames
+        List[ dict ]: Matching documents with 'filename' and 'relative_path' keys
     """
     from cosa.agents.llm_client_factory import LlmClientFactory
     from cosa.config.configuration_manager import ConfigurationManager
     from cosa.agents.io_models.utils.prompt_template_processor import PromptTemplateProcessor
     from cosa.agents.io_models.xml_models import FuzzyFileMatchResponse
 
-    # Get research directory
-    research_dir = f"{cu.get_project_root()}/io/deep-research/{user_email}"
+    config_mgr    = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+    project_root  = cu.get_project_root()
 
-    if not os.path.exists( research_dir ):
-        if debug: print( f"[match_research_docs] Research directory not found: {research_dir}" )
-        return []
+    # Build docs_map: { relative_path → abs_path } from all search dirs
+    docs_map = {}
 
-    # List markdown files
-    docs = [ f for f in os.listdir( research_dir ) if f.endswith( '.md' ) ]
+    # Source 1: Deep research directory
+    research_dir = f"{project_root}/io/deep-research/{user_email}"
+    if os.path.exists( research_dir ):
+        for f in os.listdir( research_dir ):
+            if f.endswith( ".md" ):
+                rel_path = f"io/deep-research/{user_email}/{f}"
+                docs_map[ rel_path ] = f"{research_dir}/{f}"
 
-    if not docs:
-        if debug: print( f"[match_research_docs] No markdown files found in {research_dir}" )
+    # Source 2: Additional search paths from config
+    search_paths_raw = config_mgr.get( "podcast generator source search paths", default="/src" )
+    search_dirs = [ d.strip() for d in search_paths_raw.split( "," ) if d.strip() ]
+
+    for search_dir in search_dirs:
+        abs_search_dir = project_root + search_dir
+        if not os.path.exists( abs_search_dir ):
+            if debug: print( f"[match_research_docs] Search dir not found: {abs_search_dir}" )
+            continue
+        for root, _dirs, files in os.walk( abs_search_dir ):
+            for f in files:
+                if f.endswith( ".md" ):
+                    abs_path = os.path.join( root, f )
+                    rel_path = os.path.relpath( abs_path, project_root )
+                    if rel_path not in docs_map:
+                        docs_map[ rel_path ] = abs_path
+
+    if not docs_map:
+        if debug: print( f"[match_research_docs] No markdown files found in any search directory" )
         return []
 
     if debug:
-        print( f"[match_research_docs] Found {len( docs )} research documents" )
+        print( f"[match_research_docs] Found {len( docs_map )} documents across all search dirs" )
         print( f"[match_research_docs] Description: {description}" )
 
-    # Load config and prompt template
-    config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+    # Load prompt template
     template_path = config_mgr.get( "prompt template for fuzzy file matching" )
-    template = cu.get_file_as_string( cu.get_project_root() + template_path )
+    template = cu.get_file_as_string( project_root + template_path )
 
     # Process template to inject XML example
     processor = PromptTemplateProcessor( debug=debug )
     template = processor.process_template( template, 'fuzzy file matching' )
 
-    # Format with description and file list
-    file_list = "\n".join( f"- {doc}" for doc in docs )
+    # Format with description and file list (send relative paths for better LLM context)
+    file_list = "\n".join( f"- {rel}" for rel in sorted( docs_map.keys() ) )
     prompt = template.format( description=description, file_list=file_list )
 
     # Call LLM
-    llm_factory = LlmClientFactory()
+    llm_factory  = LlmClientFactory()
     llm_spec_key = config_mgr.get( "llm spec key for fuzzy file matching" )
-    llm_client = llm_factory.get_client( llm_spec_key, debug=debug, verbose=False )
+    llm_client   = llm_factory.get_client( llm_spec_key, debug=debug, verbose=False )
 
     try:
         response = llm_client.run( prompt )
@@ -196,8 +255,18 @@ async def match_research_docs( user_email: str, description: str, debug: bool = 
         parsed_response = FuzzyFileMatchResponse.from_xml( response )
         matches = parsed_response.get_matches_list()
 
-        # Validate matches exist in docs
-        valid_matches = [ m for m in matches if m in docs ]
+        # Validate matches exist in docs_map (match against relative paths AND bare filenames)
+        valid_matches = []
+        for m in matches:
+            if m in docs_map:
+                # Direct relative path match
+                valid_matches.append( { "filename": os.path.basename( m ), "relative_path": m } )
+            else:
+                # Try matching as bare filename against all relative paths
+                for rel_path in docs_map:
+                    if os.path.basename( rel_path ) == m:
+                        valid_matches.append( { "filename": m, "relative_path": rel_path } )
+                        break
 
         if debug: print( f"[match_research_docs] Matches: {valid_matches}" )
 
@@ -211,9 +280,9 @@ async def match_research_docs( user_email: str, description: str, debug: bool = 
 async def get_user_document_selection(
     user_email: str,
     session_id: str,
-    matches: List[ str ],
+    matches: List[ dict ],
     debug: bool = False
-) -> Optional[ str ]:
+) -> Optional[ dict ]:
     """
     Present document options to user and wait for selection (BLOCKING).
 
@@ -222,27 +291,30 @@ async def get_user_document_selection(
     Requires:
         - user_email is a valid email
         - session_id is a valid WebSocket session
-        - matches is a non-empty list of filenames
+        - matches is a non-empty list of dicts with 'filename' and 'relative_path' keys
 
     Ensures:
-        - Returns selected filename string
+        - Returns selected dict with 'filename' and 'relative_path' keys
         - Returns None if user cancels or times out
 
     Args:
         user_email: The user's email for notification routing
         session_id: WebSocket session ID
-        matches: List of matching document filenames
+        matches: List of matching document dicts
         debug: Enable debug output
 
     Returns:
-        str: Selected filename, or None if cancelled
+        dict: Selected document dict, or None if cancelled
     """
     from cosa.agents.deep_research import voice_io
 
-    options = [
-        { "label": m[ :35 ] + "..." if len( m ) > 35 else m, "description": m }
-        for m in matches
-    ]
+    options = []
+    for m in matches:
+        rel  = m[ "relative_path" ]
+        label = rel[ -45: ] if len( rel ) > 45 else rel
+        if len( rel ) > 45:
+            label = "..." + label
+        options.append( { "label": label, "description": rel } )
     options.append( { "label": "Cancel", "description": "Don't create podcast" } )
 
     if debug:
@@ -250,8 +322,8 @@ async def get_user_document_selection(
 
     # Use present_choices() which BLOCKS until user responds
     questions = [ {
-        "question"    : "Which research document should I use for the podcast?",
-        "header"      : "Research",
+        "question"    : "Which document should I use for the podcast?",
+        "header"      : "Document",
         "multiSelect" : False,
         "options"     : options
     } ]
@@ -259,10 +331,10 @@ async def get_user_document_selection(
     result = await voice_io.present_choices(
         questions = questions,
         timeout   = 120,
-        title     = "Select Research Document"
+        title     = "Select Source Document"
     )
 
-    selection = result.get( "answers", {} ).get( "Research" )
+    selection = result.get( "answers", {} ).get( "Document" )
 
     if debug:
         print( f"[get_user_document_selection] User selected: {selection}" )
@@ -271,10 +343,13 @@ async def get_user_document_selection(
     if selection == "Cancel" or not selection:
         return None
 
-    # Find full filename from truncated label
+    # Find matching doc from truncated label or full relative_path
     for m in matches:
-        label = m[ :35 ] + "..." if len( m ) > 35 else m
-        if label == selection or m == selection:
+        rel   = m[ "relative_path" ]
+        label = rel[ -45: ] if len( rel ) > 45 else rel
+        if len( rel ) > 45:
+            label = "..." + label
+        if label == selection or rel == selection:
             return m
 
     return None
@@ -331,6 +406,13 @@ async def submit_podcast_job(
         # Flow A: Direct path mode
         if debug:
             print( f"[submit_podcast_job] Direct path mode: {research_source}" )
+
+        # Security: validate path stays within project root
+        if not validate_source_path( research_source ):
+            raise HTTPException(
+                status_code=403,
+                detail="Source path escapes project root. Access denied."
+            )
 
         # Normalize path
         if research_source.startswith( "/" ):
@@ -402,31 +484,34 @@ async def submit_podcast_job(
             )
 
         # Step 2: Present options to user and wait for selection (BLOCKING)
-        selected_filename = await get_user_document_selection(
+        selected_doc = await get_user_document_selection(
             user_email = user_email,
             session_id = session_id,
             matches    = matches,
             debug      = debug
         )
 
-        if not selected_filename:
+        if not selected_doc:
             # User cancelled
             return PodcastMatchingResponse(
                 status  = "cancelled",
                 message = "Podcast generation cancelled by user."
             )
 
-        # Step 3: Build full path and create job (same as Flow A)
-        from cosa.config.configuration_manager import ConfigurationManager
-        config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-        research_root = config_mgr.get( "deep research output path" )
+        # Step 3: Build full path from relative_path and create job
+        full_path = cu.get_project_root() + "/" + selected_doc[ "relative_path" ]
 
-        full_path = f"{cu.get_project_root()}{research_root}/{user_email}/{selected_filename}"
+        # Security: validate path stays within project root
+        if not validate_source_path( selected_doc[ "relative_path" ] ):
+            raise HTTPException(
+                status_code=403,
+                detail="Selected path escapes project root. Access denied."
+            )
 
         if not os.path.exists( full_path ):
             raise HTTPException(
                 status_code=404,
-                detail=f"Selected research file not found: {selected_filename}"
+                detail=f"Selected file not found: {selected_doc[ 'relative_path' ]}"
             )
 
         # Create job using shared factory
@@ -481,7 +566,7 @@ def quick_smoke_test():
     try:
         # Test 1: Import
         print( "Testing module import..." )
-        from cosa.rest.routers.podcast_generator import router, is_research_path
+        from cosa.rest.routers.podcast_generator import router, is_research_path, validate_source_path
         print( "✓ Module imported successfully" )
 
         # Test 2: Router configuration
@@ -490,24 +575,45 @@ def quick_smoke_test():
         assert "podcast-generator" in router.tags
         print( f"✓ Router prefix: {router.prefix}" )
 
-        # Test 3: is_research_path function - path detection
-        print( "Testing is_research_path() with paths..." )
+        # Test 3: is_research_path function - deep-research path detection
+        print( "Testing is_research_path() with deep-research paths..." )
         test_email = "test@example.com"
 
         # Should detect as path
         assert is_research_path( "/io/deep-research/test@example.com/report.md", test_email ) == True
         assert is_research_path( "io/deep-research/test@example.com/report.md", test_email ) == True
-        print( "✓ Path patterns detected correctly" )
+        print( "✓ Deep-research path patterns detected correctly" )
 
-        # Test 4: is_research_path function - description detection
+        # Test 4: is_research_path function - general path detection
+        print( "Testing is_research_path() with general file paths..." )
+
+        assert is_research_path( "src/rnd/2026.02.23-topic/overview.md", test_email ) == True
+        assert is_research_path( "/src/rnd/report.md", test_email ) == True
+        assert is_research_path( "src/docs/guide.txt", test_email ) == True
+        assert is_research_path( "src/docs/page.html", test_email ) == True
+        print( "✓ General file path patterns detected correctly" )
+
+        # Test 5: is_research_path function - description detection
         print( "Testing is_research_path() with descriptions..." )
 
         # Should detect as description
         assert is_research_path( "my latest Claude Code research", test_email ) == False
         assert is_research_path( "research about AI safety", test_email ) == False
+        assert is_research_path( "the trust proxy overview", test_email ) == False
         print( "✓ Description patterns detected correctly" )
 
-        # Test 5: Request/Response models
+        # Test 6: validate_source_path function
+        print( "Testing validate_source_path()..." )
+
+        assert validate_source_path( "/src/rnd/report.md" ) == True
+        assert validate_source_path( "src/rnd/report.md" ) == True
+        assert validate_source_path( "/io/deep-research/user@test.com/doc.md" ) == True
+        # Traversal attack should fail
+        assert validate_source_path( "../../etc/passwd" ) == False
+        assert validate_source_path( "/src/../../etc/passwd" ) == False
+        print( "✓ Path validation works correctly" )
+
+        # Test 7: Request/Response models
         print( "Testing request/response models..." )
         req = PodcastSubmitRequest(
             research_source  = "test description",

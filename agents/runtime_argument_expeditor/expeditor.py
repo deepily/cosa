@@ -828,10 +828,10 @@ class RuntimeArgumentExpeditor:
 
     def _handle_fuzzy_file_match( self, user_email ):
         """
-        Use fuzzy file matching to find a research document by user description.
+        Use fuzzy file matching to find a document by user description.
 
-        Reuses the FuzzyFileMatchResponse + fuzzy-file-matching.txt prompt.
-        Lists files from the user's deep research output directory.
+        Searches the user's deep research directory AND additional directories
+        from the 'podcast generator source search paths' config key.
 
         Requires:
             - user_email is a valid email
@@ -844,56 +844,75 @@ class RuntimeArgumentExpeditor:
             user_email: User's email (determines research directory)
 
         Returns:
-            str or None: Full path to selected research document
+            str or None: Full path to selected document
         """
         from cosa.agents.io_models.xml_models import FuzzyFileMatchResponse
+        from cosa.config.configuration_manager import ConfigurationManager
 
-        research_dir = cu.get_project_root() + f"/io/deep-research/{user_email}"
+        config_mgr   = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+        project_root = cu.get_project_root()
 
-        if not os.path.exists( research_dir ):
-            if self.debug: print( f"[Expeditor] No research directory: {research_dir}" )
-            # Ask for a description instead of a file
+        # Build docs_map: { relative_path → abs_path } from all search dirs
+        docs_map = {}
+
+        # Source 1: Deep research directory
+        research_dir = project_root + f"/io/deep-research/{user_email}"
+        if os.path.exists( research_dir ):
+            for f in os.listdir( research_dir ):
+                if f.endswith( ".md" ):
+                    rel_path = f"io/deep-research/{user_email}/{f}"
+                    docs_map[ rel_path ] = f"{research_dir}/{f}"
+
+        # Source 2: Additional search paths from config
+        search_paths_raw = config_mgr.get( "podcast generator source search paths", default="/src" )
+        search_dirs = [ d.strip() for d in search_paths_raw.split( "," ) if d.strip() ]
+
+        for search_dir in search_dirs:
+            abs_search_dir = project_root + search_dir
+            if not os.path.exists( abs_search_dir ):
+                if self.debug: print( f"[Expeditor] Search dir not found: {abs_search_dir}" )
+                continue
+            for root, _dirs, files in os.walk( abs_search_dir ):
+                for f in files:
+                    if f.endswith( ".md" ):
+                        abs_path = os.path.join( root, f )
+                        rel_path = os.path.relpath( abs_path, project_root )
+                        if rel_path not in docs_map:
+                            docs_map[ rel_path ] = abs_path
+
+        if not docs_map:
+            if self.debug: print( f"[Expeditor] No markdown files found in any search directory" )
             return self._ask_for_arg(
                 "research",
-                "I don't see any research documents. Please provide the path to a research document.",
-                user_email
-            )
-
-        docs = [ f for f in os.listdir( research_dir ) if f.endswith( ".md" ) ]
-
-        if not docs:
-            if self.debug: print( f"[Expeditor] No markdown files in {research_dir}" )
-            return self._ask_for_arg(
-                "research",
-                "No research documents found. Please provide the path to a research document.",
+                "No documents found. Please provide the path to a document.",
                 user_email
             )
 
         # Ask user to describe which document
         description = self._ask_for_arg(
             "research",
-            "Which research document should I use for the podcast? Describe it or say the filename.",
+            "Which document should I use for the podcast? Describe it or say the filename.",
             user_email
         )
         if not description:
             return None
 
-        # Check if they gave an exact filename
-        if description in docs:
-            return f"{research_dir}/{description}"
+        # Check if they gave an exact relative path or bare filename
+        if description in docs_map:
+            return docs_map[ description ]
+        for rel_path, abs_path in docs_map.items():
+            if os.path.basename( rel_path ) == description:
+                return abs_path
 
         # Try fuzzy matching via LLM
         try:
-            from cosa.config.configuration_manager import ConfigurationManager
-
-            config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
             template_path = config_mgr.get( "prompt template for fuzzy file matching" )
-            template = cu.get_file_as_string( cu.get_project_root() + template_path )
+            template = cu.get_file_as_string( project_root + template_path )
 
             processor = PromptTemplateProcessor( debug=self.debug )
             template = processor.process_template( template, "fuzzy file matching" )
 
-            file_list = "\n".join( f"- {doc}" for doc in docs )
+            file_list = "\n".join( f"- {rel}" for rel in sorted( docs_map.keys() ) )
             prompt = template.format( description=description, file_list=file_list )
 
             llm_client = self.llm_factory.get_client(
@@ -902,19 +921,30 @@ class RuntimeArgumentExpeditor:
             )
             response = llm_client.run( prompt )
 
-            parsed = FuzzyFileMatchResponse.from_xml( response )
-            matches = [ m for m in parsed.get_matches_list() if m in docs ]
+            parsed  = FuzzyFileMatchResponse.from_xml( response )
+            raw_matches = parsed.get_matches_list()
+
+            # Validate against docs_map (match relative paths or bare filenames)
+            matches = []
+            for m in raw_matches:
+                if m in docs_map:
+                    matches.append( m )
+                else:
+                    for rel_path in docs_map:
+                        if os.path.basename( rel_path ) == m:
+                            matches.append( rel_path )
+                            break
 
             if not matches:
                 if self.debug: print( "[Expeditor] No fuzzy matches found" )
                 return self._ask_for_arg(
                     "research",
-                    "I couldn't find a matching document. Please say the exact filename.",
+                    "I couldn't find a matching document. Please say the exact filename or path.",
                     user_email
                 )
 
             if len( matches ) == 1:
-                return f"{research_dir}/{matches[ 0 ]}"
+                return docs_map[ matches[ 0 ] ]
 
             # Multiple matches - ask user to pick
             options_str = ", ".join( f"{i + 1}. {m}" for i, m in enumerate( matches ) )
@@ -930,17 +960,17 @@ class RuntimeArgumentExpeditor:
             try:
                 idx = int( pick.strip() ) - 1
                 if 0 <= idx < len( matches ):
-                    return f"{research_dir}/{matches[ idx ]}"
+                    return docs_map[ matches[ idx ] ]
             except ValueError:
                 pass
 
             # Try to match by name
             for m in matches:
                 if pick.lower().strip() in m.lower():
-                    return f"{research_dir}/{m}"
+                    return docs_map[ m ]
 
             # Fallback: use first match
-            return f"{research_dir}/{matches[ 0 ]}"
+            return docs_map[ matches[ 0 ] ]
 
         except Exception as e:
             print( f"[Expeditor] Fuzzy match error: {e}" )

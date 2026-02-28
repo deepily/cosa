@@ -1,5 +1,48 @@
 # COSA Development History
 
+> **✅ SESSIONS 277-286 COMMIT**: Universal Prediction Engine (Slices 0-1.5), target_user notification dispatch, multi-dir podcast source search (2026.02.28)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Committed accumulated work from Lupin sessions 277-286** (19 files: 7 new + 12 modified, +2115 lines):
+>
+> **Universal Prediction Engine — Slices 0, 1, 1.5 (Sessions 281, 284)**:
+> - Created `agents/prediction_engine/` package (6 files, ~1390 lines): PredictionEngine singleton, PredictionResult dataclass, NotificationCategoryClassifier (6 categories), accuracy comparators (yes_no, multiple_choice, open_ended), config module
+> - Slice 0: Foundation — CBR-based prediction with LanceDB similarity retrieval
+> - Slice 1: Binary yes/no prediction via majority vote with confidence scoring
+> - Slice 1.5: Qualifier comment extraction from highest-similarity winning-side cases
+> - Created `PredictionLog` ORM model in postgres_models.py (UUID PK, JSONB predicted/actual values, accuracy tracking)
+> - Created `prediction_log_repository.py` with accuracy summary aggregation
+> - Integrated prediction hooks in notifications.py: Hook 1 generates prediction before WebSocket push, Hook 2 records outcome on response
+> - Added `prediction_hint` field to NotificationItem for UI rendering
+>
+> **target_user Notification Dispatch (Session 286)**:
+> - Added `target_user` attribute to AgentNotificationDispatcher + pass-through in 4 notification methods
+> - Added `TARGET_USER` module variable to 4 cosa_interface.py files (claude_code, deep_research, podcast_generator, swe_team)
+> - Wired `cosa_interface.TARGET_USER = self.user_email` in 2 job.py files (deep_research, podcast_generator)
+> - Added smoke tests for target_user default and mutability
+>
+> **Multi-Directory Podcast Source Search (Session 280)**:
+> - Expanded `_handle_fuzzy_file_match()` in expeditor.py to search multiple directories from config key `podcast generator source search paths`
+> - Expanded podcast_generator.py: `is_research_path()` accepts general file paths (.md/.txt/.html), `validate_source_path()` prevents directory traversal, `match_research_docs()` returns `List[dict]` with relative_path keys, `get_user_document_selection()` displays relative paths
+> - Updated smoke tests for new path detection and validation functions
+>
+> **Files Created (7)**:
+> - `agents/prediction_engine/__init__.py`, `config.py`, `prediction_result.py`
+> - `agents/prediction_engine/notification_category_classifier.py`, `accuracy_comparators.py`, `prediction_engine.py`
+> - `rest/db/repositories/prediction_log_repository.py`
+>
+> **Files Modified (12)**:
+> - `agents/claude_code/cosa_interface.py`, `agents/deep_research/cosa_interface.py`
+> - `agents/deep_research/job.py`, `agents/podcast_generator/cosa_interface.py`
+> - `agents/podcast_generator/job.py`, `agents/runtime_argument_expeditor/expeditor.py`
+> - `agents/swe_team/cosa_interface.py`, `agents/utils/agent_notification_dispatcher.py`
+> - `rest/notification_fifo_queue.py`, `rest/postgres_models.py`
+> - `rest/routers/notifications.py`, `rest/routers/podcast_generator.py`
+
+---
+
 > **✅ SESSIONS 268-276 COMMIT**: CLI→lupin_cli migration, data_origin provenance, interactive dry-run, SWE classifier dry-run, bug fixes (2026.02.26)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >

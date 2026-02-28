@@ -80,6 +80,9 @@ class NotificationItem:
         # Progress group ID for in-place DOM updates (notifications sharing this ID update a single element)
         self.progress_group_id  = progress_group_id
 
+        # Prediction engine hint (populated by PredictionEngine.predict() before WebSocket push)
+        self.prediction_hint    = None
+
     def _get_local_timestamp( self ) -> str:
         """Get timezone-aware timestamp using configured timezone from ConfigurationManager"""
         try:
@@ -159,7 +162,9 @@ class NotificationItem:
             # Queue where job is running (for provisional job card registration)
             "queue_name"         : self.queue_name,
             # Progress group ID for in-place DOM updates
-            "progress_group_id"  : self.progress_group_id
+            "progress_group_id"  : self.progress_group_id,
+            # Prediction engine hint (null during cold start)
+            "prediction_hint"    : self.prediction_hint
         }
 
 

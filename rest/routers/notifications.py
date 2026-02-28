@@ -564,6 +564,32 @@ async def notify_user(
         print(f"[DEBUG] Creating notification with response_default: '{response_default}'")
         print(f"[DEBUG] Response type: {response_type}, Timeout: {timeout_seconds}s")
 
+        # ---- Prediction Engine Hook 1: Generate prediction before WebSocket push ----
+        prediction_hint = None
+        try:
+            from cosa.agents.prediction_engine import get_prediction_engine
+            prediction_engine = get_prediction_engine()
+            if prediction_engine.enabled:
+                prediction_result = prediction_engine.predict( {
+                    "message"       : message.strip(),
+                    "response_type" : response_type,
+                    "sender_id"     : resolved_sender_id,
+                } )
+                # Store prediction result for later outcome recording
+                pending_responses[notification_id]["prediction_result"] = prediction_result
+                # Store original message in metadata for LanceDB storage
+                if prediction_result.metadata is not None:
+                    prediction_result.metadata[ "original_message" ] = message.strip()
+                # Only show hint if confidence exceeds threshold
+                if prediction_result.confidence >= prediction_engine.confidence_threshold:
+                    prediction_hint = prediction_result.to_hint_dict()
+                print( f"[PREDICTION] Generated prediction for {notification_id}: "
+                       f"type={response_type}, category={prediction_result.category}, "
+                       f"conf={prediction_result.confidence:.3f}, hint={'yes' if prediction_hint else 'no'}" )
+        except Exception as pred_error:
+            print( f"[PREDICTION] ⚠️ Prediction hook error (non-fatal): {pred_error}" )
+        # ---- End Prediction Engine Hook 1 ----
+
         # Push notification to WebSocket for UI rendering (Phase 2.2 with full fields)
         notification_item = notification_queue.push_notification(
             message            = message.strip(),
@@ -585,6 +611,10 @@ async def notify_user(
             queue_name         = queue_name,  # Queue for provisional job card registration
             progress_group_id  = progress_group_id  # In-place DOM update grouping
         )
+
+        # Attach prediction hint to notification item (for WebSocket broadcast)
+        if prediction_hint:
+            notification_item.prediction_hint = prediction_hint
 
         # DEBUG: Log the notification_item after creation
         print(f"[DEBUG] Notification item created: {notification_item}")
@@ -803,6 +833,27 @@ async def submit_notification_response(
                 )
 
         print(f"[NOTIFY] ✓ Updated database with response for {notification_id}")
+
+        # ---- Prediction Engine Hook 2: Record outcome on response ----
+        try:
+            if notification_id in pending_responses and "prediction_result" in pending_responses[notification_id]:
+                from cosa.agents.prediction_engine import get_prediction_engine
+                prediction_engine = get_prediction_engine()
+                prediction_result = pending_responses[notification_id]["prediction_result"]
+
+                # Determine response type from the prediction result
+                resp_type = prediction_result.response_type
+
+                prediction_engine.record_outcome(
+                    notification_id   = notification_id,
+                    prediction_result = prediction_result,
+                    actual_value      = response_value,
+                    response_type     = resp_type
+                )
+                print( f"[PREDICTION] ✓ Recorded outcome for {notification_id}" )
+        except Exception as pred_error:
+            print( f"[PREDICTION] ⚠️ Outcome recording error (non-fatal): {pred_error}" )
+        # ---- End Prediction Engine Hook 2 ----
 
         # Task 2: Signal waiting SSE stream (if it exists)
         if notification_id in pending_responses:

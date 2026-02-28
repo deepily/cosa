@@ -202,8 +202,9 @@ class PodcastGeneratorJob( AgenticJobBase ):
         if not os.path.exists( full_path ):
             raise FileNotFoundError( f"Research document not found: {self.research_path}" )
 
-        # Set sender_id for notifications
-        cosa_interface.SENDER_ID = cosa_interface._get_sender_id() + f"#{self.id_hash}"
+        # Set sender_id and target_user for notifications
+        cosa_interface.SENDER_ID   = cosa_interface._get_sender_id() + f"#{self.id_hash}"
+        cosa_interface.TARGET_USER = self.user_email
 
         if self.debug:
             print( f"[PodcastGeneratorJob] Research document: {full_path}" )
@@ -288,8 +289,9 @@ class PodcastGeneratorJob( AgenticJobBase ):
         import asyncio
         import os
 
-        # Set sender_id for notifications
-        cosa_interface.SENDER_ID = cosa_interface._get_sender_id() + f"#{self.id_hash}"
+        # Set sender_id and target_user for notifications
+        cosa_interface.SENDER_ID   = cosa_interface._get_sender_id() + f"#{self.id_hash}"
+        cosa_interface.TARGET_USER = self.user_email
 
         filename = os.path.basename( self.research_path )
 

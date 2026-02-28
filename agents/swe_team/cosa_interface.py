@@ -86,6 +86,9 @@ SESSION_NAME: Optional[ str ] = None
 # Session ID for sender_id suffix (set by orchestrator)
 SESSION_ID: Optional[ str ] = None
 
+# Target user email for notification routing (set by job.py at runtime)
+TARGET_USER: Optional[ str ] = None
+
 
 # =============================================================================
 # Primary Interface Functions
@@ -116,6 +119,7 @@ async def notify_progress(
     """
     _dispatcher.session_id   = SESSION_ID
     _dispatcher.session_name = SESSION_NAME
+    _dispatcher.target_user  = TARGET_USER
     await _dispatcher.notify_progress(
         message, priority=priority, abstract=abstract,
         session_name=session_name, job_id=job_id,
@@ -144,7 +148,8 @@ async def ask_confirmation(
     Returns:
         bool: True if approved, False otherwise
     """
-    _dispatcher.session_id = SESSION_ID
+    _dispatcher.session_id   = SESSION_ID
+    _dispatcher.target_user  = TARGET_USER
     return await _dispatcher.ask_confirmation(
         question, default=default, timeout=timeout,
         abstract=abstract, role=role
@@ -171,7 +176,8 @@ async def request_decision(
     Returns:
         dict: {"answers": {...}} with selections
     """
-    _dispatcher.session_id = SESSION_ID
+    _dispatcher.session_id   = SESSION_ID
+    _dispatcher.target_user  = TARGET_USER
     return await _dispatcher.present_choices(
         options, timeout=timeout, abstract=abstract, role=role
     )
@@ -193,7 +199,8 @@ async def get_feedback(
     Returns:
         str or None: User's transcribed response
     """
-    _dispatcher.session_id = SESSION_ID
+    _dispatcher.session_id   = SESSION_ID
+    _dispatcher.target_user  = TARGET_USER
     return await _dispatcher.get_feedback( prompt, timeout=timeout, role=role )
 
 
