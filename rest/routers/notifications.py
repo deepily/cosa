@@ -290,7 +290,7 @@ async def notify_user(
     # authenticated_user_id contains the validated user ID
 
     # Validate notification type
-    valid_types = ["task", "progress", "alert", "custom"]
+    valid_types = ["task", "progress", "alert", "custom", "user_initiated_message"]
     if type not in valid_types:
         raise HTTPException(
             status_code=400,

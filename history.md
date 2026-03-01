@@ -1,5 +1,18 @@
 # COSA Development History
 
+> **✅ SESSION 290 COMMIT**: Phase 1 Voice I/O — `user_initiated_message` type whitelist (2026.02.28)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Phase 1 Voice I/O: Notification System Extensions (Session 290)**:
+> - Added `user_initiated_message` to `valid_types` whitelist in `POST /api/notify` endpoint — enables voice hook integration to inject user-initiated messages through the existing notification pipeline
+>
+> **Files Modified (1)**:
+> - `rest/routers/notifications.py` (1 line changed)
+
+---
+
 > **✅ SESSIONS 277-286 COMMIT**: Universal Prediction Engine (Slices 0-1.5), target_user notification dispatch, multi-dir podcast source search (2026.02.28)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >
