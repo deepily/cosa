@@ -571,9 +571,10 @@ async def notify_user(
             prediction_engine = get_prediction_engine()
             if prediction_engine.enabled:
                 prediction_result = prediction_engine.predict( {
-                    "message"       : message.strip(),
-                    "response_type" : response_type,
-                    "sender_id"     : resolved_sender_id,
+                    "message"          : message.strip(),
+                    "response_type"    : response_type,
+                    "sender_id"        : resolved_sender_id,
+                    "response_options" : parsed_response_options,
                 } )
                 # Store prediction result for later outcome recording
                 pending_responses[notification_id]["prediction_result"] = prediction_result

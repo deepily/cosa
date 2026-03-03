@@ -16,7 +16,9 @@ from cosa.rest.admin_service import (
     get_user_details,
     update_user_roles,
     toggle_user_status,
-    admin_reset_password
+    admin_reset_password,
+    admin_create_user,
+    admin_delete_user
 )
 from cosa.config.configuration_manager import ConfigurationManager
 import cosa.utils.util as du
@@ -103,6 +105,45 @@ class MessageResponse( BaseModel ):
     """Generic message response."""
     message: str
     user: Optional[Dict] = None
+
+
+class CreateUserRequest( BaseModel ):
+    """Request model for admin user creation."""
+    email    : str       = Field( ..., description="Email address for new user" )
+    password : str       = Field( ..., description="Initial password" )
+    roles    : List[str] = Field( default=["user"], description="Roles to assign (admin, user)" )
+
+
+class CreateUserResponse( BaseModel ):
+    """Response model for user creation."""
+    message : str
+    user    : Dict
+    user_id : str
+
+
+class DeleteUserRequest( BaseModel ):
+    """Request model for admin user deletion."""
+    reason : Optional[str] = Field( None, description="Reason for audit trail" )
+
+
+class BatchDeleteUsersRequest( BaseModel ):
+    """Request model for batch user deletion."""
+    user_ids : List[str] = Field( ..., description="List of user IDs to delete (max 50)", min_length=1, max_length=50 )
+    reason   : Optional[str] = Field( None, description="Reason for audit trail" )
+
+
+class BatchDeleteResult( BaseModel ):
+    """Result for a single user in batch delete."""
+    user_id : str
+    success : bool
+    message : str
+
+
+class BatchDeleteUsersResponse( BaseModel ):
+    """Response model for batch user deletion."""
+    results       : List[BatchDeleteResult]
+    total_deleted : int
+    total_failed  : int
 
 
 # ============================================================================
@@ -496,6 +537,209 @@ async def reset_user_password(
             "id"    : user_data["id"],
             "email" : user_data["email"]
         }
+    )
+
+
+# ============================================================================
+# Create / Delete User Endpoints
+# ============================================================================
+
+@router.post(
+    "/users",
+    response_model  = CreateUserResponse,
+    status_code     = status.HTTP_201_CREATED,
+    summary         = "Create new user",
+    description     = "Create a new user account with specified roles. Auto-verifies email. Requires admin role."
+)
+async def create_user_endpoint(
+    request_body: CreateUserRequest,
+    request: Request,
+    admin_user: Dict = Depends( require_admin )
+) -> CreateUserResponse:
+    """
+    Create a new user account as admin.
+
+    Requires:
+        - Admin role authorization
+        - Valid email, password, and roles
+
+    Ensures:
+        - User created with specified roles
+        - Email auto-verified (admin vouches)
+        - Audit event logged
+        - Returns 201 Created with user data
+
+    Request Body:
+        - email: Valid email address
+        - password: Password meeting strength requirements
+        - roles: List of roles (default ["user"])
+
+    Returns:
+        CreateUserResponse: Message, user data, and user ID
+    """
+    admin_ip = request.client.host if request.client else "unknown"
+
+    success, message, user_data = admin_create_user(
+        admin_user_id = admin_user["user_id"],
+        email         = request_body.email,
+        password      = request_body.password,
+        roles         = request_body.roles,
+        admin_email   = admin_user.get( "email", "unknown" ),
+        admin_ip      = admin_ip
+    )
+
+    if not success:
+        # Determine appropriate status code
+        if "invalid" in message.lower() or "already" in message.lower() or "duplicate" in message.lower():
+            status_code = status.HTTP_400_BAD_REQUEST
+        elif "password" in message.lower():
+            status_code = status.HTTP_400_BAD_REQUEST
+        else:
+            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+
+        raise HTTPException(
+            status_code = status_code,
+            detail      = message
+        )
+
+    return CreateUserResponse(
+        message = message,
+        user    = user_data,
+        user_id = user_data["id"]
+    )
+
+
+@router.delete(
+    "/users/{user_id}",
+    response_model  = MessageResponse,
+    status_code     = status.HTTP_200_OK,
+    summary         = "Delete user",
+    description     = "Permanently delete user account. Cannot delete self or sole admin. Requires admin role."
+)
+async def delete_user_endpoint(
+    user_id: str,
+    request: Request,
+    admin_user: Dict = Depends( require_admin ),
+    request_body: Optional[DeleteUserRequest] = None
+) -> MessageResponse:
+    """
+    Permanently delete a user account (hard delete).
+
+    Requires:
+        - Admin role authorization
+        - Valid user ID
+        - Cannot delete self
+        - Cannot delete sole admin
+
+    Ensures:
+        - User physically removed from database
+        - All tokens revoked before deletion
+        - Audit event logged with reason
+        - Returns 200 OK on success
+
+    Path Parameters:
+        - user_id: User UUID
+
+    Request Body (optional):
+        - reason: Audit trail reason
+
+    Returns:
+        MessageResponse: Success or error message
+    """
+    admin_ip = request.client.host if request.client else "unknown"
+    reason   = request_body.reason if request_body and request_body.reason else ""
+
+    success, message = admin_delete_user(
+        admin_user_id  = admin_user["user_id"],
+        target_user_id = user_id,
+        admin_email    = admin_user.get( "email", "unknown" ),
+        admin_ip       = admin_ip,
+        reason         = reason
+    )
+
+    if not success:
+        # Determine appropriate status code
+        if "not found" in message.lower():
+            status_code = status.HTTP_404_NOT_FOUND
+        elif "cannot delete" in message.lower() or "sole admin" in message.lower():
+            status_code = status.HTTP_400_BAD_REQUEST
+        else:
+            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+
+        raise HTTPException(
+            status_code = status_code,
+            detail      = message
+        )
+
+    return MessageResponse( message=message )
+
+
+@router.post(
+    "/users/batch-delete",
+    response_model  = BatchDeleteUsersResponse,
+    status_code     = status.HTTP_200_OK,
+    summary         = "Batch delete users",
+    description     = "Delete multiple user accounts at once. Reuses single-user safety checks. Requires admin role."
+)
+async def batch_delete_users_endpoint(
+    request_body: BatchDeleteUsersRequest,
+    request: Request,
+    admin_user: Dict = Depends( require_admin )
+) -> BatchDeleteUsersResponse:
+    """
+    Batch delete multiple user accounts.
+
+    Uses POST instead of DELETE because many HTTP clients handle DELETE+body
+    inconsistently, and the existing apiCall() helper drops DELETE bodies.
+
+    Requires:
+        - Admin role authorization
+        - Non-empty user_ids list (max 50)
+
+    Ensures:
+        - Each user processed through existing admin_delete_user (all safety checks)
+        - Self-protection and sole-admin guards enforced per user
+        - Returns per-user success/failure results
+        - Audit events logged for each deletion
+
+    Request Body:
+        - user_ids: List of user UUIDs to delete
+        - reason: Optional audit trail reason
+
+    Returns:
+        BatchDeleteUsersResponse: Per-user results with totals
+    """
+    admin_ip = request.client.host if request.client else "unknown"
+    reason   = request_body.reason or "Batch delete from admin UI"
+
+    results       = []
+    total_deleted = 0
+    total_failed  = 0
+
+    for user_id in request_body.user_ids:
+        success, message = admin_delete_user(
+            admin_user_id  = admin_user["user_id"],
+            target_user_id = user_id,
+            admin_email    = admin_user.get( "email", "unknown" ),
+            admin_ip       = admin_ip,
+            reason         = reason
+        )
+
+        results.append( BatchDeleteResult(
+            user_id = user_id,
+            success = success,
+            message = message
+        ))
+
+        if success:
+            total_deleted += 1
+        else:
+            total_failed += 1
+
+    return BatchDeleteUsersResponse(
+        results       = results,
+        total_deleted = total_deleted,
+        total_failed  = total_failed
     )
 
 

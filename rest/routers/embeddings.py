@@ -10,9 +10,9 @@ Generated on: 2026-02-24
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import List
+from typing import Annotated, List
 
-from cosa.rest.auth import get_current_user
+from cosa.rest.middleware.api_key_auth import require_api_key_or_jwt
 from cosa.memory.embedding_provider import get_embedding_provider
 
 router = APIRouter( prefix="/api/embeddings", tags=[ "embeddings" ] )
@@ -60,8 +60,8 @@ class EmbedInfoResponse( BaseModel ):
 
 @router.post( "/generate", response_model=EmbedResponse )
 async def generate_embedding(
-    request      : EmbedRequest,
-    current_user = Depends( get_current_user )
+    request             : EmbedRequest,
+    authenticated_user_id : Annotated[ str, Depends( require_api_key_or_jwt ) ] = None
 ):
     """
     Generate an embedding vector for a single text string.
@@ -79,8 +79,8 @@ async def generate_embedding(
 
 @router.post( "/batch", response_model=EmbedBatchResponse )
 async def generate_embeddings_batch(
-    request      : EmbedBatchRequest,
-    current_user = Depends( get_current_user )
+    request             : EmbedBatchRequest,
+    authenticated_user_id : Annotated[ str, Depends( require_api_key_or_jwt ) ] = None
 ):
     """
     Generate embedding vectors for a list of texts.
@@ -102,7 +102,7 @@ async def generate_embeddings_batch(
 
 @router.get( "/info", response_model=EmbedInfoResponse )
 async def get_info(
-    current_user = Depends( get_current_user )
+    authenticated_user_id : Annotated[ str, Depends( require_api_key_or_jwt ) ] = None
 ):
     """
     Return metadata about the active embedding provider.

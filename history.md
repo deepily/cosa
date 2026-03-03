@@ -1,5 +1,54 @@
 # COSA Development History
 
+> **✅ SESSIONS 293-299 COMMIT**: Prediction Engine (Slices 3-5), embedding thread safety, admin CRUD, embeddings auth (2026.03.02)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Committed accumulated work from Lupin sessions 293-299** (9 files: 1 new + 8 modified, +1475/-91 lines):
+>
+> **Universal Prediction Engine — Slice 3: Multi-Select MC (Session 295)**:
+> - Added `_tally_multi_select_votes()` method with >= 50% threshold + highest-count fallback
+> - Made vote loop type-aware: detects `isinstance(option, list)` and branches to multi-select path
+> - Updated `get_comparator()` with data-driven dispatch via optional `actual_value` parameter
+> - Updated `record_outcome()` to pass `actual_dict` to comparator for correct multi-select dispatch
+>
+> **Universal Prediction Engine — Slices 4+5: Open-Ended Prediction (Session 296)**:
+> - Two-tier strategy: Tier 1 exact normalized question match (`STRATEGY_CBR_RETRIEVAL`), Tier 2 LLM synthesis via local Phi-4 14B (`STRATEGY_LLM_SYNTHESIS`)
+> - Added `_predict_open_ended()` and `_predict_open_ended_batch()` with 3 cold-start guards each
+> - Added `_build_synthesis_prompt()`, `_get_llm_client()` lazy loader, `_cosine_similarity()` static helper
+> - Added `_enrich_with_embedding_similarity()` — injects transient `_embedding_similarity` key, stripped before DB write
+> - Created `OpenEndedSynthesisResponse` BaseXMLModel (`xml_models.py`) for structured LLM I/O
+> - Upgraded `compare_open_ended()` with dual strategy: embedding similarity + exact match fallback
+> - Added `compare_open_ended_batch()` per-header comparator with average threshold
+>
+> **Embedding Thread Safety (Session 293)**:
+> - Added `_inference_lock = Lock()` class variable to both `CodeEmbeddingEngine` and `ProseEmbeddingEngine`
+> - Applied double-checked locking to `_load_model()`, wrapped all public inference methods with the lock
+> - Fixes `RuntimeError: tensor size mismatch` crash in concurrent daemon threads
+>
+> **HTTP Embedding Fallback (Session 294)**:
+> - Added `_generate_embedding_via_http()` — falls back to `POST /api/embeddings/generate` when local GPU unavailable
+> - Updated embeddings router auth from `get_current_user` to `require_api_key_or_jwt` on all 3 endpoints
+> - Added `DEFAULT_EMBEDDING_FALLBACK_PORT` config constant
+>
+> **Admin User Management (Sessions 298-299)**:
+> - Added `admin_create_user()` with auto-email-verification, `admin_delete_user()` with self-protection and sole-admin guard
+> - Added `POST /admin/users`, `DELETE /admin/users/{user_id}`, `POST /admin/users/batch-delete` endpoints with Pydantic models
+> - Batch delete reuses per-user delete for full safety (self-protection, sole-admin guard, token revocation, audit logging)
+>
+> **Files Created (1)**:
+> - `agents/prediction_engine/xml_models.py`
+>
+> **Files Modified (8)**:
+> - `agents/prediction_engine/accuracy_comparators.py`, `agents/prediction_engine/config.py`
+> - `agents/prediction_engine/prediction_engine.py`
+> - `memory/local_embedding_engine.py`
+> - `rest/admin_service.py`, `rest/routers/admin.py`
+> - `rest/routers/embeddings.py`, `rest/routers/notifications.py`
+
+---
+
 > **✅ SESSION 290 COMMIT**: Phase 1 Voice I/O — `user_initiated_message` type whitelist (2026.02.28)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >
