@@ -1,14 +1,46 @@
 # COSA Development History
 
-### 2026.03.03 - Session 304 | Podcast Generator — 3 Bug Fixes (Session 283 Bugs)
-
-**Accomplishments**:
-- **Bug #1 (Fuzzy Matching)**: Added `difflib.get_close_matches()` as 3rd validation tier in `match_research_docs()`
-- **Bug #2 (Job Card Contact / sender_id)**: Fixed double-hash in sender_id. Added `suffix` param to `_get_sender_id()`
-- **Bug #3 (Audio Segment Upload / Non-Interactive Hang)**: `_is_interactive()` guard in voice_io.py, fixed TTS cost key, pre-stitching guards
-- 37 new unit tests across 3 test files
-
-**Files**: `rest/routers/podcast_generator.py`, `agents/podcast_generator/{cosa_interface,job,orchestrator}.py`, `agents/deep_research/{cosa_interface,job}.py`, `agents/deep_research_to_podcast/job.py`, `agents/utils/voice_io.py`
+> **✅ SESSIONS 304-308 COMMIT**: Podcast bug fixes, job_id auto-injection, graceful cancellation, voice_io reconfigure (2026.03.04)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Committed accumulated work from Lupin sessions 304-308** (24 files modified, +968/-277 lines):
+>
+> **Session 304 — Podcast Generator 3 Bug Fixes + target_user dispatch**:
+> - Fuzzy matching: `difflib.get_close_matches()` 3rd tier + keyword pre-filter (top 50 from 1001 candidates)
+> - sender_id double-hash: Fixed `_get_sender_id()` suffix param across podcast/DR/DR-to-PG
+> - Audio segment upload: `_is_interactive()` guard, TTS cost key fix, pre-stitching guard
+> - target_user dispatch: Router sets `cosa_interface.TARGET_USER` before `present_choices()`
+>
+> **Session 306 — Notification Routing + Graceful Cancellation (4 checkpoints)**:
+> - job_id auto-injection: Module-level `_job_id` state in voice_io with `set_job_id()`/`clear_job_id()` lifecycle
+> - TTS error visibility: Always-print failures in tts_client + error context in abstracts
+> - Bug 4: "Initializing..." ping passes job_id; Bug 5: progress_group_id dedup in DONE card
+> - Bug 3b: `job_id` param added to cosa_interface wrappers (podcast + deep_research)
+> - Graceful cancellation: `_cancel_requested` + `request_cancel()` in AgenticJobBase, `cancel_check` callback in deep_research CLI (4 checkpoints), `POST /api/jobs/{job_id}/cancel`
+> - Speculative metadata: Added `'status': 'pending'` to todo_fifo_queue expeditor
+>
+> **Session 308 — Fix Shared Mutable Global in voice_io**:
+> - Added `reconfigure()` to 3 voice_io wrappers (podcast, deep_research, swe_team)
+> - Reset `_voice_available` on `configure()` so ping re-runs with correct cosa_interface
+> - Called `reconfigure()` at `_execute()` start in 3 job files + 2 router locations + DR-to-PG pipeline
+>
+> **Additional**:
+> - Prediction hint: constructor param in NotificationItem, override query param in `/api/notify`
+> - WebSocket debugging: session type (listener/browser) + email in connect/disconnect/emit
+> - AgentNotificationDispatcher: `job_id` param on `get_feedback()` and `present_choices()`
+>
+> **Files Modified (24)**:
+> - `agents/agentic_job_base.py`, `agents/deep_research/{cli,cosa_interface,job,voice_io}.py`
+> - `agents/deep_research_to_podcast/{agent,job}.py`
+> - `agents/podcast_generator/{cosa_interface,job,orchestrator,tts_client,voice_io}.py`
+> - `agents/swe_team/{job,voice_io}.py`
+> - `agents/utils/{agent_notification_dispatcher,voice_io}.py`
+> - `rest/{notification_fifo_queue,todo_fifo_queue,websocket_manager}.py`
+> - `rest/routers/{notifications,podcast_generator,queues,websocket}.py`
+>
+> **Commit**: 727c7e2
 
 ---
 
