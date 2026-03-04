@@ -18,12 +18,15 @@ Example:
 """
 
 import os
+import uuid
+import difflib
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from cosa.rest.auth import get_current_user
 from cosa.rest.queue_extensions import user_job_tracker
+from cosa.rest.queue_util import emit_job_state_transition
 from cosa.rest.agentic_job_factory import create_agentic_job
 from cosa.agents.podcast_generator.job import PodcastGeneratorJob
 import cosa.utils.util as cu
@@ -77,6 +80,17 @@ def get_todo_queue():
     """
     import fastapi_app.main as main_module
     return main_module.jobs_todo_queue
+
+
+def get_websocket_mgr():
+    """
+    Dependency to get WebSocket manager from main module.
+
+    Returns:
+        WebSocketManager: The WebSocket manager instance
+    """
+    import fastapi_app.main as main_module
+    return main_module.websocket_manager
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -229,6 +243,50 @@ async def match_research_docs( user_email: str, description: str, debug: bool = 
         print( f"[match_research_docs] Found {len( docs_map )} documents across all search dirs" )
         print( f"[match_research_docs] Description: {description}" )
 
+    # ── Pre-filter: narrow candidate list using keyword scoring ──────────
+    # Voice transcriptions produce noisy descriptions ("no no no", filler words).
+    # Sending 1000+ file paths to a local LLM overwhelms it. Pre-filter to top
+    # candidates using keyword overlap, then let the LLM pick the best matches.
+    STOP_WORDS = {
+        "a", "an", "the", "in", "on", "at", "to", "for", "of", "and", "or",
+        "my", "your", "that", "this", "it", "is", "was", "be", "can", "do",
+        "no", "not", "if", "see", "find", "look", "get", "you", "me", "i",
+        "about", "from", "with", "up", "out", "so", "just", "like", "also",
+        "document", "file", "directory", "folder", "please", "could", "would",
+    }
+    MAX_CANDIDATES = 50
+
+    # Extract keywords from description (lowered, de-duped, stopwords removed)
+    desc_words = set(
+        w for w in description.lower().replace( "-", " " ).replace( "/", " " ).replace( ".", " " ).replace( "&", "" ).split()
+        if w not in STOP_WORDS and len( w ) > 2
+    )
+
+    if debug: print( f"[match_research_docs] Keywords extracted: {desc_words}" )
+
+    if desc_words and len( docs_map ) > MAX_CANDIDATES:
+        # Score each path by keyword overlap (match against path components)
+        scored = []
+        for rel_path in docs_map:
+            path_lower = rel_path.lower().replace( "-", " " ).replace( "/", " " ).replace( "_", " " ).replace( ".", " " )
+            path_words = set( path_lower.split() )
+            score = len( desc_words & path_words )
+            if score > 0:
+                scored.append( ( score, rel_path ) )
+
+        scored.sort( key=lambda x: x[ 0 ], reverse=True )
+
+        if scored:
+            # Take top candidates by score
+            candidates = { rel for _score, rel in scored[ :MAX_CANDIDATES ] }
+            filtered_docs_map = { k: v for k, v in docs_map.items() if k in candidates }
+            if debug:
+                print( f"[match_research_docs] Pre-filtered {len( docs_map )} → {len( filtered_docs_map )} candidates (top scores: {[ s for s, _ in scored[ :5 ] ]})" )
+            docs_map = filtered_docs_map
+        else:
+            if debug: print( f"[match_research_docs] No keyword matches, using full docs_map ({len( docs_map )} files)" )
+    # ── End pre-filter ───────────────────────────────────────────────────
+
     # Load prompt template
     template_path = config_mgr.get( "prompt template for fuzzy file matching" )
     template = cu.get_file_as_string( project_root + template_path )
@@ -255,17 +313,44 @@ async def match_research_docs( user_email: str, description: str, debug: bool = 
         parsed_response = FuzzyFileMatchResponse.from_xml( response )
         matches = parsed_response.get_matches_list()
 
-        # Validate matches exist in docs_map (match against relative paths AND bare filenames)
+        # Validate matches exist in docs_map (3-tier: exact path → bare filename → fuzzy)
         valid_matches = []
+        all_rel_paths  = list( docs_map.keys() )
+        all_basenames  = [ os.path.basename( p ) for p in all_rel_paths ]
+
         for m in matches:
+            # Tier 1: Direct relative path match
             if m in docs_map:
-                # Direct relative path match
                 valid_matches.append( { "filename": os.path.basename( m ), "relative_path": m } )
-            else:
-                # Try matching as bare filename against all relative paths
-                for rel_path in docs_map:
-                    if os.path.basename( rel_path ) == m:
-                        valid_matches.append( { "filename": m, "relative_path": rel_path } )
+                continue
+
+            # Tier 2: Bare filename exact match
+            tier2_found = False
+            for rel_path in all_rel_paths:
+                if os.path.basename( rel_path ) == m:
+                    valid_matches.append( { "filename": m, "relative_path": rel_path } )
+                    tier2_found = True
+                    break
+            if tier2_found:
+                continue
+
+            # Tier 3: Fuzzy match against both relative paths and bare filenames
+            # This handles LLM responses with slight variations or partial paths
+            fuzzy_path_hits = difflib.get_close_matches( m, all_rel_paths, n=1, cutoff=0.6 )
+            if fuzzy_path_hits:
+                best = fuzzy_path_hits[ 0 ]
+                if debug: print( f"[match_research_docs] Fuzzy path match: '{m}' → '{best}'" )
+                valid_matches.append( { "filename": os.path.basename( best ), "relative_path": best } )
+                continue
+
+            fuzzy_name_hits = difflib.get_close_matches( m, all_basenames, n=1, cutoff=0.6 )
+            if fuzzy_name_hits:
+                best_name = fuzzy_name_hits[ 0 ]
+                # Find the corresponding relative path
+                for rel_path in all_rel_paths:
+                    if os.path.basename( rel_path ) == best_name:
+                        if debug: print( f"[match_research_docs] Fuzzy name match: '{m}' → '{best_name}'" )
+                        valid_matches.append( { "filename": best_name, "relative_path": rel_path } )
                         break
 
         if debug: print( f"[match_research_docs] Matches: {valid_matches}" )
@@ -306,7 +391,14 @@ async def get_user_document_selection(
     Returns:
         dict: Selected document dict, or None if cancelled
     """
-    from cosa.agents.deep_research import voice_io
+    from cosa.agents.podcast_generator import voice_io
+    from cosa.agents.podcast_generator import cosa_interface
+
+    # Re-establish core voice_io binding
+    voice_io.reconfigure()
+
+    # Set target_user so notifications route to the correct WebSocket session
+    cosa_interface.TARGET_USER = user_email
 
     options = []
     for m in matches:
@@ -364,7 +456,8 @@ async def get_user_document_selection(
 async def submit_podcast_job(
     request: PodcastSubmitRequest,
     current_user: dict = Depends( get_current_user ),
-    todo_queue = Depends( get_todo_queue )
+    todo_queue = Depends( get_todo_queue ),
+    websocket_mgr = Depends( get_websocket_mgr ),
 ):
     """
     Submit a podcast generation job with smart input parsing.
@@ -474,87 +567,131 @@ async def submit_podcast_job(
         if debug:
             print( f"[submit_podcast_job] Description mode: {research_source}" )
 
-        # Step 1: Find matching documents via LLM
-        matches = await match_research_docs( user_email, research_source, debug=debug )
+        # ── Step 0: Generate speculative job ID for notification routing ──
+        # Mirrors the speculative ID pattern from todo_fifo_queue.py:1056-1117.
+        # Notifications during fuzzy matching and user selection need a job_id
+        # to route to, but the real job doesn't exist until after selection.
+        from cosa.agents.podcast_generator import voice_io
+        from cosa.agents.podcast_generator import cosa_interface
 
-        if not matches:
-            raise HTTPException(
-                status_code=404,
-                detail="No matching research documents found. Please check your research library or provide a direct file path."
+        # Re-establish core voice_io binding for description mode notifications
+        voice_io.reconfigure()
+
+        spec_id = f"pg-{uuid.uuid4().hex[ :8 ]}"
+        spec_id = user_job_tracker.register_scoped_job( spec_id, user_id, session_id )
+
+        spec_metadata = {
+            'question_text' : research_source,
+            'agent_type'    : 'Podcast Generator',
+            'timestamp'     : cu.get_current_time(),
+            'status'        : 'pending',
+            'expediting'    : True
+        }
+        emit_job_state_transition( websocket_mgr, spec_id, 'pending', 'todo', user_id, spec_metadata )
+
+        # Set voice_io job_id so notifications during selection auto-route to spec card
+        cosa_interface.TARGET_USER = user_email
+        voice_io.set_job_id( spec_id )
+
+        if debug:
+            print( f"[submit_podcast_job] Speculative card emitted: {spec_id}" )
+
+        try:
+            # Step 1: Find matching documents via LLM
+            matches = await match_research_docs( user_email, research_source, debug=debug )
+
+            if not matches:
+                # Tear down speculative card
+                emit_job_state_transition( websocket_mgr, spec_id, 'todo', 'dead', user_id )
+                user_job_tracker.remove_job( spec_id )
+                raise HTTPException(
+                    status_code=404,
+                    detail="No matching research documents found. Please check your research library or provide a direct file path."
+                )
+
+            # Step 2: Present options to user and wait for selection (BLOCKING)
+            selected_doc = await get_user_document_selection(
+                user_email = user_email,
+                session_id = session_id,
+                matches    = matches,
+                debug      = debug
             )
 
-        # Step 2: Present options to user and wait for selection (BLOCKING)
-        selected_doc = await get_user_document_selection(
-            user_email = user_email,
-            session_id = session_id,
-            matches    = matches,
-            debug      = debug
-        )
+            if not selected_doc:
+                # User cancelled — tear down speculative card
+                emit_job_state_transition( websocket_mgr, spec_id, 'todo', 'dead', user_id )
+                user_job_tracker.remove_job( spec_id )
+                return PodcastMatchingResponse(
+                    status  = "cancelled",
+                    message = "Podcast generation cancelled by user."
+                )
 
-        if not selected_doc:
-            # User cancelled
-            return PodcastMatchingResponse(
-                status  = "cancelled",
-                message = "Podcast generation cancelled by user."
+            # Step 3: Build full path from relative_path and create job
+            full_path = cu.get_project_root() + "/" + selected_doc[ "relative_path" ]
+
+            # Security: validate path stays within project root
+            if not validate_source_path( selected_doc[ "relative_path" ] ):
+                emit_job_state_transition( websocket_mgr, spec_id, 'todo', 'dead', user_id )
+                user_job_tracker.remove_job( spec_id )
+                raise HTTPException(
+                    status_code=403,
+                    detail="Selected path escapes project root. Access denied."
+                )
+
+            if not os.path.exists( full_path ):
+                emit_job_state_transition( websocket_mgr, spec_id, 'todo', 'dead', user_id )
+                user_job_tracker.remove_job( spec_id )
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Selected file not found: {selected_doc[ 'relative_path' ]}"
+                )
+
+            # Create job using shared factory
+            args_dict = { "research": full_path }
+            if request.target_languages:
+                args_dict[ "languages" ] = ",".join( request.target_languages )
+            if request.dry_run:
+                args_dict[ "dry_run" ] = True
+            if request.audience:
+                args_dict[ "audience" ] = request.audience
+            if request.audience_context:
+                args_dict[ "audience_context" ] = request.audience_context
+
+            job = create_agentic_job(
+                command    = "agent router go to podcast generator",
+                args_dict  = args_dict,
+                user_id    = user_id,
+                user_email = user_email,
+                session_id = session_id,
+                debug      = debug
             )
 
-        # Step 3: Build full path from relative_path and create job
-        full_path = cu.get_project_root() + "/" + selected_doc[ "relative_path" ]
+            if job is None:
+                emit_job_state_transition( websocket_mgr, spec_id, 'todo', 'dead', user_id )
+                user_job_tracker.remove_job( spec_id )
+                raise HTTPException( status_code=500, detail="Failed to create podcast job" )
 
-        # Security: validate path stays within project root
-        if not validate_source_path( selected_doc[ "relative_path" ] ):
-            raise HTTPException(
-                status_code=403,
-                detail="Selected path escapes project root. Access denied."
+            # Apply max_segments if specified
+            if request.max_segments:
+                job.max_segments = request.max_segments
+
+            # Inherit speculative ID (already registered with user_job_tracker)
+            job.id_hash = spec_id
+
+            # Push to todo queue (re-emits pending→todo — JS dedup Set drops it)
+            todo_queue.push( job )
+
+            # Get queue position
+            queue_position = todo_queue.size()
+
+            return PodcastSubmitResponse(
+                job_id         = job.id_hash,
+                queue_position = queue_position,
+                status         = "queued"
             )
 
-        if not os.path.exists( full_path ):
-            raise HTTPException(
-                status_code=404,
-                detail=f"Selected file not found: {selected_doc[ 'relative_path' ]}"
-            )
-
-        # Create job using shared factory
-        args_dict = { "research": full_path }
-        if request.target_languages:
-            args_dict[ "languages" ] = ",".join( request.target_languages )
-        if request.dry_run:
-            args_dict[ "dry_run" ] = True
-        if request.audience:
-            args_dict[ "audience" ] = request.audience
-        if request.audience_context:
-            args_dict[ "audience_context" ] = request.audience_context
-
-        job = create_agentic_job(
-            command    = "agent router go to podcast generator",
-            args_dict  = args_dict,
-            user_id    = user_id,
-            user_email = user_email,
-            session_id = session_id,
-            debug      = debug
-        )
-
-        if job is None:
-            raise HTTPException( status_code=500, detail="Failed to create podcast job" )
-
-        # Apply max_segments if specified
-        if request.max_segments:
-            job.max_segments = request.max_segments
-
-        # Atomic: scope ID + index for user filtering BEFORE push (race condition prevention)
-        job.id_hash = user_job_tracker.register_scoped_job( job.id_hash, user_id, session_id )
-
-        # Push to todo queue
-        todo_queue.push( job )
-
-        # Get queue position
-        queue_position = todo_queue.size()
-
-        return PodcastSubmitResponse(
-            job_id         = job.id_hash,
-            queue_position = queue_position,
-            status         = "queued"
-        )
+        finally:
+            voice_io.clear_job_id()
 
 
 def quick_smoke_test():

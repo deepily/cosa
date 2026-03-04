@@ -20,7 +20,8 @@ class NotificationItem:
                  timeout_seconds: Optional[int] = None, sender_id: Optional[str] = None,
                  abstract: Optional[str] = None, suppress_ding: bool = False,
                  job_id: Optional[str] = None, queue_name: Optional[str] = None,
-                 progress_group_id: Optional[str] = None ) -> None:
+                 progress_group_id: Optional[str] = None,
+                 prediction_hint: Optional[dict] = None ) -> None:
         """
         Initialize a notification item.
 
@@ -80,8 +81,8 @@ class NotificationItem:
         # Progress group ID for in-place DOM updates (notifications sharing this ID update a single element)
         self.progress_group_id  = progress_group_id
 
-        # Prediction engine hint (populated by PredictionEngine.predict() before WebSocket push)
-        self.prediction_hint    = None
+        # Prediction engine hint (passed in before WebSocket push, or None during cold start)
+        self.prediction_hint    = prediction_hint
 
     def _get_local_timestamp( self ) -> str:
         """Get timezone-aware timestamp using configured timezone from ConfigurationManager"""
@@ -239,15 +240,15 @@ class NotificationFifoQueue( FifoQueue ):
                 # Targeted notification - send only to specific user
                 self.websocket_mgr.emit_to_user_sync( notification.user_id, 'notification_queue_update', event_data )
                 if self.debug:
-                    print( f"Emitted notification to user: {notification.user_id}" )
+                    print( f"[NOTIFY-QUEUE] Emitted notification to user: {notification.user_id}" )
             else:
                 # Broadcast notification - send to all connected clients
                 self.websocket_mgr.emit( 'notification_queue_update', event_data )
                 if self.debug:
-                    print( f"Broadcast notification to all users" )
-        
+                    print( f"[NOTIFY-QUEUE] Broadcast notification to all users" )
+
         if self.debug:
-            print( f"Pushed notification {notification.id_hash} with enhanced WebSocket emission" )
+            print( f"[NOTIFY-QUEUE] Pushed notification {notification.id_hash} with enhanced WebSocket emission" )
     
     def push_notification( self, message: str, type: str = "task", priority: str = "medium",
                          source: str = "claude_code", user_id: Optional[str] = None,
@@ -257,7 +258,8 @@ class NotificationFifoQueue( FifoQueue ):
                          timeout_seconds: Optional[int] = None, sender_id: Optional[str] = None,
                          abstract: Optional[str] = None, suppress_ding: bool = False,
                          job_id: Optional[str] = None, queue_name: Optional[str] = None,
-                         progress_group_id: Optional[str] = None ) -> NotificationItem:
+                         progress_group_id: Optional[str] = None,
+                         prediction_hint: Optional[dict] = None ) -> NotificationItem:
         """
         Push a notification with priority handling and io_tbl logging.
 
@@ -297,7 +299,8 @@ class NotificationFifoQueue( FifoQueue ):
             suppress_ding      = suppress_ding,
             job_id             = job_id,
             queue_name         = queue_name,
-            progress_group_id  = progress_group_id
+            progress_group_id  = progress_group_id,
+            prediction_hint    = prediction_hint
         )
         
         # Priority handling - urgent/high go to front, but after other urgent/high
@@ -326,12 +329,12 @@ class NotificationFifoQueue( FifoQueue ):
                     # Targeted notification - send only to specific user
                     self.websocket_mgr.emit_to_user_sync( notification.user_id, 'notification_queue_update', event_data )
                     if self.debug:
-                        print( f"Emitted priority notification to user: {notification.user_id}" )
+                        print( f"[NOTIFY-QUEUE] Emitted priority notification to user: {notification.user_id}" )
                 else:
                     # Broadcast notification - send to all connected clients
                     self.websocket_mgr.emit( 'notification_queue_update', event_data )
                     if self.debug:
-                        print( f"Broadcast priority notification to all users" )
+                        print( f"[NOTIFY-QUEUE] Broadcast priority notification to all users" )
         else:
             # Normal priority goes to end (use our overridden push method)
             self.push( notification )
@@ -340,7 +343,7 @@ class NotificationFifoQueue( FifoQueue ):
         self._log_to_io_tbl( notification )
         
         if self.debug:
-            print( f"Notification queued: {type}/{priority} - {message[:50]}..." )
+            print( f"[NOTIFY-QUEUE] Notification queued: {type}/{priority} - {message[:50]}..." )
         
         return notification
     

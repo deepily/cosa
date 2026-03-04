@@ -366,8 +366,9 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
 
             # Connect with user association and subscriptions
             print(f"[WS-QUEUE-AUTH] Connecting session [{session_id}] to user [{user_id}] in WebSocket manager...")
-            websocket_manager.connect(websocket, session_id, user_id, subscribed_events)
-            print(f"[WS-QUEUE] ✅ Authenticated session [{session_id}] for user [{user_id}]")
+            websocket_manager.connect( websocket, session_id, user_id, subscribed_events, email=user_info.get( "email" ) )
+            session_type = "listener" if session_id.startswith( "cc-listener-" ) else "browser"
+            print( f"[WS-QUEUE] Authenticated {session_type} session [{session_id}] for user [{user_id}] ({user_info.get( 'email', '?' )})" )
 
             # Verify connection was established
             is_connected = websocket_manager.is_user_connected(user_id)
@@ -444,7 +445,8 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
         pass
     finally:
         websocket_manager.disconnect(session_id)
-        print(f"[WS-QUEUE] Queue WebSocket disconnected for session: {session_id}")
+        session_type = "listener" if session_id.startswith( "cc-listener-" ) else "browser"
+        print( f"[WS-QUEUE] Queue WebSocket disconnected for {session_type} session: {session_id}" )
 
 
 def quick_smoke_test():

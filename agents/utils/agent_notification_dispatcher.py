@@ -230,6 +230,7 @@ class AgentNotificationDispatcher:
         self,
         prompt: str,
         timeout: int = 300,
+        job_id: Optional[ str ] = None,
         role: str = None
     ) -> Optional[ str ]:
         """
@@ -238,6 +239,7 @@ class AgentNotificationDispatcher:
         Args:
             prompt: Text to speak to the user
             timeout: Maximum seconds to wait
+            job_id: Optional job ID for routing to job cards
             role: Optional agent role (for role-aware dispatchers)
 
         Returns:
@@ -252,6 +254,7 @@ class AgentNotificationDispatcher:
                 timeout_seconds   = timeout,
                 sender_id         = self._resolve_sender_id( role ),
                 target_user       = self.target_user,
+                job_id            = job_id,
             )
 
             response: NotificationResponse = await asyncio.to_thread( _notify_user_sync, request )
@@ -271,6 +274,7 @@ class AgentNotificationDispatcher:
         timeout: int = 120,
         title: Optional[ str ] = None,
         abstract: Optional[ str ] = None,
+        job_id: Optional[ str ] = None,
         role: str = None
     ) -> dict:
         """
@@ -281,6 +285,7 @@ class AgentNotificationDispatcher:
             timeout: Seconds to wait for response
             title: Optional title for the notification
             abstract: Optional supplementary context
+            job_id: Optional job ID for routing to job cards
             role: Optional agent role (for role-aware dispatchers)
 
         Returns:
@@ -300,6 +305,7 @@ class AgentNotificationDispatcher:
                 target_user       = self.target_user,
                 abstract          = abstract,
                 title             = title,
+                job_id            = job_id,
             )
 
             response: NotificationResponse = await asyncio.to_thread( _notify_user_sync, request )

@@ -46,17 +46,23 @@ AGENT_TYPE = "deep.research"
 _dispatcher = AgentNotificationDispatcher( agent_type=AGENT_TYPE )
 
 
-def _get_sender_id() -> str:
+def _get_sender_id( suffix: str = None ) -> str:
     """
     Get sender_id for Deep Research Agent notifications.
 
+    Args:
+        suffix: Optional override for the default suffix (e.g., job id_hash).
+            Prevents double-hash fragments when appending job IDs.
+
     Ensures:
-        - Returns sender_id in format: deep.research@{project}.deepily.ai
+        - Returns sender_id in format: deep.research@{project}.deepily.ai#{suffix}
         - Project is detected from current working directory
 
     Returns:
         str: Sender ID for notification identity
     """
+    if suffix is not None:
+        return _dispatcher.build_sender_id( suffix=suffix )
     return _dispatcher.build_sender_id()
 
 
@@ -112,7 +118,8 @@ async def ask_confirmation(
     question: str,
     default: str = "no",
     timeout: int = 60,
-    abstract: Optional[ str ] = None
+    abstract: Optional[ str ] = None,
+    job_id: Optional[ str ] = None
 ) -> bool:
     """
     Ask a yes/no question and return boolean result.
@@ -122,6 +129,7 @@ async def ask_confirmation(
         default: Default answer if timeout ("yes" or "no")
         timeout: Seconds to wait for response
         abstract: Optional supplementary context
+        job_id: Optional job ID for routing to job card
 
     Returns:
         bool: True if user said yes, False otherwise
@@ -129,13 +137,14 @@ async def ask_confirmation(
     _dispatcher.sender_id   = SENDER_ID
     _dispatcher.target_user = TARGET_USER
     return await _dispatcher.ask_confirmation(
-        question, default=default, timeout=timeout, abstract=abstract
+        question, default=default, timeout=timeout, abstract=abstract, job_id=job_id
     )
 
 
 async def get_feedback(
     prompt: str,
-    timeout: int = 300
+    timeout: int = 300,
+    job_id: Optional[ str ] = None
 ) -> Optional[ str ]:
     """
     Get open-ended feedback from user via voice.
@@ -143,18 +152,22 @@ async def get_feedback(
     Args:
         prompt: Text to speak to the user
         timeout: Maximum seconds to wait for response
+        job_id: Optional job ID for routing to job card
 
     Returns:
         str or None: User's transcribed voice response
     """
     _dispatcher.sender_id   = SENDER_ID
     _dispatcher.target_user = TARGET_USER
-    return await _dispatcher.get_feedback( prompt, timeout=timeout )
+    return await _dispatcher.get_feedback( prompt, timeout=timeout, job_id=job_id )
 
 
 async def present_choices(
     questions: list,
-    timeout: int = 120
+    timeout: int = 120,
+    title: Optional[ str ] = None,
+    abstract: Optional[ str ] = None,
+    job_id: Optional[ str ] = None
 ) -> dict:
     """
     Present multiple-choice questions and get user's selection.
@@ -162,13 +175,18 @@ async def present_choices(
     Args:
         questions: List of question objects with options
         timeout: Seconds to wait for response
+        title: Optional title for the notification
+        abstract: Optional supplementary context
+        job_id: Optional job ID for routing to job card
 
     Returns:
         dict: {"answers": {...}} with selections keyed by header
     """
     _dispatcher.sender_id   = SENDER_ID
     _dispatcher.target_user = TARGET_USER
-    return await _dispatcher.present_choices( questions, timeout=timeout )
+    return await _dispatcher.present_choices(
+        questions, timeout=timeout, title=title, abstract=abstract, job_id=job_id
+    )
 
 
 # =============================================================================

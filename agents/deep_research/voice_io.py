@@ -16,6 +16,21 @@ from . import cosa_interface as _cosa_interface
 # Configure the core voice_io with our cosa_interface
 _core_voice_io.configure( _cosa_interface )
 
+
+def reconfigure():
+    """
+    Re-establish core voice_io binding to this agent's cosa_interface.
+
+    Call this at the start of _execute() to ensure notifications route
+    through the correct agent's dispatcher, regardless of import order.
+
+    The consolidated core voice_io uses a single global _cosa_interface.
+    When multiple agents import their wrappers, the last configure() call
+    wins. This function re-asserts the correct binding for this agent.
+    """
+    _core_voice_io.configure( _cosa_interface )
+
+
 # =============================================================================
 # Re-export all public functions from core voice_io
 # =============================================================================
@@ -25,6 +40,8 @@ reset_voice_check  = _core_voice_io.reset_voice_check
 is_voice_available = _core_voice_io.is_voice_available
 get_mode_description = _core_voice_io.get_mode_description
 is_cli_mode        = _core_voice_io.is_cli_mode
+set_job_id         = _core_voice_io.set_job_id
+clear_job_id       = _core_voice_io.clear_job_id
 
 # Voice-first I/O functions
 notify             = _core_voice_io.notify

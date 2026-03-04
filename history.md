@@ -1,5 +1,17 @@
 # COSA Development History
 
+### 2026.03.03 - Session 304 | Podcast Generator — 3 Bug Fixes (Session 283 Bugs)
+
+**Accomplishments**:
+- **Bug #1 (Fuzzy Matching)**: Added `difflib.get_close_matches()` as 3rd validation tier in `match_research_docs()`
+- **Bug #2 (Job Card Contact / sender_id)**: Fixed double-hash in sender_id. Added `suffix` param to `_get_sender_id()`
+- **Bug #3 (Audio Segment Upload / Non-Interactive Hang)**: `_is_interactive()` guard in voice_io.py, fixed TTS cost key, pre-stitching guards
+- 37 new unit tests across 3 test files
+
+**Files**: `rest/routers/podcast_generator.py`, `agents/podcast_generator/{cosa_interface,job,orchestrator}.py`, `agents/deep_research/{cosa_interface,job}.py`, `agents/deep_research_to_podcast/job.py`, `agents/utils/voice_io.py`
+
+---
+
 > **✅ SESSIONS 293-299 COMMIT**: Prediction Engine (Slices 3-5), embedding thread safety, admin CRUD, embeddings auth (2026.03.02)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >

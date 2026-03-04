@@ -194,7 +194,7 @@ class DeepResearchToPodcastJob( AgenticJobBase ):
         from cosa.agents.deep_research_to_podcast.state import PipelineState
 
         # Set sender_id for notifications
-        cosa_interface.SENDER_ID = cosa_interface._get_sender_id() + f"#{self.id_hash}"
+        cosa_interface.SENDER_ID = cosa_interface._get_sender_id( suffix=self.id_hash )
 
         if self.debug:
             print( f"[DeepResearchToPodcastJob] Query: {self.query[ :80 ]}..." )
@@ -273,7 +273,7 @@ class DeepResearchToPodcastJob( AgenticJobBase ):
         import asyncio
 
         # Set sender_id for notifications
-        cosa_interface.SENDER_ID = cosa_interface._get_sender_id() + f"#{self.id_hash}"
+        cosa_interface.SENDER_ID = cosa_interface._get_sender_id( suffix=self.id_hash )
 
         if self.debug:
             print( f"[DeepResearchToPodcastJob] DRY RUN MODE for: {self.query[ :50 ]}..." )

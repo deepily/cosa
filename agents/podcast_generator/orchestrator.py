@@ -580,16 +580,30 @@ class PodcastOrchestratorAgent:
 
                 # Handle partial failures
                 if failed_indices:
+                    # Extract first error for diagnosis
+                    first_error = next(
+                        ( r.error_message for r in tts_results if not r.success and r.error_message ),
+                        "Unknown error"
+                    )
                     continue_anyway = await voice_io.ask_yes_no(
                         f"{lang_name}: {len( failed_indices )} segments failed. Continue with partial audio?",
                         default  = "yes",
-                        abstract = f"**Language**: {lang_name}\n**Failed**: {len( failed_indices )}\n**Successful**: {len( tts_results ) - len( failed_indices )}"
+                        abstract = f"**Language**: {lang_name}\n**Failed**: {len( failed_indices )}\n**Successful**: {len( tts_results ) - len( failed_indices )}\n**Error**: {first_error}"
                     )
                     if not continue_anyway:
                         await voice_io.notify( f"Skipping {lang_name} audio due to failures." )
                         continue  # Skip this language, continue with others
 
                 if self._check_stop(): return await self._handle_stop()
+
+                # Guard: check that at least one segment succeeded before stitching
+                successful_count = sum( 1 for r in tts_results if r.success and r.pcm_audio )
+                if successful_count == 0:
+                    await voice_io.notify(
+                        f"{lang_name}: All segments failed — skipping audio stitching.",
+                        priority = "urgent"
+                    )
+                    continue  # Skip this language
 
                 # =================================================================
                 # Phase 6: Stitch Audio (Per Language)
@@ -610,6 +624,13 @@ class PodcastOrchestratorAgent:
                 )
 
                 if self._check_stop(): return await self._handle_stop()
+
+            # Guard: if NO language produced audio, this is a fatal failure
+            if not audio_paths_by_language:
+                raise RuntimeError(
+                    "All TTS audio generation failed — no audio produced for any language. "
+                    "Check ELEVENLABS_API_KEY and ElevenLabs API status."
+                )
 
             # Store paths in state
             self._podcast_state[ "final_audio_path" ] = audio_paths_by_language.get( "en", "" )
@@ -936,11 +957,16 @@ class PodcastOrchestratorAgent:
 
             # Handle partial failures - HIGH priority for TTS announcement
             if failed_indices:
+                # Extract first error for diagnosis
+                first_error = next(
+                    ( r.error_message for r in tts_results if not r.success and r.error_message ),
+                    "Unknown error"
+                )
                 continue_anyway = await voice_io.ask_yes_no(
                     f"{len( failed_indices )} segments failed. Continue with partial audio?",
                     default  = "yes",
                     timeout  = 120,
-                    abstract = f"**Failed**: {len( failed_indices )}\n**Successful**: {len( tts_results ) - len( failed_indices )}"
+                    abstract = f"**Failed**: {len( failed_indices )}\n**Successful**: {len( tts_results ) - len( failed_indices )}\n**Error**: {first_error}"
                 )
                 if not continue_anyway:
                     self.state = OrchestratorState.STOPPED
@@ -948,6 +974,11 @@ class PodcastOrchestratorAgent:
                     return None
 
             if self._check_stop(): return await self._handle_stop()
+
+            # Guard: check that at least one segment succeeded before stitching
+            successful_count = sum( 1 for r in tts_results if r.success and r.pcm_audio )
+            if successful_count == 0:
+                raise RuntimeError( "Audio generation failed: no segments produced audio data" )
 
             # =================================================================
             # Phase 6: Stitch Audio
@@ -1000,8 +1031,8 @@ class PodcastOrchestratorAgent:
                 rel_path      = self.research_doc_path.replace( io_base, "" )
                 research_link = f"[View Research](/api/io/file?path={urllib.parse.quote( rel_path )})"
 
-            # Calculate audio cost from TTS character usage
-            tts_results = self._podcast_state.get( "tts_results", [] )
+            # Calculate audio cost from TTS character usage (language-specific key)
+            tts_results = self._podcast_state.get( "tts_results_en", [] )
             total_chars = sum( r.character_count for r in tts_results if r.success )
             audio_cost  = ( total_chars / 1000.0 ) * ELEVENLABS_COST_PER_1K_CHARS
 
@@ -1661,9 +1692,18 @@ Generate the {language_name} script in JSON format with the same structure:
         # Use language-specific key to avoid overwriting
         self._podcast_state[ f"tts_results_{language}" ] = tts_results
 
+        success_count = len( tts_results ) - len( failed_indices )
         if self.debug:
-            success_count = len( tts_results ) - len( failed_indices )
             print( f"[PodcastOrchestratorAgent] Audio generation complete: {success_count}/{len( tts_results )} successful" )
+
+        # Always log failure details for diagnosis
+        if failed_indices:
+            first_error = next(
+                ( r.error_message for r in tts_results if not r.success and r.error_message ),
+                "Unknown error"
+            )
+            print( f"[PodcastOrchestratorAgent] Audio failures: {len( failed_indices )}/{len( tts_results )} segments failed" )
+            print( f"[PodcastOrchestratorAgent] First error: {first_error}" )
 
         return tts_results, failed_indices
 

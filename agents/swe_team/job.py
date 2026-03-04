@@ -240,6 +240,9 @@ class SweTeamJob( AgenticJobBase ):
         """
         from cosa.agents.swe_team import voice_io
 
+        # Re-establish core voice_io binding (import-order race: last configure() wins)
+        voice_io.reconfigure()
+
         # Handle dry-run mode with breadcrumb notifications
         if self.dry_run:
             return await self._execute_dry_run( voice_io )

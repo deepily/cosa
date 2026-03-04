@@ -229,6 +229,7 @@ async def notify_user(
     queue_name: Optional[str] = Query(None, description="Queue where job is running (run/todo/done). Used for provisional job card registration when notifications arrive before job is fetched."),
     suppress_ding: bool = Query(False, description="Suppress notification sound (ding) while still speaking message via TTS. Used for conversational TTS from queue operations."),
     progress_group_id: Optional[str] = Query(None, description="Progress group ID for in-place DOM updates. Notifications sharing this ID update a single element instead of appending new ones."),
+    prediction_hint_override: Optional[str] = Query(None, description="JSON override for prediction_hint (testing/debug). Bypasses PredictionEngine."),
     notification_queue: NotificationFifoQueue = Depends(get_notification_queue),
     ws_manager: WebSocketManager = Depends(get_websocket_manager)
 ):
@@ -348,6 +349,17 @@ async def notify_user(
                 detail=f"Invalid JSON in response_options: {str(e)}"
             )
 
+    # Parse prediction_hint_override JSON string if provided (testing/debug bypass)
+    parsed_prediction_hint_override = None
+    if prediction_hint_override:
+        try:
+            parsed_prediction_hint_override = json.loads( prediction_hint_override )
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid JSON in prediction_hint_override: {str( e )}"
+            )
+
     # Resolve sender_id using precedence: explicit > extracted from [PREFIX] > default
     resolved_sender_id = resolve_sender_id( sender_id, message )
 
@@ -388,6 +400,13 @@ async def notify_user(
         is_connected     = ws_manager.is_user_connected( target_system_id )
         connection_count = ws_manager.get_user_connection_count( target_system_id )
         print( f"[NOTIFY] WebSocket connection check: is_connected={is_connected}, count={connection_count}" )
+        if connection_count > 0:
+            user_session_ids  = ws_manager.user_sessions.get( target_system_id, [] )
+            active_sessions   = [ s for s in user_session_ids if s in ws_manager.active_connections ]
+            listener_sessions = [ s for s in active_sessions if s.startswith( "cc-listener-" ) ]
+            browser_sessions  = [ s for s in active_sessions if not s.startswith( "cc-listener-" ) ]
+            print( f"[NOTIFY]   Browser sessions  : {len( browser_sessions )} {browser_sessions}" )
+            print( f"[NOTIFY]   Listener sessions : {len( listener_sessions )} {listener_sessions}" )
 
         # =================================================================================
         # FIRE-AND-FORGET MODE (Phase 1 - existing behavior)
@@ -564,32 +583,37 @@ async def notify_user(
         print(f"[DEBUG] Creating notification with response_default: '{response_default}'")
         print(f"[DEBUG] Response type: {response_type}, Timeout: {timeout_seconds}s")
 
-        # ---- Prediction Engine Hook 1: Generate prediction before WebSocket push ----
+        # ---- Prediction Engine Hook: Generate prediction BEFORE WebSocket push ----
+        # Override takes priority (testing/debug), then PredictionEngine, then None (cold start)
         prediction_hint = None
-        try:
-            from cosa.agents.prediction_engine import get_prediction_engine
-            prediction_engine = get_prediction_engine()
-            if prediction_engine.enabled:
-                prediction_result = prediction_engine.predict( {
-                    "message"          : message.strip(),
-                    "response_type"    : response_type,
-                    "sender_id"        : resolved_sender_id,
-                    "response_options" : parsed_response_options,
-                } )
-                # Store prediction result for later outcome recording
-                pending_responses[notification_id]["prediction_result"] = prediction_result
-                # Store original message in metadata for LanceDB storage
-                if prediction_result.metadata is not None:
-                    prediction_result.metadata[ "original_message" ] = message.strip()
-                # Only show hint if confidence exceeds threshold
-                if prediction_result.confidence >= prediction_engine.confidence_threshold:
-                    prediction_hint = prediction_result.to_hint_dict()
-                print( f"[PREDICTION] Generated prediction for {notification_id}: "
-                       f"type={response_type}, category={prediction_result.category}, "
-                       f"conf={prediction_result.confidence:.3f}, hint={'yes' if prediction_hint else 'no'}" )
-        except Exception as pred_error:
-            print( f"[PREDICTION] ⚠️ Prediction hook error (non-fatal): {pred_error}" )
-        # ---- End Prediction Engine Hook 1 ----
+        if parsed_prediction_hint_override is not None:
+            prediction_hint = parsed_prediction_hint_override
+            print( f"[PREDICTION] Using override hint for {notification_id}: {prediction_hint}" )
+        else:
+            try:
+                from cosa.agents.prediction_engine import get_prediction_engine
+                prediction_engine = get_prediction_engine()
+                if prediction_engine.enabled:
+                    prediction_result = prediction_engine.predict( {
+                        "message"          : message.strip(),
+                        "response_type"    : response_type,
+                        "sender_id"        : resolved_sender_id,
+                        "response_options" : parsed_response_options,
+                    } )
+                    # Store prediction result for later outcome recording
+                    pending_responses[ notification_id ][ "prediction_result" ] = prediction_result
+                    # Store original message in metadata for LanceDB storage
+                    if prediction_result.metadata is not None:
+                        prediction_result.metadata[ "original_message" ] = message.strip()
+                    # Only show hint if confidence exceeds threshold
+                    if prediction_result.confidence >= prediction_engine.confidence_threshold:
+                        prediction_hint = prediction_result.to_hint_dict()
+                    print( f"[PREDICTION] Generated prediction for {notification_id}: "
+                           f"type={response_type}, category={prediction_result.category}, "
+                           f"conf={prediction_result.confidence:.3f}, hint={'yes' if prediction_hint else 'no'}" )
+            except Exception as pred_error:
+                print( f"[PREDICTION] ⚠️ Prediction hook error (non-fatal): {pred_error}" )
+        # ---- End Prediction Engine Hook ----
 
         # Push notification to WebSocket for UI rendering (Phase 2.2 with full fields)
         notification_item = notification_queue.push_notification(
@@ -610,12 +634,9 @@ async def notify_user(
             suppress_ding      = suppress_ding,  # Skip notification sound (conversational TTS)
             job_id             = job_id,  # Agentic job ID for routing to job cards
             queue_name         = queue_name,  # Queue for provisional job card registration
-            progress_group_id  = progress_group_id  # In-place DOM update grouping
+            progress_group_id  = progress_group_id,  # In-place DOM update grouping
+            prediction_hint    = prediction_hint  # Prediction hint (override or engine-generated)
         )
-
-        # Attach prediction hint to notification item (for WebSocket broadcast)
-        if prediction_hint:
-            notification_item.prediction_hint = prediction_hint
 
         # DEBUG: Log the notification_item after creation
         print(f"[DEBUG] Notification item created: {notification_item}")

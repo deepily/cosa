@@ -40,6 +40,7 @@ Features (consolidated from deep_research and podcast_generator):
 
 import asyncio
 import logging
+import sys
 from typing import Optional, List, Union
 
 logger = logging.getLogger( __name__ )
@@ -52,13 +53,34 @@ logger = logging.getLogger( __name__ )
 _force_cli_mode  : bool            = False
 _voice_available : Optional[ bool ] = None  # None = not checked, True/False = cached
 _cosa_interface  : Optional[ object ] = None  # Agent-specific cosa_interface module
+_job_id          : Optional[ str ]   = None  # Agentic job ID for auto-injection into notify()
+
+
+def _is_interactive() -> bool:
+    """
+    Check if stdin is attached to an interactive terminal.
+
+    When running as a background queue job (Docker, daemon, etc.),
+    stdin is not a TTY and calling input() would block indefinitely.
+
+    Ensures:
+        - Returns True only when stdin is a real terminal
+        - Returns False for background/queue/Docker execution
+
+    Returns:
+        bool: True if input() is safe to call
+    """
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except Exception:
+        return False
 
 
 # =============================================================================
 # Configuration Functions
 # =============================================================================
 
-def configure( cosa_interface_module ) -> None:
+def configure( cosa_interface_module, job_id: str = None ) -> None:
     """
     Configure the voice_io module with an agent-specific cosa_interface.
 
@@ -71,13 +93,19 @@ def configure( cosa_interface_module ) -> None:
 
     Ensures:
         - Module is configured for voice I/O with the given interface
+        - If job_id provided, auto-injection is enabled for notify()
 
     Args:
         cosa_interface_module: Agent's cosa_interface module (e.g.,
             cosa.agents.deep_research.cosa_interface)
+        job_id: Optional agentic job ID for auto-injection into notify()
     """
-    global _cosa_interface
+    global _cosa_interface, _job_id, _voice_available
     _cosa_interface = cosa_interface_module
+    if job_id is not None:
+        _job_id = job_id
+    # Reset voice availability cache — new cosa_interface may have different connectivity
+    _voice_available = None
     logger.info( f"Voice I/O configured with: {cosa_interface_module.__name__}" )
 
 
@@ -118,6 +146,42 @@ def reset_voice_check() -> None:
     _voice_available = None
 
 
+def set_job_id( job_id: str ) -> None:
+    """
+    Set the active job_id for auto-injection into notify() calls.
+
+    When set, all notify() calls that don't provide an explicit job_id
+    will automatically use this value. This routes notifications to the
+    correct job card in the frontend UI.
+
+    Requires:
+        - job_id is a non-empty string (e.g., "pg-a1b2c3d4")
+
+    Ensures:
+        - Subsequent notify() calls auto-inject this job_id
+
+    Args:
+        job_id: Agentic job ID (e.g., "dr-a1b2c3d4", "pg-a1b2c3d4")
+    """
+    global _job_id
+    _job_id = job_id
+
+
+def clear_job_id() -> None:
+    """
+    Clear the active job_id (call at job completion).
+
+    Prevents leaking job_id to subsequent jobs that reuse
+    the same voice_io module state.
+
+    Ensures:
+        - _job_id is reset to None
+        - Subsequent notify() calls will not auto-inject job_id
+    """
+    global _job_id
+    _job_id = None
+
+
 async def is_voice_available() -> bool:
     """
     Check if voice service is available (result cached).
@@ -149,7 +213,7 @@ async def is_voice_available() -> bool:
     # Try to ping the voice service
     try:
         # Send a silent/minimal notification to test connectivity
-        await _cosa_interface.notify_progress( message="Initializing...", priority="low" )
+        await _cosa_interface.notify_progress( message="Initializing...", priority="low", job_id=_job_id )
         _voice_available = True
         logger.info( "Voice service available - using voice-first mode" )
 
@@ -224,6 +288,10 @@ async def notify(
         job_id: Optional agentic job ID for routing to job cards (e.g., "dr-a1b2c3d4")
         queue_name: Optional queue where job is running (run/todo/done) for provisional job card registration
     """
+    # Auto-inject module-level job_id if caller didn't provide one
+    if job_id is None and _job_id is not None:
+        job_id = _job_id
+
     # Check for forced CLI mode or unavailable voice
     if _force_cli_mode or _cosa_interface is None or not await is_voice_available():
         print( f"  {message}" )
@@ -246,7 +314,8 @@ async def ask_yes_no(
     question: str,
     default: str = "no",
     timeout: int = 60,
-    abstract: Optional[ str ] = None
+    abstract: Optional[ str ] = None,
+    job_id: Optional[ str ] = None
 ) -> bool:
     """
     Ask a yes/no question (voice-first).
@@ -273,10 +342,19 @@ async def ask_yes_no(
     Returns:
         bool: True if user approved, False otherwise
     """
+    # Auto-inject module-level job_id if caller didn't provide one
+    if job_id is None and _job_id is not None:
+        job_id = _job_id
+
     if _force_cli_mode or _cosa_interface is None or not await is_voice_available():
         # CLI fallback - show abstract if provided
         if abstract:
             print( f"\n  Context:\n{abstract}\n" )
+        # Non-interactive (queue/Docker): use default without blocking on input()
+        if not _is_interactive():
+            logger.info( f"Non-interactive mode, using default='{default}' for: {question}" )
+            print( f"  {question} → auto-default: {default}" )
+            return default == "yes"
         default_hint = "Y/n" if default == "yes" else "y/N"
         response = input( f"  {question} [{default_hint}]: " ).strip().lower()
         if not response:
@@ -284,10 +362,14 @@ async def ask_yes_no(
         return response in [ "y", "yes", "yeah", "yep", "sure", "ok", "okay" ]
 
     try:
-        return await _cosa_interface.ask_confirmation( question, default, timeout, abstract )
+        return await _cosa_interface.ask_confirmation( question, default, timeout, abstract, job_id=job_id )
     except Exception as e:
         logger.warning( f"Voice ask_yes_no failed: {e}" )
-        # Fallback to CLI
+        # Non-interactive fallback: use default
+        if not _is_interactive():
+            logger.info( f"Non-interactive mode, using default='{default}' for: {question}" )
+            return default == "yes"
+        # Interactive CLI fallback
         if abstract:
             print( f"\n  Context:\n{abstract}\n" )
         response = input( f"  {question} [y/N]: " ).strip().lower()
@@ -297,7 +379,8 @@ async def ask_yes_no(
 async def get_input(
     prompt: str,
     allow_empty: bool = True,
-    timeout: int = 300
+    timeout: int = 300,
+    job_id: Optional[ str ] = None
 ) -> Optional[ str ]:
     """
     Get open-ended input from user (voice-first).
@@ -321,7 +404,15 @@ async def get_input(
     Returns:
         str or None: User's response, or None on timeout/error
     """
+    # Auto-inject module-level job_id if caller didn't provide one
+    if job_id is None and _job_id is not None:
+        job_id = _job_id
+
     if _force_cli_mode or _cosa_interface is None or not await is_voice_available():
+        # Non-interactive (queue/Docker): return None without blocking on input()
+        if not _is_interactive():
+            logger.info( f"Non-interactive mode, returning None for get_input: {prompt[ :60 ]}" )
+            return None
         # CLI fallback
         response = input( f"  {prompt}: " ).strip()
         if not response and not allow_empty:
@@ -329,13 +420,17 @@ async def get_input(
         return response
 
     try:
-        response = await _cosa_interface.get_feedback( prompt, timeout )
+        response = await _cosa_interface.get_feedback( prompt, timeout, job_id=job_id )
         if not response and not allow_empty:
             return None
         return response
     except Exception as e:
         logger.warning( f"Voice get_input failed: {e}" )
-        # Fallback to CLI
+        # Non-interactive fallback: return None
+        if not _is_interactive():
+            logger.info( f"Non-interactive mode, returning None for get_input: {prompt[ :60 ]}" )
+            return None
+        # Interactive CLI fallback
         response = input( f"  {prompt}: " ).strip()
         return response if response or allow_empty else None
 
@@ -344,7 +439,8 @@ async def choose(
     question: str,
     options: Union[ List[ str ], List[ dict ] ],
     timeout: int = 120,
-    allow_custom: bool = False
+    allow_custom: bool = False,
+    job_id: Optional[ str ] = None
 ) -> str:
     """
     Present multiple-choice options (voice-first).
@@ -374,6 +470,10 @@ async def choose(
     Returns:
         str: The selected option label (or custom input)
     """
+    # Auto-inject module-level job_id if caller didn't provide one
+    if job_id is None and _job_id is not None:
+        job_id = _job_id
+
     if not options:
         raise ValueError( "Options list cannot be empty" )
 
@@ -394,6 +494,10 @@ async def choose(
     labels = [ opt[ "label" ] for opt in normalized_options ]
 
     if _force_cli_mode or _cosa_interface is None or not await is_voice_available():
+        # Non-interactive (queue/Docker): use first option as default without blocking
+        if not _is_interactive():
+            logger.info( f"Non-interactive mode, using default '{labels[ 0 ]}' for: {question[ :60 ]}" )
+            return labels[ 0 ]
         # CLI fallback - numbered menu with descriptions
         print( f"\n  {question}" )
         for i, opt in enumerate( normalized_options, 1 ):
@@ -428,7 +532,7 @@ async def choose(
             "options"     : normalized_options
         } ]
 
-        result = await _cosa_interface.present_choices( questions, timeout )
+        result = await _cosa_interface.present_choices( questions, timeout, job_id=job_id )
         selection = result.get( "answers", {} ).get( "Choice" )
 
         # Handle custom "Other" response
@@ -449,7 +553,8 @@ async def present_choices(
     questions: list,
     timeout: int = 120,
     title: Optional[ str ] = None,
-    abstract: Optional[ str ] = None
+    abstract: Optional[ str ] = None,
+    job_id: Optional[ str ] = None
 ) -> dict:
     """
     Present multiple-choice questions (voice-first).
@@ -477,7 +582,23 @@ async def present_choices(
     Returns:
         dict: {"answers": {...}} with selections keyed by header
     """
+    # Auto-inject module-level job_id if caller didn't provide one
+    if job_id is None and _job_id is not None:
+        job_id = _job_id
+
     if _force_cli_mode or _cosa_interface is None or not await is_voice_available():
+        # Non-interactive (queue/Docker): use first option as default without blocking
+        if not _is_interactive():
+            answers = {}
+            for q in questions:
+                header  = q.get( "header", "Choice" )
+                options = q.get( "options", [] )
+                multi   = q.get( "multiSelect", False )
+                default_label = options[ 0 ][ "label" ] if options else ""
+                answers[ header ] = [ default_label ] if multi else default_label
+            logger.info( f"Non-interactive mode, using defaults for present_choices: {answers}" )
+            return { "answers": answers }
+
         # CLI fallback - numbered menu
         if abstract:
             print( f"\n{abstract}" )
@@ -523,7 +644,7 @@ async def present_choices(
 
     try:
         return await _cosa_interface.present_choices(
-            questions=questions, timeout=timeout, title=title, abstract=abstract
+            questions=questions, timeout=timeout, title=title, abstract=abstract, job_id=job_id
         )
     except Exception as e:
         logger.warning( f"Voice present_choices failed: {e}" )
@@ -563,6 +684,10 @@ async def select_themes(
         list[int]: Selected theme indices (0-based)
     """
     if _force_cli_mode or _cosa_interface is None or not await is_voice_available():
+        # Non-interactive (queue/Docker): select all themes without blocking
+        if not _is_interactive():
+            logger.info( f"Non-interactive mode, selecting all {len( themes )} themes" )
+            return list( range( len( themes ) ) )
         # CLI fallback
         print( "\n  Select research themes (comma-separated numbers, or 'all'):" )
         for i, theme in enumerate( themes, 1 ):
@@ -646,6 +771,10 @@ async def select_topics(
         list[int]: Selected topic indices (0-based)
     """
     if _force_cli_mode or _cosa_interface is None or not await is_voice_available():
+        # Non-interactive (queue/Docker): select all topics without blocking
+        if not _is_interactive():
+            logger.info( f"Non-interactive mode, selecting all {len( topics )} topics" )
+            return list( range( len( topics ) ) )
         # CLI fallback
         print( "\n  Refine topic selection (comma-separated numbers, 'all', or 'none'):" )
         for i, topic in enumerate( topics, 1 ):

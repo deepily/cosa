@@ -246,8 +246,9 @@ async def run_research(
     query: str,
     config: ResearchConfig,
     cost_tracker: CostTracker,
-    user_email: str,
+    user_email: str = "",
     no_confirm: bool = False,
+    cancel_check = None,
     debug: bool = False,
     verbose: bool = False
 ) -> Optional[ str ]:
@@ -260,6 +261,7 @@ async def run_research(
         cost_tracker: Cost tracker for usage
         user_email: User email for cache directory (multi-tenancy)
         no_confirm: Skip confirmation prompts
+        cancel_check: Optional callable returning True if cancellation requested
         debug: Enable debug output
         verbose: Enable verbose output
 
@@ -326,6 +328,11 @@ async def run_research(
 
         understood = clarification_response.get( "understood_query", query )
         await voice_io.notify( f"Understood: {understood[:80]}{'...' if len( understood ) > 80 else ''}", priority="low" )
+
+        # Cancel checkpoint: after clarification
+        if cancel_check and cancel_check():
+            await voice_io.notify( "Research cancelled by user.", priority="medium" )
+            return None
 
         # Step 2: Planning
         await voice_io.notify( "Step 2 of 4: Creating research plan", priority="low" )
@@ -487,6 +494,11 @@ async def run_research(
                 await voice_io.notify( "Research cancelled.", priority="medium" )
                 return None
 
+        # Cancel checkpoint: after planning
+        if cancel_check and cancel_check():
+            await voice_io.notify( "Research cancelled by user.", priority="medium" )
+            return None
+
         # Step 3: Research (simplified - single call for MVP)
         await voice_io.notify( "Step 3 of 4: Executing research", priority="low" )
 
@@ -523,6 +535,11 @@ async def run_research(
 
         try:
             for i, sq in enumerate( subqueries ):
+                # Cancel checkpoint: before each research topic
+                if cancel_check and cancel_check():
+                    await voice_io.notify( "Research cancelled by user.", priority="medium" )
+                    return None
+
                 topic = sq.get( "topic", "Unknown" )
                 await voice_io.notify( f"Researching topic {i + 1} of {len( subqueries )}: {topic}", priority="low", progress_group_id=research_group_id )
 
@@ -632,6 +649,11 @@ async def run_research(
             await voice_io.notify( f"Proceeding with {len( findings )} partial research findings", priority="medium" )
         else:
             await voice_io.notify( f"Gathered {len( findings )} research findings", priority="low" )
+
+        # Cancel checkpoint: before synthesis
+        if cancel_check and cancel_check():
+            await voice_io.notify( "Research cancelled by user.", priority="medium" )
+            return None
 
         # Step 4: Synthesis
         await voice_io.notify( "Step 4 of 4: Synthesizing your report", priority="low" )

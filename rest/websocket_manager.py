@@ -55,6 +55,8 @@ class WebSocketManager:
         self.session_to_user: Dict[str, str] = {}
         # Map user_id to list of their session_ids
         self.user_sessions: Dict[str, list] = {}
+        # Cache user_id → email for debug logging (populated on connect, cleared on last disconnect)
+        self.user_to_email: Dict[str, str] = {}
         # Store reference to main event loop for thread-safe operations
         self.main_loop: Optional[asyncio.AbstractEventLoop] = None
         # Session management configuration
@@ -96,7 +98,7 @@ class WebSocketManager:
         self.main_loop = loop
         print( "[WS] Event loop reference stored for thread-safe operations" )
     
-    def connect( self, websocket: WebSocket, session_id: str, user_id: str = None, subscribed_events: List[str] = None ):
+    def connect( self, websocket: WebSocket, session_id: str, user_id: str = None, subscribed_events: List[str] = None, email: str = None ):
         """
         Add a new WebSocket connection with optional user association.
         
@@ -150,17 +152,20 @@ class WebSocketManager:
             if user_id not in self.user_sessions:
                 self.user_sessions[user_id] = []
             self.user_sessions[user_id].append(session_id)
-        
+            if email:
+                self.user_to_email[ user_id ] = email
+
         # Store event subscriptions
+        session_type = "listener" if session_id.startswith( "cc-listener-" ) else "browser"
         if subscribed_events:
             # Validate events
             valid_events = [e for e in subscribed_events if e == "*" or e in self.available_events]
             self.session_subscriptions[session_id] = valid_events
-            print( f"[WS] Session {session_id} subscribed to: {valid_events}" )
+            print( f"[WS] Session {session_id} ({session_type}) subscribed to: {valid_events}" )
         else:
             # Default: subscribe to all events
             self.session_subscriptions[session_id] = ["*"]
-            print( f"[WS] Session {session_id} subscribed to: all events (*)" )
+            print( f"[WS] Session {session_id} ({session_type}) subscribed to: all events (*)" )
     
     def disconnect( self, session_id: str ):
         """
@@ -179,26 +184,34 @@ class WebSocketManager:
         Raises:
             - None (handles missing keys gracefully)
         """
+        # Log disconnect with session type and email
+        session_type = "listener" if session_id.startswith( "cc-listener-" ) else "browser"
+        user_id_tag  = self.session_to_user.get( session_id, "unknown" )
+        email_tag    = self.user_to_email.get( user_id_tag, "" )
+        email_suffix = f" ({email_tag})" if email_tag else ""
+        print( f"[WS] Disconnecting {session_type} session {session_id} for user {user_id_tag}{email_suffix}" )
+
         if session_id in self.active_connections:
             del self.active_connections[session_id]
-            
+
         # Clean up session timestamp
         if session_id in self.session_timestamps:
             del self.session_timestamps[session_id]
-            
+
         # Clean up event subscriptions
         if session_id in self.session_subscriptions:
             del self.session_subscriptions[session_id]
-            
+
         # Clean up user association
         if session_id in self.session_to_user:
             user_id = self.session_to_user[session_id]
             del self.session_to_user[session_id]
-            
+
             if user_id in self.user_sessions:
                 self.user_sessions[user_id].remove(session_id)
                 if not self.user_sessions[user_id]:
                     del self.user_sessions[user_id]
+                    self.user_to_email.pop( user_id, None )
     
     def register_session_user( self, session_id: str, user_id: str ):
         """
@@ -438,7 +451,9 @@ class WebSocketManager:
                 self.main_loop
             )
             # Don't wait for result to avoid blocking the COSA thread
-            print( f"[WS] Scheduled emission of {event} to user {user_id}" )
+            email_tag    = self.user_to_email.get( user_id, "" )
+            email_suffix = f" ({email_tag})" if email_tag else ""
+            print( f"[WS] Scheduled emission of {event} to user {user_id}{email_suffix}" )
         except Exception as e:
             print( f"[ERROR] Failed to schedule emission to user {user_id}: {e}" )
     

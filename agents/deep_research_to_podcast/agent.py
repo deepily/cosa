@@ -134,6 +134,9 @@ class DeepResearchToPodcastAgent:
         dr_voice_io.set_cli_mode( self.cli_mode )
         pg_voice_io.set_cli_mode( self.cli_mode )
 
+        # Re-establish DR binding as the default for pipeline notifications
+        dr_voice_io.reconfigure()
+
         if self.debug:
             mode = "CLI" if self.cli_mode else "Voice-driven"
             print( f"[DeepResearchToPodcastAgent] Set modality to: {mode}" )
@@ -230,6 +233,10 @@ class DeepResearchToPodcastAgent:
             dict with keys: report_path, abstract, cost, artifacts, cancelled
         """
         self.result.state = PipelineState.RUNNING_DEEP_RESEARCH
+
+        # Re-establish DR voice_io binding before DR phase
+        from cosa.agents.deep_research import voice_io as dr_voice_io
+        dr_voice_io.reconfigure()
 
         # Import Deep Research components
         from cosa.agents.deep_research.config import ResearchConfig
@@ -370,6 +377,10 @@ class DeepResearchToPodcastAgent:
             dict with keys: audio_path, script_path, cost, artifacts, cancelled
         """
         self.result.state = PipelineState.RUNNING_PODCAST_GEN
+
+        # Re-establish PG voice_io binding before podcast phase
+        from cosa.agents.podcast_generator import voice_io as pg_voice_io
+        pg_voice_io.reconfigure()
 
         # Import Podcast Generator components
         from cosa.agents.podcast_generator.orchestrator import PodcastOrchestratorAgent

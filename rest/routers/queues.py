@@ -457,7 +457,9 @@ async def reset_queues(
 async def get_job_interactions(
     job_id: str,
     current_user: dict = Depends( get_current_user ),
-    done_queue = Depends( get_done_queue )
+    todo_queue    = Depends( get_todo_queue ),
+    running_queue = Depends( get_running_queue ),
+    done_queue    = Depends( get_done_queue )
 ):
     """
     Get notification interaction history for a completed job.
@@ -483,15 +485,18 @@ async def get_job_interactions(
 
     print( f"[API] /api/get-job-interactions/{job_id} called by user: {current_user['uid']}" )
 
-    # Find job in done queue by compound ID
+    # Find job across all queues (running, done, todo) by compound ID
     job = None
-    for snapshot in done_queue.get_all_jobs():
-        if snapshot.id_hash == job_id:
-            job = snapshot
+    for queue in [ running_queue, done_queue, todo_queue ]:
+        for snapshot in queue.get_all_jobs():
+            if snapshot.id_hash == job_id:
+                job = snapshot
+                break
+        if job:
             break
 
     if not job:
-        print( f"[API] Job not found: {job_id}" )
+        print( f"[API] Job not found in any queue: {job_id}" )
         raise HTTPException( status_code=404, detail=f"Job not found: {job_id}" )
 
     # Authorization check — job.user_id is the single source of truth
@@ -525,6 +530,17 @@ async def get_job_interactions(
                 Notification.job_id == job_id
             ).order_by( Notification.created_at.desc() ).all()
 
+            # Deduplicate progress groups: keep only latest per progress_group_id
+            # Notifications are ordered newest-first, so first occurrence is latest
+            seen_groups = set()
+            deduped     = []
+            for n in notifications:
+                if n.progress_group_id:
+                    if n.progress_group_id in seen_groups:
+                        continue
+                    seen_groups.add( n.progress_group_id )
+                deduped.append( n )
+
             response["interactions"] = [
                 {
                     "id"                 : str( n.id ),
@@ -536,9 +552,9 @@ async def get_job_interactions(
                     "priority"           : n.priority,
                     "abstract"           : n.abstract
                 }
-                for n in notifications
+                for n in deduped
             ]
-            response["interaction_count"] = len( notifications )
+            response["interaction_count"] = len( deduped )
 
             print( f"[API] Found {len( notifications )} interactions for job {job_id}" )
 
@@ -719,4 +735,70 @@ async def send_job_message(
         "status"          : "delivered",
         "notification_id" : notification_id,
         "job_id"          : job_id,
+    }
+
+
+@router.post( "/jobs/{job_id}/cancel" )
+async def cancel_job(
+    job_id: str,
+    current_user: dict = Depends( get_current_user ),
+    running_queue = Depends( get_running_queue ),
+):
+    """
+    Request graceful cancellation of a running agentic job.
+
+    Sets the job's cancel flag so it stops at the next phase-boundary checkpoint.
+    Only agentic jobs (deep research, podcast generator) support cancellation.
+
+    Requires:
+        - job_id identifies a currently running job
+        - current_user is authenticated
+        - Job belongs to current user OR user is admin
+
+    Ensures:
+        - Job's _cancel_requested flag is set to True
+        - Orchestrator's _stop_requested flag is set (if available)
+        - Job will stop at next checkpoint (0-60 seconds latency)
+        - Returns confirmation of cancel request
+
+    Raises:
+        - HTTPException 404: Job not found in running queue
+        - HTTPException 403: User does not own this job
+        - HTTPException 400: Job type does not support cancellation
+
+    Args:
+        job_id: Target running job ID
+        current_user: Authenticated user info
+        running_queue: Running queue dependency
+
+    Returns:
+        dict: {status, job_id, message}
+    """
+    user_id = current_user[ "uid" ]
+
+    print( f"[API] POST /api/jobs/{job_id}/cancel - user: {user_id}" )
+
+    # Validate job exists and is running
+    try:
+        job = running_queue.get_by_id_hash( job_id )
+    except KeyError:
+        raise HTTPException( status_code=404, detail=f"Job not found or not running: {job_id}" )
+
+    # Validate ownership (user or admin)
+    if job.user_id != user_id and not is_admin( current_user ):
+        raise HTTPException( status_code=403, detail="Not authorized to cancel this job" )
+
+    # Check if it's an agentic job (only agentic jobs support cancellation)
+    if not isinstance( job, AgenticJobBase ):
+        raise HTTPException( status_code=400, detail="Only agentic jobs support cancellation" )
+
+    # Request graceful cancellation
+    job.request_cancel()
+
+    print( f"[API] Cancel requested for job {job_id} by user {user_id}" )
+
+    return {
+        "status"  : "cancel_requested",
+        "job_id"  : job_id,
+        "message" : "Cancellation requested. Job will stop at next checkpoint.",
     }

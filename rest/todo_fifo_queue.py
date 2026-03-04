@@ -1065,6 +1065,7 @@ class TodoFifoQueue( FifoQueue ):
             'question_text' : original_question,
             'agent_type'    : display_name,
             'timestamp'     : du.get_current_time(),
+            'status'        : 'pending',
             'expediting'    : True
         }
         emit_job_state_transition( self.websocket_mgr, spec_id, 'pending', 'todo', user_id, spec_metadata )
