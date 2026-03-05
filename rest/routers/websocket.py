@@ -76,17 +76,18 @@ def get_app_debug():
 
 def is_valid_session_id(session_id: str) -> bool:
     """
-    Validate session ID format according to the expected pattern.
+    Validate session ID format according to expected patterns.
 
-    Session IDs should be in the format: adjective noun (e.g., 'wise penguin')
+    Accepted formats:
+        - Browser sessions: "adjective noun" (e.g., 'wise penguin')
+        - Programmatic sessions: "prefix-hash" (e.g., 'cc-listener-72116632')
 
     Requires:
         - session_id is a string (may be empty or invalid)
 
     Ensures:
-        - Returns True if session_id matches pattern "word word" (lowercase)
+        - Returns True if session_id matches a supported format
         - Returns False if empty, whitespace-only, or invalid format
-        - Uses regex pattern '^[a-z]+ [a-z]+$' for validation (single space only)
         - Rejects tab, newline, and other whitespace characters for security
 
     Raises:
@@ -105,10 +106,16 @@ def is_valid_session_id(session_id: str) -> bool:
     if not session_id.strip():
         return False
 
-    # Check format: word word (with a single space only - no tabs/newlines/etc)
+    # Format 1: "adjective noun" browser sessions (single space only)
     # SECURITY: Use literal space ' ' instead of \s to prevent tab/newline injection
-    pattern = r'^[a-z]+ [a-z]+$'
-    return bool(re.match(pattern, session_id.lower()))
+    browser_pattern = r'^[a-z]+ [a-z]+$'
+    if re.match( browser_pattern, session_id.lower() ):
+        return True
+
+    # Format 2: programmatic sessions — lowercase alphanumeric with hyphens
+    # e.g., "cc-listener-72116632", "proxy-ratify"
+    programmatic_pattern = r'^[a-z][a-z0-9-]{2,48}$'
+    return bool( re.match( programmatic_pattern, session_id.lower() ) )
 
 @router.get("/api/auth-test")
 async def auth_test(current_user: dict = Depends(get_current_user)):
@@ -525,8 +532,8 @@ def quick_smoke_test():
         print( "Testing session ID validation logic..." )
         try:
             # Test valid session IDs
-            valid_test_cases = [ "wise penguin", "happy cat", "smart dog" ]
-            invalid_test_cases = [ "", "   ", "singleword", "too many words here", "UPPERCASE", "with123numbers" ]
+            valid_test_cases = [ "wise penguin", "happy cat", "smart dog", "cc-listener-72116632", "proxy-ratify" ]
+            invalid_test_cases = [ "", "   ", "too many words here", "a", "ab" ]
             
             valid_passed = 0
             for valid_id in valid_test_cases:
