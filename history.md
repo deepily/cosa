@@ -1,5 +1,22 @@
 # COSA Development History
 
+> **✅ SESSION 309 COMMIT**: Extend is_valid_session_id() for programmatic session IDs (2026.03.04)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 309 — Fix Headless CC Notification Listener (Bug #2)**:
+> - Extended `is_valid_session_id()` to accept programmatic session ID format (`cc-listener-{hash}`) in addition to browser "adjective noun" format
+> - Added second regex pattern for lowercase alphanumeric with hyphens (3-49 chars)
+> - Updated smoke test cases to cover both browser and programmatic session formats
+>
+> **Files Modified (1)**:
+> - `rest/routers/websocket.py`
+>
+> **Commit**: 24983d4
+
+---
+
 > **✅ SESSIONS 304-308 COMMIT**: Podcast bug fixes, job_id auto-injection, graceful cancellation, voice_io reconfigure (2026.03.04)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >
