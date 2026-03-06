@@ -1,5 +1,27 @@
 # COSA Development History
 
+> **✅ SESSIONS 315+318 COMMIT**: QualifierClassification model, display_qualifier_widget notification field (2026.03.05)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 315 — display_qualifier_widget notification field**:
+> - Threaded `display_qualifier_widget` boolean through full notification stack: `NotificationItem` constructor + `to_dict()`, `NotificationFifoQueue.push_notification()`, FastAPI query parameter in `notifications.py` router (both fire-and-forget and response-requested paths)
+>
+> **Session 318 — QualifierClassification BaseXMLModel**:
+> - Added `QualifierClassification` model with `is_question()`/`is_instruction()` helpers, None-to-empty-string coercion, `get_example_for_template()`, and `quick_smoke_test()`
+> - Registered `'qualifier classification'` key in `PromptTemplateProcessor.MODEL_MAPPING`
+>
+> **Files Modified (4)**:
+> - `rest/notification_fifo_queue.py`
+> - `rest/routers/notifications.py`
+> - `agents/io_models/xml_models.py`
+> - `agents/io_models/utils/prompt_template_processor.py`
+>
+> **Commit**: ccd3e25
+
+---
+
 > **✅ SESSION 309 COMMIT**: Extend is_valid_session_id() for programmatic session IDs (2026.03.04)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >
