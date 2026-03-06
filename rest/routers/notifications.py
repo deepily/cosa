@@ -230,6 +230,7 @@ async def notify_user(
     suppress_ding: bool = Query(False, description="Suppress notification sound (ding) while still speaking message via TTS. Used for conversational TTS from queue operations."),
     progress_group_id: Optional[str] = Query(None, description="Progress group ID for in-place DOM updates. Notifications sharing this ID update a single element instead of appending new ones."),
     prediction_hint_override: Optional[str] = Query(None, description="JSON override for prediction_hint (testing/debug). Bypasses PredictionEngine."),
+    display_qualifier_widget: bool = Query(False, description="Render yes/no qualifier comment widget expanded by default with softer instructional text."),
     notification_queue: NotificationFifoQueue = Depends(get_notification_queue),
     ws_manager: WebSocketManager = Depends(get_websocket_manager)
 ):
@@ -414,18 +415,19 @@ async def notify_user(
         if not response_requested:
             # Add to notification queue with state tracking and io_tbl logging
             notification_item = notification_queue.push_notification(
-                message           = message.strip(),
-                type              = type,
-                priority          = priority,
-                source            = "claude_code",
-                user_id           = target_system_id,
-                title             = title,  # Phase 2.2 - include title for consistency
-                sender_id         = resolved_sender_id,  # Sender-aware notification system
-                abstract          = abstract,  # Supplementary context for action-required cards
-                suppress_ding     = suppress_ding,  # Skip notification sound (conversational TTS)
-                job_id            = job_id,  # Agentic job ID for routing to job cards
-                queue_name        = queue_name,  # Queue for provisional job card registration
-                progress_group_id = progress_group_id  # In-place DOM update grouping
+                message                 = message.strip(),
+                type                    = type,
+                priority                = priority,
+                source                  = "claude_code",
+                user_id                 = target_system_id,
+                title                   = title,  # Phase 2.2 - include title for consistency
+                sender_id               = resolved_sender_id,  # Sender-aware notification system
+                abstract                = abstract,  # Supplementary context for action-required cards
+                suppress_ding           = suppress_ding,  # Skip notification sound (conversational TTS)
+                job_id                  = job_id,  # Agentic job ID for routing to job cards
+                queue_name              = queue_name,  # Queue for provisional job card registration
+                progress_group_id       = progress_group_id,  # In-place DOM update grouping
+                display_qualifier_widget = display_qualifier_widget  # Expanded comment widget
             )
 
             # Persist to PostgreSQL for history loading
@@ -617,25 +619,26 @@ async def notify_user(
 
         # Push notification to WebSocket for UI rendering (Phase 2.2 with full fields)
         notification_item = notification_queue.push_notification(
-            message            = message.strip(),
-            type               = type,
-            priority           = priority,
-            source             = "claude_code",
-            user_id            = target_system_id,
-            id                 = notification_id,  # Use database ID for consistency
-            title              = title or message.strip()[:50],
-            response_requested = True,
-            response_type      = response_type,
-            response_default   = response_default,
-            response_options   = parsed_response_options,  # Multiple-choice options
-            timeout_seconds    = timeout_seconds,
-            sender_id          = resolved_sender_id,  # Sender-aware notification system
-            abstract           = abstract,  # Supplementary context for action-required cards
-            suppress_ding      = suppress_ding,  # Skip notification sound (conversational TTS)
-            job_id             = job_id,  # Agentic job ID for routing to job cards
-            queue_name         = queue_name,  # Queue for provisional job card registration
-            progress_group_id  = progress_group_id,  # In-place DOM update grouping
-            prediction_hint    = prediction_hint  # Prediction hint (override or engine-generated)
+            message                  = message.strip(),
+            type                     = type,
+            priority                 = priority,
+            source                   = "claude_code",
+            user_id                  = target_system_id,
+            id                       = notification_id,  # Use database ID for consistency
+            title                    = title or message.strip()[:50],
+            response_requested       = True,
+            response_type            = response_type,
+            response_default         = response_default,
+            response_options         = parsed_response_options,  # Multiple-choice options
+            timeout_seconds          = timeout_seconds,
+            sender_id                = resolved_sender_id,  # Sender-aware notification system
+            abstract                 = abstract,  # Supplementary context for action-required cards
+            suppress_ding            = suppress_ding,  # Skip notification sound (conversational TTS)
+            job_id                   = job_id,  # Agentic job ID for routing to job cards
+            queue_name               = queue_name,  # Queue for provisional job card registration
+            progress_group_id        = progress_group_id,  # In-place DOM update grouping
+            prediction_hint          = prediction_hint,  # Prediction hint (override or engine-generated)
+            display_qualifier_widget = display_qualifier_widget  # Expanded comment widget
         )
 
         # DEBUG: Log the notification_item after creation

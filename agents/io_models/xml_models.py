@@ -16,6 +16,7 @@ This module provides:
 - AgentRouterResponse: Agent routing command responses
 - GistResponse: Text summarization responses
 - ConfirmationResponse: Yes/no/ambiguous decision responses
+- QualifierClassification: Question/instruction intent classification
 
 All models inherit from BaseXMLModel and include quick_smoke_test() methods.
 """
@@ -2708,6 +2709,110 @@ class ConfirmationResponse( BaseXMLModel ):
             return False
 
 
+class QualifierClassification( BaseXMLModel ):
+    """
+    Intent classification response model.
+
+    Handles XML responses for classifying user utterances as questions or instructions:
+    <response>
+        <intent>question</intent>
+        <confidence>0.9</confidence>
+        <reasoning>The user is asking about test results, not requesting action.</reasoning>
+    </response>
+
+    Used by qualifier-classification.txt template.
+    """
+
+    intent     : str = Field( ..., description="'question' or 'instruction'" )
+    confidence : str = Field( default="0.0", description="Confidence score 0.0-1.0" )
+    reasoning  : str = Field( default="", description="Brief explanation of classification" )
+
+    @field_validator( "*", mode="before" )
+    @classmethod
+    def coerce_none_to_empty_str( cls, v ):
+        if v is None:
+            return ""
+        return v
+
+    def is_question( self ):
+        """Return True if the classified intent is 'question'."""
+        return self.intent.strip().lower() == "question"
+
+    def is_instruction( self ):
+        """Return True if the classified intent is 'instruction'."""
+        return self.intent.strip().lower() == "instruction"
+
+    @classmethod
+    def get_example_for_template( cls ):
+        """
+        Get example instance for prompt templates.
+
+        Ensures:
+            - Returns QualifierClassification with sample question classification
+        """
+        return cls(
+            intent     = "question",
+            confidence = "0.85",
+            reasoning  = "The user is asking about the status of something, not requesting an action."
+        )
+
+    @classmethod
+    def quick_smoke_test( cls, debug=False ):
+        """
+        Quick smoke test for QualifierClassification.
+
+        Returns:
+            True if all tests pass
+        """
+        if debug:
+            print( f"Testing {cls.__name__}..." )
+
+        try:
+            # Test base functionality
+            if not super().quick_smoke_test( debug=False ):
+                return False
+
+            # Test creation
+            response = cls( intent="question", confidence="0.9", reasoning="Asking about results" )
+            assert response.intent == "question"
+            assert response.confidence == "0.9"
+
+            # Test is_question / is_instruction
+            assert response.is_question() is True
+            assert response.is_instruction() is False
+
+            instr = cls( intent="instruction", confidence="0.8", reasoning="Requesting action" )
+            assert instr.is_question() is False
+            assert instr.is_instruction() is True
+
+            # Test XML round-trip
+            xml_str = response.to_xml()
+            assert "<intent>question</intent>" in xml_str
+            parsed = cls.from_xml( xml_str )
+            assert parsed.intent == "question"
+            assert parsed.confidence == "0.9"
+
+            # Test None coercion
+            coerced = cls( intent="question", confidence=None, reasoning=None )
+            assert coerced.confidence == ""
+            assert coerced.reasoning == ""
+
+            # Test template example
+            example = cls.get_example_for_template()
+            assert example.intent == "question"
+            assert example.confidence == "0.85"
+
+            if debug:
+                print( f"✓ {cls.__name__} smoke test PASSED" )
+
+            return True
+
+        except Exception as e:
+            if debug:
+                print( f"✗ {cls.__name__} smoke test FAILED: {e}" )
+            return False
+
+
 class FuzzyFileMatchResponse( BaseXMLModel ):
     """
     Fuzzy file matching response model.
@@ -2853,6 +2958,7 @@ def quick_smoke_test() -> bool:
             AgentRouterResponse,
             GistResponse,
             ConfirmationResponse,
+            QualifierClassification,
             FuzzyFileMatchResponse
         ]
         

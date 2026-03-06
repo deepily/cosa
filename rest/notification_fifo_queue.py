@@ -21,7 +21,8 @@ class NotificationItem:
                  abstract: Optional[str] = None, suppress_ding: bool = False,
                  job_id: Optional[str] = None, queue_name: Optional[str] = None,
                  progress_group_id: Optional[str] = None,
-                 prediction_hint: Optional[dict] = None ) -> None:
+                 prediction_hint: Optional[dict] = None,
+                 display_qualifier_widget: bool = False ) -> None:
         """
         Initialize a notification item.
 
@@ -83,6 +84,9 @@ class NotificationItem:
 
         # Prediction engine hint (passed in before WebSocket push, or None during cold start)
         self.prediction_hint    = prediction_hint
+
+        # Display qualifier widget expanded by default (yes/no comment input)
+        self.display_qualifier_widget = display_qualifier_widget
 
     def _get_local_timestamp( self ) -> str:
         """Get timezone-aware timestamp using configured timezone from ConfigurationManager"""
@@ -165,7 +169,9 @@ class NotificationItem:
             # Progress group ID for in-place DOM updates
             "progress_group_id"  : self.progress_group_id,
             # Prediction engine hint (null during cold start)
-            "prediction_hint"    : self.prediction_hint
+            "prediction_hint"            : self.prediction_hint,
+            # Display qualifier widget expanded by default
+            "display_qualifier_widget"   : self.display_qualifier_widget
         }
 
 
@@ -259,7 +265,8 @@ class NotificationFifoQueue( FifoQueue ):
                          abstract: Optional[str] = None, suppress_ding: bool = False,
                          job_id: Optional[str] = None, queue_name: Optional[str] = None,
                          progress_group_id: Optional[str] = None,
-                         prediction_hint: Optional[dict] = None ) -> NotificationItem:
+                         prediction_hint: Optional[dict] = None,
+                 display_qualifier_widget: bool = False ) -> NotificationItem:
         """
         Push a notification with priority handling and io_tbl logging.
 
@@ -299,8 +306,9 @@ class NotificationFifoQueue( FifoQueue ):
             suppress_ding      = suppress_ding,
             job_id             = job_id,
             queue_name         = queue_name,
-            progress_group_id  = progress_group_id,
-            prediction_hint    = prediction_hint
+            progress_group_id        = progress_group_id,
+            prediction_hint          = prediction_hint,
+            display_qualifier_widget = display_qualifier_widget
         )
         
         # Priority handling - urgent/high go to front, but after other urgent/high
