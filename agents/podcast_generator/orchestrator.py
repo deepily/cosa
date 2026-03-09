@@ -950,7 +950,8 @@ class PodcastOrchestratorAgent:
             segment_count = script.get_segment_count()
             await voice_io.notify(
                 f"Starting English audio generation ({segment_count} segments)...",
-                priority = "medium"
+                priority          = "medium",
+                progress_group_id = self._audio_progress_group_id,
             )
 
             tts_results, failed_indices = await self._generate_audio_async( script )

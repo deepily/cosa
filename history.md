@@ -1,5 +1,50 @@
 # COSA Development History
 
+> **✅ SESSIONS 328-330 COMMIT**: R2P notification fixes, TARGET_USER handoff, PG audio progress, WebSocket diagnostics, job card bug fixes (2026.03.08)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 328 Checkpoint 1 — CJ Flow Job Card Bug Fixes + Packaging Guide**:
+> - Fixed user messages in running job cards rendering as gray activity-log instead of blue chat bubbles
+> - Fixed cancel button not removed on job card transition to done/dead
+> - Fixed R2P sender_id validation error — changed `self.id_hash` to `self.base_id` for sender_id construction
+> - Removed double truncation in job card `last_question_asked` — Python-side no longer truncates, JS handles display
+>
+> **Session 328 Checkpoint 2 — Fix Missing TARGET_USER in R2P Job**:
+> - Added `cosa_interface.TARGET_USER = self.user_email` in both `_execute()` and `_execute_dry_run()`
+>
+> **Session 329 Checkpoint 1 — R2P Notification Delivery Diagnostics + Fix**:
+> - Added diagnostic logging to `WebSocketManager.emit_to_user()` — exposed silent failure points
+> - Fixed missing `self.debug` attribute in `WebSocketManager.__init__()`
+> - Added `job_id=self.id_hash` and `queue_name="run"` to all 14 `voice_io.notify()` calls in R2P job.py
+> - Added `voice_io.set_job_id()` / `voice_io.clear_job_id()` lifecycle in R2P `_execute()` and `_execute_dry_run()`
+>
+> **Session 329 Checkpoint 2 — Fix R2P → PG Handoff Missing TARGET_USER on Agent**:
+> - Added `pg_cosa_interface.TARGET_USER` and `dr_cosa_interface.TARGET_USER` in agent.py before each phase
+> - Replaced bare DR completion notification with rich checkpoint showing report path, abstract, cost, tokens, duration
+> - Added `**kwargs` pass-through to `_notify()` helper so `abstract=` reaches `voice_io.notify()`
+>
+> **Session 330 — Fix PG Audio Progress Not Updating In-Place**:
+> - Added `progress_group_id = self._audio_progress_group_id` to Phase 5 English audio start notification
+>
+> **Additional changes committed**:
+> - DR cli.py: Added user interaction breadcrumb notifications (clarification, theme selection, topic refinement, plan approval, partial report)
+> - DR job.py: Always print tracebacks on failure (not just debug mode), include traceback in error field, CostTracker with session_id + budget_limit_usd
+> - queues.py: Fixed `user_id_db` scope — captured `user.id` inside DB session before using outside it
+>
+> **Files Modified (8)**:
+> - `agents/deep_research/cli.py` — User interaction breadcrumb notifications (+30 lines)
+> - `agents/deep_research/job.py` — Full traceback on failure, CostTracker params, removed truncation (+24/-12)
+> - `agents/deep_research_to_podcast/agent.py` — TARGET_USER on both cosa_interfaces, rich DR checkpoint, `_notify()` kwargs (+21/-4)
+> - `agents/deep_research_to_podcast/job.py` — sender_id base_id fix, job_id/queue_name on all notifies, try/finally lifecycle (+158/-100)
+> - `agents/podcast_generator/job.py` — Removed filename truncation (+7/-8)
+> - `agents/podcast_generator/orchestrator.py` — progress_group_id on English audio start notification (+3/-2)
+> - `rest/routers/queues.py` — user_id_db scope fix (+3/-1)
+> - `rest/websocket_manager.py` — emit_to_user() diagnostic logging, self.debug init (+33/-18)
+
+---
+
 > **✅ SESSIONS 315+318 COMMIT**: QualifierClassification model, display_qualifier_widget notification field (2026.03.05)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >

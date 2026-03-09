@@ -63,7 +63,8 @@ class WebSocketManager:
         self.config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         self.single_session_per_user = self.config_mgr.get( "websocket enforce single session per user", default=False, return_type="boolean" )
         self.session_timestamps: Dict[str, datetime] = {}  # Track when sessions connected
-        
+        self.debug = self.config_mgr.get( "app_debug", default=False, return_type="boolean" )
+
         # Event subscription system
         self.session_subscriptions: Dict[str, List[str]] = {}  # Map session_id to list of subscribed events
         
@@ -389,7 +390,7 @@ class WebSocketManager:
                 self.main_loop
             )
             # Don't wait for result to avoid blocking
-            if hasattr( self, 'debug' ) and self.debug:
+            if self.debug:
                 print( f"[WS] Scheduled emission of {event}" )
         except Exception as e:
             print( f"[ERROR] Failed to schedule emission: {e}" )
@@ -521,34 +522,44 @@ class WebSocketManager:
             bool: True if message was sent to at least one connection, False if user not available
         """
         if user_id not in self.user_sessions:
+            print( f"[WS] emit_to_user: user {user_id} not in user_sessions — delivery skipped" )
             return False
-            
+
         message = {
             "type": event,
             "timestamp": datetime.now().isoformat(),
             **data
         }
-        
+
         sent_count = 0
         disconnected = []
-        
-        for session_id in self.user_sessions[user_id]:
+
+        sessions = list( self.user_sessions[ user_id ] )
+        for session_id in sessions:
             if session_id in self.active_connections:
                 # Check if this session is subscribed to this event
                 subscriptions = self.session_subscriptions.get( session_id, ["*"] )
-                
+
                 if "*" in subscriptions or event in subscriptions:
                     try:
-                        websocket = self.active_connections[session_id]
+                        websocket = self.active_connections[ session_id ]
                         await websocket.send_json( message )
                         sent_count += 1
-                    except:
+                    except Exception as send_err:
+                        print( f"[WS] emit_to_user: send_json failed for session {session_id}: {send_err}" )
                         disconnected.append( session_id )
-        
+                else:
+                    if self.debug: print( f"[WS] emit_to_user: session {session_id} not subscribed to {event}" )
+            else:
+                if self.debug: print( f"[WS] emit_to_user: session {session_id} not in active_connections" )
+
         # Clean up disconnected sessions
         for session_id in disconnected:
             self.disconnect( session_id )
-        
+
+        if sent_count == 0:
+            print( f"[WS] emit_to_user: {event} to user {user_id} — sent_count=0 (sessions={len( sessions )})" )
+
         return sent_count > 0
     
     async def emit_to_all( self, event: str, data: dict ):

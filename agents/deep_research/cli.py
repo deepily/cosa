@@ -325,6 +325,12 @@ async def run_research(
 
                 if clarification and clarification.lower().strip() not in [ "skip", "none", "no", "" ]:
                     query = f"{query} - Clarification: {clarification}"
+                    await voice_io.notify(
+                        f"User clarification: {clarification[ :100 ]}",
+                        priority="low"
+                    )
+                else:
+                    await voice_io.notify( "User skipped clarification.", priority="low" )
 
         understood = clarification_response.get( "understood_query", query )
         await voice_io.notify( f"Understood: {understood[:80]}{'...' if len( understood ) > 80 else ''}", priority="low" )
@@ -424,6 +430,14 @@ async def run_research(
                     logger.error( f"Theme selection failed: {e}" )
                     return None
 
+            # Record user's theme selection in job card
+            if selected_theme_indices:
+                selected_names = [ themes[ i ][ "name" ] for i in selected_theme_indices ]
+                await voice_io.notify(
+                    f"User selected {len( selected_names )} theme(s): {', '.join( selected_names )}",
+                    priority="low"
+                )
+
             if not selected_theme_indices:
                 await voice_io.notify( "No themes selected. Research cancelled at your request.", priority="medium" )
                 return None
@@ -454,6 +468,14 @@ async def run_research(
                     # Technical failure - user already notified by select_topics
                     logger.error( f"Topic selection failed: {e}" )
                     return None
+
+                # Record user's topic refinement in job card
+                if selected_indices:
+                    selected_topic_names = [ candidate_subqueries[ i ][ 1 ].get( "topic", "?" ) for i in selected_indices ]
+                    await voice_io.notify(
+                        f"User refined to {len( selected_indices )} topic(s): {', '.join( selected_topic_names )}",
+                        priority="low"
+                    )
 
                 if not selected_indices:
                     await voice_io.notify( "No topics selected. Research cancelled at your request.", priority="medium" )
@@ -489,6 +511,10 @@ async def run_research(
                 "Would you like to proceed with this research plan?",
                 default="yes",
                 abstract=plan_abstract
+            )
+            await voice_io.notify(
+                f"User {'approved' if proceed else 'rejected'} research plan ({len( subqueries )} topics).",
+                priority="low"
             )
             if not proceed:
                 await voice_io.notify( "Research cancelled.", priority="medium" )
@@ -629,6 +655,10 @@ async def run_research(
                 proceed_partial = await voice_io.ask_yes_no(
                     f"Generate partial report from {completed} completed topics?",
                     default="yes"
+                )
+                await voice_io.notify(
+                    f"User {'approved' if proceed_partial else 'declined'} partial report ({completed}/{total} topics).",
+                    priority="low"
                 )
 
                 if not proceed_partial:

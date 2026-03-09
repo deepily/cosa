@@ -126,8 +126,7 @@ class DeepResearchToPodcastJob( AgenticJobBase ):
         Returns:
             str: Human-readable job description
         """
-        truncated = self.query[ :40 ] + "..." if len( self.query ) > 40 else self.query
-        return f"[Research→Podcast] {truncated}"
+        return f"[Research→Podcast] {self.query}"
 
     def do_all( self ) -> str:
         """
@@ -193,68 +192,78 @@ class DeepResearchToPodcastJob( AgenticJobBase ):
         from cosa.agents.deep_research_to_podcast.agent import DeepResearchToPodcastAgent
         from cosa.agents.deep_research_to_podcast.state import PipelineState
 
-        # Set sender_id for notifications
-        cosa_interface.SENDER_ID = cosa_interface._get_sender_id( suffix=self.id_hash )
+        # Set sender_id and target_user for notifications (use base_id to strip ::user_id scope suffix)
+        cosa_interface.SENDER_ID   = cosa_interface._get_sender_id( suffix=self.base_id )
+        cosa_interface.TARGET_USER = self.user_email
+
+        # Set job_id for auto-injection into all downstream notify() calls (same pattern as DeepResearchJob)
+        voice_io.set_job_id( self.id_hash )
 
         if self.debug:
             print( f"[DeepResearchToPodcastJob] Query: {self.query[ :80 ]}..." )
             print( f"[DeepResearchToPodcastJob] Budget: ${self.budget}" if self.budget else "[DeepResearchToPodcastJob] Budget: unlimited" )
             print( f"[DeepResearchToPodcastJob] Target languages: {self.target_languages}" )
 
-        # Notify start
-        await voice_io.notify(
-            f"Starting research→podcast pipeline: {self.query[ :60 ]}...",
-            priority="medium"
-        )
+        try:
+            # Notify start
+            await voice_io.notify(
+                f"Starting research→podcast pipeline: {self.query[ :60 ]}...",
+                priority="medium",
+                job_id=self.id_hash,
+                queue_name="run"
+            )
 
-        # Create the chained agent
-        agent = DeepResearchToPodcastAgent(
-            query            = self.query,
-            user_email       = self.user_email,
-            budget           = self.budget,
-            audience         = self.audience,
-            audience_context = self.audience_context,
-            target_languages = self.target_languages,
-            max_segments     = self.max_segments,
-            cli_mode         = False,  # Voice-driven mode for queue
-            debug            = self.debug,
-            verbose          = self.verbose,
-        )
+            # Create the chained agent
+            agent = DeepResearchToPodcastAgent(
+                query            = self.query,
+                user_email       = self.user_email,
+                budget           = self.budget,
+                audience         = self.audience,
+                audience_context = self.audience_context,
+                target_languages = self.target_languages,
+                max_segments     = self.max_segments,
+                cli_mode         = False,  # Voice-driven mode for queue
+                debug            = self.debug,
+                verbose          = self.verbose,
+            )
 
-        # Run the full pipeline
-        result = await agent.run_async()
+            # Run the full pipeline
+            result = await agent.run_async()
 
-        # Check result state
-        if result.state == PipelineState.CANCELLED:
-            await voice_io.notify( "Pipeline was cancelled.", priority="medium" )
-            return "Research→Podcast pipeline was cancelled by the user."
+            # Check result state
+            if result.state == PipelineState.CANCELLED:
+                await voice_io.notify( "Pipeline was cancelled.", priority="medium", job_id=self.id_hash, queue_name="run" )
+                return "Research→Podcast pipeline was cancelled by the user."
 
-        if result.state == PipelineState.FAILED:
-            error_msg = result.error or "Unknown error"
-            await voice_io.notify( f"Pipeline failed: {error_msg[ :80 ]}", priority="urgent" )
-            raise Exception( error_msg )
+            if result.state == PipelineState.FAILED:
+                error_msg = result.error or "Unknown error"
+                await voice_io.notify( f"Pipeline failed: {error_msg[ :80 ]}", priority="urgent", job_id=self.id_hash, queue_name="run" )
+                raise Exception( error_msg )
 
-        # Store results
-        self.research_path = result.research_path
-        self.audio_path    = result.audio_path
-        self.script_path   = result.script_path
+            # Store results
+            self.research_path = result.research_path
+            self.audio_path    = result.audio_path
+            self.script_path   = result.script_path
 
-        # Store artifacts
-        self.artifacts[ "research_path" ]     = result.research_path
-        self.artifacts[ "research_abstract" ] = result.research_abstract
-        self.artifacts[ "audio_path" ]        = result.audio_path
-        self.artifacts[ "script_path" ]       = result.script_path
+            # Store artifacts
+            self.artifacts[ "research_path" ]     = result.research_path
+            self.artifacts[ "research_abstract" ] = result.research_abstract
+            self.artifacts[ "audio_path" ]        = result.audio_path
+            self.artifacts[ "script_path" ]       = result.script_path
 
-        # Build cost summary
-        self.cost_summary = {
-            "dr_cost_usd"    : result.dr_cost,
-            "pg_cost_usd"    : result.pg_cost,
-            "total_cost_usd" : result.total_cost,
-        }
-        self.artifacts[ "cost_summary" ] = self.cost_summary
+            # Build cost summary
+            self.cost_summary = {
+                "dr_cost_usd"    : result.dr_cost,
+                "pg_cost_usd"    : result.pg_cost,
+                "total_cost_usd" : result.total_cost,
+            }
+            self.artifacts[ "cost_summary" ] = self.cost_summary
 
-        # Return conversational answer
-        return f"Pipeline complete! Research report and podcast generated. Total cost: ${result.total_cost:.4f}. Audio: {self.audio_path}"
+            # Return conversational answer
+            return f"Pipeline complete! Research report and podcast generated. Total cost: ${result.total_cost:.4f}. Audio: {self.audio_path}"
+
+        finally:
+            voice_io.clear_job_id()
 
     async def _execute_dry_run( self, voice_io, cosa_interface ) -> str:
         """
@@ -272,42 +281,46 @@ class DeepResearchToPodcastJob( AgenticJobBase ):
         """
         import asyncio
 
-        # Set sender_id for notifications
-        cosa_interface.SENDER_ID = cosa_interface._get_sender_id( suffix=self.id_hash )
+        # Set sender_id and target_user for notifications (use base_id to strip ::user_id scope suffix)
+        cosa_interface.SENDER_ID   = cosa_interface._get_sender_id( suffix=self.base_id )
+        cosa_interface.TARGET_USER = self.user_email
+
+        # Set job_id for auto-injection into all downstream notify() calls
+        voice_io.set_job_id( self.id_hash )
 
         if self.debug:
             print( f"[DeepResearchToPodcastJob] DRY RUN MODE for: {self.query[ :50 ]}..." )
 
         # === Deep Research Phase Breadcrumbs ===
-        await voice_io.notify( f"🧪 Dry run: Starting research→podcast simulation", priority="low" )
+        await voice_io.notify( f"🧪 Dry run: Starting research→podcast simulation", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
-        await voice_io.notify( "🧪 Dry run: [RESEARCH] skipping query clarification", priority="low" )
+        await voice_io.notify( "🧪 Dry run: [RESEARCH] skipping query clarification", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
-        await voice_io.notify( "🧪 Dry run: [RESEARCH] skipping research planning", priority="low" )
+        await voice_io.notify( "🧪 Dry run: [RESEARCH] skipping research planning", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
-        await voice_io.notify( "🧪 Dry run: [RESEARCH] skipping subquery research (5 queries)", priority="low" )
+        await voice_io.notify( "🧪 Dry run: [RESEARCH] skipping subquery research (5 queries)", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
-        await voice_io.notify( "🧪 Dry run: [RESEARCH] skipping report synthesis", priority="low" )
+        await voice_io.notify( "🧪 Dry run: [RESEARCH] skipping report synthesis", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
-        await voice_io.notify( "🧪 Dry run: [RESEARCH] skipping report write to disk", priority="low" )
+        await voice_io.notify( "🧪 Dry run: [RESEARCH] skipping report write to disk", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
         # === Podcast Generation Phase Breadcrumbs ===
-        await voice_io.notify( "🧪 Dry run: [PODCAST] skipping content analysis", priority="low" )
+        await voice_io.notify( "🧪 Dry run: [PODCAST] skipping content analysis", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
-        await voice_io.notify( "🧪 Dry run: [PODCAST] skipping script generation", priority="low" )
+        await voice_io.notify( "🧪 Dry run: [PODCAST] skipping script generation", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
-        await voice_io.notify( "🧪 Dry run: [PODCAST] skipping TTS generation (10 segments)", priority="low" )
+        await voice_io.notify( "🧪 Dry run: [PODCAST] skipping TTS generation (10 segments)", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
-        await voice_io.notify( "🧪 Dry run: [PODCAST] skipping audio stitching", priority="low" )
+        await voice_io.notify( "🧪 Dry run: [PODCAST] skipping audio stitching", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
         # Set mock results
@@ -343,9 +356,12 @@ class DeepResearchToPodcastJob( AgenticJobBase ):
         await voice_io.notify(
             "🧪 Dry run complete! Pipeline simulation finished.",
             priority="medium",
-            abstract=completion_abstract
+            abstract=completion_abstract,
+            job_id=self.id_hash,
+            queue_name="run"
         )
 
+        voice_io.clear_job_id()
         return "Dry run complete. Research and podcast simulation finished."
 
 

@@ -116,16 +116,15 @@ class PodcastGeneratorJob( AgenticJobBase ):
         """
         Display string for queue UI.
 
-        Returns truncated research path with [Podcast] prefix.
+        Returns research path filename with [Podcast] prefix.
+        JS header truncates independently via truncateText().
 
         Returns:
             str: Human-readable job description
         """
-        # Extract filename from path for display
         import os
         filename = os.path.basename( self.research_path )
-        truncated = filename[ :40 ] + "..." if len( filename ) > 40 else filename
-        return f"[Podcast] {truncated}"
+        return f"[Podcast] {filename}"
 
     def do_all( self ) -> str:
         """

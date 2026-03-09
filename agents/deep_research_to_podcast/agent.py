@@ -182,9 +182,20 @@ class DeepResearchToPodcastAgent:
             self.result.dr_artifacts = dr_result.get( "artifacts", {} )
             self.result.state = PipelineState.DEEP_RESEARCH_DONE
 
+            # Checkpoint: Confirm DR artifacts before PG handoff
+            dr_artifacts = self.result.dr_artifacts
+            checkpoint_abstract = (
+                f"**Research Report**: {report_path}\n\n"
+                f"**Abstract**: {self.result.research_abstract[ :200 ] if self.result.research_abstract else 'N/A'}...\n\n"
+                f"**Cost**: ${self.result.dr_cost:.4f} | "
+                f"**Tokens**: {dr_artifacts.get( 'tokens_used', 'N/A' ):,} | "
+                f"**Duration**: {dr_artifacts.get( 'duration_seconds', 0 ):.0f}s"
+            )
+
             await self._notify(
                 f"Deep Research complete! Cost: ${self.result.dr_cost:.4f}",
-                priority="low"
+                priority="medium",
+                abstract=checkpoint_abstract
             )
 
             # Step 2: Run Podcast Generator
@@ -236,7 +247,9 @@ class DeepResearchToPodcastAgent:
 
         # Re-establish DR voice_io binding before DR phase
         from cosa.agents.deep_research import voice_io as dr_voice_io
+        from cosa.agents.deep_research import cosa_interface as dr_cosa_interface
         dr_voice_io.reconfigure()
+        dr_cosa_interface.TARGET_USER = self.user_email
 
         # Import Deep Research components
         from cosa.agents.deep_research.config import ResearchConfig
@@ -380,7 +393,9 @@ class DeepResearchToPodcastAgent:
 
         # Re-establish PG voice_io binding before podcast phase
         from cosa.agents.podcast_generator import voice_io as pg_voice_io
+        from cosa.agents.podcast_generator import cosa_interface as pg_cosa_interface
         pg_voice_io.reconfigure()
+        pg_cosa_interface.TARGET_USER = self.user_email
 
         # Import Podcast Generator components
         from cosa.agents.podcast_generator.orchestrator import PodcastOrchestratorAgent
@@ -447,7 +462,7 @@ class DeepResearchToPodcastAgent:
         self.result.total_cost = self.result.dr_cost + self.result.pg_cost
         return self.result
 
-    async def _notify( self, message: str, priority: str = "medium" ) -> None:
+    async def _notify( self, message: str, priority: str = "medium", **kwargs ) -> None:
         """
         Send a notification using the appropriate modality.
 
@@ -455,7 +470,7 @@ class DeepResearchToPodcastAgent:
         """
         from cosa.agents.deep_research import voice_io
 
-        await voice_io.notify( message, priority=priority )
+        await voice_io.notify( message, priority=priority, **kwargs )
 
     def get_state( self ) -> PipelineState:
         """Get current pipeline state."""

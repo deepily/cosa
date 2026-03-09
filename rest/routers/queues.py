@@ -659,6 +659,7 @@ async def send_job_message(
             db.commit()
 
             notification_id = str( notification.id )
+            user_id_db      = user.id
 
     except HTTPException:
         raise
@@ -698,7 +699,7 @@ async def send_job_message(
                 notif_repo2 = NotificationRepository( db2 )
                 echo_notif  = notif_repo2.create_notification(
                     sender_id          = f"swe.lead@lupin",
-                    recipient_id       = user.id,
+                    recipient_id       = user_id_db,
                     message            = echo_message,
                     type               = "progress",
                     priority           = "low",

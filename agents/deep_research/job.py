@@ -18,6 +18,7 @@ Example:
 """
 
 import asyncio
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -115,13 +116,13 @@ class DeepResearchJob( AgenticJobBase ):
         """
         Display string for queue UI.
 
-        Returns truncated query with [Deep Research] prefix.
+        Returns full query with [Deep Research] prefix.
+        JS header truncates independently via truncateText().
 
         Returns:
             str: Human-readable job description
         """
-        truncated = self.query[ :50 ] + "..." if len( self.query ) > 50 else self.query
-        return f"[Deep Research] {truncated}"
+        return f"[Deep Research] {self.query}"
 
     def do_all( self ) -> str:
         """
@@ -164,14 +165,15 @@ class DeepResearchJob( AgenticJobBase ):
             return result
 
         except Exception as e:
+            import traceback
+            tb_str = traceback.format_exc()
+
             self.status       = "failed"
             self.completed_at = datetime.now().isoformat()
-            self.error        = str( e )
+            self.error        = f"{e}\n\n{tb_str}"
 
-            if self.debug:
-                print( f"[DeepResearchJob] Failed: {e}" )
-                import traceback
-                traceback.print_exc()
+            print( f"[DeepResearchJob] Failed: {e}" )
+            print( tb_str )
 
             # Return error message as conversational answer
             self.answer_conversational = f"Research failed: {str( e )}"
@@ -276,7 +278,11 @@ class DeepResearchJob( AgenticJobBase ):
             config.audience_context = self.audience_context or audience_context_from_config or None
 
             # Create cost tracker
-            cost_tracker = CostTracker( budget_limit=self.budget )
+            cost_tracker = CostTracker(
+                session_id       = f"research-{self.user_id}-{int( time.time() )}",
+                budget_limit_usd = self.budget,
+                debug            = self.debug,
+            )
 
             # Run the research (with cancellation callback)
             cancel_check = lambda: self._cancel_requested
