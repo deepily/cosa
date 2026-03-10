@@ -451,19 +451,6 @@ async def notify_user(
                         repo.update_state( db_notification.id, "delivered" )
                     print( f"[NOTIFY] ✓ Persisted notification {db_notification.id} to PostgreSQL" )
 
-                    # Broadcast active_conversation_changed event (Conversation Identity Phase 2)
-                    try:
-                        await ws_manager.emit_to_user(
-                            target_system_id,
-                            "active_conversation_changed",
-                            {
-                                "active_sender_id" : resolved_sender_id,
-                                "timestamp"        : datetime.now( timezone.utc ).isoformat()
-                            }
-                        )
-                    except Exception as ws_error:
-                        print( f"[NOTIFY] ⚠️ Failed to broadcast active_conversation_changed: {ws_error}" )
-
             except Exception as db_error:
                 # Log but don't fail - FIFO queue is the primary delivery mechanism
                 print( f"[NOTIFY] ⚠️ Failed to persist to PostgreSQL (non-fatal): {db_error}" )
@@ -560,19 +547,6 @@ async def notify_user(
             notification_id = str( db_notification.id )
 
         print(f"[NOTIFY] Created response-required notification: {notification_id}")
-
-        # Broadcast active_conversation_changed event (Conversation Identity Phase 2)
-        try:
-            await ws_manager.emit_to_user(
-                target_system_id,
-                "active_conversation_changed",
-                {
-                    "active_sender_id" : resolved_sender_id,
-                    "timestamp"        : datetime.now( timezone.utc ).isoformat()
-                }
-            )
-        except Exception as ws_error:
-            print( f"[NOTIFY] ⚠️ Failed to broadcast active_conversation_changed: {ws_error}" )
 
         # Task 3: Create in-memory event for SSE blocking
         response_event = asyncio.Event()

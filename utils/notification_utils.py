@@ -3,8 +3,11 @@
 Notification Utility Functions.
 
 Shared formatting utilities for notification messages across COSA agents
-and the MCP server. Handles TTS message formatting and API format conversion.
+and the MCP server. Handles TTS message formatting, API format conversion,
+and qualifier extraction/formatting for yes/no responses.
 """
+
+import re
 
 
 def normalize_abstract( abstract ) -> str:
@@ -178,6 +181,55 @@ def convert_open_ended_batch_for_api( questions: list ) -> dict:
     return { "questions": converted }
 
 
+def extract_qualifier_comment( response_value ):
+    """
+    Extract qualifier comment from a yes/no response value.
+
+    Requires:
+        - response_value is a string or None
+
+    Ensures:
+        - Returns ( answer, qualifier ) tuple
+        - answer is "yes" or "no" (lowercase), or None if empty
+        - qualifier is the comment text or None
+
+    Examples:
+        "yes [comment: fix the tests]" -> ( "yes", "fix the tests" )
+        "no [comment: not ready]"      -> ( "no", "not ready" )
+        "yes"                          -> ( "yes", None )
+        "no"                           -> ( "no", None )
+    """
+    if not response_value:
+        return ( None, None )
+
+    match = re.match( r'^(yes|no)\s*(?:\[comment:\s*(.+)\])?$', response_value.strip(), re.IGNORECASE )
+    if match:
+        return ( match.group( 1 ).lower(), match.group( 2 ) )
+
+    # Fallback: treat the whole string as the answer
+    return ( response_value.strip().lower(), None )
+
+
+def format_qualified_response( answer, qualifier ):
+    """
+    Format a yes/no answer with qualifier into an enriched string that Claude will act on.
+
+    Requires:
+        - answer is "yes" or "no"
+        - qualifier is a non-empty string
+
+    Ensures:
+        - Returns a multi-line string with explicit instructions for Claude
+    """
+    return (
+        f"{answer}\n\n"
+        f"IMPORTANT — The user attached a comment to their {answer} response:\n"
+        f'"{qualifier}"\n\n'
+        "You MUST act on this comment. It is a direct instruction or question from the user. "
+        "Do NOT ignore it. If it is a question, answer it. If it is an instruction, carry it out."
+    )
+
+
 def quick_smoke_test():
     """Quick smoke test for notification_utils module."""
     import cosa.utils.util as cu
@@ -279,6 +331,28 @@ def quick_smoke_test():
         assert converted[ "questions" ][ 0 ][ "default_value" ] == "no limit"
         assert "default_value" not in converted[ "questions" ][ 1 ]
         print( "✓ default_value passed through when present, omitted when absent" )
+
+        # Test 9: extract_qualifier_comment
+        print( "Testing extract_qualifier_comment..." )
+        answer, qualifier = extract_qualifier_comment( "yes [comment: fix the tests]" )
+        assert answer == "yes"
+        assert qualifier == "fix the tests"
+        answer, qualifier = extract_qualifier_comment( "no" )
+        assert answer == "no"
+        assert qualifier is None
+        answer, qualifier = extract_qualifier_comment( None )
+        assert answer is None
+        assert qualifier is None
+        print( "✓ extract_qualifier_comment works correctly" )
+
+        # Test 10: format_qualified_response
+        print( "Testing format_qualified_response..." )
+        result = format_qualified_response( "yes", "fix the import" )
+        assert result.startswith( "yes\n" )
+        assert "MUST act" in result
+        assert "fix the import" in result
+        assert "Do NOT ignore" in result
+        print( "✓ format_qualified_response works correctly" )
 
         print( "\n✓ Notification utils smoke test completed successfully" )
 

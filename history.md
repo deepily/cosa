@@ -1,5 +1,25 @@
 # COSA Development History
 
+> **✅ SESSIONS 331-332 COMMIT**: Remove dead `active_conversation_changed` event, qualifier extraction consolidation (2026.03.09)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 331 — Remove Dead `active_conversation_changed` WebSocket Event**:
+> - Removed two `active_conversation_changed` emission blocks from `notifications.py` — server emitted this event but it was never in INI available events or JS subscriptions, making it dead code
+>
+> **Session 332 — Qualifier Extraction Consolidation into notification_utils.py**:
+> - Added `extract_qualifier_comment()` — regex-based parser for `yes [comment: ...]` / `no [comment: ...]` response format, returns `( answer, qualifier )` tuple
+> - Added `format_qualified_response()` — formats answer + qualifier into enriched string with explicit instructions for Claude to act on the user's comment
+> - Added smoke tests (Tests 9-10) for both new functions
+> - Added `import re` to support regex parsing
+>
+> **Files Modified (2)**:
+> - `rest/routers/notifications.py` — Removed 2 dead `active_conversation_changed` emission blocks (-26 lines)
+> - `utils/notification_utils.py` — Added `extract_qualifier_comment()`, `format_qualified_response()`, smoke tests (+75/-1 lines)
+
+---
+
 > **✅ SESSIONS 328-330 COMMIT**: R2P notification fixes, TARGET_USER handoff, PG audio progress, WebSocket diagnostics, job card bug fixes (2026.03.08)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >
