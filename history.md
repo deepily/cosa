@@ -1,5 +1,22 @@
 # COSA Development History
 
+> **✅ SESSION 337c COMMIT**: Credential store consolidation — swap config_loader.py primary/legacy paths (2026.03.10)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 337c — Credential Store Consolidation (config_loader.py)**:
+> - Swapped primary/legacy config paths: `~/.lupin/config` is now primary, `~/.notifications/config` is legacy fallback
+> - Updated docstring to reflect new precedence order
+> - Renamed variables: `new_config_path`/`old_config_path` → `primary_config_path`/`legacy_config_path`
+> - Removed unused `using_deprecated_path` variable
+> - Added `lupin-config migrate` hint to deprecation warning message
+>
+> **Files Modified (1)**:
+> - `utils/config_loader.py` — Swapped primary/legacy credential config paths (+13/-14 lines)
+
+---
+
 > **✅ SESSIONS 331-332 COMMIT**: Remove dead `active_conversation_changed` event, qualifier extraction consolidation (2026.03.09)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >

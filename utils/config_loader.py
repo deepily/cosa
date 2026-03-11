@@ -34,7 +34,7 @@ def get_api_config( env: Optional[str] = None ) -> Dict[str, str]:
 
     Precedence Order:
         1. Environment variables (LUPIN_API_URL, LUPIN_API_KEY_FILE, LUPIN_DEV_EMAIL)
-        2. Config file (~/.notifications/config or deprecated ~/.lupin/config) with LUPIN_ENV or 'env' parameter
+        2. Config file (~/.lupin/config or deprecated ~/.notifications/config) with LUPIN_ENV or 'env' parameter
         3. Hardcoded defaults (localhost:7999, dev key)
 
     NOTE: Config uses 'global_notification_recipient' but API/CLI use 'target_user'
@@ -66,21 +66,20 @@ def get_api_config( env: Optional[str] = None ) -> Dict[str, str]:
             result['global_notification_recipient'] = notification_recipient
         return result
 
-    # Priority 2: Check config file (both old and new locations)
-    new_config_path = Path.home() / '.notifications' / 'config'
-    old_config_path = Path.home() / '.lupin' / 'config'
+    # Priority 2: Check config file (unified location + legacy fallback)
+    primary_config_path = Path.home() / '.lupin' / 'config'
+    legacy_config_path  = Path.home() / '.notifications' / 'config'
 
-    # Try new location first, fallback to old location
+    # Try unified location first, fallback to legacy ~/.notifications/config
     config_path = None
-    using_deprecated_path = False
 
-    if new_config_path.exists():
-        config_path = new_config_path
-    elif old_config_path.exists():
-        config_path = old_config_path
-        using_deprecated_path = True
-        print( f"⚠️  DEPRECATED: Using old config location: {old_config_path}", file=sys.stderr )
-        print( f"   Please migrate to: {new_config_path}", file=sys.stderr )
+    if primary_config_path.exists():
+        config_path = primary_config_path
+    elif legacy_config_path.exists():
+        config_path = legacy_config_path
+        print( f"⚠️  DEPRECATED: Using legacy config location: {legacy_config_path}", file=sys.stderr )
+        print( f"   Please migrate to: {primary_config_path}", file=sys.stderr )
+        print( f"   Run: lupin-config migrate", file=sys.stderr )
         print( f"   The old location will be removed in a future version.", file=sys.stderr )
 
     if config_path and config_path.exists():
