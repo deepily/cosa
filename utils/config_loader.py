@@ -29,16 +29,13 @@ def get_api_config( env: Optional[str] = None ) -> Dict[str, str]:
     Ensures:
         - returns dict with 'api_url' and 'api_key_file' keys (required)
         - returns 'global_notification_recipient' key if configured (optional)
-        - precedence: env vars > config file > hardcoded defaults
-        - raises ValueError if config invalid or missing
+        - precedence: env vars > config file
+        - raises FileNotFoundError if ~/.lupin/config missing and no env vars
+        - raises ValueError if config invalid
 
     Precedence Order:
         1. Environment variables (LUPIN_API_URL, LUPIN_API_KEY_FILE, LUPIN_DEV_EMAIL)
-        2. Config file (~/.lupin/config or deprecated ~/.notifications/config) with LUPIN_ENV or 'env' parameter
-        3. Hardcoded defaults (localhost:7999, dev key)
-
-    NOTE: Config uses 'global_notification_recipient' but API/CLI use 'target_user'
-          for backward compatibility. This naming mismatch is intentional.
+        2. Config file (~/.lupin/config) with LUPIN_ENV or 'env' parameter
 
     Args:
         env: Optional environment name to use (overrides LUPIN_ENV and config default)
@@ -48,6 +45,7 @@ def get_api_config( env: Optional[str] = None ) -> Dict[str, str]:
 
     Raises:
         ValueError: If config invalid (malformed URL, missing key file, etc.)
+        FileNotFoundError: If ~/.lupin/config not found and env vars not set
     """
     # Priority 1: Check environment variables (highest)
     api_url = os.getenv( 'LUPIN_API_URL' )
@@ -66,77 +64,53 @@ def get_api_config( env: Optional[str] = None ) -> Dict[str, str]:
             result['global_notification_recipient'] = notification_recipient
         return result
 
-    # Priority 2: Check config file (unified location + legacy fallback)
-    primary_config_path = Path.home() / '.lupin' / 'config'
-    legacy_config_path  = Path.home() / '.notifications' / 'config'
+    # Priority 2: Config file (~/.lupin/config)
+    config_path = Path.home() / '.lupin' / 'config'
 
-    # Try unified location first, fallback to legacy ~/.notifications/config
-    config_path = None
+    if not config_path.exists():
+        raise FileNotFoundError(
+            f"~/.lupin/config not found.\n"
+            f"Create it with: lupin-config init\n"
+            f"Or migrate from legacy files: lupin-config migrate"
+        )
 
-    if primary_config_path.exists():
-        config_path = primary_config_path
-    elif legacy_config_path.exists():
-        config_path = legacy_config_path
-        print( f"⚠️  DEPRECATED: Using legacy config location: {legacy_config_path}", file=sys.stderr )
-        print( f"   Please migrate to: {primary_config_path}", file=sys.stderr )
-        print( f"   Run: lupin-config migrate", file=sys.stderr )
-        print( f"   The old location will be removed in a future version.", file=sys.stderr )
+    config = _load_config_file( config_path )
 
-    if config_path and config_path.exists():
-        config = _load_config_file( config_path )
+    # Determine which environment to use
+    if env:
+        # Explicit env parameter (highest)
+        env_name = env
+    elif os.getenv( 'LUPIN_ENV' ):
+        # LUPIN_ENV environment variable
+        env_name = os.getenv( 'LUPIN_ENV' )
+    else:
+        # Default from config file
+        env_name = config.get( 'environments', 'default', fallback='local' )
 
-        # Determine which environment to use
-        if env:
-            # Explicit env parameter (highest)
-            env_name = env
-        elif os.getenv( 'LUPIN_ENV' ):
-            # LUPIN_ENV environment variable
-            env_name = os.getenv( 'LUPIN_ENV' )
-        else:
-            # Default from config file
-            env_name = config.get( 'environments', 'default', fallback='local' )
+    # Get environment config
+    if env_name not in config:
+        raise ValueError( f"Environment '{env_name}' not found in {config_path}" )
 
-        # Get environment config
-        if env_name not in config:
-            raise ValueError( f"Environment '{env_name}' not found in {config_path}" )
+    env_config = config[env_name]
 
-        env_config = config[env_name]
+    # Validate required fields exist
+    if 'api_url' not in env_config:
+        raise ValueError( f"Missing 'api_url' in environment '{env_name}' ({config_path})" )
+    if 'api_key_file' not in env_config:
+        raise ValueError( f"Missing 'api_key_file' in environment '{env_name}' ({config_path})" )
 
-        # Validate required fields exist
-        if 'api_url' not in env_config:
-            raise ValueError( f"Missing 'api_url' in environment '{env_name}' ({config_path})" )
-        if 'api_key_file' not in env_config:
-            raise ValueError( f"Missing 'api_key_file' in environment '{env_name}' ({config_path})" )
+    global_recipient = env_config.get( 'global_notification_recipient' )
 
-        # Support both old and new config keys
-        global_recipient = env_config.get( 'global_notification_recipient' )
-
-        if not global_recipient:
-            # Fallback to old key name
-            global_recipient = env_config.get( 'target_user' )
-            if global_recipient:
-                print( f"⚠️  DEPRECATED: Config key 'target_user' is deprecated", file=sys.stderr )
-                print( f"   Please rename to 'global_notification_recipient' in {config_path}", file=sys.stderr )
-                print( f"   Support for 'target_user' will be removed in a future version.", file=sys.stderr )
-
-        result = {
-            'api_url': env_config['api_url'],
-            'api_key_file': env_config['api_key_file']
-        }
-
-        # Add global_notification_recipient if configured
-        if global_recipient:
-            result['global_notification_recipient'] = global_recipient
-
-        return result
-
-    # Priority 3: Hardcoded defaults (local development)
-    project_root = cu.get_project_root()
-
-    return {
-        'api_url': 'http://localhost:7999',
-        'api_key_file': f"{project_root}/src/conf/keys/notification-api-claude-code-dev"
+    result = {
+        'api_url'      : env_config['api_url'],
+        'api_key_file' : env_config['api_key_file']
     }
+
+    # Add global_notification_recipient if configured
+    if global_recipient:
+        result['global_notification_recipient'] = global_recipient
+
+    return result
 
 
 def _load_config_file( config_path: Path ) -> ConfigParser:
@@ -282,9 +256,9 @@ def quick_smoke_test():
         - cosa.utils.util available
 
     Ensures:
-        - Tests all three precedence levels
+        - Tests env var precedence and config file loading
         - Tests validation function
-        - Tests error handling
+        - Tests error handling (missing config raises FileNotFoundError)
         - Comprehensive output with status indicators
 
     Raises:
@@ -299,14 +273,13 @@ def quick_smoke_test():
         print( "Testing module imports..." )
         print( "✓ config_loader module imported" )
 
-        # Test 2: Hardcoded defaults (no env vars, no config file)
-        print( "\nTesting hardcoded defaults..." )
+        # Test 2: Config file loading (requires ~/.lupin/config on this system)
+        print( "\nTesting config file loading..." )
         config = get_api_config()
         assert 'api_url' in config
         assert 'api_key_file' in config
-        assert config['api_url'] == 'http://localhost:7999'
-        print( f"✓ Default api_url: {config['api_url']}" )
-        print( f"✓ Default api_key_file: {config['api_key_file']}" )
+        print( f"✓ Config api_url: {config['api_url']}" )
+        print( f"✓ Config api_key_file: {config['api_key_file']}" )
 
         # Test 3: Environment variable override
         print( "\nTesting environment variable precedence..." )

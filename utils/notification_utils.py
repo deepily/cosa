@@ -10,6 +10,35 @@ and qualifier extraction/formatting for yes/no responses.
 import re
 
 
+# ── Known Project Registry ───────────────────────────────────────────────────
+
+KNOWN_PROJECTS = {
+    "/cosa"                  : "cosa",
+    "/planning-is-prompting" : "plan",
+    "/lupin"                 : "lupin",
+}
+
+
+def is_known_project( project: str ) -> bool:
+    """
+    Check whether a project name is in the known project registry.
+
+    Requires:
+        - project is a string
+
+    Ensures:
+        - Returns True if project is a recognized project name
+        - Returns False otherwise (including empty string)
+
+    Args:
+        project: Project name to check (e.g., "lupin", "cosa", "plan")
+
+    Returns:
+        bool: True if known, False otherwise
+    """
+    return project in KNOWN_PROJECTS.values()
+
+
 def normalize_abstract( abstract ) -> str:
     """
     Convert literal \\n to actual newlines in abstract text.
@@ -353,6 +382,28 @@ def quick_smoke_test():
         assert "fix the import" in result
         assert "Do NOT ignore" in result
         print( "✓ format_qualified_response works correctly" )
+
+        # Test 11: is_known_project (known projects)
+        print( "Testing is_known_project (known)..." )
+        assert is_known_project( "lupin" ) is True
+        assert is_known_project( "cosa" ) is True
+        assert is_known_project( "plan" ) is True
+        print( "✓ Known projects return True" )
+
+        # Test 12: is_known_project (unknown projects)
+        print( "Testing is_known_project (unknown)..." )
+        assert is_known_project( "newrepo" ) is False
+        assert is_known_project( "unknown" ) is False
+        assert is_known_project( "" ) is False
+        print( "✓ Unknown projects return False" )
+
+        # Test 13: KNOWN_PROJECTS dict structure
+        print( "Testing KNOWN_PROJECTS structure..." )
+        assert "/lupin" in KNOWN_PROJECTS
+        assert KNOWN_PROJECTS[ "/lupin" ] == "lupin"
+        assert KNOWN_PROJECTS[ "/cosa" ] == "cosa"
+        assert KNOWN_PROJECTS[ "/planning-is-prompting" ] == "plan"
+        print( "✓ KNOWN_PROJECTS has correct mappings" )
 
         print( "\n✓ Notification utils smoke test completed successfully" )
 

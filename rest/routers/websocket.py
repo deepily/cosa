@@ -114,7 +114,7 @@ def is_valid_session_id(session_id: str) -> bool:
 
     # Format 2: programmatic sessions — lowercase alphanumeric with hyphens
     # e.g., "cc-listener-72116632", "proxy-ratify"
-    programmatic_pattern = r'^[a-z][a-z0-9-]{2,48}$'
+    programmatic_pattern = r'^[a-z][a-z0-9]*-[a-z0-9-]{1,47}$'
     return bool( re.match( programmatic_pattern, session_id.lower() ) )
 
 @router.get("/api/auth-test")
