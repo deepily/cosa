@@ -1,5 +1,41 @@
 # COSA Development History
 
+> **✅ SESSIONS 340-348 COMMIT**: UPE response_type filtering, integration test hot-swap infrastructure (2026.03.12)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Sessions 340-348 — UPE Response-Type Filtering + Integration Test Infrastructure**:
+> - `proxy_decision_embeddings.py`: Added `response_type` field to LanceDB schema, `add_decision()`, and `find_similar()` — prevents cross-type contamination in CBR lookups
+> - `prediction_engine.py`: All 4 prediction slices (yes_no, multiple_choice, open_ended, open_ended_batch) now filter by `response_type`; new `_extract_valid_options()` validates MC predictions against available option labels; bare strings wrapped for MC storage compatibility
+> - `database.py`: New `swap_database()` hot-swap function for runtime environment switching; DB defaults disambiguated (`lupin_db_dev`/`lupin_db_prod`)
+> - `system.py`: New `GET /api/server-info` endpoint for infrastructure monitoring; enhanced `/api/init` with optional `config_block_id` query param for runtime config + DB swap
+>
+> **Files Modified (4)**:
+> - `agents/decision_proxy/proxy_decision_embeddings.py` — Add `response_type` field + filter (+12/-2 lines)
+> - `agents/prediction_engine/prediction_engine.py` — Response-type filtering + MC option validation (+157/-14 lines)
+> - `rest/db/database.py` — `swap_database()` + DB name disambiguation (+41/-2 lines)
+> - `rest/routers/system.py` — `/api/server-info` + enhanced `/api/init` (+112/-46 lines)
+
+---
+
+> **✅ SESSIONS 337-339 COMMIT**: Harden config_loader, strict project detection, session ID regex (2026.03.11)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Sessions 337-339 — v0.1.5 Hardening**:
+> - `config_loader.py`: Removed legacy `~/.notifications/config` fallback and hardcoded defaults; `~/.lupin/config` now required (`FileNotFoundError` if missing)
+> - `notification_utils.py`: Added `KNOWN_PROJECTS` registry + `is_known_project()` for strict MCP project detection, 3 smoke tests
+> - `websocket.py`: Tightened programmatic session ID regex to require hyphen
+>
+> **Files Modified (3)**:
+> - `utils/config_loader.py` — Remove legacy fallback, require `~/.lupin/config` (+56/-83 lines)
+> - `utils/notification_utils.py` — Add `KNOWN_PROJECTS` registry + `is_known_project()` (+51 lines)
+> - `rest/routers/websocket.py` — Tighten session ID regex (+1/-1 lines)
+
+---
+
 > **✅ SESSION 337c COMMIT**: Credential store consolidation — swap config_loader.py primary/legacy paths (2026.03.10)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >

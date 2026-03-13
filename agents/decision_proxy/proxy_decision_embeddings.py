@@ -84,6 +84,7 @@ class ProxyDecisionEmbeddings:
             pa.field( "decision_value",      pa.string() ),
             pa.field( "ratification_state",  pa.string() ),
             pa.field( "data_origin",         pa.string() ),
+            pa.field( "response_type",       pa.string() ),
             pa.field( "question_embedding",  pa.list_( pa.float32(), self.embedding_dim ) ),
             pa.field( "created_at",          pa.string() ),
         ] )
@@ -116,7 +117,7 @@ class ProxyDecisionEmbeddings:
             if self.debug: print( f"[ProxyDecisionEmbeddings] Failed to initialize table: {e}" )
             return False
 
-    def add_decision( self, id, question, category, decision_value, ratification_state, question_embedding, created_at, data_origin="organic" ):
+    def add_decision( self, id, question, category, decision_value, ratification_state, question_embedding, created_at, data_origin="organic", response_type="" ):
         """
         Insert a decision record into the LanceDB table.
 
@@ -137,6 +138,7 @@ class ProxyDecisionEmbeddings:
             question_embedding: 768-dim float vector
             created_at: ISO timestamp string
             data_origin: Provenance tag (organic, synthetic_seed, synthetic_generated)
+            response_type: Notification response type (yes_no, multiple_choice, open_ended, open_ended_batch)
         """
         try:
             if not self._ensure_table():
@@ -149,6 +151,7 @@ class ProxyDecisionEmbeddings:
                 "decision_value"     : decision_value,
                 "ratification_state" : ratification_state,
                 "data_origin"        : data_origin,
+                "response_type"      : response_type,
                 "question_embedding" : question_embedding,
                 "created_at"         : created_at,
             }
@@ -160,7 +163,7 @@ class ProxyDecisionEmbeddings:
         except Exception as e:
             if self.debug: print( f"[ProxyDecisionEmbeddings] add_decision failed (non-fatal): {e}" )
 
-    def find_similar( self, query_embedding, category=None, limit=5, threshold=0.75, data_origin=None ):
+    def find_similar( self, query_embedding, category=None, limit=5, threshold=0.75, data_origin=None, response_type=None ):
         """
         Find similar decisions by vector search.
 
@@ -180,6 +183,7 @@ class ProxyDecisionEmbeddings:
             limit: Maximum number of results
             threshold: Minimum similarity (0.0-1.0) to include
             data_origin: Optional provenance filter (e.g., "organic" to exclude synthetic)
+            response_type: Optional response type filter (e.g., "multiple_choice", "yes_no")
 
         Returns:
             list[ tuple[ float, dict ] ]: ( similarity_pct, record ) pairs
@@ -202,6 +206,10 @@ class ProxyDecisionEmbeddings:
             if data_origin is not None:
                 escaped_origin = data_origin.replace( "'", "''" )
                 where_clauses.append( f"data_origin = '{escaped_origin}'" )
+
+            if response_type is not None:
+                escaped_type = response_type.replace( "'", "''" )
+                where_clauses.append( f"response_type = '{escaped_type}'" )
 
             if where_clauses:
                 search = search.where( " AND ".join( where_clauses ) )

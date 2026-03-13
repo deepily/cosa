@@ -256,13 +256,14 @@ class PredictionEngine:
                 metadata      = { "reason": "no_embedding_store" }
             )
 
-        # Find similar past notifications
+        # Find similar past notifications (filtered by response_type)
         try:
             similar_cases = store.find_similar(
                 query_embedding = embedding,
                 category        = category,
                 limit           = self.cbr_top_k,
-                threshold       = self.similarity_threshold
+                threshold       = self.similarity_threshold,
+                response_type   = RESPONSE_TYPE_YES_NO
             )
         except Exception as e:
             if self.debug: print( f"[PredictionEngine] find_similar error: {e}" )
@@ -328,6 +329,50 @@ class PredictionEngine:
             }
         )
 
+    @staticmethod
+    def _extract_valid_options( options: Any ) -> Optional[Dict[str, Dict]]:
+        """
+        Extract valid option labels and multi_select flag from the options structure.
+
+        Requires:
+            - options: The options parameter from notifications, or None
+
+        Ensures:
+            - Returns { header: { "labels": set[str], "multi_select": bool } } if parseable
+            - Returns None if options is None or unparseable
+
+        Expected input format:
+            {"questions": [{"question": "...", "header": "...", "multi_select": bool,
+                            "options": [{"label": "Push", "description": "..."}]}]}
+        """
+        if options is None:
+            return None
+
+        try:
+            # Handle string input (JSON)
+            if isinstance( options, str ):
+                import json
+                options = json.loads( options )
+
+            questions = options.get( "questions", [] ) if isinstance( options, dict ) else []
+            if not questions:
+                return None
+
+            result = {}
+            for q in questions:
+                header       = q.get( "header", q.get( "question", "" ) )
+                multi_select = q.get( "multi_select", q.get( "multiSelect", False ) )
+                opt_list     = q.get( "options", [] )
+                labels       = { opt[ "label" ] for opt in opt_list if isinstance( opt, dict ) and "label" in opt }
+
+                if header and labels:
+                    result[ header ] = { "labels": labels, "multi_select": multi_select }
+
+            return result if result else None
+
+        except ( TypeError, KeyError, ValueError ):
+            return None
+
     def _predict_multiple_choice( self, message: str, category: str,
                                      embedding: Optional[list],
                                      options: Any = None ) -> PredictionResult:
@@ -338,15 +383,15 @@ class PredictionEngine:
             - message: The notification message
             - category: Classified category
             - embedding: Message embedding vector (or None)
-            - options: Response options list (for future option-scoring; unused in CBR)
+            - options: Response options structure with valid labels for validation
 
         Ensures:
-            - Retrieves top-k similar past multiple_choice responses
-            - Detects single vs multi-select from data (isinstance check on answer values)
-            - Single-select: per-header majority vote → string values
-            - Multi-select: per-header option frequency counting → list values
+            - Retrieves top-k similar past multiple_choice responses (filtered by response_type)
+            - Detects single vs multi-select from options structure (fallback to data detection)
+            - Single-select: per-header majority vote → string values, validated against options
+            - Multi-select: per-header option frequency counting → list values, validated against options
             - Confidence = max_similarity * avg_consistency
-            - Returns cold_start if no similar cases found
+            - Returns cold_start if no similar cases found or no valid options after filtering
             - predicted_value is {"answers": {"Header": "Option"}} or {"answers": {"Header": ["A", "B"]}}
         """
         if embedding is None:
@@ -366,13 +411,17 @@ class PredictionEngine:
                 metadata      = { "reason": "no_embedding_store" }
             )
 
-        # Find similar past notifications
+        # Extract valid options for validation
+        valid_options = self._extract_valid_options( options )
+
+        # Find similar past notifications (filtered by response_type)
         try:
             similar_cases = store.find_similar(
                 query_embedding = embedding,
                 category        = category,
                 limit           = self.cbr_top_k,
-                threshold       = self.similarity_threshold
+                threshold       = self.similarity_threshold,
+                response_type   = RESPONSE_TYPE_MULTIPLE_CHOICE
             )
         except Exception as e:
             if self.debug: print( f"[PredictionEngine] find_similar error (MC): {e}" )
@@ -386,6 +435,11 @@ class PredictionEngine:
                 similar_case_count = 0,
                 metadata           = { "reason": "no_similar_cases" }
             )
+
+        # Determine multi_select from options structure (fallback to data detection)
+        options_multi_select = None
+        if valid_options:
+            options_multi_select = any( v[ "multi_select" ] for v in valid_options.values() )
 
         # Per-header vote accumulation (type-aware: single vs multi-select)
         # header_votes: { "Header": { "OptionA": count, "OptionB": count } }
@@ -426,6 +480,10 @@ class PredictionEngine:
                 metadata           = { "reason": "no_valid_mc_cases" }
             )
 
+        # Use options structure to determine multi_select when available
+        if options_multi_select is not None:
+            is_multi_select = options_multi_select
+
         # Build predicted answers — branch by single vs multi-select
         if is_multi_select:
             predicted_answers, avg_consistency = self._tally_multi_select_votes( header_votes, valid_cases )
@@ -444,11 +502,68 @@ class PredictionEngine:
 
             avg_consistency = consistency_sum / header_count if header_count > 0 else 0.0
 
+        # Validate predictions against available options
+        constrained = False
+        if valid_options:
+            validated_answers = {}
+            for header, prediction in predicted_answers.items():
+                option_info = valid_options.get( header )
+                if option_info is None:
+                    # Header not in options structure — keep as-is (backward compat)
+                    validated_answers[ header ] = prediction
+                    continue
+
+                valid_labels = option_info[ "labels" ]
+
+                if isinstance( prediction, list ):
+                    # Multi-select: filter to valid labels only
+                    filtered = [ p for p in prediction if p in valid_labels ]
+                    if filtered:
+                        if set( filtered ) != set( prediction ):
+                            constrained = True
+                            if self.debug: print( f"[PredictionEngine] MC constrained '{header}': {prediction} → {filtered}" )
+                        validated_answers[ header ] = sorted( filtered )
+                    else:
+                        # No valid options survived — will trigger cold_start below
+                        validated_answers[ header ] = []
+                else:
+                    # Single-select: winner must be a valid label
+                    if prediction in valid_labels:
+                        validated_answers[ header ] = prediction
+                    else:
+                        # Fall back to highest-voted valid option
+                        constrained = True
+                        option_votes = header_votes.get( header, {} )
+                        valid_voted  = { opt: count for opt, count in option_votes.items() if opt in valid_labels }
+                        if valid_voted:
+                            fallback = max( valid_voted, key=valid_voted.get )
+                            if self.debug: print( f"[PredictionEngine] MC constrained '{header}': '{prediction}' → '{fallback}'" )
+                            validated_answers[ header ] = fallback
+                        else:
+                            validated_answers[ header ] = None
+
+            predicted_answers = validated_answers
+
+            # Check if any header ended up empty after validation
+            has_empty = any(
+                ( v is None ) or ( isinstance( v, list ) and len( v ) == 0 )
+                for v in predicted_answers.values()
+            )
+            if has_empty:
+                return PredictionResult(
+                    response_type      = RESPONSE_TYPE_MULTIPLE_CHOICE,
+                    category           = category,
+                    strategy           = STRATEGY_COLD_START,
+                    similar_case_count = len( similar_cases ),
+                    metadata           = { "reason": "no_valid_options_after_filtering", "valid_cases": valid_cases }
+                )
+
         confidence = max_similarity * avg_consistency
 
         if self.debug:
             mode = "multi" if is_multi_select else "single"
-            print( f"[PredictionEngine] MC({mode}): predicted={predicted_answers}, conf={confidence:.3f}, cases={valid_cases}" )
+            extra = " (constrained)" if constrained else ""
+            print( f"[PredictionEngine] MC({mode}){extra}: predicted={predicted_answers}, conf={confidence:.3f}, cases={valid_cases}" )
 
         return PredictionResult(
             response_type      = RESPONSE_TYPE_MULTIPLE_CHOICE,
@@ -462,6 +577,7 @@ class PredictionEngine:
                 "max_similarity" : round( max_similarity, 3 ),
                 "valid_cases"    : valid_cases,
                 "multi_select"   : is_multi_select,
+                "constrained"    : constrained,
             }
         )
 
@@ -538,13 +654,14 @@ class PredictionEngine:
                 metadata      = { "reason": "no_embedding_store" }
             )
 
-        # Retrieve top K similar cases using open-ended-specific thresholds
+        # Retrieve top K similar cases using open-ended-specific thresholds (filtered by response_type)
         try:
             similar_cases = store.find_similar(
                 query_embedding = embedding,
                 category        = category,
                 limit           = self.open_ended_cbr_top_k,
-                threshold       = self.open_ended_cbr_threshold
+                threshold       = self.open_ended_cbr_threshold,
+                response_type   = RESPONSE_TYPE_OPEN_ENDED
             )
         except Exception as e:
             if self.debug: print( f"[PredictionEngine] find_similar error (OE): {e}" )
@@ -728,7 +845,8 @@ class PredictionEngine:
                 query_embedding = embedding,
                 category        = category,
                 limit           = self.open_ended_cbr_top_k,
-                threshold       = self.open_ended_cbr_threshold
+                threshold       = self.open_ended_cbr_threshold,
+                response_type   = RESPONSE_TYPE_OPEN_ENDED_BATCH
             )
         except Exception as e:
             if self.debug: print( f"[PredictionEngine] find_similar error (OEB): {e}" )
@@ -1081,12 +1199,16 @@ class PredictionEngine:
             embedding = provider.generate_embedding( message, content_type="prose" )
 
             # Format decision_value based on response type
+            import json
             if isinstance( actual_value, str ):
-                decision_value = actual_value
+                # Wrap bare strings for MC type so they're parseable by _parse_mc_decision_value
+                if response_type == RESPONSE_TYPE_MULTIPLE_CHOICE:
+                    decision_value = json.dumps( { "answers": { "_other": actual_value } } )
+                else:
+                    decision_value = actual_value
             elif isinstance( actual_value, dict ):
                 answers = actual_value.get( "answers" )
                 if answers:
-                    import json
                     decision_value = json.dumps( { "answers": answers } )
                 else:
                     value = actual_value.get( "value", "" )
@@ -1105,7 +1227,8 @@ class PredictionEngine:
                 ratification_state = "not_required",
                 question_embedding = embedding,
                 created_at         = datetime.now( timezone.utc ).isoformat(),
-                data_origin        = "organic"
+                data_origin        = "organic",
+                response_type      = response_type
             )
 
         except Exception as e:

@@ -8,6 +8,8 @@ and WebSocket session management with cleanup functionality.
 Generated on: 2025-01-24
 """
 
+import os
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -103,58 +105,106 @@ async def health():
         "timestamp": datetime.now().isoformat()
     }
 
-@router.get("/api/init", response_class=JSONResponse)
-async def init():
+@router.get( "/api/server-info", response_class=JSONResponse )
+async def get_server_info( config_mgr: ConfigurationManager = Depends( get_config_manager ) ):
+    """
+    Return current server configuration state for infrastructure monitoring.
+
+    Requires:
+        - FastAPI application is running with initialized config manager
+
+    Ensures:
+        - Returns current config block ID, masked database URL, and environment
+        - Database password is always masked in the response
+        - No authentication required (infrastructure metadata only)
+
+    Returns:
+        dict: config_block_id, database_url (masked), environment
+    """
+    from cosa.rest.db import database as db_module
+
+    env    = os.environ.get( "LUPIN_ENV", "development" ).lower()
+    db_url = str( db_module.engine.url )
+    masked = db_url.replace( str( db_module.engine.url.password or "" ), "***" )
+
+    return {
+        "config_block_id" : config_mgr.config_block_id,
+        "database_url"    : masked,
+        "environment"     : env
+    }
+
+
+@router.get( "/api/init", response_class=JSONResponse )
+async def init( config_block_id: Optional[ str ] = None ):
     """
     Refresh configuration and reload application resources without restart.
-    
+
+    Optionally accepts a config_block_id query parameter to hot-swap
+    the server's configuration block and database connection at runtime.
+
     Requires:
         - FastAPI application is running with initialized components
         - Configuration files exist at specified paths (lupin-app.ini)
         - LUPIN_CONFIG_MGR_CLI_ARGS environment variable is set
         - fastapi_app.main module is accessible with global components
-        
+
     Ensures:
-        - Creates new ConfigurationManager instance with fresh settings
-        - Prints current configuration with bracket formatting
+        - Reinitializes the singleton ConfigurationManager (not a throwaway)
+        - If config_block_id provided, swaps database connection to match
         - Reloads solution snapshots from disk if snapshot_mgr exists
-        - Returns success status with confirmation message
-        - STT model remains loaded (managed by lifespan context)
-        - Handles exceptions gracefully with error status
-        
+        - Returns success status with current config state
+
     Raises:
         - None (catches all exceptions and returns error status)
-        
+
     Returns:
-        dict: Success/error status with message and timestamp
-        
-    Note:
-        Unlike Flask version, STT model is not reloaded as it's 
-        already managed by the lifespan context manager
+        dict: Success/error status with config state and timestamp
     """
     try:
-        # Import global variables from main (temporary solution)
+        from cosa.rest.db.database import swap_database
+        import cosa.rest.dependencies.config as config_module
         import fastapi_app.main as main_module
-        
-        # Refresh configuration manager
-        config_mgr = ConfigurationManager(env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS")
-        config_mgr.print_configuration(brackets=True)
-        
+
+        # Get the singleton config manager (not a throwaway instance)
+        config_mgr = config_module.get_config_manager()
+
+        if config_block_id is not None:
+            block_id = config_block_id.replace( "+", " " )
+            env_map  = {
+                "Lupin: Testing"     : "testing",
+                "Lupin: Development" : "development",
+                "Lupin: Production"  : "production"
+            }
+            new_env = env_map.get( block_id, "development" )
+
+            # Reinitialize config manager with new block (in place)
+            config_mgr.init( config_block_id=block_id )
+
+            # Swap database connection to match
+            new_db_url = swap_database( new_env )
+        else:
+            config_mgr.init()
+            new_db_url = "(unchanged)"
+
+        config_mgr.print_configuration( brackets=True )
+
         # Reload snapshots using the global snapshot manager
-        if hasattr(main_module, 'snapshot_mgr') and main_module.snapshot_mgr:
-            print("Reloading solution snapshots...")
+        if hasattr( main_module, 'snapshot_mgr' ) and main_module.snapshot_mgr:
+            print( "Reloading solution snapshots..." )
             main_module.snapshot_mgr.reload()
-        
+
         return {
-            "status": "success",
-            "message": "Configuration refreshed and snapshots reloaded",
-            "timestamp": datetime.now().isoformat()
+            "status"          : "success",
+            "config_block_id" : config_mgr.config_block_id,
+            "database_url"    : new_db_url,
+            "environment"     : os.environ.get( "LUPIN_ENV", "development" ),
+            "timestamp"       : datetime.now().isoformat()
         }
     except Exception as e:
         return {
-            "status": "error",
-            "message": f"Init failed: {str(e)}",
-            "timestamp": datetime.now().isoformat()
+            "status"    : "error",
+            "message"   : f"Init failed: {str( e )}",
+            "timestamp" : datetime.now().isoformat()
         }
 
 @router.get("/api/get-session-id")
