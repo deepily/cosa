@@ -158,10 +158,8 @@ async def submit_claude_code_to_queue(
             session_id = session_id
         )
 
-        # Session 108: Associate BEFORE push to prevent race condition
-        # The consumer thread may grab the job immediately after push(), so user mapping must exist first
-        user_job_tracker.associate_job_with_user( job.id_hash, user_id )
-        user_job_tracker.associate_job_with_session( job.id_hash, session_id )
+        # Atomic: scope ID + index for user filtering BEFORE push (race condition prevention)
+        job.id_hash = user_job_tracker.register_scoped_job( job.id_hash, user_id, session_id )
 
         # Push to todo queue
         # The todo queue's push method handles WebSocket notifications

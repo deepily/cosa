@@ -118,6 +118,7 @@ class PodcastTTSClient:
     def __init__(
         self,
         config_mgr         = None,
+        api_key            : Optional[ str ] = None,
         progress_callback  : Optional[ Callable[ [ int, int, str, float ], Awaitable[ None ] ] ] = None,
         retry_callback     : Optional[ Callable[ [ int, int, int, str ], Awaitable[ None ] ] ] = None,
         debug              : bool = False,
@@ -130,6 +131,7 @@ class PodcastTTSClient:
 
         Args:
             config_mgr: ConfigurationManager instance for voice settings
+            api_key: Optional explicit API key (highest priority)
             progress_callback: Async callback(current, total, speaker, eta_seconds) for progress
             retry_callback: Async callback(segment_index, attempt, max_attempts, speaker) for retries
             debug: Enable debug output
@@ -148,11 +150,28 @@ class PodcastTTSClient:
         # Cache voice configurations
         self._voice_cache: dict[ str, VoiceConfig ] = {}
 
-        # Get API key
-        self._api_key = os.getenv( "ELEVENLABS_API_KEY" )
+        # Get API key using three-tier priority (matches api_client.py pattern)
+        self._api_key    = api_key
+        self._key_source = "parameter"
+
+        if not self._api_key:
+            self._api_key    = os.getenv( "ELEVENLABS_API_KEY" )
+            self._key_source = "environment"
+
+        if not self._api_key:
+            try:
+                import cosa.utils.util as cu
+                key_value = cu.get_api_key( "eleven11" )
+                if key_value:
+                    self._api_key    = key_value.strip()
+                    self._key_source = "local file"
+            except Exception as e:
+                if self.debug:
+                    print( f"[PodcastTTSClient] Could not load local key file: {e}" )
 
         if self.debug:
-            print( f"[PodcastTTSClient] Initialized (API key: {'present' if self._api_key else 'MISSING'})" )
+            key_status = f"present (via {self._key_source})" if self._api_key else "MISSING"
+            print( f"[PodcastTTSClient] Initialized (API key: {key_status})" )
 
     def get_voice_config_for_speaker( self, speaker: str, language: str = "en" ) -> VoiceConfig:
         """
@@ -405,7 +424,8 @@ class PodcastTTSClient:
 
             except Exception as e:
                 last_error = str( e )
-                logger.warning( f"TTS attempt {attempt + 1}/{self.max_retries} failed: {e}" )
+                # Always print failures to console — logger.warning() doesn't reach stdout
+                print( f"[PodcastTTSClient] TTS attempt {attempt + 1}/{self.max_retries} failed for segment {index + 1} ({segment.speaker}): {e}" )
 
                 # Notify user of retry (low priority)
                 if self.retry_callback and attempt < self.max_retries - 1:
@@ -416,9 +436,11 @@ class PodcastTTSClient:
 
                 if attempt < self.max_retries - 1:
                     delay = self.retry_base_delay * ( 2 ** attempt )
-                    if self.debug:
-                        print( f"[PodcastTTSClient] Retrying in {delay:.1f}s..." )
+                    print( f"[PodcastTTSClient] Retrying segment {index + 1} in {delay:.1f}s..." )
                     await asyncio.sleep( delay )
+
+        # Always print final failure — this is the root cause users need to see
+        print( f"[PodcastTTSClient] SEGMENT {index + 1} FAILED after {self.max_retries} attempts: {last_error}" )
 
         return TTSSegmentResult(
             segment_index = index,
@@ -618,10 +640,18 @@ class PodcastTTSClient:
                 except Exception as e:
                     logger.warning( f"Progress callback failed: {e}" )
 
-        if self.debug:
-            success_count = total - len( failed_indices )
-            total_time    = sum( segment_times )
-            print( f"[PodcastTTSClient] Complete: {success_count}/{total} segments in {total_time:.1f}s" )
+        # Always print completion summary — critical for diagnosing failures
+        success_count = total - len( failed_indices )
+        total_time    = sum( segment_times )
+        print( f"[PodcastTTSClient] Complete: {success_count}/{total} segments in {total_time:.1f}s" )
+
+        if failed_indices:
+            # Print first unique error for diagnosis
+            first_error = next(
+                ( r.error_message for r in results if not r.success and r.error_message ),
+                "Unknown error"
+            )
+            print( f"[PodcastTTSClient] {len( failed_indices )} segments failed. First error: {first_error}" )
 
         return results, failed_indices
 

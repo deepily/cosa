@@ -1028,25 +1028,23 @@ class FileBasedSolutionManager( SolutionSnapshotManagerInterface ):
 
             similarity_score = SolutionSnapshot.get_embedding_similarity( question_embedding, snapshot.question_embedding )
 
-            if similarity_score >= threshold_question:
-                similar_snapshots.append( ( similarity_score, snapshot ) )
-                if self.debug:
-                    print( f"Score [{similarity_score:.2f}]% for question [{snapshot.question}] IS similar enough to [{question}]" )
-            else:
-                if self.debug and self.verbose:
-                    print( f"Score [{similarity_score:.2f}]% for question [{snapshot.question}] is NOT similar enough to [{question}]" )
+            # Top-1 + confirm strategy: return ALL results, let caller decide
+            similar_snapshots.append( ( similarity_score, snapshot ) )
+            if self.debug:
+                print( f"Score [{similarity_score:.2f}]% for question [{snapshot.question}] vs [{question}]" )
 
-        # Iterate snapshots by question gist and compare the embeddings
-        if question_gist is not None:
-            for snapshot in self._snapshots_by_question_gist.values():
-                similarity_score = SolutionSnapshot.get_embedding_similarity( question_gist_embedding, snapshot[ 1 ].question_embedding )
-                if similarity_score >= threshold_gist:
-                    similar_snapshots.append( ( similarity_score, snapshot[ 1 ] ) )
-                    if self.debug:
-                        print( f"Score [{similarity_score:.2f}]% for gist [{snapshot[ 1 ].question_gist}] IS similar enough to [{question_gist}]" )
-                else:
-                    if self.debug and self.verbose:
-                        print( f"Score [{similarity_score:.2f}]% for gist [{snapshot[ 1 ].question_gist}] is NOT similar enough to [{question_gist}]" )
+        # Gist embedding comparison — DISABLED (top-1 + confirm strategy)
+        # Gist text still generated for display/logging, but not used for matching
+        # if question_gist is not None:
+        #     for snapshot in self._snapshots_by_question_gist.values():
+        #         similarity_score = SolutionSnapshot.get_embedding_similarity( question_gist_embedding, snapshot[ 1 ].question_embedding )
+        #         if similarity_score >= threshold_gist:
+        #             similar_snapshots.append( ( similarity_score, snapshot[ 1 ] ) )
+        #             if self.debug:
+        #                 print( f"Score [{similarity_score:.2f}]% for gist [{snapshot[ 1 ].question_gist}] IS similar enough to [{question_gist}]" )
+        #         else:
+        #             if self.debug and self.verbose:
+        #                 print( f"Score [{similarity_score:.2f}]% for gist [{snapshot[ 1 ].question_gist}] is NOT similar enough to [{question_gist}]" )
 
         # Sort by similarity score, descending
         similar_snapshots.sort( key=lambda x: x[ 0 ], reverse=True )

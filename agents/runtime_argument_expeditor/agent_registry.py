@@ -21,6 +21,7 @@ from typing import Optional
 
 AGENTIC_AGENTS = {
     "agent router go to deep research" : {
+        "job_prefix"         : "dr",
         "cli_module"         : "cosa.agents.deep_research.cli",
         "job_class_path"     : "cosa.agents.deep_research.job.DeepResearchJob",
         "display_name"       : "Deep Research",
@@ -46,6 +47,7 @@ AGENTIC_AGENTS = {
         },
     },
     "agent router go to podcast generator" : {
+        "job_prefix"         : "pg",
         "cli_module"         : "cosa.agents.podcast_generator",
         "job_class_path"     : "cosa.agents.podcast_generator.job.PodcastGeneratorJob",
         "display_name"       : "Podcast Generator",
@@ -74,6 +76,7 @@ AGENTIC_AGENTS = {
         },
     },
     "agent router go to research to podcast" : {
+        "job_prefix"         : "rp",
         "cli_module"         : "cosa.agents.deep_research_to_podcast",
         "job_class_path"     : "cosa.agents.deep_research_to_podcast.job.DeepResearchToPodcastJob",
         "display_name"       : "Research to Podcast",
@@ -101,6 +104,7 @@ AGENTIC_AGENTS = {
         },
     },
     "agent router go to claude code" : {
+        "job_prefix"         : "cc",
         "cli_module"         : "cosa.agents.claude_code",
         "job_class_path"     : "cosa.agents.claude_code.job.ClaudeCodeJob",
         "display_name"       : "Claude Code",
@@ -118,6 +122,32 @@ AGENTIC_AGENTS = {
         "fallback_defaults" : {
             "project"          : "lupin",
             "task_type"        : "BOUNDED",
+        },
+    },
+    "agent router go to swe team" : {
+        "job_prefix"         : "swe",
+        "cli_module"         : "cosa.agents.swe_team",
+        "job_class_path"     : "cosa.agents.swe_team.job.SweTeamJob",
+        "display_name"       : "SWE Team",
+        "required_user_args" : [ "task" ],
+        "system_provided"    : [ "user_id", "user_email", "session_id" ],
+        "arg_mapping"        : {
+            "task"             : "task",
+            "prompt"           : "task",
+            "budget"           : "budget",
+            "timeout"          : "timeout",
+            "dry_run"          : "dry_run",
+        },
+        "fallback_questions" : {
+            "task"             : "What engineering task should the SWE Team work on?",
+            "budget"           : "Would you like to set a budget limit in dollars? Say a dollar amount, or 'no limit'.",
+            "timeout"          : "Would you like to set a timeout? Say a number of seconds, or 'default'.",
+            "dry_run"          : "Would you like to enable dry run mode? Say 'yes' or 'no'.",
+        },
+        "fallback_defaults" : {
+            "budget"           : "no limit",
+            "timeout"          : "default",
+            "dry_run"          : "no",
         },
     },
 }
@@ -244,7 +274,7 @@ def quick_smoke_test():
     # Test 1: Registry structure
     print( "\n1. Testing registry structure..." )
     try:
-        assert len( AGENTIC_AGENTS ) == 4, f"Expected 4 agents, got {len( AGENTIC_AGENTS )}"
+        assert len( AGENTIC_AGENTS ) == 5, f"Expected 5 agents, got {len( AGENTIC_AGENTS )}"
         for key, entry in AGENTIC_AGENTS.items():
             assert "cli_module" in entry, f"Missing cli_module in {key}"
             assert "required_user_args" in entry, f"Missing required_user_args in {key}"
@@ -253,7 +283,8 @@ def quick_smoke_test():
             assert "fallback_questions" in entry, f"Missing fallback_questions in {key}"
             assert "fallback_defaults" in entry, f"Missing fallback_defaults in {key}"
             assert "display_name" in entry, f"Missing display_name in {key}"
-            print( f"   ✓ {key}: structure valid (has fallback_defaults, display_name={entry[ 'display_name' ]})" )
+            assert "job_prefix" in entry, f"Missing job_prefix in {key}"
+            print( f"   ✓ {key}: structure valid (job_prefix={entry[ 'job_prefix' ]}, display_name={entry[ 'display_name' ]})" )
         tests_passed += 1
     except Exception as e:
         print( f"   ✗ Failed: {e}" )
@@ -277,6 +308,12 @@ def quick_smoke_test():
         assert rp is not None
         assert rp[ "required_user_args" ] == [ "query" ]
         print( "   ✓ Research to podcast lookup works" )
+
+        st = AGENTIC_AGENTS.get( "agent router go to swe team" )
+        assert st is not None
+        assert st[ "required_user_args" ] == [ "task" ]
+        assert st[ "display_name" ] == "SWE Team"
+        print( "   ✓ SWE Team lookup works" )
 
         missing = AGENTIC_AGENTS.get( "nonexistent command" )
         assert missing is None

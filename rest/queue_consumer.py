@@ -67,7 +67,7 @@ def start_todo_producer_run_consumer_thread( todo_queue: Any, running_queue: Any
                     # Phase 2: Direct attribute access - Protocol guarantees these exist
                     job_id = job.id_hash
                     if hasattr( running_queue, 'websocket_mgr' ):
-                        user_id = running_queue.user_job_tracker.get_user_for_job( job_id ) if hasattr( running_queue, 'user_job_tracker' ) else None
+                        user_id = job.user_id
                         # Phase 6.1: Include card-rendering metadata for client-side card creation
                         metadata = {
                             'question_text' : job.last_question_asked,

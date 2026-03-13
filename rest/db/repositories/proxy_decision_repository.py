@@ -50,7 +50,7 @@ class ProxyDecisionRepository( BaseRepository[ProxyDecision] ):
 
     def log_shadow( self, notification_id, domain, category, question,
                     sender_id="", confidence=0.0, trust_level=1, reason="",
-                    metadata_json=None ):
+                    metadata_json=None, data_origin="organic" ):
         """
         Log a shadow decision (L1 — observe only, no action taken).
 
@@ -75,6 +75,7 @@ class ProxyDecisionRepository( BaseRepository[ProxyDecision] ):
             trust_level: Trust level at decision time
             reason: Human-readable reason
             metadata_json: Optional JSONB metadata
+            data_origin: Provenance tag (organic, synthetic_seed, synthetic_generated)
 
         Returns:
             Created ProxyDecision instance
@@ -91,13 +92,15 @@ class ProxyDecisionRepository( BaseRepository[ProxyDecision] ):
             trust_level          = trust_level,
             reason               = reason or "L1 shadow mode — log only",
             ratification_state   = "not_required",
-            metadata_json        = metadata_json
+            metadata_json        = metadata_json,
+            data_origin          = data_origin,
         )
 
     def log_decision( self, notification_id, domain, category, question,
                       action, decision_value=None, sender_id="",
                       confidence=0.0, trust_level=1, reason="",
-                      requires_ratification=False, metadata_json=None ):
+                      requires_ratification=False, metadata_json=None,
+                      data_origin="organic" ):
         """
         Log a decision with specified action (suggest, act, defer).
 
@@ -126,6 +129,7 @@ class ProxyDecisionRepository( BaseRepository[ProxyDecision] ):
             reason: Human-readable reason
             requires_ratification: Whether decision needs human approval
             metadata_json: Optional JSONB metadata
+            data_origin: Provenance tag (organic, synthetic_seed, synthetic_generated)
 
         Returns:
             Created ProxyDecision instance
@@ -144,7 +148,8 @@ class ProxyDecisionRepository( BaseRepository[ProxyDecision] ):
             trust_level          = trust_level,
             reason               = reason,
             ratification_state   = ratification_state,
-            metadata_json        = metadata_json
+            metadata_json        = metadata_json,
+            data_origin          = data_origin,
         )
 
     def get_pending( self, domain=None, category=None, limit=100 ):
@@ -215,6 +220,43 @@ class ProxyDecisionRepository( BaseRepository[ProxyDecision] ):
 
         self.session.flush()
         return decision
+
+    def delete_pending( self, decision_id ):
+        """
+        Delete a pending decision permanently.
+
+        Only decisions with ratification_state="pending" can be deleted.
+        Approved/rejected decisions are protected from deletion.
+
+        Requires:
+            - decision_id: UUID of the decision to delete
+
+        Ensures:
+            - Decision is hard-deleted from the database if pending
+            - Returns True on success, False if not found
+            - Does NOT modify trust state counters
+
+        Raises:
+            - ValueError if decision exists but is not in "pending" state
+
+        Args:
+            decision_id: UUID of the decision
+
+        Returns:
+            True if deleted, False if not found
+        """
+        decision = self.get_by_id( decision_id )
+        if not decision:
+            return False
+
+        if decision.ratification_state != "pending":
+            raise ValueError(
+                f"Cannot delete decision with state '{decision.ratification_state}' — only pending decisions can be deleted"
+            )
+
+        self.session.delete( decision )
+        self.session.flush()
+        return True
 
     def get_by_domain_category( self, domain, category, limit=50 ):
         """

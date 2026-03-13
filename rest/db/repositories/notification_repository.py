@@ -56,7 +56,8 @@ class NotificationRepository( BaseRepository[Notification] ):
         response_options: Optional[dict] = None,
         timeout_seconds: Optional[int] = None,
         expires_at: Optional[datetime] = None,
-        job_id: Optional[str] = None
+        job_id: Optional[str] = None,
+        progress_group_id: Optional[str] = None
     ) -> Notification:
         """
         Create new notification.
@@ -103,6 +104,7 @@ class NotificationRepository( BaseRepository[Notification] ):
             timeout_seconds    = timeout_seconds,
             expires_at         = expires_at,
             job_id             = job_id,
+            progress_group_id  = progress_group_id,
             state              = "created"
         )
 
@@ -795,7 +797,7 @@ class NotificationRepository( BaseRepository[Notification] ):
         Returns:
             List of session summaries: [{ session_id, sender_id, last_activity, count, is_active }]
         """
-        from cosa.cli.notification_models import parse_sender_id
+        from lupin_cli.notifications.notification_models import parse_sender_id
 
         # Get all sender activities for this user
         all_activities = self.get_sender_last_activities_visible( recipient_id )

@@ -23,8 +23,8 @@ from cosa.crud_for_dataframes.storage import DataFrameStorage
 from cosa.crud_for_dataframes.dispatcher import dispatch, format_result_for_voice, extract_intent_xml
 from cosa.crud_for_dataframes.intent_extractor import extract_intent_via_claude_code
 
-from cosa.cli.notify_user_sync import notify_user_sync
-from cosa.cli.notification_models import NotificationRequest, ResponseType
+from lupin_cli.notifications.notify_user_sync import notify_user_sync
+from lupin_cli.notifications.notification_models import NotificationRequest, ResponseType
 
 
 class CrudForDataFramesAgent( AgentBase ):

@@ -15,6 +15,65 @@ Used by:
 
 from typing import Optional
 
+_SEMANTIC_NONE = { "default", "no limit", "none", "skip", "no", "" }
+
+
+def _parse_optional_int( value, default=None ):
+    """
+    Safely parse a value to int, treating semantic strings as None.
+
+    Requires:
+        - value is a string, int, None, or other type
+
+    Ensures:
+        - Returns int if value is a valid numeric string or int
+        - Returns default if value is None, empty, a semantic skip word, or unparseable
+    """
+    if not value or str( value ).strip().lower() in _SEMANTIC_NONE:
+        return default
+    try:
+        return int( value )
+    except ( ValueError, TypeError ):
+        return default
+
+
+def _parse_boolean( value, default=False ):
+    """
+    Safely parse a value to bool, treating semantic strings appropriately.
+
+    Requires:
+        - value is a string, bool, None, or other type
+
+    Ensures:
+        - Returns True for "yes", "true", "1", "enable", "enabled"
+        - Returns False for all other strings including "no", "false", "0"
+        - Returns default if value is None
+        - Passes through bool values unchanged
+    """
+    if value is None: return default
+    if isinstance( value, bool ): return value
+    s = str( value ).lower().strip()
+    return s in ( "yes", "true", "1", "enable", "enabled" )
+
+
+def _parse_optional_float( value, default=None ):
+    """
+    Safely parse a value to float, treating semantic strings as None.
+
+    Requires:
+        - value is a string, float, int, None, or other type
+
+    Ensures:
+        - Returns float if value is a valid numeric string or number
+        - Returns default if value is None, empty, a semantic skip word, or unparseable
+    """
+    if not value or str( value ).strip().lower() in _SEMANTIC_NONE:
+        return default
+    try:
+        return float( value )
+    except ( ValueError, TypeError ):
+        return default
+
 
 def create_agentic_job( command, args_dict, user_id, user_email, session_id, debug=False, verbose=False ):
     """
@@ -52,9 +111,9 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             user_id          = user_id,
             user_email       = user_email,
             session_id       = session_id,
-            budget           = float( args_dict[ "budget" ] ) if args_dict.get( "budget" ) else None,
+            budget           = _parse_optional_float( args_dict.get( "budget" ) ),
             no_confirm       = True,
-            dry_run          = args_dict.get( "dry_run", False ),
+            dry_run          = _parse_boolean( args_dict.get( "dry_run" ) ),
             audience         = args_dict.get( "audience" ),
             audience_context = args_dict.get( "audience_context" ),
             debug            = debug,
@@ -76,7 +135,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             user_email       = user_email,
             session_id       = session_id,
             target_languages = languages,
-            dry_run          = args_dict.get( "dry_run", False ),
+            dry_run          = _parse_boolean( args_dict.get( "dry_run" ) ),
             audience         = args_dict.get( "audience" ),
             audience_context = args_dict.get( "audience_context" ),
             debug            = debug,
@@ -97,9 +156,9 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             user_id          = user_id,
             user_email       = user_email,
             session_id       = session_id,
-            budget           = float( args_dict[ "budget" ] ) if args_dict.get( "budget" ) else None,
+            budget           = _parse_optional_float( args_dict.get( "budget" ) ),
             target_languages = languages,
-            dry_run          = args_dict.get( "dry_run", False ),
+            dry_run          = _parse_boolean( args_dict.get( "dry_run" ) ),
             audience         = args_dict.get( "audience" ),
             audience_context = args_dict.get( "audience_context" ),
             debug            = debug,
@@ -114,11 +173,30 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             user_email      = user_email,
             session_id      = session_id,
             task_type       = args_dict.get( "task_type", "BOUNDED" ),
-            max_turns       = int( args_dict[ "max_turns" ] ) if args_dict.get( "max_turns" ) else None,
-            timeout_seconds = int( args_dict[ "timeout_seconds" ] ) if args_dict.get( "timeout_seconds" ) else None,
-            dry_run         = args_dict.get( "dry_run", False ),
+            max_turns       = _parse_optional_int( args_dict.get( "max_turns" ) ),
+            timeout_seconds = _parse_optional_int( args_dict.get( "timeout_seconds" ) ),
+            dry_run         = _parse_boolean( args_dict.get( "dry_run" ) ),
             debug           = debug,
             verbose         = verbose
+        )
+
+    elif command == "agent router go to swe team":
+        from cosa.agents.swe_team.job import SweTeamJob
+        return SweTeamJob(
+            task           = args_dict.get( "task", args_dict.get( "prompt", "" ) ),
+            user_id        = user_id,
+            user_email     = user_email,
+            session_id     = session_id,
+            dry_run        = _parse_boolean( args_dict.get( "dry_run" ) ),
+            dry_run_phases = _parse_optional_int( args_dict.get( "dry_run_phases" ) ) or 10,
+            dry_run_delay  = _parse_optional_float( args_dict.get( "dry_run_delay" ) ) or 1.5,
+            lead_model     = args_dict.get( "lead_model" ),
+            worker_model   = args_dict.get( "worker_model" ),
+            budget         = _parse_optional_float( args_dict.get( "budget" ) ),
+            timeout        = _parse_optional_int( args_dict.get( "timeout" ) ),
+            trust_mode     = args_dict.get( "trust_mode" ),
+            debug          = debug,
+            verbose        = verbose
         )
 
     else:

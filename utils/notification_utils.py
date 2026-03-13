@@ -3,8 +3,62 @@
 Notification Utility Functions.
 
 Shared formatting utilities for notification messages across COSA agents
-and the MCP server. Handles TTS message formatting and API format conversion.
+and the MCP server. Handles TTS message formatting, API format conversion,
+and qualifier extraction/formatting for yes/no responses.
 """
+
+import re
+
+
+# ── Known Project Registry ───────────────────────────────────────────────────
+
+KNOWN_PROJECTS = {
+    "/cosa"                  : "cosa",
+    "/planning-is-prompting" : "plan",
+    "/lupin"                 : "lupin",
+}
+
+
+def is_known_project( project: str ) -> bool:
+    """
+    Check whether a project name is in the known project registry.
+
+    Requires:
+        - project is a string
+
+    Ensures:
+        - Returns True if project is a recognized project name
+        - Returns False otherwise (including empty string)
+
+    Args:
+        project: Project name to check (e.g., "lupin", "cosa", "plan")
+
+    Returns:
+        bool: True if known, False otherwise
+    """
+    return project in KNOWN_PROJECTS.values()
+
+
+def normalize_abstract( abstract ) -> str:
+    """
+    Convert literal \\n to actual newlines in abstract text.
+
+    Requires:
+        - abstract is None or a string
+
+    Ensures:
+        - Returns None if input is None
+        - Returns string with literal \\\\n converted to newlines
+
+    Args:
+        abstract: Abstract text from MCP tool call (may contain escaped newlines)
+
+    Returns:
+        str or None: Normalized abstract text
+    """
+    if abstract is None:
+        return None
+    return abstract.replace( '\\n', '\n' )
 
 
 def format_questions_for_tts( questions: list ) -> str:
@@ -95,17 +149,18 @@ def format_open_ended_batch_for_tts( questions: list ) -> str:
     """
     Format open-ended batch questions for TTS playback.
 
-    Builds a spoken message like: "I have 3 questions for you.
-    Question 1 of 3: What topic? Question 2 of 3: What budget?"
+    For a single question, speaks the question text directly.
+    For multiple questions, speaks only the count preamble — individual
+    questions are already displayed in the UI batch form and should NOT
+    be read aloud (too verbose for voice UX).
 
     Requires:
         - questions is a non-empty list of question dicts
         - Each dict should have 'question' key
 
     Ensures:
-        - Returns TTS-friendly string with numbered questions
-        - Single question: just the question text (no "I have 1 question" preamble)
-        - Multiple questions: preamble + numbered questions
+        - Single question: just the question text (no preamble)
+        - Multiple questions: count-only preamble ("I have N questions for you.")
 
     Args:
         questions: List of question objects with 'question' and 'header' keys
@@ -114,19 +169,11 @@ def format_open_ended_batch_for_tts( questions: list ) -> str:
         str: TTS-friendly message
     """
     total = len( questions )
-    parts = []
-
-    if total > 1:
-        parts.append( f"I have {total} questions for you." )
-
-    for i, q in enumerate( questions, 1 ):
-        question_text = q.get( "question", "Please provide a value" )
-        if total > 1:
-            parts.append( f"Question {i} of {total}: {question_text}" )
-        else:
-            parts.append( question_text )
-
-    return " ".join( parts )
+    if total == 0:
+        return ""
+    if total == 1:
+        return questions[ 0 ].get( "question", "Please provide a value" )
+    return f"I have {total} questions for you."
 
 
 def convert_open_ended_batch_for_api( questions: list ) -> dict:
@@ -161,6 +208,55 @@ def convert_open_ended_batch_for_api( questions: list ) -> dict:
             converted_q[ "default_value" ] = q[ "default_value" ]
         converted.append( converted_q )
     return { "questions": converted }
+
+
+def extract_qualifier_comment( response_value ):
+    """
+    Extract qualifier comment from a yes/no response value.
+
+    Requires:
+        - response_value is a string or None
+
+    Ensures:
+        - Returns ( answer, qualifier ) tuple
+        - answer is "yes" or "no" (lowercase), or None if empty
+        - qualifier is the comment text or None
+
+    Examples:
+        "yes [comment: fix the tests]" -> ( "yes", "fix the tests" )
+        "no [comment: not ready]"      -> ( "no", "not ready" )
+        "yes"                          -> ( "yes", None )
+        "no"                           -> ( "no", None )
+    """
+    if not response_value:
+        return ( None, None )
+
+    match = re.match( r'^(yes|no)\s*(?:\[comment:\s*(.+)\])?$', response_value.strip(), re.IGNORECASE )
+    if match:
+        return ( match.group( 1 ).lower(), match.group( 2 ) )
+
+    # Fallback: treat the whole string as the answer
+    return ( response_value.strip().lower(), None )
+
+
+def format_qualified_response( answer, qualifier ):
+    """
+    Format a yes/no answer with qualifier into an enriched string that Claude will act on.
+
+    Requires:
+        - answer is "yes" or "no"
+        - qualifier is a non-empty string
+
+    Ensures:
+        - Returns a multi-line string with explicit instructions for Claude
+    """
+    return (
+        f"{answer}\n\n"
+        f"IMPORTANT — The user attached a comment to their {answer} response:\n"
+        f'"{qualifier}"\n\n'
+        "You MUST act on this comment. It is a direct instruction or question from the user. "
+        "Do NOT ignore it. If it is a question, answer it. If it is an instruction, carry it out."
+    )
 
 
 def quick_smoke_test():
@@ -228,7 +324,7 @@ def quick_smoke_test():
         assert "I have" not in tts
         print( f"✓ Result: '{tts}'" )
 
-        # Test 6: format_open_ended_batch_for_tts (multiple questions)
+        # Test 6: format_open_ended_batch_for_tts (multiple questions — count-only preamble)
         print( "Testing format_open_ended_batch_for_tts (multiple questions)..." )
         questions = [
             { "question": "What topic?", "header": "Topic" },
@@ -236,11 +332,9 @@ def quick_smoke_test():
             { "question": "Who is the audience?", "header": "Audience" }
         ]
         tts = format_open_ended_batch_for_tts( questions )
-        assert "I have 3 questions for you" in tts
-        assert "Question 1 of 3" in tts
-        assert "Question 2 of 3" in tts
-        assert "Question 3 of 3" in tts
-        print( f"✓ Result: '{tts[ :80 ]}...'" )
+        assert tts == "I have 3 questions for you."
+        assert "Question 1 of 3" not in tts  # Individual questions NOT spoken
+        print( f"✓ Result: '{tts}'" )
 
         # Test 7: convert_open_ended_batch_for_api
         print( "Testing convert_open_ended_batch_for_api..." )
@@ -266,6 +360,50 @@ def quick_smoke_test():
         assert converted[ "questions" ][ 0 ][ "default_value" ] == "no limit"
         assert "default_value" not in converted[ "questions" ][ 1 ]
         print( "✓ default_value passed through when present, omitted when absent" )
+
+        # Test 9: extract_qualifier_comment
+        print( "Testing extract_qualifier_comment..." )
+        answer, qualifier = extract_qualifier_comment( "yes [comment: fix the tests]" )
+        assert answer == "yes"
+        assert qualifier == "fix the tests"
+        answer, qualifier = extract_qualifier_comment( "no" )
+        assert answer == "no"
+        assert qualifier is None
+        answer, qualifier = extract_qualifier_comment( None )
+        assert answer is None
+        assert qualifier is None
+        print( "✓ extract_qualifier_comment works correctly" )
+
+        # Test 10: format_qualified_response
+        print( "Testing format_qualified_response..." )
+        result = format_qualified_response( "yes", "fix the import" )
+        assert result.startswith( "yes\n" )
+        assert "MUST act" in result
+        assert "fix the import" in result
+        assert "Do NOT ignore" in result
+        print( "✓ format_qualified_response works correctly" )
+
+        # Test 11: is_known_project (known projects)
+        print( "Testing is_known_project (known)..." )
+        assert is_known_project( "lupin" ) is True
+        assert is_known_project( "cosa" ) is True
+        assert is_known_project( "plan" ) is True
+        print( "✓ Known projects return True" )
+
+        # Test 12: is_known_project (unknown projects)
+        print( "Testing is_known_project (unknown)..." )
+        assert is_known_project( "newrepo" ) is False
+        assert is_known_project( "unknown" ) is False
+        assert is_known_project( "" ) is False
+        print( "✓ Unknown projects return False" )
+
+        # Test 13: KNOWN_PROJECTS dict structure
+        print( "Testing KNOWN_PROJECTS structure..." )
+        assert "/lupin" in KNOWN_PROJECTS
+        assert KNOWN_PROJECTS[ "/lupin" ] == "lupin"
+        assert KNOWN_PROJECTS[ "/cosa" ] == "cosa"
+        assert KNOWN_PROJECTS[ "/planning-is-prompting" ] == "plan"
+        print( "✓ KNOWN_PROJECTS has correct mappings" )
 
         print( "\n✓ Notification utils smoke test completed successfully" )
 

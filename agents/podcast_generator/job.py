@@ -116,16 +116,15 @@ class PodcastGeneratorJob( AgenticJobBase ):
         """
         Display string for queue UI.
 
-        Returns truncated research path with [Podcast] prefix.
+        Returns research path filename with [Podcast] prefix.
+        JS header truncates independently via truncateText().
 
         Returns:
             str: Human-readable job description
         """
-        # Extract filename from path for display
         import os
         filename = os.path.basename( self.research_path )
-        truncated = filename[ :40 ] + "..." if len( filename ) > 40 else filename
-        return f"[Podcast] {truncated}"
+        return f"[Podcast] {filename}"
 
     def do_all( self ) -> str:
         """
@@ -145,6 +144,16 @@ class PodcastGeneratorJob( AgenticJobBase ):
 
         try:
             result = asyncio.run( self._execute() )
+
+            # Check if cancellation was requested during execution
+            if self._cancel_requested:
+                self.status                = "cancelled"
+                self.completed_at          = datetime.now().isoformat()
+                self.error                 = "Cancelled by user request"
+                self.answer_conversational = result or "Podcast generation was cancelled by the user."
+                if self.debug:
+                    print( f"[PodcastGeneratorJob] Cancelled by user request" )
+                return self.answer_conversational
 
             self.status       = "completed"
             self.completed_at = datetime.now().isoformat()
@@ -185,6 +194,9 @@ class PodcastGeneratorJob( AgenticJobBase ):
         import cosa.utils.util as cu
         import os
 
+        # Re-establish core voice_io binding (import-order race: last configure() wins)
+        voice_io.reconfigure()
+
         # Handle dry-run mode with breadcrumb notifications
         if self.dry_run:
             return await self._execute_dry_run( voice_io, cosa_interface )
@@ -202,8 +214,12 @@ class PodcastGeneratorJob( AgenticJobBase ):
         if not os.path.exists( full_path ):
             raise FileNotFoundError( f"Research document not found: {self.research_path}" )
 
-        # Set sender_id for notifications
-        cosa_interface.SENDER_ID = cosa_interface._get_sender_id() + f"#{self.id_hash}"
+        # Set sender_id and target_user for notifications
+        cosa_interface.SENDER_ID   = cosa_interface._get_sender_id( suffix=self.base_id )
+        cosa_interface.TARGET_USER = self.user_email
+
+        # Set job_id for auto-injection into all orchestrator notify() calls
+        voice_io.set_job_id( self.id_hash )
 
         if self.debug:
             print( f"[PodcastGeneratorJob] Research document: {full_path}" )
@@ -211,65 +227,70 @@ class PodcastGeneratorJob( AgenticJobBase ):
             if self.max_segments:
                 print( f"[PodcastGeneratorJob] Max segments: {self.max_segments}" )
 
-        # Notify start
-        await voice_io.notify(
-            f"Starting podcast generation from: {os.path.basename( full_path )}",
-            priority="medium"
-        )
+        try:
+            # Notify start
+            await voice_io.notify(
+                f"Starting podcast generation from: {os.path.basename( full_path )}",
+                priority="medium"
+            )
 
-        # Create config
-        config = PodcastConfig()
+            # Create config
+            config = PodcastConfig()
 
-        # Target audience configuration (job arg overrides config file)
-        from cosa.config.configuration_manager import ConfigurationManager
-        config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-        config.audience = self.audience or config_mgr.get(
-            "podcast generator audience",
-            default="academic"
-        )
-        audience_context_from_config = config_mgr.get( "podcast generator audience context", default="" )
-        config.audience_context = self.audience_context or audience_context_from_config or None
+            # Target audience configuration (job arg overrides config file)
+            from cosa.config.configuration_manager import ConfigurationManager
+            config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+            config.audience = self.audience or config_mgr.get(
+                "podcast generator audience",
+                default="academic"
+            )
+            audience_context_from_config = config_mgr.get( "podcast generator audience context", default="" )
+            config.audience_context = self.audience_context or audience_context_from_config or None
 
-        # Create orchestrator
-        agent = PodcastOrchestratorAgent(
-            research_doc_path = full_path,
-            user_id           = self.user_email,
-            config            = config,
-            target_languages  = self.target_languages,
-            max_segments      = self.max_segments,
-            debug             = self.debug,
-            verbose           = self.verbose,
-        )
+            # Create orchestrator
+            agent = PodcastOrchestratorAgent(
+                research_doc_path = full_path,
+                user_id           = self.user_email,
+                config            = config,
+                target_languages  = self.target_languages,
+                max_segments      = self.max_segments,
+                debug             = self.debug,
+                verbose           = self.verbose,
+            )
+            self._orchestrator = agent  # Store ref for cancellation from API thread
 
-        # Run the full workflow
-        script = await agent.do_all_async()
+            # Run the full workflow
+            script = await agent.do_all_async()
 
-        if script is None:
-            await voice_io.notify( "Podcast generation was cancelled.", priority="medium" )
-            return "Podcast generation was cancelled by the user."
+            if script is None:
+                await voice_io.notify( "Podcast generation was cancelled.", priority="medium" )
+                return "Podcast generation was cancelled by the user."
 
-        # Extract results from agent state
-        state = agent._podcast_state
-        self.audio_path  = state.get( "final_audio_path" )
-        self.script_path = state.get( "final_script_path" )
+            # Extract results from agent state
+            state = agent._podcast_state
+            self.audio_path  = state.get( "final_audio_path" )
+            self.script_path = state.get( "final_script_path" )
 
-        # Store artifacts
-        self.artifacts[ "audio_path" ]  = self.audio_path
-        self.artifacts[ "script_path" ] = self.script_path
-        self.artifacts[ "podcast_id" ]  = agent.podcast_id
+            # Store artifacts
+            self.artifacts[ "audio_path" ]  = self.audio_path
+            self.artifacts[ "script_path" ] = self.script_path
+            self.artifacts[ "podcast_id" ]  = agent.podcast_id
 
-        # Build cost summary
-        api_cost = agent.api_client.cost_estimate.estimated_cost_usd if agent._api_client else 0.0
-        self.cost_summary = {
-            "script_cost_usd" : api_cost,
-            "audio_cost_usd"  : 0.0,  # TODO: Calculate from TTS results
-            "total_cost_usd"  : api_cost,
-        }
-        self.artifacts[ "cost_summary" ] = self.cost_summary
+            # Build cost summary
+            api_cost = agent.api_client.cost_estimate.estimated_cost_usd if agent._api_client else 0.0
+            self.cost_summary = {
+                "script_cost_usd" : api_cost,
+                "audio_cost_usd"  : 0.0,  # TODO: Calculate from TTS results
+                "total_cost_usd"  : api_cost,
+            }
+            self.artifacts[ "cost_summary" ] = self.cost_summary
 
-        # Return conversational answer
-        duration = script.estimated_duration_minutes
-        return f"Podcast complete! Generated {script.get_segment_count()} segments, ~{duration:.1f} minutes. Audio: {self.audio_path}"
+            # Return conversational answer
+            duration = script.estimated_duration_minutes
+            return f"Podcast complete! Generated {script.get_segment_count()} segments, ~{duration:.1f} minutes. Audio: {self.audio_path}"
+
+        finally:
+            voice_io.clear_job_id()
 
     async def _execute_dry_run( self, voice_io, cosa_interface ) -> str:
         """
@@ -288,8 +309,9 @@ class PodcastGeneratorJob( AgenticJobBase ):
         import asyncio
         import os
 
-        # Set sender_id for notifications
-        cosa_interface.SENDER_ID = cosa_interface._get_sender_id() + f"#{self.id_hash}"
+        # Set sender_id and target_user for notifications
+        cosa_interface.SENDER_ID   = cosa_interface._get_sender_id( suffix=self.base_id )
+        cosa_interface.TARGET_USER = self.user_email
 
         filename = os.path.basename( self.research_path )
 

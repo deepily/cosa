@@ -26,8 +26,9 @@ class CodeEmbeddingEngine:
     L2-normalized embeddings. Supports asymmetric search with query prefix.
     """
 
-    _instance = None
-    _lock     = Lock()
+    _instance        = None
+    _lock            = Lock()
+    _inference_lock  = Lock()
 
     def __new__( cls, debug=False, verbose=False ):
         """
@@ -90,29 +91,34 @@ class CodeEmbeddingEngine:
         Ensures:
             - self._model is a loaded SentenceTransformer
             - Model is on the configured device with configured dtype
+            - Thread-safe via double-checked locking on _inference_lock
         """
         if self._model is not None:
             return
 
-        timer = sw.Stopwatch( msg=f"Loading CodeRankEmbed onto {self._device}..." )
+        with self._inference_lock:
+            if self._model is not None:
+                return
 
-        from sentence_transformers import SentenceTransformer
+            timer = sw.Stopwatch( msg=f"Loading CodeRankEmbed onto {self._device}..." )
 
-        dtype_map = { "float16": torch.float16, "float32": torch.float32, "bfloat16": torch.bfloat16 }
-        model_dtype = dtype_map.get( self._dtype_str, torch.float16 )
+            from sentence_transformers import SentenceTransformer
 
-        self._model = SentenceTransformer(
-            self._model_name,
-            trust_remote_code=True,
-            device=self._device,
-            model_kwargs={ "torch_dtype": model_dtype }
-        )
+            dtype_map = { "float16": torch.float16, "float32": torch.float32, "bfloat16": torch.bfloat16 }
+            model_dtype = dtype_map.get( self._dtype_str, torch.float16 )
 
-        timer.print( "Done!", use_millis=True )
+            self._model = SentenceTransformer(
+                self._model_name,
+                trust_remote_code=True,
+                device=self._device,
+                model_kwargs={ "torch_dtype": model_dtype }
+            )
 
-        if self.debug:
-            vram = vram_report( self._device )
-            print( f"  VRAM after load: allocated={vram[ 'allocated_gb' ]:.2f} GB, peak={vram[ 'peak_gb' ]:.2f} GB" )
+            timer.print( "Done!", use_millis=True )
+
+            if self.debug and self._device.startswith( "cuda" ):
+                vram = vram_report( self._device )
+                print( f"  VRAM after load: allocated={vram[ 'allocated_gb' ]:.2f} GB, peak={vram[ 'peak_gb' ]:.2f} GB" )
 
     def encode_query( self, queries: List[ str ] ) -> List[ List[ float ] ]:
         """
@@ -124,6 +130,7 @@ class CodeEmbeddingEngine:
         Ensures:
             - Returns list of 768-dim L2-normalized embeddings
             - Prepends query prefix to each query
+            - Thread-safe: serializes inference via _inference_lock
 
         Args:
             queries: List of query strings to encode
@@ -138,7 +145,8 @@ class CodeEmbeddingEngine:
         if self.debug and self.verbose:
             timer = sw.Stopwatch( msg=f"Encoding {len( queries )} code queries..." )
 
-        embeddings = self._model.encode( prefixed, normalize_embeddings=True )
+        with self._inference_lock:
+            embeddings = self._model.encode( prefixed, normalize_embeddings=True )
 
         if self.debug and self.verbose:
             timer.print( "Done!", use_millis=True )
@@ -155,6 +163,7 @@ class CodeEmbeddingEngine:
         Ensures:
             - Returns list of 768-dim L2-normalized embeddings
             - No prefix applied (asymmetric: documents have no prefix)
+            - Thread-safe: serializes inference via _inference_lock
 
         Args:
             code_snippets: List of code strings to encode
@@ -167,7 +176,8 @@ class CodeEmbeddingEngine:
         if self.debug and self.verbose:
             timer = sw.Stopwatch( msg=f"Encoding {len( code_snippets )} code snippets..." )
 
-        embeddings = self._model.encode( code_snippets, normalize_embeddings=True )
+        with self._inference_lock:
+            embeddings = self._model.encode( code_snippets, normalize_embeddings=True )
 
         if self.debug and self.verbose:
             timer.print( "Done!", use_millis=True )
@@ -175,12 +185,13 @@ class CodeEmbeddingEngine:
         return embeddings.tolist()
 
     def unload( self ):
-        """Unload model from GPU to free VRAM."""
-        if self._model is not None:
-            del self._model
-            self._model = None
-            torch.cuda.empty_cache()
-            if self.debug: print( "CodeEmbeddingEngine: model unloaded" )
+        """Unload model from GPU to free VRAM. Thread-safe via _inference_lock."""
+        with self._inference_lock:
+            if self._model is not None:
+                del self._model
+                self._model = None
+                torch.cuda.empty_cache()
+                if self.debug: print( "CodeEmbeddingEngine: model unloaded" )
 
     @property
     def dimensions( self ):
@@ -207,8 +218,9 @@ class ProseEmbeddingEngine:
     Produces L2-normalized embeddings at configurable dimensions (64-768).
     """
 
-    _instance = None
-    _lock     = Lock()
+    _instance        = None
+    _lock            = Lock()
+    _inference_lock  = Lock()
 
     def __new__( cls, debug=False, verbose=False ):
         """
@@ -276,29 +288,34 @@ class ProseEmbeddingEngine:
             - self._model is a loaded AutoModel in eval mode
             - self._tokenizer is a loaded AutoTokenizer
             - Model is on the configured device with configured dtype
+            - Thread-safe via double-checked locking on _inference_lock
         """
         if self._model is not None:
             return
 
-        timer = sw.Stopwatch( msg=f"Loading nomic-embed-text-v1.5 onto {self._device}..." )
+        with self._inference_lock:
+            if self._model is not None:
+                return
 
-        from transformers import AutoModel, AutoTokenizer
+            timer = sw.Stopwatch( msg=f"Loading nomic-embed-text-v1.5 onto {self._device}..." )
 
-        dtype_map = { "float16": torch.float16, "float32": torch.float32, "bfloat16": torch.bfloat16 }
-        model_dtype = dtype_map.get( self._dtype_str, torch.float16 )
+            from transformers import AutoModel, AutoTokenizer
 
-        self._tokenizer = AutoTokenizer.from_pretrained( "bert-base-uncased" )
-        self._model = AutoModel.from_pretrained(
-            self._model_name,
-            trust_remote_code=True,
-            torch_dtype=model_dtype
-        ).to( self._device ).eval()
+            dtype_map = { "float16": torch.float16, "float32": torch.float32, "bfloat16": torch.bfloat16 }
+            model_dtype = dtype_map.get( self._dtype_str, torch.float16 )
 
-        timer.print( "Done!", use_millis=True )
+            self._tokenizer = AutoTokenizer.from_pretrained( "bert-base-uncased" )
+            self._model = AutoModel.from_pretrained(
+                self._model_name,
+                trust_remote_code=True,
+                torch_dtype=model_dtype
+            ).to( self._device ).eval()
 
-        if self.debug:
-            vram = vram_report( self._device )
-            print( f"  VRAM after load: allocated={vram[ 'allocated_gb' ]:.2f} GB, peak={vram[ 'peak_gb' ]:.2f} GB" )
+            timer.print( "Done!", use_millis=True )
+
+            if self.debug and self._device.startswith( "cuda" ):
+                vram = vram_report( self._device )
+                print( f"  VRAM after load: allocated={vram[ 'allocated_gb' ]:.2f} GB, peak={vram[ 'peak_gb' ]:.2f} GB" )
 
     def _mean_pooling( self, model_output, attention_mask ):
         """
@@ -364,6 +381,7 @@ class ProseEmbeddingEngine:
         Ensures:
             - Returns list of matryoshka_dim L2-normalized embeddings
             - Prepends query prefix to each query
+            - Thread-safe: serializes inference via _inference_lock
 
         Args:
             queries: List of query strings to encode
@@ -378,7 +396,8 @@ class ProseEmbeddingEngine:
         if self.debug and self.verbose:
             timer = sw.Stopwatch( msg=f"Encoding {len( queries )} prose queries..." )
 
-        result = self._encode_batch( prefixed )
+        with self._inference_lock:
+            result = self._encode_batch( prefixed )
 
         if self.debug and self.verbose:
             timer.print( "Done!", use_millis=True )
@@ -395,6 +414,7 @@ class ProseEmbeddingEngine:
         Ensures:
             - Returns list of matryoshka_dim L2-normalized embeddings
             - Prepends document prefix to each document
+            - Thread-safe: serializes inference via _inference_lock
 
         Args:
             documents: List of document strings to encode
@@ -409,7 +429,8 @@ class ProseEmbeddingEngine:
         if self.debug and self.verbose:
             timer = sw.Stopwatch( msg=f"Encoding {len( documents )} prose documents..." )
 
-        result = self._encode_batch( prefixed )
+        with self._inference_lock:
+            result = self._encode_batch( prefixed )
 
         if self.debug and self.verbose:
             timer.print( "Done!", use_millis=True )
@@ -417,14 +438,15 @@ class ProseEmbeddingEngine:
         return result.tolist()
 
     def unload( self ):
-        """Unload model and tokenizer from GPU to free VRAM."""
-        if self._model is not None:
-            del self._model
-            del self._tokenizer
-            self._model     = None
-            self._tokenizer = None
-            torch.cuda.empty_cache()
-            if self.debug: print( "ProseEmbeddingEngine: model unloaded" )
+        """Unload model and tokenizer from GPU to free VRAM. Thread-safe via _inference_lock."""
+        with self._inference_lock:
+            if self._model is not None:
+                del self._model
+                del self._tokenizer
+                self._model     = None
+                self._tokenizer = None
+                torch.cuda.empty_cache()
+                if self.debug: print( "ProseEmbeddingEngine: model unloaded" )
 
     @property
     def dimensions( self ):

@@ -764,11 +764,14 @@ class ConfigurationManager():
         """
     
         if self.exists( key ):
-    
+
             # Get the value
             value = self.config.get( self.config_block_id, key )
             # value = self.config.get( key )
-    
+
+            # Resolve ${ENV_VAR} patterns in config values
+            value = os.path.expandvars( value )
+
             return self._get_typed_value( value, return_type )
     
         else:

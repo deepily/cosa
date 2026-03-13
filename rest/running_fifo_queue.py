@@ -15,10 +15,18 @@ import cosa.utils.util as du
 import cosa.utils.util_stopwatch as sw
 import time
 
+import threading
 import traceback
 import pprint
 from datetime import datetime
 from typing import Optional, Any
+
+# Notification service imports for async correctness verification
+from lupin_cli.notifications.notify_user_sync import notify_user_sync
+from lupin_cli.notifications.notification_models import (
+    NotificationRequest,
+    ResponseType
+)
 
 class RunningFifoQueue( FifoQueue ):
     """
@@ -57,12 +65,13 @@ class RunningFifoQueue( FifoQueue ):
         self.jobs_dead_queue     = jobs_dead_queue
         self.emit_speech_callback = emit_speech_callback
         
-        self.auto_debug          = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
-        self.inject_bugs         = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
-        self.debug               = False if config_mgr is None else config_mgr.get( "app_debug",   default=False, return_type="boolean" )
-        self.verbose             = False if config_mgr is None else config_mgr.get( "app_verbose", default=False, return_type="boolean" )
-        self.io_tbl              = InputAndOutputTable()
-        self.gist_normalizer     = GistNormalizer( debug=self.debug, verbose=self.verbose )
+        self.auto_debug              = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
+        self.inject_bugs             = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
+        self.debug                   = False if config_mgr is None else config_mgr.get( "app_debug",   default=False, return_type="boolean" )
+        self.verbose                 = False if config_mgr is None else config_mgr.get( "app_verbose", default=False, return_type="boolean" )
+        self.threshold_confirmation  = 90.0  if config_mgr is None else config_mgr.get( "similarity_threshold_confirmation", default=90.0, return_type="float" )
+        self.io_tbl                  = InputAndOutputTable()
+        self.gist_normalizer         = GistNormalizer( debug=self.debug, verbose=self.verbose )
     
     
     def enter_running_loop( self ) -> None:
@@ -172,17 +181,26 @@ class RunningFifoQueue( FifoQueue ):
                     cached_snapshots = self.snapshot_mgr.get_snapshots_by_question( question )
 
                     if cached_snapshots and len( cached_snapshots ) > 0:
-                        # CACHE HIT - Use the cached result
-                        score, cached_snapshot = cached_snapshots[0]  # Unpack (score, snapshot) tuple
+                        # Unpack best match
+                        score, cached_snapshot = cached_snapshots[ 0 ]
 
-                        if self.debug: print( f"[CACHE] 🎯 CACHE HIT: Found cached solution from {cached_snapshot.run_date} (score: {score:.1f}%)" )
+                        if score >= 100.0:
+                            # Exact match — auto-accept
+                            if self.debug: print( f"[CACHE] EXACT HIT: score {score:.1f}% from {cached_snapshot.run_date}" )
+                            running_job = self._format_cached_result( cached_snapshot, running_job, truncated_question, run_timer )
 
-                        # Convert cached snapshot to proper format and use it
-                        # Pass original running_job to get current user context for done queue
-                        running_job = self._format_cached_result( cached_snapshot, running_job, truncated_question, run_timer )
+                        elif score >= self.threshold_confirmation:
+                            # Above floor — accept (push_job already handled user confirmation)
+                            if self.debug: print( f"[CACHE] THRESHOLD ACCEPT: score {score:.1f}% >= {self.threshold_confirmation}% from {cached_snapshot.run_date}" )
+                            running_job = self._format_cached_result( cached_snapshot, running_job, truncated_question, run_timer )
+
+                        else:
+                            # Below threshold — reject, route to agent
+                            print( f"[CACHE] THRESHOLD REJECT: score {score:.1f}% < {self.threshold_confirmation}% floor — routing to agent" )
+                            running_job = self._handle_base_agent( running_job, truncated_question, run_timer )
                     else:
                         # CACHE MISS - Continue with normal agent execution
-                        if self.debug: print( f"[CACHE] ❌ CACHE MISS: Running agent for new question" )
+                        if self.debug: print( f"[CACHE] MISS: Running agent for new question" )
 
                         running_job = self._handle_base_agent( running_job, truncated_question, run_timer )
             else:
@@ -197,7 +215,7 @@ class RunningFifoQueue( FifoQueue ):
             failed_job = self.head()
             if failed_job:
                 job_id  = failed_job.id_hash
-                user_id = self.user_job_tracker.get_user_for_job( job_id )
+                user_id = failed_job.user_id
 
                 # TTS notification for the error
                 self._notify( f"Job failed: {e}", job=failed_job, priority="urgent" )
@@ -265,7 +283,7 @@ class RunningFifoQueue( FifoQueue ):
 
         # Emit job state transition (run -> dead) with error metadata
         job_id  = running_job.id_hash
-        user_id = self.user_job_tracker.get_user_for_job( job_id )
+        user_id = running_job.user_id
 
         completed_at = datetime.now().isoformat()
         started_at   = running_job.started_at
@@ -337,9 +355,8 @@ class RunningFifoQueue( FifoQueue ):
                 self._notify( running_job.answer_conversational, job=running_job )
 
                 # Emit job state transition (run -> done) with completion metadata
-                # Phase 2: Direct attribute access - Protocol guarantees these exist
                 job_id  = running_job.id_hash
-                user_id = self.user_job_tracker.get_user_for_job( job_id )
+                user_id = running_job.user_id
                 # Calculate completed_at timestamp for duration calculation
                 completed_at = datetime.now().isoformat()
                 started_at   = running_job.started_at
@@ -364,7 +381,6 @@ class RunningFifoQueue( FifoQueue ):
                     'question_text'   : running_job.last_question_asked,
                     'agent_type'      : running_job.job_type,
                     'timestamp'       : running_job.created_date,
-                    # Session 107: Fix field parity between WebSocket and server-fetched cards
                     'status'          : 'completed',
                     'has_interactions': bool( running_job.session_id ),
                     'is_cache_hit'    : running_job.is_cache_hit,
@@ -402,9 +418,8 @@ class RunningFifoQueue( FifoQueue ):
                 )
 
                 # Emit job state transition (run -> dead) with error metadata
-                # Phase 2: Direct attribute access - Protocol guarantees these exist
                 job_id  = running_job.id_hash
-                user_id = self.user_job_tracker.get_user_for_job( job_id )
+                user_id = running_job.user_id
 
                 # Calculate timestamps for error case
                 completed_at = datetime.now().isoformat()
@@ -457,9 +472,9 @@ class RunningFifoQueue( FifoQueue ):
             )
 
             # Emit job state transition (run -> dead) with error metadata
-            # Phase 2: Direct attribute access - Protocol guarantees these exist
+            # Emit job state transition (run -> dead) with error metadata
             job_id  = running_job.id_hash
-            user_id = self.user_job_tracker.get_user_for_job( job_id )
+            user_id = running_job.user_id
 
             # Calculate timestamps for crash case
             completed_at = datetime.now().isoformat()
@@ -571,7 +586,14 @@ class RunningFifoQueue( FifoQueue ):
                 print( f"Saving job [{truncated_question}] to snapshot manager..." )
                 self.snapshot_mgr.save_snapshot( running_job )
                 print( f"Saving job [{truncated_question}] to snapshot manager... Done!" )
-                
+
+                # Fire async correctness verification (non-blocking)
+                self._fire_correctness_check_async(
+                    running_job,
+                    truncated_question,
+                    du.truncate_string( running_job.answer_conversational or running_job.answer, 120 )
+                )
+
                 du.print_banner( "running_job.runtime_stats", prepend_nl=True )
                 pprint.pprint( running_job.runtime_stats )
             else:
@@ -582,7 +604,7 @@ class RunningFifoQueue( FifoQueue ):
 
             # Emit job state transition (run -> done) with completion metadata for ALL agents
             job_id  = running_job.id_hash
-            user_id = self.user_job_tracker.get_user_for_job( job_id )
+            user_id = running_job.user_id
 
             # Calculate completed_at timestamp for duration calculation
             completed_at = datetime.now().isoformat()
@@ -611,10 +633,11 @@ class RunningFifoQueue( FifoQueue ):
                 # Session 107: Fix field parity between WebSocket and server-fetched cards
                 'status'          : 'completed',
                 'has_interactions': bool( running_job.session_id ),
-                'is_cache_hit'    : running_job.is_cache_hit,
-                'started_at'      : started_at,
-                'completed_at'    : completed_at,
-                'duration_seconds': duration_seconds
+                'is_cache_hit'       : running_job.is_cache_hit,
+                'answer_is_correct'  : running_job.answer_is_correct if isinstance( running_job, SolutionSnapshot ) else None,
+                'started_at'         : started_at,
+                'completed_at'       : completed_at,
+                'duration_seconds'   : duration_seconds
             }
             emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'done', user_id, metadata )
 
@@ -625,11 +648,11 @@ class RunningFifoQueue( FifoQueue ):
             self.io_tbl.insert_io_row( input_type=running_job.routing_command, input=running_job.last_question_asked, output_raw=running_job.answer, output_final=running_job.answer_conversational )
 
         else:
-            
+
             running_job = self._handle_error_case( code_response, running_job, truncated_question )
-        
+
         return running_job
-    
+
     def _handle_solution_snapshot( self, running_job: SolutionSnapshot, truncated_question: str, run_timer: sw.Stopwatch ) -> SolutionSnapshot:
         """
         Handle execution of SolutionSnapshot instances.
@@ -661,9 +684,8 @@ class RunningFifoQueue( FifoQueue ):
         self._notify( running_job.answer_conversational, job=running_job )
 
         # Emit job state transition (run -> done) with completion metadata
-        # Phase 2: Direct attribute access - Protocol guarantees these exist
         job_id  = running_job.id_hash
-        user_id = self.user_job_tracker.get_user_for_job( job_id )
+        user_id = running_job.user_id
 
         # Calculate completed_at timestamp for duration calculation
         completed_at = datetime.now().isoformat()
@@ -691,11 +713,12 @@ class RunningFifoQueue( FifoQueue ):
             'timestamp'       : running_job.created_date,
             # Session 107: Fix field parity between WebSocket and server-fetched cards
             'status'          : 'completed',
-            'has_interactions': bool( running_job.session_id ),
-            'is_cache_hit'    : False,
-            'started_at'      : started_at,
-            'completed_at'    : completed_at,
-            'duration_seconds': duration_seconds
+            'has_interactions'  : bool( running_job.session_id ),
+            'is_cache_hit'      : False,
+            'answer_is_correct' : running_job.answer_is_correct,
+            'started_at'        : started_at,
+            'completed_at'      : completed_at,
+            'duration_seconds'  : duration_seconds
         }
         emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'done', user_id, metadata )
 
@@ -733,6 +756,67 @@ class RunningFifoQueue( FifoQueue ):
         self.io_tbl.insert_io_row( input_type=running_job.routing_command, input=running_job.last_question_asked, output_raw=running_job.answer, output_final=running_job.answer_conversational )
         
         return running_job
+
+    def _fire_correctness_check_async( self, snapshot: SolutionSnapshot, truncated_question: str, truncated_answer: str ) -> None:
+        """
+        Spawn a daemon thread that asks the user whether the answer was correct.
+
+        Non-blocking: the job has already moved to the done queue before this fires.
+        On response, updates snapshot.answer_is_correct and persists via save_snapshot().
+        On timeout or error, leaves answer_is_correct as None (unverified).
+
+        Requires:
+            - snapshot is a SolutionSnapshot that has been saved to LanceDB
+            - truncated_question is a short string for the prompt
+            - truncated_answer is a short string for the prompt
+
+        Ensures:
+            - Does NOT block the pipeline
+            - Thread-safe via LanceDBSolutionManager._save_lock
+            - Updates snapshot in LanceDB on yes/no response
+        """
+        def _ask_and_update():
+            try:
+                msg = f"Was this answer correct? Question: '{truncated_question}' Answer: '{truncated_answer}'"
+
+                request = NotificationRequest(
+                    message          = msg,
+                    response_type    = ResponseType.YES_NO,
+                    response_default = "no",
+                    timeout_seconds  = 60,
+                    priority         = "high",
+                    suppress_ding    = True,
+                    target_user      = snapshot.user_email,
+                    sender_id        = f"queue.correctness@lupin.deepily.ai"
+                )
+
+                response = notify_user_sync( request )
+
+                if response.status == "responded":
+                    snapshot.answer_is_correct = ( response.response_value == "yes" )
+                    self.snapshot_mgr.save_snapshot( snapshot )
+                    if self.debug: print( f"[CORRECTNESS] Recorded answer_is_correct={snapshot.answer_is_correct} for [{truncated_question}]" )
+
+                    # Emit WebSocket event so UI can update the card
+                    job_id  = snapshot.id_hash
+                    user_id = snapshot.user_id
+                    if self.websocket_mgr:
+                        self.websocket_mgr.emit(
+                            "answer_verified",
+                            {
+                                "job_id"            : job_id,
+                                "answer_is_correct" : snapshot.answer_is_correct,
+                                "user_id"           : user_id
+                            }
+                        )
+                else:
+                    if self.debug: print( f"[CORRECTNESS] No response for [{truncated_question}] (status={response.status}), leaving as None" )
+
+            except Exception as e:
+                if self.debug: print( f"[CORRECTNESS] Error during verification for [{truncated_question}]: {e}" )
+
+        thread = threading.Thread( target=_ask_and_update, daemon=True, name=f"correctness-{snapshot.id_hash[:8]}" )
+        thread.start()
 
     def _format_cached_result( self, cached_snapshot: Any, original_job: Any, truncated_question: str, run_timer: sw.Stopwatch ) -> Any:
         """
@@ -813,9 +897,8 @@ class RunningFifoQueue( FifoQueue ):
         self._notify( cached_snapshot.answer_conversational, job=done_queue_entry )
 
         # Emit job state transition (run -> done) with completion metadata (cache hit)
-        # Phase 2: Direct attribute access - Protocol guarantees these exist
         job_id  = done_queue_entry.id_hash
-        user_id = self.user_job_tracker.get_user_for_job( job_id )
+        user_id = done_queue_entry.user_id
 
         # Calculate completed_at timestamp for duration calculation (cache retrieval time)
         completed_at = datetime.now().isoformat()
@@ -841,13 +924,14 @@ class RunningFifoQueue( FifoQueue ):
             'question_text'   : cached_snapshot.last_question_asked,
             'agent_type'      : cached_snapshot.job_type,
             'timestamp'       : cached_snapshot.created_date,
-            'is_cache_hit'    : True,
+            'is_cache_hit'      : True,
+            'answer_is_correct' : cached_snapshot.answer_is_correct,
             # Session 107: Fix field parity between WebSocket and server-fetched cards
-            'status'          : 'completed',
-            'has_interactions': bool( original_job.session_id ),
-            'started_at'      : started_at,
-            'completed_at'    : completed_at,
-            'duration_seconds': duration_seconds
+            'status'            : 'completed',
+            'has_interactions'  : bool( original_job.session_id ),
+            'started_at'        : started_at,
+            'completed_at'      : completed_at,
+            'duration_seconds'  : duration_seconds
         }
         emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'done', user_id, metadata )
 

@@ -279,6 +279,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             pa.field( "replay_history", pa.string() ),   # JSON serialized list
             pa.field( "replay_stats", pa.string() ),     # JSON serialized dict
             pa.field( "is_cache_hit", pa.bool_() ),
+            pa.field( "answer_is_correct", pa.string() ),  # JSON tri-state: "true", "false", "null"
 
             # Vector embeddings (configurable dimensions: 768 for local, 1536 for openai)
             pa.field( "question_embedding", pa.list_( pa.float32(), self._embedding_dim ) ),
@@ -376,6 +377,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             "replay_history": json.dumps( getattr( snapshot, 'replay_history', [] ) ),
             "replay_stats": json.dumps( getattr( snapshot, 'replay_stats', {} ) ),
             "is_cache_hit": getattr( snapshot, 'is_cache_hit', False ),
+            "answer_is_correct": json.dumps( snapshot.answer_is_correct ),
 
             # Vector embeddings
             "question_embedding": normalize_embedding( getattr( snapshot, 'question_embedding', [] ) ),
@@ -471,6 +473,11 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
 
         is_cache_hit = record.get( "is_cache_hit", False )
 
+        try:
+            answer_is_correct = json.loads( record.get( "answer_is_correct", "null" ) )
+        except:
+            answer_is_correct = None
+
         # Create SolutionSnapshot with ALL fields INCLUDING embeddings
         # CRITICAL: Passing embeddings to constructor prevents 977ms regeneration
         snapshot = SolutionSnapshot(
@@ -511,7 +518,8 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             # Replay tracking for Time Saved Dashboard
             replay_history=replay_history,
             replay_stats=replay_stats,
-            is_cache_hit=is_cache_hit
+            is_cache_hit=is_cache_hit,
+            answer_is_correct=answer_is_correct
         )
 
         return snapshot
@@ -1195,6 +1203,12 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             # Delete from table
             self._table.delete( f"id_hash = '{id_hash}'" )
 
+            # Clean up associated canonical_synonyms entries to prevent ghost snapshots
+            if self._canonical_synonyms is not None and self._canonical_synonyms is not False:
+                deleted_count = self._canonical_synonyms.delete_by_snapshot_id( id_hash )
+                if self.debug:
+                    print( f"[DELETE-DEBUG] Cleaned up {deleted_count} canonical synonym(s) for {id_hash[:8]}..." )
+
             # Update cache (remove if present)
             if question in self._question_lookup:
                 del self._question_lookup[question]
@@ -1203,9 +1217,9 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
 
             if self.debug:
                 print( f"✓ Deleted snapshot: {id_hash[:8]}..." )
-            
+
             return True
-            
+
         except Exception as e:
             if self.debug:
                 print( f"✗ Failed to delete snapshot: {e}" )
@@ -1290,7 +1304,11 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                     snapshot = self.get_snapshot_by_id( snapshot_id )
                     if snapshot:
                         monitor.stop()
-                        return [(100.0, snapshot)]
+                        return [( 100.0, snapshot )]
+                    else:
+                        # Ghost snapshot: synonym points to non-existent solution — auto-heal
+                        print( f"[GHOST] WARNING: Level 1 synonym points to missing snapshot {snapshot_id[:8]}... — auto-cleaning" )
+                        self._canonical_synonyms.delete_by_snapshot_id( snapshot_id )
 
                 # Level 2: Exact normalized match
                 if self._normalizer and self._normalizer is not False:
@@ -1302,18 +1320,23 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                         snapshot = self.get_snapshot_by_id( snapshot_id )
                         if snapshot:
                             monitor.stop()
-                            return [(100.0, snapshot)]
+                            return [( 100.0, snapshot )]
+                        else:
+                            # Ghost snapshot: synonym points to non-existent solution — auto-heal
+                            print( f"[GHOST] WARNING: Level 2 synonym points to missing snapshot {snapshot_id[:8]}... — auto-cleaning" )
+                            self._canonical_synonyms.delete_by_snapshot_id( snapshot_id )
 
-                # Level 3: Exact gist match
-                if question_gist:
-                    snapshot_id = self._canonical_synonyms.find_exact_gist( question_gist )
-                    if snapshot_id:
-                        if self.debug:
-                            print( f"✓ LEVEL 3: Exact gist match found for snapshot: {snapshot_id}" )
-                        snapshot = self.get_snapshot_by_id( snapshot_id )
-                        if snapshot:
-                            monitor.stop()
-                            return [(95.0, snapshot)]
+                # Level 3: Exact gist match — DISABLED (top-1 + confirm strategy)
+                # Gist text still generated for display/logging, but not used for matching
+                # if question_gist:
+                #     snapshot_id = self._canonical_synonyms.find_exact_gist( question_gist )
+                #     if snapshot_id:
+                #         if self.debug:
+                #             print( f"✓ LEVEL 3: Exact gist match found for snapshot: {snapshot_id}" )
+                #         snapshot = self.get_snapshot_by_id( snapshot_id )
+                #         if snapshot:
+                #             monitor.stop()
+                #             return [(95.0, snapshot)]
 
             # Check for exact match in local cache (backward compatibility)
             # NOTE: Cache stores VERBATIM questions, so use verbatim lookup for consistency
@@ -1374,14 +1397,13 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                 # similarity = 1 - distance, matching file-based np.dot() * 100 formula
                 similarity_percent = ( 1.0 - distance ) * 100
 
-                # Apply threshold filter
-                if similarity_percent >= threshold_question:
-                    snapshot = self._record_to_snapshot( record )
-                    similar_snapshots.append( ( similarity_percent, snapshot ) )
+                # Top-1 + confirm strategy: return ALL results, let caller decide
+                snapshot = self._record_to_snapshot( record )
+                similar_snapshots.append( ( similarity_percent, snapshot ) )
 
-            # Point 3: Top 10 results logging (regardless of threshold)
+            # Point 3: Top 10 results logging (no threshold — all returned to caller)
             if self.debug and self.verbose and search_results:
-                print( f"[SIMILARITY-DEBUG] Top 10 results (threshold={threshold_question}%):" )
+                print( f"[SIMILARITY-DEBUG] Top 10 results (no threshold — top-1 + confirm strategy):" )
                 for i, record in enumerate( search_results[:10] ):
                     distance       = record.get( "_distance", 0.0 )
                     score          = ( 1.0 - distance ) * 100
@@ -1389,15 +1411,13 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
                     created_date   = record.get( "created_date", "?" )[:10]  # Just date part
                     answer_preview = du.truncate_string( record.get( "answer", "?" ), 20 )
                     q_preview      = du.truncate_string( record.get( "question", "?" ), 40 )
-                    pass_fail      = "✓" if score >= threshold_question else "✗"
-                    print( f"[SIMILARITY-DEBUG]   {i+1}. {pass_fail} {score:.1f}% [{id_hash}] {created_date} - '{q_preview}' → '{answer_preview}'" )
+                    rank_marker    = "→" if i == 0 else " "
+                    print( f"[SIMILARITY-DEBUG]   {i+1}. {rank_marker} {score:.1f}% [{id_hash}] {created_date} - '{q_preview}' → '{answer_preview}'" )
 
             # Point 4: Summary
             if self.debug:
-                total    = len( search_results )
-                passed   = len( similar_snapshots )
-                filtered = total - passed
-                print( f"[SIMILARITY-DEBUG] Vector search: {total} total, {passed} above {threshold_question}%, {filtered} filtered out" )
+                total = len( search_results )
+                print( f"[SIMILARITY-DEBUG] Vector search: {total} results returned (no threshold filter)" )
                 if self.verbose and similar_snapshots:
                     print( f"[SIMILARITY-DEBUG] Top result: {similar_snapshots[0][0]:.1f}% - '{du.truncate_string( similar_snapshots[0][1].question, 50 )}'" )
 
@@ -1651,129 +1671,6 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         except Exception as e:
             if debug:
                 print( f"✗ Solution similarity search failed: {e}" )
-            raise
-        finally:
-            monitor.stop()
-
-        return similar_snapshots
-
-    def get_snapshots_by_solution_gist_similarity(
-        self,
-        exemplar_snapshot: SolutionSnapshot,
-        threshold: float = 85.0,
-        limit: int = 10,
-        exclude_self: bool = True,
-        ensure_top_result: bool = True,
-        debug: bool = False
-    ) -> List[Tuple[float, SolutionSnapshot]]:
-        """
-        Find snapshots with similar solution gists based on solution_gist_embedding.
-
-        Requires:
-            - Manager is initialized
-            - Exemplar snapshot is not None
-            - Threshold is between 0.0 and 100.0 (percentage)
-            - Limit is non-negative
-
-        Ensures:
-            - Returns list of (similarity_percent, snapshot) tuples
-            - Results sorted by similarity descending
-            - Excludes self if exclude_self=True
-            - If ensure_top_result=True and no results meet threshold, includes best match
-
-        Raises:
-            - RuntimeError if not initialized
-            - ValueError for invalid parameters
-        """
-        if not self.is_initialized():
-            raise RuntimeError( "Manager must be initialized before searching by solution gist similarity" )
-
-        if not exemplar_snapshot:
-            raise ValueError( "Exemplar snapshot cannot be None" )
-
-        if not (0.0 <= threshold <= 100.0):
-            raise ValueError( "Threshold must be between 0.0 and 100.0" )
-
-        monitor = PerformanceMonitor( "get_snapshots_by_solution_gist_similarity" )
-        monitor.start()
-
-        try:
-            # Get solution gist embedding from exemplar snapshot
-            query_embedding = exemplar_snapshot.solution_gist_embedding
-
-            # Validate solution gist embedding exists and is non-zero
-            if not query_embedding:
-                if debug: print( "[GIST-SIMILARITY] Exemplar snapshot has no solution_gist_embedding" )
-                monitor.stop()
-                return []
-
-            # Check if embedding is all zeros (invalid)
-            is_zeros = all( v == 0.0 for v in query_embedding[:100] )
-            if is_zeros:
-                if debug: print( "[GIST-SIMILARITY] Exemplar snapshot has zero solution_gist_embedding" )
-                monitor.stop()
-                return []
-
-            if debug:
-                print( f"[GIST-SIMILARITY] Searching with solution_gist_embedding ({len( query_embedding )} dims)" )
-                print( f"[GIST-SIMILARITY] Exemplar: '{du.truncate_string( exemplar_snapshot.question, 60 )}'" )
-
-            # Perform vector similarity search on solution_gist_embedding field
-            # Request extra results to account for self-exclusion
-            effective_limit = ( limit + 1 ) if exclude_self else ( limit if limit > 0 else 100 )
-
-            search_results = self._table.search(
-                query_embedding,
-                vector_column_name="solution_gist_embedding"
-            ).metric( "dot" ).nprobes( self._nprobes ).limit( effective_limit ).to_list()
-
-            if debug:
-                print( f"[GIST-SIMILARITY] LanceDB returned {len( search_results )} raw results" )
-
-            similar_snapshots = []
-            best_below_threshold = None  # Track best result that doesn't meet threshold
-
-            for record in search_results:
-                # Skip self if requested
-                if exclude_self and record.get( "id_hash" ) == exemplar_snapshot.id_hash:
-                    continue
-
-                # Extract distance and convert to similarity percentage
-                # With dot metric: _distance = 1 - dot_product (lower = more similar)
-                distance = record.get( "_distance", 0.0 )
-                similarity_percent = ( 1.0 - distance ) * 100
-
-                # Apply threshold filter
-                if similarity_percent >= threshold:
-                    snapshot = self._record_to_snapshot( record )
-                    similar_snapshots.append( ( similarity_percent, snapshot ) )
-                elif ensure_top_result and best_below_threshold is None:
-                    # Track the best result below threshold (first one since LanceDB returns sorted)
-                    snapshot = self._record_to_snapshot( record )
-                    best_below_threshold = ( similarity_percent, snapshot )
-
-            # Sort by similarity descending
-            similar_snapshots.sort( key=lambda x: x[0], reverse=True )
-
-            # Limit results
-            if limit > 0:
-                similar_snapshots = similar_snapshots[:limit]
-
-            if debug:
-                print( f"[GIST-SIMILARITY] Found {len( similar_snapshots )} snapshots above {threshold}% threshold" )
-                for i, ( score, snap ) in enumerate( similar_snapshots[:5] ):
-                    print( f"[GIST-SIMILARITY]   {i+1}. {score:.1f}% - '{du.truncate_string( snap.question, 50 )}'" )
-
-            # If no results met threshold but ensure_top_result is enabled, include best match
-            if len( similar_snapshots ) == 0 and ensure_top_result and best_below_threshold is not None:
-                similar_snapshots.append( best_below_threshold )
-                if debug:
-                    score, snap = best_below_threshold
-                    print( f"[GIST-SIMILARITY] Including best result below threshold: {score:.1f}% - '{du.truncate_string( snap.question, 50 )}'" )
-
-        except Exception as e:
-            if debug:
-                print( f"✗ Solution gist similarity search failed: {e}" )
             raise
         finally:
             monitor.stop()

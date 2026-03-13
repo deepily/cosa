@@ -94,9 +94,13 @@ class AgenticJobBase( ABC ):
         # Execution state tracking
         self.started_at   = None
         self.completed_at = None
-        self.status       = "pending"  # pending, running, completed, failed
+        self.status       = "pending"  # pending, running, completed, cancelled, failed
         self.error        = None
         self.is_cache_hit = False      # Agentic jobs are never cache hits
+
+        # Cancellation support (thread-safe: boolean assignment is atomic under CPython GIL)
+        self._cancel_requested = False
+        self._orchestrator     = None  # Subclasses store their orchestrator here
 
         # Results (populated by subclasses after execution)
         self.result       = None
@@ -114,6 +118,25 @@ class AgenticJobBase( ABC ):
             str: Job ID in format "{prefix}-{uuid8}" (e.g., "dr-a1b2c3d4")
         """
         return f"{self.JOB_PREFIX}-{uuid.uuid4().hex[ :8 ]}"
+
+    @property
+    def base_id( self ) -> str:
+        """
+        Base job ID without user-scope suffix.
+
+        Scoped IDs have format "{base}::{user_id}" (from register_scoped_job).
+        This property returns just the base portion for use in sender_id
+        construction and other contexts that don't accept the :: separator.
+
+        Ensures:
+            - Returns portion before :: if scoped
+            - Returns id_hash unchanged if not scoped
+
+        Examples:
+            "pg-a1b2c3d4::uuid"  → "pg-a1b2c3d4"
+            "dr-a1b2c3d4"        → "dr-a1b2c3d4"
+        """
+        return self.id_hash.split( "::" )[ 0 ] if "::" in self.id_hash else self.id_hash
 
     @property
     @abstractmethod
@@ -229,6 +252,23 @@ class AgenticJobBase( ABC ):
         """
         return False
 
+    def request_cancel( self ) -> None:
+        """
+        Request graceful cancellation. Thread-safe (boolean assignment under GIL).
+
+        Sets the cancel flag on this job. If an orchestrator reference is stored,
+        also signals the orchestrator to stop at its next checkpoint.
+
+        Subclasses may override to add additional cancellation logic.
+
+        Ensures:
+            - self._cancel_requested is set to True
+            - Orchestrator's _stop_requested is set to True if available
+        """
+        self._cancel_requested = True
+        if self._orchestrator and hasattr( self._orchestrator, '_stop_requested' ):
+            self._orchestrator._stop_requested = True
+
     def code_ran_to_completion( self ) -> bool:
         """
         Check if job execution completed successfully.
@@ -253,7 +293,16 @@ class AgenticJobBase( ABC ):
         """
         return self.answer_conversational is not None
 
-    def notify_progress( self, message: str, priority: str = "low", job_id: str = None ) -> None:
+    def create_progress_group( self ) -> str:
+        """
+        Generate unique progress group ID for in-place DOM updates.
+
+        Returns:
+            str: Progress group ID in format "pg-{8_hex_chars}" (e.g., "pg-a1b2c3d4")
+        """
+        return f"pg-{uuid.uuid4().hex[ :8 ]}"
+
+    def notify_progress( self, message: str, priority: str = "low", job_id: str = None, progress_group_id: str = None ) -> None:
         """
         Send progress notification via cosa-voice.
 
@@ -261,23 +310,24 @@ class AgenticJobBase( ABC ):
             message: Progress message to send
             priority: Notification priority (low, medium, high, urgent)
             job_id: Job ID for routing to job card (defaults to self.id_hash)
+            progress_group_id: Optional progress group ID for in-place DOM updates
         """
         if job_id is None:
             job_id = self.id_hash
 
-        # Import here to avoid circular imports
+        # Import core voice_io to avoid coupling to any specific agent's identity
         try:
             import asyncio
-            from cosa.agents.deep_research import voice_io
+            from cosa.agents.utils import voice_io
 
             # Use asyncio.run() if not in async context, otherwise schedule
             try:
                 loop = asyncio.get_running_loop()
                 # Already in async context - create task
-                asyncio.create_task( voice_io.notify( message, priority=priority, job_id=job_id ) )
+                asyncio.create_task( voice_io.notify( message, priority=priority, job_id=job_id, progress_group_id=progress_group_id ) )
             except RuntimeError:
                 # No running loop - use asyncio.run()
-                asyncio.run( voice_io.notify( message, priority=priority, job_id=job_id ) )
+                asyncio.run( voice_io.notify( message, priority=priority, job_id=job_id, progress_group_id=progress_group_id ) )
 
         except ImportError as e:
             if self.debug:
@@ -298,9 +348,10 @@ class AgenticJobBase( ABC ):
         if job_id is None:
             job_id = self.id_hash
 
+        # Import core voice_io to avoid coupling to any specific agent's identity
         try:
             import asyncio
-            from cosa.agents.deep_research import voice_io
+            from cosa.agents.utils import voice_io
 
             try:
                 loop = asyncio.get_running_loop()
@@ -422,6 +473,19 @@ def quick_smoke_test():
         assert job.job_type == "test", "job_type should equal JOB_TYPE"
         assert job.created_date == job.run_date, "created_date should equal run_date"
         print( "✓ Unified interface properties work correctly" )
+
+        # Test 9: Test base_id property (unscoped)
+        print( "Testing base_id property (unscoped)..." )
+        assert job.base_id == job.id_hash, "base_id should equal id_hash when unscoped"
+        print( f"✓ base_id (unscoped): {job.base_id}" )
+
+        # Test 10: Test base_id property (scoped)
+        print( "Testing base_id property (scoped)..." )
+        original_id = job.id_hash
+        job.id_hash = f"{original_id}::0cf47e2d-d5a1-4cd4-addf-79810fd32b15"
+        assert job.base_id == original_id, "base_id should strip ::user_id suffix"
+        print( f"✓ base_id (scoped): {job.base_id} from {job.id_hash}" )
+        job.id_hash = original_id  # Restore
 
         print( "\n✓ Smoke test completed successfully" )
 

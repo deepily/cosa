@@ -5,8 +5,8 @@ from cosa.rest.queue_extensions import user_job_tracker
 from cosa.rest.queue_protocol import is_queueable_job
 
 # Notification service imports for TTS migration (Session 97)
-from cosa.cli.notify_user_async import notify_user_async
-from cosa.cli.notification_models import (
+from lupin_cli.notifications.notify_user_async import notify_user_async
+from lupin_cli.notifications.notification_models import (
     AsyncNotificationRequest,
     NotificationPriority
 )

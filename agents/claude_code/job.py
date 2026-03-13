@@ -49,6 +49,25 @@ class ClaudeCodeJob( AgenticJobBase ):
     JOB_TYPE   = "claude_code"
     JOB_PREFIX = "cc"
 
+    # Phase labels for dry-run simulation loops
+    DRY_RUN_BOUNDED_LABELS = [
+        "Initializing Claude Code session",
+        "Parsing task prompt",
+        "Preparing project environment",
+        "Simulating bounded execution",
+        "Generating completion report",
+    ]
+
+    DRY_RUN_INTERACTIVE_LABELS = [
+        "Initializing interactive session",
+        "Streaming initial response",
+        "Pausing for user input",
+        "Processing injected message",
+        "Resuming with context awareness",
+        "Second interaction cycle",
+        "Graceful session shutdown",
+    ]
+
     # Config-driven defaults (loaded once at class level, overridden per-instance)
     _config_defaults_loaded = False
     _default_max_turns      = 50
@@ -79,6 +98,8 @@ class ClaudeCodeJob( AgenticJobBase ):
         max_turns: int = None,
         timeout_seconds: int = None,
         dry_run: bool = False,
+        dry_run_phases: int = None,
+        dry_run_delay: float = None,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -108,6 +129,8 @@ class ClaudeCodeJob( AgenticJobBase ):
             max_turns: Maximum agentic turns (None = load from config, default 50)
             timeout_seconds: Task timeout (None = load from config, default 3600)
             dry_run: If True, simulate execution without running Claude Code
+            dry_run_phases: Number of simulation phases (None = use class-level defaults per task_type)
+            dry_run_delay: Seconds to sleep per phase (None = 1.0 for bounded, 1.0 for interactive)
             debug: Enable debug output
             verbose: Enable verbose output
         """
@@ -129,6 +152,8 @@ class ClaudeCodeJob( AgenticJobBase ):
         self.max_turns       = max_turns if max_turns is not None else self._default_max_turns
         self.timeout_seconds = timeout_seconds if timeout_seconds is not None else self._default_timeout
         self.dry_run         = dry_run
+        self.dry_run_phases  = dry_run_phases
+        self.dry_run_delay   = dry_run_delay
 
         # Results (populated after execution)
         self.task_result  = None
@@ -308,14 +333,33 @@ class ClaudeCodeJob( AgenticJobBase ):
 
     async def _execute_dry_run( self ) -> str:
         """
-        Simulate ClaudeCodeJob execution for testing queue flow.
+        Dispatch dry-run execution to mode-specific handler.
 
-        Sends breadcrumb notifications and returns mock results.
-        Does NOT invoke actual Claude Code execution.
+        Routes to _execute_dry_run_interactive() for INTERACTIVE tasks,
+        _execute_dry_run_bounded() for everything else.
+
+        Returns:
+            str: Mock completion message
+        """
+        if self.task_type == "INTERACTIVE":
+            return await self._execute_dry_run_interactive()
+        return await self._execute_dry_run_bounded()
+
+    async def _execute_dry_run_bounded( self ) -> str:
+        """
+        Simulate BOUNDED ClaudeCodeJob execution for testing queue flow.
+
+        Loops through DRY_RUN_BOUNDED_LABELS with configurable phase count
+        and delay, sending low-priority notifications at each phase.
+
+        Requires:
+            - self.dry_run is True
+            - self.task_type is "BOUNDED" (or any non-INTERACTIVE type)
 
         Ensures:
-            - Sends 5 breadcrumb notifications
-            - Sets mock results with $0.00 cost
+            - Runs min( dry_run_phases, len( DRY_RUN_BOUNDED_LABELS ) ) phases
+            - Each phase sleeps for dry_run_delay seconds
+            - Sets cost_summary dict and artifacts for queue parity
             - Returns mock completion message
 
         Returns:
@@ -324,73 +368,251 @@ class ClaudeCodeJob( AgenticJobBase ):
         from cosa.agents.claude_code import cosa_interface
         import asyncio
 
-        task_type_display = "Bounded" if self.task_type == "BOUNDED" else "Interactive"
+        # Resolve configurable phase count and delay
+        num_phases = self.dry_run_phases if self.dry_run_phases is not None else len( self.DRY_RUN_BOUNDED_LABELS )
+        delay      = self.dry_run_delay if self.dry_run_delay is not None else 1.0
+        num_phases = min( num_phases, len( self.DRY_RUN_BOUNDED_LABELS ) )
 
-        # Breadcrumb 1: Initialization
-        await cosa_interface.notify_progress(
-            f"Dry run: Initializing Claude Code ({task_type_display})",
-            priority="low",
-            job_id=self.id_hash
-        )
-        await asyncio.sleep( 1.0 )
+        if self.debug:
+            print( f"[ClaudeCodeJob] DRY RUN BOUNDED for: {self.prompt[ :50 ]}..." )
+            print( f"[ClaudeCodeJob] Phases: {num_phases}, delay: {delay}s" )
 
-        # Breadcrumb 2: Task parsing
-        await cosa_interface.notify_progress(
-            f"Dry run: Parsing task prompt ({len( self.prompt )} chars)",
-            priority="low",
-            job_id=self.id_hash
-        )
-        await asyncio.sleep( 1.0 )
+        # Loop through simulation phases
+        for i in range( num_phases ):
+            label = self.DRY_RUN_BOUNDED_LABELS[ i ]
+            await cosa_interface.notify_progress(
+                f"Dry run: {label}",
+                priority="low",
+                job_id=self.id_hash
+            )
+            await asyncio.sleep( delay )
 
-        # Breadcrumb 3: Project setup
-        await cosa_interface.notify_progress(
-            f"Dry run: Preparing project '{self.project}'",
-            priority="low",
-            job_id=self.id_hash
-        )
-        await asyncio.sleep( 1.0 )
-
-        # Breadcrumb 4: Simulated execution
-        await cosa_interface.notify_progress(
-            f"Dry run: Simulating {task_type_display.lower()} execution",
-            priority="low",
-            job_id=self.id_hash
-        )
-        await asyncio.sleep( 1.0 )
-
-        # Breadcrumb 5: Completion
-        await cosa_interface.notify_progress(
-            f"Dry run: Generating completion report",
-            priority="low",
-            job_id=self.id_hash
-        )
-        await asyncio.sleep( 1.0 )
-
-        # Set mock results
-        self.output_text  = f"Mock {task_type_display} execution completed for: {self.prompt[ :100 ]}..."
+        # Mock cost summary with actual simulated duration
+        total_duration = num_phases * delay
+        self.output_text  = f"Mock Bounded execution completed for: {self.prompt[ :100 ]}..."
         self.cost_usd     = 0.0
         self.cost_summary = {
-            "total_cost_usd" : 0.0
+            "duration_seconds"    : total_duration,
+            "total_cost_usd"      : 0.0,
+            "total_input_tokens"  : 0,
+            "total_output_tokens" : 0,
         }
-        self.artifacts    = {
-            "cost_usd"   : 0.0,
-            "output_text": self.output_text,
-            "task_type"  : self.task_type,
-            "project"    : self.project,
-            "dry_run"    : True
+        self.artifacts = {
+            "cost_usd"     : 0.0,
+            "output_text"  : self.output_text,
+            "task_type"    : self.task_type,
+            "project"      : self.project,
+            "dry_run"      : True,
+            "cost_summary" : self.cost_summary,
         }
-        self.status = "completed"
 
         # Completion notification with abstract
         completion_abstract = f"""**Mock Claude Code Job Complete**
 
 - **Job ID**: {self.id_hash}
-- **Type**: {task_type_display}
+- **Type**: Bounded
 - **Project**: {self.project}
 - **Cost**: $0.00 (dry-run)
-- **Duration**: ~5s (simulated)
+- **Duration**: ~{total_duration:.0f}s (simulated)
 
 This was a dry-run simulation. No actual Claude Code execution occurred."""
+
+        await cosa_interface.notify_progress(
+            f"Dry run complete: {self.id_hash}",
+            priority="medium",
+            abstract=completion_abstract,
+            job_id=self.id_hash
+        )
+
+        return self.output_text
+
+    async def _execute_dry_run_interactive( self ) -> str:
+        """
+        Simulate INTERACTIVE ClaudeCodeJob execution for testing queue flow.
+
+        Exercises MessageHistory and multi-turn conversation simulation,
+        validating the bidirectional flow that the real dispatcher uses
+        (dispatcher.py:388-509) without touching the dispatcher.
+
+        Phases:
+            1. Session init — create MessageHistory, set original prompt
+            2. Initial response — add_assistant_text with mock analysis
+            3. Pause for input — notification: "waiting for user"
+            4. Injected message — add_user_message + get_context_prompt
+            5. Resume with context — add_assistant_text showing context awareness
+            6. Second cycle — another user+assistant turn
+            7. Session end — final notification + stats
+
+        Requires:
+            - self.dry_run is True
+            - self.task_type is "INTERACTIVE"
+
+        Ensures:
+            - MessageHistory tracks 5 messages (2 assistant, 2 user, 1 assistant)
+            - get_context_prompt() returns non-empty string
+            - Sets cost_summary dict and artifacts with conversation stats
+            - Returns mock completion message with conversation turn count
+
+        Returns:
+            str: Mock completion message including conversation stats
+        """
+        from cosa.agents.claude_code import cosa_interface
+        from cosa.orchestration.claude_code.message_history import MessageHistory
+        import asyncio
+
+        # Resolve configurable phase count and delay
+        num_phases = self.dry_run_phases if self.dry_run_phases is not None else len( self.DRY_RUN_INTERACTIVE_LABELS )
+        delay      = self.dry_run_delay if self.dry_run_delay is not None else 1.0
+        num_phases = min( num_phases, len( self.DRY_RUN_INTERACTIVE_LABELS ) )
+
+        if self.debug:
+            print( f"[ClaudeCodeJob] DRY RUN INTERACTIVE for: {self.prompt[ :50 ]}..." )
+            print( f"[ClaudeCodeJob] Phases: {num_phases}, delay: {delay}s" )
+
+        # ─── Phase 1: Session init ────────────────────────────────────────
+        history = MessageHistory()
+        history.set_original_prompt( self.prompt )
+
+        if num_phases >= 1:
+            await cosa_interface.notify_progress(
+                f"Dry run: {self.DRY_RUN_INTERACTIVE_LABELS[ 0 ]}",
+                priority="low",
+                job_id=self.id_hash
+            )
+            await asyncio.sleep( delay )
+
+        # ─── Phase 2: Initial response ────────────────────────────────────
+        mock_analysis = (
+            f"I'll analyze the task: '{self.prompt[ :80 ]}'. "
+            "Let me start by examining the relevant code and identifying "
+            "the key areas that need attention."
+        )
+        history.add_assistant_text( mock_analysis )
+
+        if num_phases >= 2:
+            await cosa_interface.notify_progress(
+                f"Dry run: {self.DRY_RUN_INTERACTIVE_LABELS[ 1 ]}",
+                priority="low",
+                job_id=self.id_hash
+            )
+            await asyncio.sleep( delay )
+
+        # ─── Phase 3: Pause for user input ─────────────────────────────────
+        if num_phases >= 3:
+            await cosa_interface.notify_progress(
+                f"Dry run: {self.DRY_RUN_INTERACTIVE_LABELS[ 2 ]}",
+                priority="low",
+                job_id=self.id_hash
+            )
+            await asyncio.sleep( delay )
+
+        # ─── Phase 4: Injected message + context prompt ────────────────────
+        mock_user_message = "Focus on the error handling paths first, then address the main logic."
+        history.add_user_message( mock_user_message )
+
+        # Validate context prompt generation (the key piece!)
+        context_prompt = history.get_context_prompt()
+        if self.debug:
+            print( f"[ClaudeCodeJob] Context prompt length: {len( context_prompt )} chars" )
+            print( f"[ClaudeCodeJob] Messages in history: {len( history )}" )
+
+        if num_phases >= 4:
+            await cosa_interface.notify_progress(
+                f"Dry run: {self.DRY_RUN_INTERACTIVE_LABELS[ 3 ]}",
+                priority="low",
+                job_id=self.id_hash
+            )
+            await asyncio.sleep( delay )
+
+        # ─── Phase 5: Resume with context awareness ────────────────────────
+        mock_context_response = (
+            "Understood. I'll prioritize the error handling paths as requested. "
+            "Based on our conversation context, I can see the original task and "
+            "your refinement. Proceeding with error handling first."
+        )
+        history.add_assistant_text( mock_context_response )
+
+        if num_phases >= 5:
+            await cosa_interface.notify_progress(
+                f"Dry run: {self.DRY_RUN_INTERACTIVE_LABELS[ 4 ]}",
+                priority="low",
+                job_id=self.id_hash
+            )
+            await asyncio.sleep( delay )
+
+        # ─── Phase 6: Second interaction cycle ─────────────────────────────
+        mock_user_followup = "Looks good, please continue with the main logic now."
+        history.add_user_message( mock_user_followup )
+
+        mock_final_response = (
+            "Moving on to the main logic now. All error handling paths have been "
+            "addressed. The implementation is complete."
+        )
+        history.add_assistant_text( mock_final_response )
+
+        if num_phases >= 6:
+            await cosa_interface.notify_progress(
+                f"Dry run: {self.DRY_RUN_INTERACTIVE_LABELS[ 5 ]}",
+                priority="low",
+                job_id=self.id_hash
+            )
+            await asyncio.sleep( delay )
+
+        # ─── Phase 7: Session end ──────────────────────────────────────────
+        conversation_turns = len( history )
+        context_prompt_len = len( history.get_context_prompt() )
+
+        # Verify conversation state
+        if self.debug:
+            print( f"[ClaudeCodeJob] Final conversation turns: {conversation_turns}" )
+            print( f"[ClaudeCodeJob] Final context prompt length: {context_prompt_len}" )
+            assert conversation_turns == 5, f"Expected 5 messages, got {conversation_turns}"
+            assert context_prompt_len > 0, "Context prompt should be non-empty"
+
+        total_duration = num_phases * delay
+        self.output_text  = (
+            f"Mock Interactive session completed for: {self.prompt[ :100 ]}... "
+            f"({conversation_turns} conversation turns, "
+            f"context prompt: {context_prompt_len} chars)"
+        )
+        self.cost_usd     = 0.0
+        self.cost_summary = {
+            "duration_seconds"    : total_duration,
+            "total_cost_usd"      : 0.0,
+            "total_input_tokens"  : 0,
+            "total_output_tokens" : 0,
+        }
+        self.artifacts = {
+            "cost_usd"           : 0.0,
+            "output_text"        : self.output_text,
+            "task_type"          : self.task_type,
+            "project"            : self.project,
+            "dry_run"            : True,
+            "cost_summary"       : self.cost_summary,
+            "conversation_turns" : conversation_turns,
+            "context_prompt_len" : context_prompt_len,
+        }
+
+        if num_phases >= 7:
+            await cosa_interface.notify_progress(
+                f"Dry run: {self.DRY_RUN_INTERACTIVE_LABELS[ 6 ]}",
+                priority="low",
+                job_id=self.id_hash
+            )
+            await asyncio.sleep( delay )
+
+        # Completion notification with abstract
+        completion_abstract = f"""**Mock Interactive Claude Code Job Complete**
+
+- **Job ID**: {self.id_hash}
+- **Type**: Interactive
+- **Project**: {self.project}
+- **Cost**: $0.00 (dry-run)
+- **Duration**: ~{total_duration:.0f}s (simulated)
+- **Conversation turns**: {conversation_turns}
+- **Context prompt**: {context_prompt_len} chars
+
+This was a dry-run simulation exercising MessageHistory and multi-turn context."""
 
         await cosa_interface.notify_progress(
             f"Dry run complete: {self.id_hash}",
@@ -520,6 +742,34 @@ def quick_smoke_test():
         assert hasattr( job, 'cost_summary' ), "Job should have cost_summary attribute"
         assert job.cost_summary is None, "cost_summary should be None initially"
         print( "✓ cost_summary attribute exists and is None by default" )
+
+        # Test 12: Test dry_run_phases and dry_run_delay defaults
+        print( "Testing dry_run_phases and dry_run_delay defaults..." )
+        assert job.dry_run_phases is None, "dry_run_phases should be None by default"
+        assert job.dry_run_delay is None, "dry_run_delay should be None by default"
+        print( "✓ dry_run_phases and dry_run_delay are None by default" )
+
+        # Test 13: Test dry_run_phases and dry_run_delay with explicit values
+        print( "Testing dry_run_phases and dry_run_delay with explicit values..." )
+        job_custom_dry = ClaudeCodeJob(
+            prompt          = "Test custom dry run params",
+            project         = "lupin",
+            user_id         = "user_custom",
+            user_email      = "custom@test.com",
+            session_id      = "session_custom",
+            dry_run         = True,
+            dry_run_phases  = 3,
+            dry_run_delay   = 0.5
+        )
+        assert job_custom_dry.dry_run_phases == 3, f"Expected 3, got {job_custom_dry.dry_run_phases}"
+        assert job_custom_dry.dry_run_delay == 0.5, f"Expected 0.5, got {job_custom_dry.dry_run_delay}"
+        print( "✓ dry_run_phases=3 and dry_run_delay=0.5 set correctly" )
+
+        # Test 14: Test class-level phase labels
+        print( "Testing class-level DRY_RUN labels..." )
+        assert len( ClaudeCodeJob.DRY_RUN_BOUNDED_LABELS ) == 5, "Bounded should have 5 labels"
+        assert len( ClaudeCodeJob.DRY_RUN_INTERACTIVE_LABELS ) == 7, "Interactive should have 7 labels"
+        print( f"✓ Bounded: {len( ClaudeCodeJob.DRY_RUN_BOUNDED_LABELS )} labels, Interactive: {len( ClaudeCodeJob.DRY_RUN_INTERACTIVE_LABELS )} labels" )
 
         # Note: We don't test do_all() here as it requires Claude Code CLI
         print( "\n* Note: do_all() not tested (requires Claude Code CLI)" )

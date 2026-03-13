@@ -55,13 +55,16 @@ class WebSocketManager:
         self.session_to_user: Dict[str, str] = {}
         # Map user_id to list of their session_ids
         self.user_sessions: Dict[str, list] = {}
+        # Cache user_id → email for debug logging (populated on connect, cleared on last disconnect)
+        self.user_to_email: Dict[str, str] = {}
         # Store reference to main event loop for thread-safe operations
         self.main_loop: Optional[asyncio.AbstractEventLoop] = None
         # Session management configuration
         self.config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         self.single_session_per_user = self.config_mgr.get( "websocket enforce single session per user", default=False, return_type="boolean" )
         self.session_timestamps: Dict[str, datetime] = {}  # Track when sessions connected
-        
+        self.debug = self.config_mgr.get( "app_debug", default=False, return_type="boolean" )
+
         # Event subscription system
         self.session_subscriptions: Dict[str, List[str]] = {}  # Map session_id to list of subscribed events
         
@@ -96,7 +99,7 @@ class WebSocketManager:
         self.main_loop = loop
         print( "[WS] Event loop reference stored for thread-safe operations" )
     
-    def connect( self, websocket: WebSocket, session_id: str, user_id: str = None, subscribed_events: List[str] = None ):
+    def connect( self, websocket: WebSocket, session_id: str, user_id: str = None, subscribed_events: List[str] = None, email: str = None ):
         """
         Add a new WebSocket connection with optional user association.
         
@@ -150,17 +153,20 @@ class WebSocketManager:
             if user_id not in self.user_sessions:
                 self.user_sessions[user_id] = []
             self.user_sessions[user_id].append(session_id)
-        
+            if email:
+                self.user_to_email[ user_id ] = email
+
         # Store event subscriptions
+        session_type = "listener" if session_id.startswith( "cc-listener-" ) else "browser"
         if subscribed_events:
             # Validate events
             valid_events = [e for e in subscribed_events if e == "*" or e in self.available_events]
             self.session_subscriptions[session_id] = valid_events
-            print( f"[WS] Session {session_id} subscribed to: {valid_events}" )
+            print( f"[WS] Session {session_id} ({session_type}) subscribed to: {valid_events}" )
         else:
             # Default: subscribe to all events
             self.session_subscriptions[session_id] = ["*"]
-            print( f"[WS] Session {session_id} subscribed to: all events (*)" )
+            print( f"[WS] Session {session_id} ({session_type}) subscribed to: all events (*)" )
     
     def disconnect( self, session_id: str ):
         """
@@ -179,26 +185,34 @@ class WebSocketManager:
         Raises:
             - None (handles missing keys gracefully)
         """
+        # Log disconnect with session type and email
+        session_type = "listener" if session_id.startswith( "cc-listener-" ) else "browser"
+        user_id_tag  = self.session_to_user.get( session_id, "unknown" )
+        email_tag    = self.user_to_email.get( user_id_tag, "" )
+        email_suffix = f" ({email_tag})" if email_tag else ""
+        print( f"[WS] Disconnecting {session_type} session {session_id} for user {user_id_tag}{email_suffix}" )
+
         if session_id in self.active_connections:
             del self.active_connections[session_id]
-            
+
         # Clean up session timestamp
         if session_id in self.session_timestamps:
             del self.session_timestamps[session_id]
-            
+
         # Clean up event subscriptions
         if session_id in self.session_subscriptions:
             del self.session_subscriptions[session_id]
-            
+
         # Clean up user association
         if session_id in self.session_to_user:
             user_id = self.session_to_user[session_id]
             del self.session_to_user[session_id]
-            
+
             if user_id in self.user_sessions:
                 self.user_sessions[user_id].remove(session_id)
                 if not self.user_sessions[user_id]:
                     del self.user_sessions[user_id]
+                    self.user_to_email.pop( user_id, None )
     
     def register_session_user( self, session_id: str, user_id: str ):
         """
@@ -376,7 +390,7 @@ class WebSocketManager:
                 self.main_loop
             )
             # Don't wait for result to avoid blocking
-            if hasattr( self, 'debug' ) and self.debug:
+            if self.debug:
                 print( f"[WS] Scheduled emission of {event}" )
         except Exception as e:
             print( f"[ERROR] Failed to schedule emission: {e}" )
@@ -438,7 +452,9 @@ class WebSocketManager:
                 self.main_loop
             )
             # Don't wait for result to avoid blocking the COSA thread
-            print( f"[WS] Scheduled emission of {event} to user {user_id}" )
+            email_tag    = self.user_to_email.get( user_id, "" )
+            email_suffix = f" ({email_tag})" if email_tag else ""
+            print( f"[WS] Scheduled emission of {event} to user {user_id}{email_suffix}" )
         except Exception as e:
             print( f"[ERROR] Failed to schedule emission to user {user_id}: {e}" )
     
@@ -506,34 +522,44 @@ class WebSocketManager:
             bool: True if message was sent to at least one connection, False if user not available
         """
         if user_id not in self.user_sessions:
+            print( f"[WS] emit_to_user: user {user_id} not in user_sessions — delivery skipped" )
             return False
-            
+
         message = {
             "type": event,
             "timestamp": datetime.now().isoformat(),
             **data
         }
-        
+
         sent_count = 0
         disconnected = []
-        
-        for session_id in self.user_sessions[user_id]:
+
+        sessions = list( self.user_sessions[ user_id ] )
+        for session_id in sessions:
             if session_id in self.active_connections:
                 # Check if this session is subscribed to this event
                 subscriptions = self.session_subscriptions.get( session_id, ["*"] )
-                
+
                 if "*" in subscriptions or event in subscriptions:
                     try:
-                        websocket = self.active_connections[session_id]
+                        websocket = self.active_connections[ session_id ]
                         await websocket.send_json( message )
                         sent_count += 1
-                    except:
+                    except Exception as send_err:
+                        print( f"[WS] emit_to_user: send_json failed for session {session_id}: {send_err}" )
                         disconnected.append( session_id )
-        
+                else:
+                    if self.debug: print( f"[WS] emit_to_user: session {session_id} not subscribed to {event}" )
+            else:
+                if self.debug: print( f"[WS] emit_to_user: session {session_id} not in active_connections" )
+
         # Clean up disconnected sessions
         for session_id in disconnected:
             self.disconnect( session_id )
-        
+
+        if sent_count == 0:
+            print( f"[WS] emit_to_user: {event} to user {user_id} — sent_count=0 (sessions={len( sessions )})" )
+
         return sent_count > 0
     
     async def emit_to_all( self, event: str, data: dict ):

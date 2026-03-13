@@ -104,6 +104,16 @@ TEST_PROFILES = {
         "languages"        : "en",
         "prompt"           : "fix the authentication bug in the login endpoint",
         "project"          : "lupin",
+        "task"             : "add a health check endpoint to the API",
+        "timeout"          : "default",
+        "dry_run"          : "yes",
+    },
+    "swe_team" : {
+        "description"      : "Auto-answer for SWE Team agent expediter questions",
+        "task"             : "add a health check endpoint to the API",
+        "budget"           : "no limit",
+        "timeout"          : "default",
+        "dry_run"          : "yes",
     },
     "expeditor_smoke" : {
         "description"      : "Q&A answers for expeditor smoke test matrix",

@@ -228,6 +228,9 @@ async def notify_user(
     job_id: Optional[str] = Query(None, description="Agentic job ID for routing to job cards (e.g., dr-a1b2c3d4, mock-12345678)"),
     queue_name: Optional[str] = Query(None, description="Queue where job is running (run/todo/done). Used for provisional job card registration when notifications arrive before job is fetched."),
     suppress_ding: bool = Query(False, description="Suppress notification sound (ding) while still speaking message via TTS. Used for conversational TTS from queue operations."),
+    progress_group_id: Optional[str] = Query(None, description="Progress group ID for in-place DOM updates. Notifications sharing this ID update a single element instead of appending new ones."),
+    prediction_hint_override: Optional[str] = Query(None, description="JSON override for prediction_hint (testing/debug). Bypasses PredictionEngine."),
+    display_qualifier_widget: bool = Query(False, description="Render yes/no qualifier comment widget expanded by default with softer instructional text."),
     notification_queue: NotificationFifoQueue = Depends(get_notification_queue),
     ws_manager: WebSocketManager = Depends(get_websocket_manager)
 ):
@@ -289,7 +292,7 @@ async def notify_user(
     # authenticated_user_id contains the validated user ID
 
     # Validate notification type
-    valid_types = ["task", "progress", "alert", "custom"]
+    valid_types = ["task", "progress", "alert", "custom", "user_initiated_message"]
     if type not in valid_types:
         raise HTTPException(
             status_code=400,
@@ -347,6 +350,17 @@ async def notify_user(
                 detail=f"Invalid JSON in response_options: {str(e)}"
             )
 
+    # Parse prediction_hint_override JSON string if provided (testing/debug bypass)
+    parsed_prediction_hint_override = None
+    if prediction_hint_override:
+        try:
+            parsed_prediction_hint_override = json.loads( prediction_hint_override )
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid JSON in prediction_hint_override: {str( e )}"
+            )
+
     # Resolve sender_id using precedence: explicit > extracted from [PREFIX] > default
     resolved_sender_id = resolve_sender_id( sender_id, message )
 
@@ -387,6 +401,13 @@ async def notify_user(
         is_connected     = ws_manager.is_user_connected( target_system_id )
         connection_count = ws_manager.get_user_connection_count( target_system_id )
         print( f"[NOTIFY] WebSocket connection check: is_connected={is_connected}, count={connection_count}" )
+        if connection_count > 0:
+            user_session_ids  = ws_manager.user_sessions.get( target_system_id, [] )
+            active_sessions   = [ s for s in user_session_ids if s in ws_manager.active_connections ]
+            listener_sessions = [ s for s in active_sessions if s.startswith( "cc-listener-" ) ]
+            browser_sessions  = [ s for s in active_sessions if not s.startswith( "cc-listener-" ) ]
+            print( f"[NOTIFY]   Browser sessions  : {len( browser_sessions )} {browser_sessions}" )
+            print( f"[NOTIFY]   Listener sessions : {len( listener_sessions )} {listener_sessions}" )
 
         # =================================================================================
         # FIRE-AND-FORGET MODE (Phase 1 - existing behavior)
@@ -394,17 +415,19 @@ async def notify_user(
         if not response_requested:
             # Add to notification queue with state tracking and io_tbl logging
             notification_item = notification_queue.push_notification(
-                message       = message.strip(),
-                type          = type,
-                priority      = priority,
-                source        = "claude_code",
-                user_id       = target_system_id,
-                title         = title,  # Phase 2.2 - include title for consistency
-                sender_id     = resolved_sender_id,  # Sender-aware notification system
-                abstract      = abstract,  # Supplementary context for action-required cards
-                suppress_ding = suppress_ding,  # Skip notification sound (conversational TTS)
-                job_id        = job_id,  # Agentic job ID for routing to job cards
-                queue_name    = queue_name  # Queue for provisional job card registration
+                message                 = message.strip(),
+                type                    = type,
+                priority                = priority,
+                source                  = "claude_code",
+                user_id                 = target_system_id,
+                title                   = title,  # Phase 2.2 - include title for consistency
+                sender_id               = resolved_sender_id,  # Sender-aware notification system
+                abstract                = abstract,  # Supplementary context for action-required cards
+                suppress_ding           = suppress_ding,  # Skip notification sound (conversational TTS)
+                job_id                  = job_id,  # Agentic job ID for routing to job cards
+                queue_name              = queue_name,  # Queue for provisional job card registration
+                progress_group_id       = progress_group_id,  # In-place DOM update grouping
+                display_qualifier_widget = display_qualifier_widget  # Expanded comment widget
             )
 
             # Persist to PostgreSQL for history loading
@@ -419,26 +442,14 @@ async def notify_user(
                         priority         = priority,
                         title            = title,
                         abstract         = abstract,
-                        response_options = parsed_response_options,
-                        job_id           = job_id
+                        response_options   = parsed_response_options,
+                        job_id             = job_id,
+                        progress_group_id  = progress_group_id
                     )
                     # Update state to delivered if user is connected
                     if is_connected:
                         repo.update_state( db_notification.id, "delivered" )
                     print( f"[NOTIFY] ✓ Persisted notification {db_notification.id} to PostgreSQL" )
-
-                    # Broadcast active_conversation_changed event (Conversation Identity Phase 2)
-                    try:
-                        await ws_manager.emit_to_user(
-                            target_system_id,
-                            "active_conversation_changed",
-                            {
-                                "active_sender_id" : resolved_sender_id,
-                                "timestamp"        : datetime.now( timezone.utc ).isoformat()
-                            }
-                        )
-                    except Exception as ws_error:
-                        print( f"[NOTIFY] ⚠️ Failed to broadcast active_conversation_changed: {ws_error}" )
 
             except Exception as db_error:
                 # Log but don't fail - FIFO queue is the primary delivery mechanism
@@ -491,7 +502,8 @@ async def notify_user(
                         response_options   = parsed_response_options,
                         timeout_seconds    = timeout_seconds,
                         expires_at         = expires_at,
-                        job_id             = job_id
+                        job_id             = job_id,
+                        progress_group_id  = progress_group_id
                     )
                     repo.update_state( db_notification.id, "expired" )
                     notification_id = str( db_notification.id )
@@ -527,26 +539,14 @@ async def notify_user(
                 response_options   = parsed_response_options,
                 timeout_seconds    = timeout_seconds,
                 expires_at         = expires_at,
-                job_id             = job_id
+                job_id             = job_id,
+                progress_group_id  = progress_group_id
             )
             # Mark as delivered since user is connected
             repo.update_state( db_notification.id, "delivered" )
             notification_id = str( db_notification.id )
 
         print(f"[NOTIFY] Created response-required notification: {notification_id}")
-
-        # Broadcast active_conversation_changed event (Conversation Identity Phase 2)
-        try:
-            await ws_manager.emit_to_user(
-                target_system_id,
-                "active_conversation_changed",
-                {
-                    "active_sender_id" : resolved_sender_id,
-                    "timestamp"        : datetime.now( timezone.utc ).isoformat()
-                }
-            )
-        except Exception as ws_error:
-            print( f"[NOTIFY] ⚠️ Failed to broadcast active_conversation_changed: {ws_error}" )
 
         # Task 3: Create in-memory event for SSE blocking
         response_event = asyncio.Event()
@@ -559,25 +559,60 @@ async def notify_user(
         print(f"[DEBUG] Creating notification with response_default: '{response_default}'")
         print(f"[DEBUG] Response type: {response_type}, Timeout: {timeout_seconds}s")
 
+        # ---- Prediction Engine Hook: Generate prediction BEFORE WebSocket push ----
+        # Override takes priority (testing/debug), then PredictionEngine, then None (cold start)
+        prediction_hint = None
+        if parsed_prediction_hint_override is not None:
+            prediction_hint = parsed_prediction_hint_override
+            print( f"[PREDICTION] Using override hint for {notification_id}: {prediction_hint}" )
+        else:
+            try:
+                from cosa.agents.prediction_engine import get_prediction_engine
+                prediction_engine = get_prediction_engine()
+                if prediction_engine.enabled:
+                    prediction_result = prediction_engine.predict( {
+                        "message"          : message.strip(),
+                        "response_type"    : response_type,
+                        "sender_id"        : resolved_sender_id,
+                        "response_options" : parsed_response_options,
+                    } )
+                    # Store prediction result for later outcome recording
+                    pending_responses[ notification_id ][ "prediction_result" ] = prediction_result
+                    # Store original message in metadata for LanceDB storage
+                    if prediction_result.metadata is not None:
+                        prediction_result.metadata[ "original_message" ] = message.strip()
+                    # Only show hint if confidence exceeds threshold
+                    if prediction_result.confidence >= prediction_engine.confidence_threshold:
+                        prediction_hint = prediction_result.to_hint_dict()
+                    print( f"[PREDICTION] Generated prediction for {notification_id}: "
+                           f"type={response_type}, category={prediction_result.category}, "
+                           f"conf={prediction_result.confidence:.3f}, hint={'yes' if prediction_hint else 'no'}" )
+            except Exception as pred_error:
+                print( f"[PREDICTION] ⚠️ Prediction hook error (non-fatal): {pred_error}" )
+        # ---- End Prediction Engine Hook ----
+
         # Push notification to WebSocket for UI rendering (Phase 2.2 with full fields)
         notification_item = notification_queue.push_notification(
-            message            = message.strip(),
-            type               = type,
-            priority           = priority,
-            source             = "claude_code",
-            user_id            = target_system_id,
-            id                 = notification_id,  # Use database ID for consistency
-            title              = title or message.strip()[:50],
-            response_requested = True,
-            response_type      = response_type,
-            response_default   = response_default,
-            response_options   = parsed_response_options,  # Multiple-choice options
-            timeout_seconds    = timeout_seconds,
-            sender_id          = resolved_sender_id,  # Sender-aware notification system
-            abstract           = abstract,  # Supplementary context for action-required cards
-            suppress_ding      = suppress_ding,  # Skip notification sound (conversational TTS)
-            job_id             = job_id,  # Agentic job ID for routing to job cards
-            queue_name         = queue_name  # Queue for provisional job card registration
+            message                  = message.strip(),
+            type                     = type,
+            priority                 = priority,
+            source                   = "claude_code",
+            user_id                  = target_system_id,
+            id                       = notification_id,  # Use database ID for consistency
+            title                    = title or message.strip()[:50],
+            response_requested       = True,
+            response_type            = response_type,
+            response_default         = response_default,
+            response_options         = parsed_response_options,  # Multiple-choice options
+            timeout_seconds          = timeout_seconds,
+            sender_id                = resolved_sender_id,  # Sender-aware notification system
+            abstract                 = abstract,  # Supplementary context for action-required cards
+            suppress_ding            = suppress_ding,  # Skip notification sound (conversational TTS)
+            job_id                   = job_id,  # Agentic job ID for routing to job cards
+            queue_name               = queue_name,  # Queue for provisional job card registration
+            progress_group_id        = progress_group_id,  # In-place DOM update grouping
+            prediction_hint          = prediction_hint,  # Prediction hint (override or engine-generated)
+            display_qualifier_widget = display_qualifier_widget  # Expanded comment widget
         )
 
         # DEBUG: Log the notification_item after creation
@@ -797,6 +832,27 @@ async def submit_notification_response(
                 )
 
         print(f"[NOTIFY] ✓ Updated database with response for {notification_id}")
+
+        # ---- Prediction Engine Hook 2: Record outcome on response ----
+        try:
+            if notification_id in pending_responses and "prediction_result" in pending_responses[notification_id]:
+                from cosa.agents.prediction_engine import get_prediction_engine
+                prediction_engine = get_prediction_engine()
+                prediction_result = pending_responses[notification_id]["prediction_result"]
+
+                # Determine response type from the prediction result
+                resp_type = prediction_result.response_type
+
+                prediction_engine.record_outcome(
+                    notification_id   = notification_id,
+                    prediction_result = prediction_result,
+                    actual_value      = response_value,
+                    response_type     = resp_type
+                )
+                print( f"[PREDICTION] ✓ Recorded outcome for {notification_id}" )
+        except Exception as pred_error:
+            print( f"[PREDICTION] ⚠️ Outcome recording error (non-fatal): {pred_error}" )
+        # ---- End Prediction Engine Hook 2 ----
 
         # Task 2: Signal waiting SSE stream (if it exists)
         if notification_id in pending_responses:
@@ -1308,6 +1364,8 @@ async def get_sender_conversation(
                     "response_requested" : notif.response_requested,
                     "response_type"      : notif.response_type,
                     "response_value"     : notif.response_value,
+                    "job_id"             : notif.job_id,
+                    "progress_group_id"  : notif.progress_group_id,
                     "timestamp"          : format_ts( notif.created_at ),
                     "time_display"       : format_time_display( notif.created_at )
                 } )
@@ -1502,6 +1560,8 @@ async def get_sender_conversation_by_date(
                         "response_requested" : notif.response_requested,
                         "response_type"      : notif.response_type,
                         "response_value"     : notif.response_value,
+                        "job_id"             : notif.job_id,
+                        "progress_group_id"  : notif.progress_group_id,
                         "timestamp"          : format_ts( notif.created_at ),
                         "time_display"       : format_time_display( notif.created_at )
                     } )

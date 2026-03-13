@@ -17,7 +17,7 @@ from sqlalchemy import func
 
 from cosa.rest.db.database import get_db
 from cosa.rest.db.repositories import UserRepository, AuthAuditLogRepository, FailedLoginAttemptRepository
-from cosa.rest.user_service import get_user_by_id, get_user_by_email
+from cosa.rest.user_service import get_user_by_id, get_user_by_email, create_user, mark_email_verified
 from cosa.rest.password_service import hash_password, validate_password_strength
 from cosa.rest.refresh_token_service import revoke_all_user_tokens
 from cosa.rest.auth_audit import log_auth_event
@@ -453,3 +453,176 @@ def admin_reset_password(
         return False, "Invalid UUID format", None
     except Exception as e:
         return False, f"Password reset failed: {e}", None
+
+
+def admin_create_user(
+    admin_user_id: str,
+    email: str,
+    password: str,
+    roles: List[str],
+    admin_email: str = "unknown",
+    admin_ip: str = "unknown"
+) -> Tuple[bool, str, Optional[Dict]]:
+    """
+    Create a new user account as admin, auto-verified.
+
+    Requires:
+        - admin_user_id is valid UUID of admin performing action
+        - email is a valid email address
+        - password is a non-empty string meeting strength requirements
+        - roles is a list of valid role strings ("admin", "user")
+
+    Ensures:
+        - Validates roles against allowed list
+        - Creates user via user_service.create_user()
+        - Auto-verifies email (admin vouches for user)
+        - Logs audit event "admin_user_create"
+        - Returns (success, message, user_data_dict)
+
+    Returns:
+        Tuple[bool, str, Optional[Dict]]: (success, message, user_data)
+
+    Example:
+        success, msg, user = admin_create_user(
+            admin_user_id = "admin-uuid",
+            email         = "newuser@example.com",
+            password      = "StrongPass123!",
+            roles         = ["user"],
+            admin_email   = "admin@example.com",
+            admin_ip      = "192.168.1.1"
+        )
+    """
+    # Validate roles
+    valid_roles = ["admin", "user"]
+    if not roles or not all( role in valid_roles for role in roles ):
+        return False, f"Invalid roles. Allowed: {', '.join( valid_roles )}", None
+
+    try:
+        # Create user via existing service
+        success, message, user_id = create_user(
+            email    = email,
+            password = password,
+            roles    = roles
+        )
+
+        if not success:
+            return False, message, None
+
+        # Auto-verify email since admin is creating the account
+        verify_success, verify_msg = mark_email_verified( user_id )
+        if not verify_success:
+            print( f"Warning: User created but email verification failed: {verify_msg}" )
+
+        # Log audit event
+        log_auth_event(
+            event_type = "admin_user_create",
+            user_id    = admin_user_id,
+            email      = admin_email,
+            ip_address = admin_ip,
+            details    = f"Admin created user {email} with roles {roles}",
+            success    = True
+        )
+
+        # Get full user data
+        user_data = get_user_by_id( user_id )
+
+        return True, "User created successfully", user_data
+
+    except Exception as e:
+        return False, f"User creation failed: {e}", None
+
+
+def admin_delete_user(
+    admin_user_id: str,
+    target_user_id: str,
+    admin_email: str = "unknown",
+    admin_ip: str = "unknown",
+    reason: str = ""
+) -> Tuple[bool, str]:
+    """
+    Permanently delete a user account (hard delete).
+
+    Requires:
+        - admin_user_id is valid UUID of admin performing action
+        - target_user_id is valid UUID of user to delete
+        - admin_user_id != target_user_id (cannot delete self)
+        - Target is not the sole admin
+
+    Ensures:
+        - Self-protection: rejects if admin tries to delete self
+        - Sole-admin guard: rejects if target is last admin
+        - Revokes all tokens before deletion
+        - Physically deletes user from database
+        - Logs audit event "admin_user_delete" with target email and reason
+        - Returns (success, message)
+
+    Returns:
+        Tuple[bool, str]: (success, message)
+
+    Example:
+        success, msg = admin_delete_user(
+            admin_user_id  = "admin-uuid",
+            target_user_id = "user-uuid",
+            admin_email    = "admin@example.com",
+            admin_ip       = "192.168.1.1",
+            reason         = "Account no longer needed"
+        )
+    """
+    # Self-protection: Cannot delete self
+    if admin_user_id == target_user_id:
+        return False, "Cannot delete your own account"
+
+    try:
+        # Get target user data
+        target_user = get_user_by_id( target_user_id )
+        if not target_user:
+            return False, "User not found"
+
+        target_email = target_user["email"]
+        target_roles = target_user.get( "roles", [] )
+
+        # Sole-admin guard: if target has admin role, check admin count
+        if "admin" in target_roles:
+            with get_db() as session:
+                from cosa.rest.postgres_models import User
+                admin_count = session.query( User ).filter(
+                    User.roles.contains( ["admin"] ),
+                    User.is_active == True
+                ).count()
+
+            if admin_count <= 1:
+                return False, "Cannot delete the sole admin account"
+
+        # Revoke all tokens before deletion
+        revoke_all_user_tokens( target_user_id )
+
+        # Physical delete via repository
+        target_uuid = uuid.UUID( target_user_id )
+
+        with get_db() as session:
+            user_repo = UserRepository( session )
+            deleted = user_repo.delete( target_uuid )
+
+            if not deleted:
+                return False, "Failed to delete user"
+
+        # Log audit event (after successful deletion)
+        audit_details = f"Admin deleted user {target_email} (ID: {target_user_id})"
+        if reason:
+            audit_details += f" - Reason: {reason}"
+
+        log_auth_event(
+            event_type = "admin_user_delete",
+            user_id    = admin_user_id,
+            email      = admin_email,
+            ip_address = admin_ip,
+            details    = audit_details,
+            success    = True
+        )
+
+        return True, f"User {target_email} deleted successfully"
+
+    except ValueError:
+        return False, "Invalid UUID format"
+    except Exception as e:
+        return False, f"User deletion failed: {e}"

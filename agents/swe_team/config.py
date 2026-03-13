@@ -46,6 +46,14 @@ class SweTeamConfig:
     feedback_timeout_seconds : int  = 300
     narrate_progress         : bool = True
 
+    # === User Check-In ===
+    enable_checkins      : bool = True   # Pause between tasks for user input
+    checkin_timeout      : int  = 30     # Seconds before auto-continue
+    enable_user_messages : bool = True   # Accept user messages via WebSocket during execution
+
+    # === Decision Proxy ===
+    trust_mode : str = "shadow"    # "disabled", "shadow", "suggest", "active"
+
     # === Feature Flags ===
     enabled  : bool = False
     dry_run  : bool = False

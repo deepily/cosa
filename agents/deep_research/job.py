@@ -18,6 +18,7 @@ Example:
 """
 
 import asyncio
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -115,13 +116,13 @@ class DeepResearchJob( AgenticJobBase ):
         """
         Display string for queue UI.
 
-        Returns truncated query with [Deep Research] prefix.
+        Returns full query with [Deep Research] prefix.
+        JS header truncates independently via truncateText().
 
         Returns:
             str: Human-readable job description
         """
-        truncated = self.query[ :50 ] + "..." if len( self.query ) > 50 else self.query
-        return f"[Deep Research] {truncated}"
+        return f"[Deep Research] {self.query}"
 
     def do_all( self ) -> str:
         """
@@ -142,6 +143,16 @@ class DeepResearchJob( AgenticJobBase ):
         try:
             result = asyncio.run( self._execute() )
 
+            # Check if cancellation was requested during execution
+            if self._cancel_requested:
+                self.status                = "cancelled"
+                self.completed_at          = datetime.now().isoformat()
+                self.error                 = "Cancelled by user request"
+                self.answer_conversational = result or "Research was cancelled by the user."
+                if self.debug:
+                    print( f"[DeepResearchJob] Cancelled by user request" )
+                return self.answer_conversational
+
             self.status       = "completed"
             self.completed_at = datetime.now().isoformat()
             self.result       = result
@@ -154,14 +165,15 @@ class DeepResearchJob( AgenticJobBase ):
             return result
 
         except Exception as e:
+            import traceback
+            tb_str = traceback.format_exc()
+
             self.status       = "failed"
             self.completed_at = datetime.now().isoformat()
-            self.error        = str( e )
+            self.error        = f"{e}\n\n{tb_str}"
 
-            if self.debug:
-                print( f"[DeepResearchJob] Failed: {e}" )
-                import traceback
-                traceback.print_exc()
+            print( f"[DeepResearchJob] Failed: {e}" )
+            print( tb_str )
 
             # Return error message as conversational answer
             self.answer_conversational = f"Research failed: {str( e )}"
@@ -179,6 +191,9 @@ class DeepResearchJob( AgenticJobBase ):
             str: Conversational summary of research results
         """
         from cosa.agents.deep_research import voice_io, cosa_interface
+
+        # Re-establish core voice_io binding (import-order race: last configure() wins)
+        voice_io.reconfigure()
 
         # Handle dry-run mode with breadcrumb notifications
         if self.dry_run:
@@ -220,53 +235,63 @@ class DeepResearchJob( AgenticJobBase ):
         # Derive semantic_topic from session_name
         semantic_topic = session_name.replace( " ", "-" )
 
-        # Set sender_id for notifications
-        cosa_interface.SENDER_ID = cosa_interface._get_sender_id() + f"#{self.id_hash}"
+        # Set sender_id, target_user, and session_name for notifications
+        cosa_interface.SENDER_ID    = cosa_interface._get_sender_id( suffix=self.base_id )
+        cosa_interface.TARGET_USER  = self.user_email
         cosa_interface.SESSION_NAME = session_name
+
+        # Set job_id for auto-injection into all downstream notify() calls
+        voice_io.set_job_id( self.id_hash )
 
         if self.debug:
             print( f"[DeepResearchJob] Session name: {session_name}" )
             print( f"[DeepResearchJob] Semantic topic: {semantic_topic}" )
             print( f"[DeepResearchJob] Storage backend: {storage_backend}" )
 
-        # Notify start (with job_id and queue_name for job card routing)
-        await voice_io.notify(
-            f"Starting deep research on: {self.query[ :80 ]}",
-            priority="medium",
-            job_id=self.id_hash,
-            queue_name="run"
-        )
-
-        # Create research configuration
-        config = ResearchConfig(
-            lead_model     = self.lead_model if self.lead_model else config_mgr.get(
-                "deep research lead model",
-                default="claude-opus-4-20250514"
-            ),
-            subagent_model = config_mgr.get(
-                "deep research subagent model",
-                default="claude-sonnet-4-20250514"
-            ),
-        )
-
-        # Target audience configuration (job arg overrides config file)
-        config.audience = self.audience or config_mgr.get(
-            "deep research audience",
-            default="academic"
-        )
-        audience_context_from_config = config_mgr.get( "deep research audience context", default="" )
-        config.audience_context = self.audience_context or audience_context_from_config or None
-
-        # Create cost tracker
-        cost_tracker = CostTracker( budget_limit=self.budget )
-
         try:
-            # Run the research
+            # Notify start (with job_id and queue_name for job card routing)
+            await voice_io.notify(
+                f"Starting deep research on: {self.query[ :80 ]}",
+                priority="medium",
+                job_id=self.id_hash,
+                queue_name="run"
+            )
+
+            # Create research configuration
+            config = ResearchConfig(
+                lead_model     = self.lead_model if self.lead_model else config_mgr.get(
+                    "deep research lead model",
+                    default="claude-opus-4-20250514"
+                ),
+                subagent_model = config_mgr.get(
+                    "deep research subagent model",
+                    default="claude-sonnet-4-20250514"
+                ),
+            )
+
+            # Target audience configuration (job arg overrides config file)
+            config.audience = self.audience or config_mgr.get(
+                "deep research audience",
+                default="academic"
+            )
+            audience_context_from_config = config_mgr.get( "deep research audience context", default="" )
+            config.audience_context = self.audience_context or audience_context_from_config or None
+
+            # Create cost tracker
+            cost_tracker = CostTracker(
+                session_id       = f"research-{self.user_id}-{int( time.time() )}",
+                budget_limit_usd = self.budget,
+                debug            = self.debug,
+            )
+
+            # Run the research (with cancellation callback)
+            cancel_check = lambda: self._cancel_requested
             report = await run_research(
                 query        = self.query,
                 config       = config,
                 cost_tracker = cost_tracker,
                 no_confirm   = self.no_confirm,
+                cancel_check = cancel_check,
                 debug        = self.debug,
                 verbose      = self.verbose
             )
@@ -351,6 +376,9 @@ class DeepResearchJob( AgenticJobBase ):
             )
             raise
 
+        finally:
+            voice_io.clear_job_id()
+
     async def _execute_dry_run( self, voice_io, cosa_interface ) -> str:
         """
         Execute dry-run mode with breadcrumb notifications.
@@ -367,8 +395,9 @@ class DeepResearchJob( AgenticJobBase ):
         """
         import asyncio
 
-        # Set sender_id for notifications
-        cosa_interface.SENDER_ID = cosa_interface._get_sender_id() + f"#{self.id_hash}"
+        # Set sender_id and target_user for notifications
+        cosa_interface.SENDER_ID   = cosa_interface._get_sender_id( suffix=self.base_id )
+        cosa_interface.TARGET_USER = self.user_email
 
         if self.debug:
             print( f"[DeepResearchJob] DRY RUN MODE for: {self.query[ :50 ]}..." )

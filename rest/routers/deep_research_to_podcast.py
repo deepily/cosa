@@ -120,7 +120,7 @@ async def submit_research_to_podcast(
         HTTPException 401: If not authenticated
     """
     user_email = current_user.get( "email" )
-    user_id    = current_user.get( "user_id", user_email )
+    user_id    = current_user.get( "uid", user_email )
     session_id = current_user.get( "session_id", "unknown" )
     debug      = current_user.get( "debug", False )
 
@@ -159,10 +159,8 @@ async def submit_research_to_podcast(
     if request.max_segments:
         job.max_segments = request.max_segments
 
-    # Associate BEFORE push to prevent race condition
-    # The consumer thread may grab the job immediately after push(), so user mapping must exist first
-    user_job_tracker.associate_job_with_user( job.id_hash, user_id )
-    user_job_tracker.associate_job_with_session( job.id_hash, session_id )
+    # Atomic: scope ID + index for user filtering BEFORE push (race condition prevention)
+    job.id_hash = user_job_tracker.register_scoped_job( job.id_hash, user_id, session_id )
 
     # Push to todo queue
     todo_queue.push( job )

@@ -52,7 +52,7 @@ def get_database_url() -> str:
         instance = os.environ.get( "CLOUD_SQL_CONNECTION_NAME" )
         user = os.environ.get( "DB_USER", "lupin_app" )
         password = os.environ.get( "DB_PASSWORD" )
-        database = os.environ.get( "DB_NAME", "lupin_db" )
+        database = os.environ.get( "DB_NAME", "lupin_db_prod" )
 
         if not instance or not password:
             raise ValueError(
@@ -79,7 +79,7 @@ def get_database_url() -> str:
         password = os.environ.get( "DB_PASSWORD", "dev_password" )
         host = os.environ.get( "DB_HOST", "localhost" )
         port = os.environ.get( "DB_PORT", "5432" )
-        database = os.environ.get( "DB_NAME", "lupin_db" )
+        database = os.environ.get( "DB_NAME", "lupin_db_dev" )
 
         return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{database}"
 
@@ -154,6 +154,43 @@ SessionLocal = sessionmaker(
 
 # Thread-safe scoped session for web applications
 ScopedSession = scoped_session( SessionLocal )
+
+
+def swap_database( new_env: str ) -> str:
+    """
+    Hot-swap the database connection to a different environment.
+
+    Requires:
+        - new_env is one of: "development", "testing", "production"
+
+    Ensures:
+        - LUPIN_ENV is updated
+        - engine, SessionLocal, ScopedSession are recreated
+        - Old engine is disposed (connections released)
+        - Returns the new database URL (password masked)
+
+    Raises:
+        - sqlalchemy.exc.OperationalError if new database is unreachable
+    """
+    global engine, SessionLocal, ScopedSession
+
+    os.environ[ "LUPIN_ENV" ] = new_env
+
+    # Dispose old engine (releases connection pool)
+    engine.dispose()
+
+    # Recreate with new settings
+    engine        = create_engine( get_database_url(), **get_pool_config() )
+    SessionLocal  = sessionmaker( autocommit=False, autoflush=False, bind=engine )
+    ScopedSession = scoped_session( SessionLocal )
+
+    # Verify connection works
+    with engine.connect() as conn:
+        conn.execute( text( "SELECT 1" ) )
+
+    db_url = str( engine.url )
+    masked = db_url.replace( str( engine.url.password or "" ), "***" )
+    return masked
 
 
 @contextmanager

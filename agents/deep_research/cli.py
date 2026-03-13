@@ -246,8 +246,9 @@ async def run_research(
     query: str,
     config: ResearchConfig,
     cost_tracker: CostTracker,
-    user_email: str,
+    user_email: str = "",
     no_confirm: bool = False,
+    cancel_check = None,
     debug: bool = False,
     verbose: bool = False
 ) -> Optional[ str ]:
@@ -260,6 +261,7 @@ async def run_research(
         cost_tracker: Cost tracker for usage
         user_email: User email for cache directory (multi-tenancy)
         no_confirm: Skip confirmation prompts
+        cancel_check: Optional callable returning True if cancellation requested
         debug: Enable debug output
         verbose: Enable verbose output
 
@@ -323,9 +325,20 @@ async def run_research(
 
                 if clarification and clarification.lower().strip() not in [ "skip", "none", "no", "" ]:
                     query = f"{query} - Clarification: {clarification}"
+                    await voice_io.notify(
+                        f"User clarification: {clarification[ :100 ]}",
+                        priority="low"
+                    )
+                else:
+                    await voice_io.notify( "User skipped clarification.", priority="low" )
 
         understood = clarification_response.get( "understood_query", query )
         await voice_io.notify( f"Understood: {understood[:80]}{'...' if len( understood ) > 80 else ''}", priority="low" )
+
+        # Cancel checkpoint: after clarification
+        if cancel_check and cancel_check():
+            await voice_io.notify( "Research cancelled by user.", priority="medium" )
+            return None
 
         # Step 2: Planning
         await voice_io.notify( "Step 2 of 4: Creating research plan", priority="low" )
@@ -417,6 +430,14 @@ async def run_research(
                     logger.error( f"Theme selection failed: {e}" )
                     return None
 
+            # Record user's theme selection in job card
+            if selected_theme_indices:
+                selected_names = [ themes[ i ][ "name" ] for i in selected_theme_indices ]
+                await voice_io.notify(
+                    f"User selected {len( selected_names )} theme(s): {', '.join( selected_names )}",
+                    priority="low"
+                )
+
             if not selected_theme_indices:
                 await voice_io.notify( "No themes selected. Research cancelled at your request.", priority="medium" )
                 return None
@@ -447,6 +468,14 @@ async def run_research(
                     # Technical failure - user already notified by select_topics
                     logger.error( f"Topic selection failed: {e}" )
                     return None
+
+                # Record user's topic refinement in job card
+                if selected_indices:
+                    selected_topic_names = [ candidate_subqueries[ i ][ 1 ].get( "topic", "?" ) for i in selected_indices ]
+                    await voice_io.notify(
+                        f"User refined to {len( selected_indices )} topic(s): {', '.join( selected_topic_names )}",
+                        priority="low"
+                    )
 
                 if not selected_indices:
                     await voice_io.notify( "No topics selected. Research cancelled at your request.", priority="medium" )
@@ -483,9 +512,18 @@ async def run_research(
                 default="yes",
                 abstract=plan_abstract
             )
+            await voice_io.notify(
+                f"User {'approved' if proceed else 'rejected'} research plan ({len( subqueries )} topics).",
+                priority="low"
+            )
             if not proceed:
                 await voice_io.notify( "Research cancelled.", priority="medium" )
                 return None
+
+        # Cancel checkpoint: after planning
+        if cancel_check and cancel_check():
+            await voice_io.notify( "Research cancelled by user.", priority="medium" )
+            return None
 
         # Step 3: Research (simplified - single call for MVP)
         await voice_io.notify( "Step 3 of 4: Executing research", priority="low" )
@@ -518,17 +556,25 @@ async def run_research(
         rate_limit_hit = False
         cache_hits = 0
 
+        # Progress group ID for in-place DOM updates across all subquery notifications
+        research_group_id = f"pg-{uuid.uuid4().hex[ :8 ]}"
+
         try:
             for i, sq in enumerate( subqueries ):
+                # Cancel checkpoint: before each research topic
+                if cancel_check and cancel_check():
+                    await voice_io.notify( "Research cancelled by user.", priority="medium" )
+                    return None
+
                 topic = sq.get( "topic", "Unknown" )
-                await voice_io.notify( f"Researching topic {i + 1} of {len( subqueries )}: {topic}", priority="low" )
+                await voice_io.notify( f"Researching topic {i + 1} of {len( subqueries )}: {topic}", priority="low", progress_group_id=research_group_id )
 
                 # Check cache first
                 cached_result = search_cache.load_cached_result( user_email, topic )
                 if cached_result:
                     cache_hits += 1
                     if debug: print( f"  [Cache hit] Using cached result for: {topic[:50]}..." )
-                    await voice_io.notify( f"Using cached result for topic {i + 1}", priority="low" )
+                    await voice_io.notify( f"Using cached result for topic {i + 1}", priority="low", progress_group_id=research_group_id )
 
                     # Use cached content directly
                     content = cached_result.get( "results", {} ).get( "content", "" )
@@ -589,7 +635,8 @@ async def run_research(
                     await voice_io.notify(
                         f"Topic {i + 1}/{len( subqueries )} complete{cache_note} ({tokens_used:,} tokens). "
                         f"{remaining} remaining." + ( f" Next search in ~{next_wait:.0f} seconds." if next_wait > 0 else "" ),
-                        priority="low"
+                        priority="low",
+                        progress_group_id=research_group_id,
                     )
 
         except anthropic.RateLimitError:
@@ -608,6 +655,10 @@ async def run_research(
                 proceed_partial = await voice_io.ask_yes_no(
                     f"Generate partial report from {completed} completed topics?",
                     default="yes"
+                )
+                await voice_io.notify(
+                    f"User {'approved' if proceed_partial else 'declined'} partial report ({completed}/{total} topics).",
+                    priority="low"
                 )
 
                 if not proceed_partial:
@@ -628,6 +679,11 @@ async def run_research(
             await voice_io.notify( f"Proceeding with {len( findings )} partial research findings", priority="medium" )
         else:
             await voice_io.notify( f"Gathered {len( findings )} research findings", priority="low" )
+
+        # Cancel checkpoint: before synthesis
+        if cancel_check and cancel_check():
+            await voice_io.notify( "Research cancelled by user.", priority="medium" )
+            return None
 
         # Step 4: Synthesis
         await voice_io.notify( "Step 4 of 4: Synthesizing your report", priority="low" )

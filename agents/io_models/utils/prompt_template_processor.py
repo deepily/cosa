@@ -15,7 +15,7 @@ from cosa.agents.io_models.xml_models import (
     IterativeDebuggingFullResponse, IterativeDebuggingMinimalistResponse,
     BugInjectionResponse, ReceptionistResponse, WeatherResponse,
     VoxCommandResponse, AgentRouterResponse, GistResponse, ConfirmationResponse,
-    FuzzyFileMatchResponse
+    QualifierClassification, FuzzyFileMatchResponse
 )
 from cosa.agents.runtime_argument_expeditor.xml_models import ExpeditorResponse, ArgConfirmationResponse
 from cosa.agents.notification_proxy.xml_models import ScriptMatcherResponse, BatchScriptMatcherResponse, VerificationResponse
@@ -48,6 +48,7 @@ class PromptTemplateProcessor:
         'gist generation': GistResponse,
         'confirmation dialog': ConfirmationResponse,
         'fuzzy file matching'          : FuzzyFileMatchResponse,
+        'qualifier classification'     : QualifierClassification,
         'runtime argument expeditor'              : ExpeditorResponse,
         'argument confirmation'                   : ArgConfirmationResponse,
         'agent router go to crud for dataframes'  : CRUDIntent,
