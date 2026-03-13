@@ -1,6 +1,6 @@
 # CoSA: Collection of Small Agents
 
-CoSA is a modular framework for building, training, and deploying specialized LLM-powered agents. It provides the infrastructure for Lupin (formerly Genie-in-the-Box), a versatile conversational AI system.
+CoSA is a modular framework for building, training, and deploying specialized LLM-powered agents. It provides the infrastructure for [Lupin](https://github.com/deepily/lupin), a voice-first conversational AI system with trust-aware human-in-the-loop decision making.
 
 <a href="docs/images/5-microphone-genie-robots.png" target="_blank">
   <img src="docs/images/5-microphone-genie-robots.png" alt="Genie robots with microphones" width="1024px">
@@ -262,103 +262,65 @@ For current research and planning documents, see the [RND directory](./rnd/), wh
 - [Python Package Distribution Plan](./rnd/2025-05-16_python_package_distribution_plan.md): Plan for package distribution strategy
 - [Versioning and CI/CD Strategy](./rnd/2025-05-28_versioning_and_cicd_strategy.md): Version management and deployment strategy
 
-## Recent and Upcoming Work
+## What's New in v0.1.5 — Voice-First Human in the Loop
 
-### Current Version
-- **Version 0.7.0**: Current stable release featuring complete FastAPI migration, comprehensive testing infrastructure, and production-ready agent framework with Pydantic XML processing.
+### Trust-Aware Decision Proxy
+- **Universal Prediction Engine (UPE)** — 7 prediction slices with response_type filtering to prevent cross-type contamination
+- **Bayesian Beta-Bernoulli Trust Model** — Per-agent trust learning with conjugate prior updates
+- **Thompson Sampling** — Exploration-exploitation balance for auto-approve vs. escalate decisions
+- **Conformal Prediction** — Calibrated confidence intervals with statistical guarantees
+- **LanceDB Preference Embeddings** — Semantic similarity search with `response_type` filtering and MC option validation
+- **L1-L5 Trust Escalation** — Five trust levels from "always ask" to "full autonomy" with circuit breaker pattern
 
-### Recently Completed
+### Integration Test Infrastructure
+- **Hot-Swap Config** — Running dev server toggles between config blocks at runtime via `/api/init?config_block_id=...`
+- **`GET /api/server-info`** — Unauthenticated introspection endpoint (config block, masked DB URL, environment)
+- **`swap_database()`** — Runtime database environment switching (development/testing/production)
+- **Database Disambiguation** — `lupin_db` split into `lupin_db_dev` and `lupin_db_prod`
 
-#### August 2025 Major Achievements
+### Credential Consolidation
+- **Unified `~/.lupin/config`** — Three credential stores collapsed into one file
+- **Fail-hard on missing config** — Removed all legacy fallbacks; `FileNotFoundError` with migration instructions
+- **Strict Project Detection** — `KNOWN_PROJECTS` registry + `is_known_project()` for MCP validation
 
-- **Dynamic XML Template Migration (August 2025)**: Complete architectural transformation achieving single source of truth
-  - **All 11 XML Response Models**: Added `get_example_for_template()` methods for self-documenting XML structures
-  - **Template Transformation**: Replaced hardcoded XML in 7 prompt templates with `{{PYDANTIC_XML_EXAMPLE}}` markers
-  - **Mandatory Processing**: Removed conditional logic - dynamic templating now standard for all agents
-  - **Automatic Synchronization**: Template changes automatically when models change, eliminating maintenance duplication
-  - **Production Ready**: 100% tested with comprehensive smoke testing confirming zero regressions
-  - **Architecture Quality**: Models own their XML structure definitions, ensuring consistency across all agents
+### Voice & Notification Infrastructure
+- **`user_initiated_message`** type for voice input routing
+- **`QualifierClassification`** model + `display_qualifier_widget` notification field
+- **Programmatic session ID** regex tightened to require hyphen
+- **Dead event cleanup** — Removed `active_conversation_changed` (emitted but never subscribed)
 
-- **Pydantic XML Migration (August 2025)**: Full structured parsing system achieving 100% agent migration
-  - **All 8 Agents Migrated**: Math, Calendar, Weather, Todo, Date/Time, Bug Injector, Debugger, Receptionist operational with structured_v2 parsing
-  - **4 Core Models**: SimpleResponse, CommandResponse, YesNoResponse, CodeResponse with bidirectional XML conversion
-  - **Advanced Processing**: Sophisticated nested XML handling with `@model_validator(mode='before')` preprocessing
-  - **Agent-Specific Extensions**: CalendarResponse, MathBrainstormResponse models for complex nested structures
-  - **3-Tier Strategy**: Runtime flag system with baseline, structured_v1, and structured_v2 parsing options
-  - **Zero Compatibility Issues**: Complete validation confirmed no breaking changes from migration
+### New Agents & Agent Enhancements
+- **SWE Team Agent** — 4-phase agentic software development with trust-aware decision proxy
+- **Everyday Calculator Agent** — Natural language calculator with MathAgent fallback
+- **CRUD for DataFrames Agent** — Voice-controlled create/read/update/delete for Pandas DataFrames
+- **Notification Proxy Agent** — Phi-4 LLM fuzzy script matching for automated interactive testing
 
-- **Phase 6 Training Components Testing (August 2025)**: Complete ML infrastructure validation
-  - **86/86 Tests Passing**: 100% success rate across all 8 training components with fast execution (<1s each)
-  - **Zero External Dependencies**: Sophisticated mocking of PyTorch, HuggingFace, PEFT, AutoRound, TRL frameworks
-  - **Comprehensive Coverage**: HuggingFace integration, model quantization, PEFT training, XML processing validation
-  - **CICD Ready**: Professional-grade testing suitable for automated pipeline integration
-  - **Error Handling Excellence**: Complete edge case coverage and malformed input validation
+### CJ Flow (COSA Jobs Flow)
+- **Agentic Job System** — Background execution engine for long-running Claude Agent SDK tasks
+- **Deep Research + Podcast Generator** — Research-to-podcast chained pipeline
+- **Dry-Run Mode** — Test agentic jobs without API costs
+- **`job_state_transition`** events for real-time job status via WebSocket
 
-- **Phase 2 Unit Testing Framework (August 2025)**: Complete agent framework testing infrastructure
-  - **64/64 Tests Passing**: 100% success rate for all agent framework components with <50ms execution times
-  - **Complete Isolation**: Zero dependencies on external APIs, file systems, or network calls
-  - **Deterministic Testing**: Predictable behavior through comprehensive mocking strategies
-  - **Advanced Patterns**: Async/await simulation, singleton testing, time-based operations mocking
-  - **Framework Foundation**: Established patterns ready for remaining testing phases
+### Testing (2,075+ unit tests)
+- +905 unit tests across trust engine, session bridge, hooks, credentials, prediction engine
+- WebSocket tests: 50/50 passing
+- Integration tests: 136 passed (comprehensive auth, admin, queue filtering)
+- Interactive proxy tests: 12 scenarios across Calculator, CRUD, and Expediter agents
 
-- **Smoke Test Infrastructure Remediation (August 2025)**: Complete testing infrastructure transformation achieving perfect reliability
-  - **100% Success Rate**: Transformed completely broken smoke test infrastructure (0% operational) to perfect 100% success rate (35/35 tests passing)
-  - **Comprehensive Coverage**: All 5 framework categories validated - Core (3/3), Agents (17/17), REST (5/5), Memory (7/7), Training (3/3)
-  - **Automation Ready**: Fully operational infrastructure for regular use with sub-minute execution time (~1 minute total)
-  - **Pydantic XML Migration Validation**: Confirmed zero compatibility issues from recent Pydantic XML migration - all agents operational
-  - **Critical Fixes Applied**: Resolved initialization errors and PYTHONPATH inheritance issues enabling consistent automation
-  - **Quality Achievement**: Enterprise-grade smoke testing infrastructure ready for daily CI/CD integration
+### Earlier Milestones
 
-- **Comprehensive Design by Contract Documentation (August 2025)**: Complete framework documentation standardization
-  - **100% Coverage**: All 73 Python modules in CoSA framework fully documented with Design by Contract specifications
-  - **Consistent Standards**: Uniform Requires/Ensures/Raises format across entire codebase
-  - **Professional Grade**: Enterprise-level documentation suitable for production systems
-  - **Enhanced Developer Experience**: Clear contracts for all functions defining expected inputs, guaranteed outputs, and exception behavior
-  - **Improved Maintainability**: Consistent documentation patterns enabling easier debugging and modification
-  - **Complete Coverage**: Agents (24), REST (11), Memory (4), CLI (3), Training (9), Utils (6), Tools (3)
+- **v0.1.4** — cosa-voice MCP Server, Runtime Argument Expeditor, batch voice questions
+- **v0.1.3** — CJ Flow agentic job system, JWT WebSocket auth, unified LoRA training
+- **v0.1.2** — LanceDB migration with 100% feature parity
+- **v0.1.1** — WebSocket FastAPI test suite
+- **v0.1.0** — Complete Flask elimination, FastAPI-only architecture
 
-#### July 2025 Major Achievements
-
-- **WebSocket User Routing Architecture (July 2025)**: Complete redesign for persistent user-centric event routing
-  - **Persistent User IDs**: Replaced ephemeral WebSocket IDs with persistent user identification
-  - **Multi-Session Support**: Users can maintain multiple concurrent sessions across devices/tabs
-  - **Event-Driven Architecture**: Comprehensive event taxonomy for rich user experience
-  - **Resilient Design**: Handles disconnections, reconnections, and network issues gracefully
-  - **Future-Ready**: Architecture designed for offline event queuing capabilities
-
-- **Producer-Consumer Queue Optimization (July 2025)**: 6700x performance improvement through event-driven processing
-  - **Performance Breakthrough**: Improved from 1s polling delays to ~1ms event-driven latency
-  - **Zero CPU Waste**: Eliminated polling loops using efficient threading.Condition coordination
-  - **Job Validation**: Pre-processing validation with WebSocket rejection notifications
-  - **Thread-Safe Design**: Robust producer-consumer coordination with graceful lifecycle management
-  - **FastAPI Integration**: Clean startup/shutdown integration with proper daemon thread management
-
-#### Earlier Achievements
-
-- **Standardized Smoke Testing (August 2025)**: Comprehensive refactoring of all modules to use consistent `quick_smoke_test()` patterns
-  - All 21 core modules now include standardized smoke tests
-  - Tests validate complete workflow execution, not just object creation
-  - Consistent error handling and status reporting across all components
-  - Professional formatting with clear ✓/✗ indicators
-
-- **Modular LLM Client Architecture (v1)**: MVP implementation of a vendor-agnostic LLM client system
-  - Support for multiple providers (OpenAI, Groq, Anthropic/Claude, Google/Gemini)
-  - Integration with Deepily's edge servers for local model inference
-  - Factory pattern for client creation with configuration-driven setup
-  - Comprehensive token counting and performance metrics
-  - Design by Contract documentation
-
-### In Progress
-- **Phase 3 Unit Testing**: Memory & Persistence testing implementation for complete framework coverage
-- **Template Rendering Enhancement**: Investigation of Pydantic object integration for prompt template rendering
-- **Configuration Key Migration**: Migration of remaining underscore config keys to plain English style
-- **Job Delete Functionality**: Implementation of server-side deletion with confirmation dialogs
-
-### Future Plans
-- **Phase 4-5 Unit Testing**: REST API integration and external services testing
-- **Technical Debt Cleanup**: Removal of deprecated configuration keys after migration validation
-- **XML Validation Enhancement**: Schema validation to ensure generated examples parse correctly
-- **Performance Monitoring**: Advanced metrics for template processing and agent execution times
+### Infrastructure Foundation (pre-v0.1.0)
+- **Pydantic XML Migration** — All 8 agents migrated with 4 core models and 3-tier strategy
+- **Design by Contract Documentation** — 100% coverage across all 73 Python modules
+- **Modular LLM Client Architecture** — Vendor-agnostic support for OpenAI, Groq, Anthropic, Google
+- **Producer-Consumer Queue** — 6,700x performance improvement via event-driven processing
+- **WebSocket User Routing** — Persistent user-centric event routing with multi-session support
 
 ## License
 
