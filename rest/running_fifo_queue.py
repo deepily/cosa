@@ -65,11 +65,11 @@ class RunningFifoQueue( FifoQueue ):
         self.jobs_dead_queue     = jobs_dead_queue
         self.emit_speech_callback = emit_speech_callback
         
-        self.auto_debug              = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
-        self.inject_bugs             = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
-        self.debug                   = False if config_mgr is None else config_mgr.get( "app_debug",   default=False, return_type="boolean" )
-        self.verbose                 = False if config_mgr is None else config_mgr.get( "app_verbose", default=False, return_type="boolean" )
-        self.threshold_confirmation  = 90.0  if config_mgr is None else config_mgr.get( "similarity_threshold_confirmation", default=90.0, return_type="float" )
+        self.auto_debug              = False if config_mgr is None else config_mgr.get( "debug auto",  default=False, return_type="boolean" )
+        self.inject_bugs             = False if config_mgr is None else config_mgr.get( "debug inject bugs", default=False, return_type="boolean" )
+        self.debug                   = False if config_mgr is None else config_mgr.get( "app debug",   default=False, return_type="boolean" )
+        self.verbose                 = False if config_mgr is None else config_mgr.get( "app verbose", default=False, return_type="boolean" )
+        self.threshold_confirmation  = 90.0  if config_mgr is None else config_mgr.get( "similarity threshold confirmation", default=90.0, return_type="float" )
         self.io_tbl                  = InputAndOutputTable()
         self.gist_normalizer         = GistNormalizer( debug=self.debug, verbose=self.verbose )
     

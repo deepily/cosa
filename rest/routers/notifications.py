@@ -97,7 +97,7 @@ def get_local_timestamp():
     app_debug = main_module.app_debug
     
     # Get timezone from config, default to America/New_York (East Coast)
-    timezone_name = config_mgr.get("app_timezone", default="America/New_York")
+    timezone_name = config_mgr.get("app timezone", default="America/New_York")
     
     
     try:
@@ -132,7 +132,7 @@ def get_formatted_time_display():
     import fastapi_app.main as main_module
     config_mgr = main_module.config_mgr
 
-    timezone_name = config_mgr.get( "app_timezone", default="America/New_York" )
+    timezone_name = config_mgr.get( "app timezone", default="America/New_York" )
 
     try:
         tz = zoneinfo.ZoneInfo( timezone_name )
@@ -161,7 +161,7 @@ def get_formatted_date_display():
     import fastapi_app.main as main_module
     config_mgr = main_module.config_mgr
 
-    timezone_name = config_mgr.get( "app_timezone", default="America/New_York" )
+    timezone_name = config_mgr.get( "app timezone", default="America/New_York" )
 
     try:
         tz = zoneinfo.ZoneInfo( timezone_name )
@@ -1322,7 +1322,7 @@ async def get_sender_conversation(
 
         # Get timezone from configuration for consistent timestamp serialization
         config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-        timezone_name = config_mgr.get( "app_timezone", default="America/New_York" )
+        timezone_name = config_mgr.get( "app timezone", default="America/New_York" )
         tz = zoneinfo.ZoneInfo( timezone_name )
 
         # Helper to convert timestamp to local timezone before serialization
@@ -1514,7 +1514,7 @@ async def get_sender_conversation_by_date(
 
         # Get timezone from configuration
         config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-        timezone_name = config_mgr.get( "app_timezone", default="America/New_York" )
+        timezone_name = config_mgr.get( "app timezone", default="America/New_York" )
         tz = zoneinfo.ZoneInfo( timezone_name )
 
         # Helper to convert timestamp to local timezone before serialization
@@ -1635,7 +1635,7 @@ async def soft_delete_by_date( sender_id: str, user_email: str, date_string: str
 
         # Get timezone from configuration
         config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-        timezone_name = config_mgr.get( "app_timezone", default="America/New_York" )
+        timezone_name = config_mgr.get( "app timezone", default="America/New_York" )
 
         with get_db() as session:
             repo = NotificationRepository( session )
@@ -1712,7 +1712,7 @@ async def get_sender_date_summaries(
 
         # Get timezone from configuration
         config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-        timezone_name = config_mgr.get( "app_timezone", default="America/New_York" )
+        timezone_name = config_mgr.get( "app timezone", default="America/New_York" )
 
         with get_db() as session:
             repo = NotificationRepository( session )

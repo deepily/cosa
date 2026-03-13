@@ -448,8 +448,8 @@ def get_file_as_dictionary(path: str, lower_case: bool = False, omit_comments: b
             p0 = pipe_regex.sub("", pair[0].strip())
             p1 = pipe_regex.sub("", pair[1].strip())
             lines_as_dict[p0] = p1
-        else:
-            if debug: print("ERROR: [{}]".format(pair[0]))
+        # else:
+        #     if debug: print("ERROR: [{}]".format(pair[0]))
 
     return lines_as_dict
 

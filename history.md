@@ -1,5 +1,70 @@
 # COSA Development History
 
+> **✅ SESSIONS 349-356 COMMIT**: INI key standardization, document viewer/audio player routes, SWE team notification fix (2026.03.13)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 349 — Standardize ~91 Underscore Config Keys to Space-Separated**:
+> - Renamed all underscore config keys to space-separated naming across 45 CoSA files (agents, memory, REST, tests, training, utils, config)
+> - Key regroupings: `auto_debug` → `debug auto`, `inject_bugs` → `debug inject bugs`, `database_path_wo_root` → `path to database wo root`, `code_execution_file_path` → `path to code execution file`
+> - Commented out singleton reuse debug print in `configuration_manager.py`
+> - Fixed 5 false positives where Python attribute names were incorrectly renamed as config keys
+> - Full regression green: unit 2094/2094, WebSocket 50/50, integration 136 passed
+>
+> **Sessions 353-354 — Document Viewer + Audio Player Routes & Link Migration**:
+> - `pages.py`: Added `/app/docs` and `/app/audio` route table entries + route functions
+> - `orchestrator.py`: Migrated 10 link URLs from `/api/io/file?path=` → `/app/docs?path=` (markdown) and `/app/audio?path=` (MP3)
+> - `cli.py`: Changed local-path deep research report URL from hardcoded `http://localhost:7999/api/deep-research/report` → relative `/app/docs?path=deep-research/`
+>
+> **Session 356 — SWE Team Notification Routing Bug Fix**:
+> - `swe_team/job.py`: Added `cosa_interface.TARGET_USER = self.user_email` in both live and dry-run execution paths — notifications now route to job submitter instead of personal email
+> - `fifo_queue.py`: Replaced hardcoded `ricardo.felipe.ruiz@gmail.com` fallback with `LUPIN_DEV_EMAIL` env var; skips notification if env var unset
+>
+> **Files Modified (50)**:
+> - 45 files: INI config key renames (agents, memory, REST, tests, training, utils, config)
+> - `rest/routers/pages.py` — `/app/docs` + `/app/audio` routes (+10 lines)
+> - `agents/podcast_generator/orchestrator.py` — 10 link URL migrations (+10/-10 lines)
+> - `agents/deep_research/cli.py` — 1 local-path URL migration (+1/-1 lines)
+> - `agents/swe_team/job.py` — TARGET_USER assignment (+2/-1 lines)
+> - `rest/fifo_queue.py` — env var email fallback (+6/-3 lines)
+
+---
+
+> **✅ SESSION 354 COMMIT**: Audio Player Viewer — in-browser MP3 playback page (2026.03.13)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 354 — Audio Player Viewer: In-Browser MP3 Playback Page**:
+> - Created `audio-player.html` (Lupin parent): Styled HTML5 `<audio>` player page mirroring document-viewer architecture — same nav bar, CSS patterns, container layout; includes title derivation from filename, companion `-script.md` metadata lookup, HEAD request for file size, download button, collapsed file details accordion
+> - `pages.py`: Added `/app/audio` route table entry + `page_audio()` route function
+> - `orchestrator.py`: Migrated last 2 MP3 link URLs from `/api/io/file?path=` → `/app/audio?path=` so podcast MP3 links open in styled player instead of triggering raw download
+>
+> **Files Modified (2 COSA + 1 Lupin)**:
+> - `rest/routers/pages.py` — `/app/audio` route (+5 lines)
+> - `agents/podcast_generator/orchestrator.py` — 2 MP3 link URLs migrated to `/app/audio` (+2/-2 lines)
+> - `src/fastapi_app/static/html/audio-player.html` (Lupin) — New file (~140 lines HTML/CSS/JS)
+
+---
+
+> **✅ SESSION 353 COMMIT**: Markdown Document Viewer Phase 2 — frontmatter fix + link URL migration (2026.03.13)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 353 — Document Viewer Phase 2: Frontmatter Accordion + Link Migration**:
+> - `document-viewer.html` (Lupin parent): Added `extractFrontmatter()` to strip YAML frontmatter before marked.js parsing; renders metadata as collapsed `<details>` accordion with CSS grid definition list
+> - `orchestrator.py`: Migrated 8 markdown link URLs from `/api/io/file?path=` → `/app/docs?path=` so "View Script" / "View Research" links open in the formatted viewer; kept 2 MP3 links on `/api/io/file` for direct download
+> - `cli.py`: Changed local-path deep research report URL from hardcoded `http://localhost:7999/api/deep-research/report?path=` → relative `/app/docs?path=deep-research/`; GCS paths kept on old endpoint
+>
+> **Files Modified (2 COSA + 1 Lupin)**:
+> - `agents/podcast_generator/orchestrator.py` — 8 link URLs migrated to `/app/docs` (+8/-8 lines)
+> - `agents/deep_research/cli.py` — 1 local-path URL migrated (+1/-1 lines)
+> - `src/fastapi_app/static/html/document-viewer.html` (Lupin) — Frontmatter accordion (~55 lines added)
+
+---
+
 > **✅ v0.1.5 PR & MERGE**: PR #17 merged to main, tagged v0.1.5, new branch v0.1.6 created (2026.03.12)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work` → merged → deleted
 >

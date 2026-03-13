@@ -151,7 +151,7 @@ class TestInputAndOutputTable( unittest.TestCase ):
             mock_config_class.assert_called_once_with( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
             mock_embedding_class.assert_called_once_with( debug=True, verbose=True )
             mock_question_class.assert_called_once_with( debug=True, verbose=True )
-            mock_config_mgr.get.assert_called_once_with( "database_path_wo_root" )
+            mock_config_mgr.get.assert_called_once_with( "path to database wo root" )
             mock_lancedb.assert_called_once_with( "/project/root/test/db" )
             mock_db.open_table.assert_called_once_with( "input_and_output_tbl" )
             mock_table.count_rows.assert_called_once()

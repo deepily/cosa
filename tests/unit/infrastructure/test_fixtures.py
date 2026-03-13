@@ -245,7 +245,7 @@ class CoSATestFixtures:
                     "env_var_name": "LUPIN_CONFIG_MGR_CLI_ARGS"
                 },
                 expected_outputs={
-                    "app_debug": False,
+                    "app debug": False,
                     "agent_timeout": 30,
                     "config_loaded": True
                 },
@@ -258,13 +258,13 @@ class CoSATestFixtures:
                 description="Test with debug mode enabled",
                 inputs={
                     "config_values": {
-                        "app_debug": "true",
+                        "app debug": "true",
                         "agent_timeout": "60",
                         "verbose_logging": "yes"
                     }
                 },
                 expected_outputs={
-                    "app_debug": True,
+                    "app debug": True,
                     "agent_timeout": 60,
                     "verbose_logging": True
                 },
@@ -294,7 +294,7 @@ class CoSATestFixtures:
                 inputs={
                     "config_values": {
                         "agent_timeout": "invalid_number",
-                        "app_debug": "maybe",
+                        "app debug": "maybe",
                         "missing_required_key": None
                     }
                 },

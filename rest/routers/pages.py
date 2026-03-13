@@ -34,6 +34,8 @@ _ROUTE_TABLE = {
     "/app/admin/proxy-ratify"    : "html/auth/admin/proxy-ratify.html",
     "/app/admin/proxy-dashboard" : "html/auth/admin/proxy-dashboard.html",
     "/app/admin/dev-tools"       : "html/dev-tools.html",
+    "/app/docs"                  : "html/document-viewer.html",
+    "/app/audio"                 : "html/audio-player.html",
 }
 
 
@@ -106,3 +108,11 @@ async def page_admin_proxy_dashboard():
 @router.get( "/app/admin/dev-tools", include_in_schema=False )
 async def page_admin_dev_tools():
     return _serve_file( _ROUTE_TABLE[ "/app/admin/dev-tools" ] )
+
+@router.get( "/app/docs", include_in_schema=False )
+async def page_docs():
+    return _serve_file( _ROUTE_TABLE[ "/app/docs" ] )
+
+@router.get( "/app/audio", include_in_schema=False )
+async def page_audio():
+    return _serve_file( _ROUTE_TABLE[ "/app/audio" ] )

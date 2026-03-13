@@ -134,12 +134,12 @@ class LlmClientFactory:
             model_spec   = self.config_mgr.get( model_config_key, default=None )
             model_params = self.config_mgr.get( f"{model_config_key}_params", default="{}", return_type="dict" )
             
-            model_tokenizer_map = self.config_mgr.get( "model_tokenizer_map", default="{}", return_type="json" )
+            model_tokenizer_map = self.config_mgr.get( "model tokenizer map", default="{}", return_type="json" )
             if debug and verbose:
                 du.print_banner( f"Model params for '{model_config_key}':" )
                 print( json.dumps( model_params, indent=4, sort_keys=True ) )
             
-            default_prompt_format = self.config_mgr.get( "prompt_format_default", default="json_message" )
+            default_prompt_format = self.config_mgr.get( "prompt format default", default="json_message" )
             prompt_format         = model_params.get( "prompt_format", default_prompt_format )
             completion_mode       = prompt_format in [ "instruction_completion", "special_token" ]
             

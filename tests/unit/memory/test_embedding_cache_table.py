@@ -75,7 +75,7 @@ class TestEmbeddingCacheTable( unittest.TestCase ):
             Tuple of (cache_table, mocks_dict) for easy access to mocks
         """
         if config_values is None:
-            config_values = {"database_path_wo_root": "/test/db"}
+            config_values = {"path to database wo root": "/test/db"}
         
         if existing_tables is None:
             existing_tables = []
@@ -121,12 +121,12 @@ class TestEmbeddingCacheTable( unittest.TestCase ):
             - Row count displayed
         """
         cache_table, mocks = self._create_mocked_cache_table(
-            config_values={"database_path_wo_root": "/test/db"},  
+            config_values={"path to database wo root": "/test/db"},  
             existing_tables=["embedding_cache_tbl"]
         )
         
         # Verify database connection
-        mocks["config"].get.assert_called_with( "database_path_wo_root" )
+        mocks["config"].get.assert_called_with( "path to database wo root" )
         
         # Verify table opened (not created)
         mocks["db"].open_table.assert_called_once_with( "embedding_cache_tbl" )
@@ -145,12 +145,12 @@ class TestEmbeddingCacheTable( unittest.TestCase ):
             - FTS index created
         """
         cache_table, mocks = self._create_mocked_cache_table(
-            config_values={"database_path_wo_root": "/test/db"},
+            config_values={"path to database wo root": "/test/db"},
             existing_tables=[]  # No existing tables
         )
         
         # Verify database connection  
-        mocks["config"].get.assert_called_with( "database_path_wo_root" )
+        mocks["config"].get.assert_called_with( "path to database wo root" )
         
         # Verify table created (not opened)
         mocks["db"].create_table.assert_called()

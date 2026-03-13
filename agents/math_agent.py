@@ -37,8 +37,8 @@ class MathAgent( AgentBase ):
         self.prompt = self.prompt_template.format( question=self.last_question_asked )
         self.xml_response_tag_names   = [ "thoughts", "brainstorm", "evaluation", "code", "example", "returns", "explanation" ]
     
-        # self.serialize_prompt_to_json = self.config_mgr.get( "agent_todo_list_serialize_prompt_to_json", default=False, return_type="boolean" )
-        # self.serialize_code_to_json   = self.config_mgr.get( "agent_todo_list_serialize_code_to_json",   default=False, return_type="boolean" )
+        # self.serialize_prompt_to_json = self.config_mgr.get( "agent todo list serialize prompt to json", default=False, return_type="boolean" )
+        # self.serialize_code_to_json   = self.config_mgr.get( "agent todo list serialize code to json",   default=False, return_type="boolean" )
     
     def restore_from_serialized_state( self, file_path: str ) -> None:
         """
@@ -67,7 +67,7 @@ class MathAgent( AgentBase ):
 
         Requires:
             - raw_output is the raw computational result (e.g., "4")
-            - config_mgr has 'formatter_prompt_for_math_terse' setting
+            - config_mgr has 'formatter prompt for math terse' setting
 
         Ensures:
             - Returns raw output if terse mode enabled
@@ -83,7 +83,7 @@ class MathAgent( AgentBase ):
             - str: Formatted output if terse mode (returns raw_output as-is)
             - None: Signal to use default LLM formatter (verbose mode)
         """
-        terse_output = config_mgr.get( "formatter_prompt_for_math_terse", default=False, return_type="boolean" )
+        terse_output = config_mgr.get( "formatter prompt for math terse", default=False, return_type="boolean" )
 
         if terse_output:
             # Terse mode: Return raw output directly, skip LLM formatting
@@ -102,7 +102,7 @@ class MathAgent( AgentBase ):
 
         Requires:
             - self.code_response_dict contains 'output' field
-            - Config has 'formatter_prompt_for_math_terse' setting
+            - Config has 'formatter prompt for math terse' setting
 
         Ensures:
             - Returns formatted answer

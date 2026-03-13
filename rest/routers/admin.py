@@ -804,7 +804,7 @@ async def search_snapshots(
 
     try:
         # Use threshold from query param, debug from config
-        debug = _config_mgr.get( "app_debug", default=False, return_type="boolean" )
+        debug = _config_mgr.get( "app debug", default=False, return_type="boolean" )
 
         # Search snapshots using vector similarity
         results = snapshot_mgr.get_snapshots_by_question(
@@ -1119,7 +1119,7 @@ async def get_similar_snapshots(
     Returns:
         SimilarSnapshotsResponse: Similar snapshots grouped by type
     """
-    debug = _config_mgr.get( "app_debug" )
+    debug = _config_mgr.get( "app debug" )
 
     try:
         if debug: print( f"[ADMIN-SIMILAR] Finding similar snapshots for {id_hash}" )

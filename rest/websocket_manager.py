@@ -63,7 +63,7 @@ class WebSocketManager:
         self.config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         self.single_session_per_user = self.config_mgr.get( "websocket enforce single session per user", default=False, return_type="boolean" )
         self.session_timestamps: Dict[str, datetime] = {}  # Track when sessions connected
-        self.debug = self.config_mgr.get( "app_debug", default=False, return_type="boolean" )
+        self.debug = self.config_mgr.get( "app debug", default=False, return_type="boolean" )
 
         # Event subscription system
         self.session_subscriptions: Dict[str, List[str]] = {}  # Map session_id to list of subscribed events

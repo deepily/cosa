@@ -576,7 +576,7 @@ class CalendarXmlMigrationTester:
             results[ "calendar_override_config" ] = calendar_override_value in [ "baseline", "hybrid_v1", "structured_v2" ]
             
             # Test global configuration still works
-            global_strategy = self.config_mgr.get( "xml_parsing_global_strategy", default="baseline" )
+            global_strategy = self.config_mgr.get( "xml parsing global strategy", default="baseline" )
             results[ "global_strategy_config" ] = global_strategy in [ "baseline", "hybrid_v1", "structured_v2" ]
             
             # Test debugging flags

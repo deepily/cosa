@@ -126,8 +126,8 @@ class TodoFifoQueue( FifoQueue ):
         self.config_mgr          = config_mgr
         self.emit_speech_callback = emit_speech_callback
         
-        self.auto_debug   = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
-        self.inject_bugs  = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
+        self.auto_debug   = False if config_mgr is None else config_mgr.get( "debug auto",  default=False, return_type="boolean" )
+        self.inject_bugs  = False if config_mgr is None else config_mgr.get( "debug inject bugs", default=False, return_type="boolean" )
         
         # Initialize LLM client factory for v010 compatibility
         self.llm_factory = LlmClientFactory( debug=debug, verbose=verbose )
@@ -488,7 +488,7 @@ class TodoFifoQueue( FifoQueue ):
                 # Top-1 + confirm strategy: no threshold filtering — all results returned by manager
                 # threshold_question = self.config_mgr.get( "similarity_threshold_question",      default=98.0, return_type="float" )  # OBSOLETE
                 # threshold_gist     = self.config_mgr.get( "similarity_threshold_question_gist", default=95.0, return_type="float" )  # OBSOLETE
-                threshold_confirmation = self.config_mgr.get( "similarity_threshold_confirmation", default=90.0, return_type="float" )
+                threshold_confirmation = self.config_mgr.get( "similarity threshold confirmation", default=90.0, return_type="float" )
                 print( f"push_job(): Top-1 + confirm strategy (ask floor: {threshold_confirmation}%)" )
 
                 # We're searching for similar snapshots without any salutations prepended to the question.
@@ -532,7 +532,7 @@ class TodoFifoQueue( FifoQueue ):
 
             elif best_score >= threshold_confirmation:
                 # Good enough to ask — confirm with user (score >= 90%)
-                confirmation_enabled = self.config_mgr.get( "similarity_confirmation_enabled", default=True, return_type="boolean" )
+                confirmation_enabled = self.config_mgr.get( "similarity confirmation enabled", default=True, return_type="boolean" )
 
                 if confirmation_enabled:
 

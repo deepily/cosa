@@ -249,7 +249,8 @@ class SweTeamJob( AgenticJobBase ):
 
         # Set SESSION_ID so sender_id includes job hash suffix for routing
         from cosa.agents.swe_team import cosa_interface
-        cosa_interface.SESSION_ID = self.id_hash
+        cosa_interface.SESSION_ID   = self.id_hash
+        cosa_interface.TARGET_USER  = self.user_email
 
         # Live execution: build config and delegate to orchestrator
         from cosa.agents.swe_team.config import SweTeamConfig
@@ -390,7 +391,8 @@ class SweTeamJob( AgenticJobBase ):
 
         # Set SESSION_ID so sender_id includes job hash suffix for routing
         from cosa.agents.swe_team import cosa_interface
-        cosa_interface.SESSION_ID = self.id_hash
+        cosa_interface.SESSION_ID   = self.id_hash
+        cosa_interface.TARGET_USER  = self.user_email
 
         # Loop through simulation phases
         num_phases = min( self.dry_run_phases, len( self.DRY_RUN_PHASE_LABELS ) )

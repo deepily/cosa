@@ -50,9 +50,9 @@ def singleton( cls: type ) -> Callable[..., Any]:
         if cls not in instances:
             # print( "Instantiating ConfigurationManager() singleton...", end="\n\n" )
             instances[ cls ] = cls( *args, **kwargs )
-        else:
-            if instances[ cls ].get( "app_debug", default=False, return_type="boolean" ):
-                print( "Reusing ConfigurationManager() singleton..." )
+        # else:
+        #     if instances[ cls ].get( "app debug", default=False, return_type="boolean" ):
+        #         print( "Reusing ConfigurationManager() singleton..." )
             
         return instances[ cls ]
     

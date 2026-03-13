@@ -58,7 +58,7 @@ class PromptFormatter:
         if template_dir:
             self.template_dir = template_dir
         else:
-            template_path = self.config_mgr.get( "prompt_format_template_directory", default="src/conf/prompts/v1/llms" )
+            template_path = self.config_mgr.get( "prompt format template directory", default="src/conf/prompts/v1/llms" )
             self.template_dir = os.path.join( du.get_project_root(), template_path )
             
         if self.debug:
@@ -143,7 +143,7 @@ class PromptFormatter:
             return "instruction_completion"
         
         # Default to the most widely supported format if we can't determine
-        default_format = self.config_mgr.get( "prompt_format_default", "json_message" )
+        default_format = self.config_mgr.get( "prompt format default", "json_message" )
         return default_format
     
     def format_prompt( self, model_name: str, instructions: str, input_text: str, output: str="" ) -> str:

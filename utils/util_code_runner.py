@@ -293,7 +293,7 @@ def assemble_and_run_solution( solution_code: list[str], example_code: str, path
     # Get the code execution file path, with a fallback for test environments
     try:
         config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-        code_file_path = config_mgr.get( "code_execution_file_path" )
+        code_file_path = config_mgr.get( "path to code execution file" )
     except ValueError as e:
         # We're likely in a test environment without the environment variable set
         du.print_banner( f"ConfigurationManager error: {str(e)}", expletive=True, chunk="🤔" )

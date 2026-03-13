@@ -472,9 +472,13 @@ class FifoQueue:
         if not resolved_email and job and job.user_email:
             resolved_email = job.user_email
         if not resolved_email:
-            # Fallback to default email
-            resolved_email = "ricardo.felipe.ruiz@gmail.com"
-            print( f"[NOTIFY] Warning: No user_email found, using fallback: {resolved_email}" )
+            import os
+            resolved_email = os.environ.get( "LUPIN_DEV_EMAIL", "" )
+            if resolved_email:
+                print( f"[NOTIFY] Warning: No user_email found, using LUPIN_DEV_EMAIL fallback: {resolved_email}" )
+            else:
+                print( "[NOTIFY] Warning: No user_email and no LUPIN_DEV_EMAIL — notification skipped" )
+                return
 
         try:
             request = AsyncNotificationRequest(

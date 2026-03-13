@@ -25,7 +25,7 @@ class IterativeDebuggingAgent( AgentBase ):
             - error_message is a non-empty string with the error to debug
             - path_to_code is a valid relative path to the code file
             - The code file exists at project_root + path_to_code
-            - Config has 'llm_model_keys_for_debugger' setting
+            - Config has 'llm model keys for debugger' setting
             
         Ensures:
             - Loads the available LLM models for debugging
@@ -65,7 +65,7 @@ class IterativeDebuggingAgent( AgentBase ):
         Load LLM specifications from configuration.
         
         Requires:
-            - Config has 'llm_model_keys_for_debugger' as valid JSON
+            - Config has 'llm model keys for debugger' as valid JSON
             - Each key in model_keys exists in configuration as JSON
             
         Ensures:
@@ -78,7 +78,7 @@ class IterativeDebuggingAgent( AgentBase ):
             - JSONDecodeError if invalid JSON in config
         """
         
-        model_keys = self.config_mgr.get( "llm_model_keys_for_debugger", return_type="json" )
+        model_keys = self.config_mgr.get( "llm model keys for debugger", return_type="json" )
         
         available_llms = []
         for key in model_keys:
@@ -96,7 +96,7 @@ class IterativeDebuggingAgent( AgentBase ):
         Requires:
             - self.error_message is set
             - self.formatted_code contains code with line numbers
-            - Config has 'agent_prompt_for_debugger_minimalist' if minimalist=True
+            - Config has 'agent prompt for debugger minimalist' if minimalist=True
             
         Ensures:
             - Returns formatted prompt string
@@ -111,7 +111,7 @@ class IterativeDebuggingAgent( AgentBase ):
         
         if self.debug: print( f"IterativeDebuggingAgent._get_prompt() minimalist: {self.minimalist}", end="\n" )
         if self.minimalist:
-            self.prompt_template  = du.get_file_as_string( du.get_project_root() + self.config_mgr.get( "agent_prompt_for_debugger_minimalist" ) )
+            self.prompt_template  = du.get_file_as_string( du.get_project_root() + self.config_mgr.get( "agent prompt for debugger minimalist" ) )
             prompt                = self.prompt_template.format( error_message=self.error_message, formatted_code=self.formatted_code )
             if self.debug and self.verbose: print( f"Prompt: {prompt}" )
             return prompt
@@ -385,7 +385,7 @@ def quick_smoke_test():
     try:
         # Set up test scenario
         config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-        code_file_path = config_mgr.get("code_execution_file_path")
+        code_file_path = config_mgr.get("path to code execution file")
         test_file_path = du.get_project_root() + code_file_path
         
         error_message = f'''File "{test_file_path}", line 3
@@ -438,7 +438,7 @@ def quick_smoke_test():
         # Ensure cleanup
         try:
             config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-            code_file_path = config_mgr.get("code_execution_file_path")
+            code_file_path = config_mgr.get("path to code execution file")
             test_file_path = du.get_project_root() + code_file_path
             if os.path.exists( test_file_path ):
                 os.remove( test_file_path )

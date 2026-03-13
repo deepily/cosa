@@ -189,7 +189,7 @@ async def upload_and_transcribe_mp3_file(
         decoded_audio = base64.b64decode(body)
         
         # Get recording path from config
-        recording_path = config_mgr.get( "audio_recording_file_path" )
+        recording_path = config_mgr.get( "path to audio recording file" )
         path = du.get_project_root() + recording_path
         
         if app_debug: 

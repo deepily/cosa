@@ -862,7 +862,7 @@ def save_report_with_frontmatter(
         "file_path"        : file_path,
         "session_id"       : session_id,
         "user_email"       : user_email,
-        "storage_backend"  : storage_backend,
+        "storage backend"  : storage_backend,
         "generated"        : datetime.now().isoformat() + "Z",
         "duration_seconds" : round( duration_seconds, 1 ),
         "cost_usd"         : round( cost_usd, 4 ),
@@ -907,7 +907,7 @@ def save_report_with_frontmatter(
 
             # Update frontmatter to reflect fallback
             frontmatter[ "file_path" ] = fallback_path
-            frontmatter[ "storage_backend" ] = "local_fallback"
+            frontmatter[ "storage backend" ] = "local_fallback"
             frontmatter[ "gcs_error" ] = str( e )
 
             yaml_content = yaml.dump(
@@ -1180,7 +1180,7 @@ def main():
                     else:
                         relative_path = file_path  # Fallback to full path
                     encoded_path = urllib.parse.quote( relative_path, safe="" )
-                    view_url = f"http://localhost:7999/api/deep-research/report?path={encoded_path}"
+                    view_url = f"/app/docs?path=deep-research/{encoded_path}"
                     links_section = f"""🔗 **View Report**: [Open in Browser]({view_url})"""
 
                 # Build markdown for notification abstract field

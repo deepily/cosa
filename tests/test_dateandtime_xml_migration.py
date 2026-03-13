@@ -551,7 +551,7 @@ class DateAndTimeXmlMigrationTester:
         
         try:
             # Test global strategy configuration
-            global_strategy = self.config_mgr.get( "xml_parsing_global_strategy", default="baseline" )
+            global_strategy = self.config_mgr.get( "xml parsing global strategy", default="baseline" )
             results[ "datetime_global_strategy_config" ] = global_strategy in [ "baseline", "hybrid_v1", "structured_v2" ]
             
             # Test agent-specific override (if configured)

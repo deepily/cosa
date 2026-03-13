@@ -97,7 +97,7 @@ class NotificationItem:
             app_debug = main_module.app_debug
 
             # Get timezone from config, default to America/New_York (East Coast)
-            timezone_name = config_mgr.get( "app_timezone", default="America/New_York" )
+            timezone_name = config_mgr.get( "app timezone", default="America/New_York" )
 
             if app_debug: print( f"[TIMEZONE-DEBUG] NotificationItem using timezone: {timezone_name}" )
 
@@ -122,7 +122,7 @@ class NotificationItem:
             config_mgr = main_module.config_mgr
 
             # Get timezone from config
-            timezone_name = config_mgr.get( "app_timezone", default="America/New_York" )
+            timezone_name = config_mgr.get( "app timezone", default="America/New_York" )
 
             # Get current time in configured timezone
             tz_date = du.get_current_datetime_raw( tz_name=timezone_name )

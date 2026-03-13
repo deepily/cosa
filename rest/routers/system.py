@@ -497,7 +497,7 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
             "token_expiry_threshold_secs": 300,           # 5 mins in seconds
             "token_refresh_dedup_window_ms": 60000,       # 60 secs in milliseconds
             "websocket_heartbeat_interval_secs": 30,      # Reference value (secs)
-            "app_timezone": "America/New_York"            # IANA timezone for display
+            "app timezone": "America/New_York"            # IANA timezone for display
         }
 
     Example:
@@ -510,7 +510,7 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
             "token_expiry_threshold_secs": 300,
             "token_refresh_dedup_window_ms": 60000,
             "websocket_heartbeat_interval_secs": 30,
-            "app_timezone": "America/New_York"
+            "app timezone": "America/New_York"
         }
     """
     # Note: user_id parameter required by Depends() - validates JWT token
@@ -536,7 +536,7 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
         default=30
     )
     app_timezone = config_mgr.get(
-        "app_timezone",
+        "app timezone",
         default="America/New_York"
     )
 
@@ -554,7 +554,7 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
         "websocket_heartbeat_interval_secs": int( heartbeat_interval_secs ),
 
         # IANA timezone name for client-side date/time formatting
-        "app_timezone": app_timezone
+        "app timezone": app_timezone
     }
 
 
@@ -577,7 +577,7 @@ async def get_similarity_confirmation(
         dict: { "enabled": true/false }
     """
     enabled = todo_queue.config_mgr.get(
-        "similarity_confirmation_enabled", default=True, return_type="boolean"
+        "similarity confirmation enabled", default=True, return_type="boolean"
     )
     return { "enabled": enabled }
 
@@ -604,9 +604,9 @@ async def set_similarity_confirmation(
         dict: { "enabled": true/false, "previous": true/false }
     """
     previous = todo_queue.config_mgr.get(
-        "similarity_confirmation_enabled", default=True, return_type="boolean"
+        "similarity confirmation enabled", default=True, return_type="boolean"
     )
     todo_queue.config_mgr.set_config(
-        "similarity_confirmation_enabled", str( body.enabled ).lower()
+        "similarity confirmation enabled", str( body.enabled ).lower()
     )
     return { "enabled": body.enabled, "previous": previous }
