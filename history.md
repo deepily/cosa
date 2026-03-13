@@ -1,5 +1,21 @@
 # COSA Development History
 
+> **✅ v0.1.5 PR & MERGE**: PR #17 merged to main, tagged v0.1.5, new branch v0.1.6 created (2026.03.12)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work` → merged → deleted
+>
+> ### Accomplishments
+>
+> **v0.1.5 Release — PR & Branch Lifecycle**:
+> - Updated README.md with v0.1.5 "What's New" section (Trust Proxy, UPE, Integration Test Infra, CJ Flow, new agents, testing expansion)
+> - Created PR #17 via `gh pr create` with comprehensive description (28 commits, 112 files, +13,355/-7,742 lines)
+> - Merged to main, verified tag `v0.1.5`, deleted old branch (local + remote)
+> - Created new development branch `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> **Files Modified (1)**:
+> - `README.md` — Replace stale v0.7.0 content with v0.1.5 features (+60/-98 lines)
+
+---
+
 > **✅ SESSIONS 340-348 COMMIT**: UPE response_type filtering, integration test hot-swap infrastructure (2026.03.12)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >
