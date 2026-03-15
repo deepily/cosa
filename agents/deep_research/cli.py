@@ -1020,22 +1020,18 @@ def main():
     if not args.dry_run and not check_prerequisites():
         sys.exit( 1 )
 
-    # Build configuration
-    config = ResearchConfig()
+    # Build configuration from INI (CLI args override)
+    config = ResearchConfig.from_config( config_mgr, debug=args.debug )
     if args.lead_model:
         config.lead_model = args.lead_model
     if args.subagent_model:
         config.subagent_model = args.subagent_model
     if args.max_subagents:
         config.max_subagents_complex = args.max_subagents
-
-    # Target audience configuration (CLI overrides config file)
-    config.audience = args.audience or config_mgr.get(
-        "deep research audience",
-        default="academic"
-    )
-    audience_context_from_config = config_mgr.get( "deep research audience context", default="" )
-    config.audience_context = args.audience_context or audience_context_from_config or None
+    if args.audience:
+        config.audience = args.audience
+    if args.audience_context:
+        config.audience_context = args.audience_context
 
     # Create cost tracker with simplified session_id
     session_id = f"cli-{uuid.uuid4().hex[:8]}"

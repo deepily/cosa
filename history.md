@@ -1,5 +1,42 @@
 # COSA Development History
 
+> **⏳ SESSIONS 359-364 PENDING COMMIT**: Config migration, CJ Flow persistence, CUDA OOM fix, WS logging guard (2026.03.14)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 364 — Claude Agent SDK Config Migration (Phases 0-4)**:
+> - `deep_research/config.py`: Added `ResearchConfig.from_config( config_mgr )` classmethod — reads 24 fields from INI with type coercion, falls back to dataclass defaults
+> - `deep_research/job.py`: Updated to use `ResearchConfig.from_config()` with job arg overrides
+> - `deep_research/cli.py`: Updated to use `from_config()` with CLI arg overrides
+> - `podcast_generator/config.py`: Added `HostPersonality.from_config()`, `VoiceProfile.from_config()`, `PodcastConfig.from_config()` — nested composition with pipe-delimited list parsing for `typical_phrases` (27 keys)
+> - `podcast_generator/job.py`: Updated to use `PodcastConfig.from_config()` with job arg overrides
+> - `llm_client_factory.py`: Replaced hardcoded `VENDOR_URLS`, `VENDOR_API_ENV_VARS`, `CLIENT_DEFAULT_PARAMS` class dicts with instance methods loading from INI at singleton init (10 keys)
+>
+> **Session 360 — CJ Flow Persistence (Phases 1-2)**:
+> - `rest/postgres_models.py`: Added `JobHistory` SQLAlchemy model — 16 columns, 5 indexes for tracking agentic job lifecycle
+> - `rest/job_persistence.py` (NEW): Stateless persistence service with 8 functions (INSERT/UPDATE/query/recovery). Fire-and-forget error handling.
+>
+> **Session 359 — Bug Fix: Periodic CUDA OOM on Whisper Transcription**:
+> - `rest/routers/speech.py`: Added `_run_whisper_with_retry()` — on CUDA OOM, runs `gc.collect()` + `torch.cuda.empty_cache()` then retries once. Returns 503 with `Retry-After: 5` on persistent failure.
+>
+> **Session 363 — WS-QUEUE Verbose Logging Guard**:
+> - `rest/routers/websocket.py`: Gated `[WS-QUEUE] Received message from` print behind `app_debug and app_verbose` — stops sys_pong flood from cc-listener sessions
+>
+> **Files Modified (9) + New (1)**:
+> - `agents/deep_research/config.py` (+98 lines) — `from_config()` classmethod
+> - `agents/deep_research/job.py` (+29/-13 lines) — Use `from_config()`
+> - `agents/deep_research/cli.py` (+16/-4 lines) — Use `from_config()`
+> - `agents/podcast_generator/config.py` (+178 lines) — Nested `from_config()` classmethods
+> - `agents/podcast_generator/job.py` (+18/-4 lines) — Use `from_config()`
+> - `agents/llm_client_factory.py` (+95/-26 lines) — INI-based vendor config
+> - `rest/postgres_models.py` (+129 lines) — `JobHistory` model
+> - `rest/job_persistence.py` (NEW, ~200 lines) — Persistence service
+> - `rest/routers/speech.py` (+85/-20 lines) — Whisper CUDA OOM retry
+> - `rest/routers/websocket.py` (+1/-1 lines) — Logging guard
+
+---
+
 > **✅ SESSIONS 349-356 COMMIT**: INI key standardization, document viewer/audio player routes, SWE team notification fix (2026.03.13)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >

@@ -234,18 +234,16 @@ class PodcastGeneratorJob( AgenticJobBase ):
                 priority="medium"
             )
 
-            # Create config
-            config = PodcastConfig()
-
-            # Target audience configuration (job arg overrides config file)
+            # Create config from INI
             from cosa.config.configuration_manager import ConfigurationManager
             config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-            config.audience = self.audience or config_mgr.get(
-                "podcast generator audience",
-                default="academic"
-            )
-            audience_context_from_config = config_mgr.get( "podcast generator audience context", default="" )
-            config.audience_context = self.audience_context or audience_context_from_config or None
+            config = PodcastConfig.from_config( config_mgr, debug=self.debug )
+
+            # Job args override INI values
+            if self.audience:
+                config.audience = self.audience
+            if self.audience_context:
+                config.audience_context = self.audience_context
 
             # Create orchestrator
             agent = PodcastOrchestratorAgent(

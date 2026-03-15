@@ -83,12 +83,17 @@ class LlmClientFactory:
         # Only initialize once
         if self._initialized:
             return
-        
+
         # Instantiate the global config manager
         self.config_mgr   = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         self._initialized = True
         self.debug        = debug
         self.verbose      = verbose
+
+        # Load vendor config from INI (with hardcoded fallbacks)
+        self.VENDOR_URLS          = self._load_vendor_urls()
+        self.VENDOR_API_ENV_VARS  = self._load_vendor_env_vars()
+        self.CLIENT_DEFAULT_PARAMS = self._load_client_defaults()
     
     def get_client( self, model_config_key: str, debug: bool=None, verbose: bool=None ) -> LlmClientInterface:
         """
@@ -191,33 +196,67 @@ class LlmClientFactory:
                     **model_params
                 )
     
-    # Vendor configuration
-    VENDOR_URLS: dict[str, str] = {
-        "openai"    : "https://api.openai.com/v1",
-        "groq"      : "https://api.groq.com/openai/v1",
-        "anthropic" : "https://api.anthropic.com/v1",
-        "google-gla": "https://generativelanguage.googleapis.com/v1",
-        "vllm"      : "http://192.168.1.21:3001/v1",
-        "deepily"   : "http://192.168.1.21:3001/v1",
-        "mistralai" : "https://api.mistral.ai/v1"
-    }
-    
-    # API key environment variables
-    VENDOR_API_ENV_VARS: dict[str, Optional[str]] = {
-        "openai"    : "OPENAI_API_KEY",
-        "groq"      : "GROQ_API_KEY",
-        "anthropic" : "ANTHROPIC_API_KEY",
-        "google-gla": "GOOGLE_API_KEY",
-        "vllm"      : None,  # Local server, no key needed
-        "deepily"   : None,  # Local server, no key needed
-        "mistralai" : "MISTRAL_API_KEY"
-    }
-    
-    # Default parameters for LlmClient
-    CLIENT_DEFAULT_PARAMS: dict[str, Any] = {
-        "temperature": 0.7,
-        "max_tokens" : 1024
-    }
+    def _load_vendor_urls( self ) -> dict[ str, str ]:
+        """
+        Load vendor API URLs from ConfigManager, falling back to hardcoded defaults.
+
+        Ensures:
+            - Returns dict mapping vendor name to API endpoint URL
+            - INI keys override hardcoded defaults
+        """
+        defaults = {
+            "openai"    : "https://api.openai.com/v1",
+            "groq"      : "https://api.groq.com/openai/v1",
+            "anthropic" : "https://api.anthropic.com/v1",
+            "google-gla": "https://generativelanguage.googleapis.com/v1",
+            "vllm"      : "http://192.168.1.21:3001/v1",
+            "deepily"   : "http://192.168.1.21:3001/v1",
+            "mistralai" : "https://api.mistral.ai/v1",
+        }
+        result = {}
+        for vendor, default_url in defaults.items():
+            result[ vendor ] = self.config_mgr.get(
+                f"llm vendor url {vendor}", default=default_url, silent=True
+            )
+        return result
+
+    def _load_vendor_env_vars( self ) -> dict[ str, Optional[ str ] ]:
+        """
+        Load vendor API key environment variable names from ConfigManager.
+
+        Ensures:
+            - Returns dict mapping vendor name to env var name (or None for local)
+        """
+        defaults = {
+            "openai"    : "OPENAI_API_KEY",
+            "groq"      : "GROQ_API_KEY",
+            "anthropic" : "ANTHROPIC_API_KEY",
+            "google-gla": "GOOGLE_API_KEY",
+            "vllm"      : None,
+            "deepily"   : None,
+            "mistralai" : "MISTRAL_API_KEY",
+        }
+        result = {}
+        for vendor, default_var in defaults.items():
+            if default_var is None:
+                result[ vendor ] = None
+            else:
+                result[ vendor ] = self.config_mgr.get(
+                    f"llm vendor env var {vendor}", default=default_var, silent=True
+                )
+        return result
+
+    def _load_client_defaults( self ) -> dict[ str, Any ]:
+        """
+        Load default client parameters from ConfigManager.
+
+        Ensures:
+            - Returns dict with temperature and max_tokens defaults
+        """
+        return {
+            "temperature" : self.config_mgr.get( "llm client default temperature", default="0.7", silent=True, return_type="float" ),
+            "max_tokens"  : self.config_mgr.get( "llm client default max tokens",  default="1024", silent=True, return_type="int" ),
+        }
     # Comprehensive vendor configuration
     VENDOR_CONFIG: dict[str, dict[str, Any]] = {
         "openai"    : {

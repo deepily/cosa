@@ -423,7 +423,7 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
                 # Listen for any incoming messages (for future bidirectional communication)
                 data = await websocket.receive_text()
                 message = json.loads(data)
-                print(f"[WS-QUEUE] Received message from {session_id}: {message}")
+                if app_debug and app_verbose: print(f"[WS-QUEUE] Received message from {session_id}: {message}")
                 
                 # Handle specific message types if needed
                 if message.get("type") == "sys_ping":

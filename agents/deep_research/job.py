@@ -257,25 +257,16 @@ class DeepResearchJob( AgenticJobBase ):
                 queue_name="run"
             )
 
-            # Create research configuration
-            config = ResearchConfig(
-                lead_model     = self.lead_model if self.lead_model else config_mgr.get(
-                    "deep research lead model",
-                    default="claude-opus-4-20250514"
-                ),
-                subagent_model = config_mgr.get(
-                    "deep research subagent model",
-                    default="claude-sonnet-4-20250514"
-                ),
-            )
+            # Create research configuration from INI
+            config = ResearchConfig.from_config( config_mgr, debug=self.debug )
 
-            # Target audience configuration (job arg overrides config file)
-            config.audience = self.audience or config_mgr.get(
-                "deep research audience",
-                default="academic"
-            )
-            audience_context_from_config = config_mgr.get( "deep research audience context", default="" )
-            config.audience_context = self.audience_context or audience_context_from_config or None
+            # Job args override INI values
+            if self.lead_model:
+                config.lead_model = self.lead_model
+            if self.audience:
+                config.audience = self.audience
+            if self.audience_context:
+                config.audience_context = self.audience_context
 
             # Create cost tracker
             cost_tracker = CostTracker(
