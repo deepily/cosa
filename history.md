@@ -1,6 +1,52 @@
 # COSA Development History
 
-> **⏳ SESSIONS 359-364 PENDING COMMIT**: Config migration, CJ Flow persistence, CUDA OOM fix, WS logging guard (2026.03.14)
+> **✅ SESSIONS 365-368 COMMITTED**: Admin filter, Presentation Generator, CJ Flow persistence wiring, bug fixes (2026.03.23)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 365 — CUDA Memory Optimization (Embedding OOM Retry)**:
+> - `memory/local_embedding_engine.py`: Added `_run_with_cuda_retry()` — on CUDA OOM, runs `gc.collect()` + `torch.cuda.empty_cache()` then retries once. Multi-batch warmup support.
+>
+> **Session 366 — 5 Bug Fixes (WebSocket, LanceDB, Config Keys, Phantom Connection)**:
+> - `agents/decision_proxy/proxy_decision_embeddings.py`: Schema validation in `_ensure_table()` — drop+recreate on column mismatch (fixes `response_type` field missing from pre-existing tables)
+> - `rest/routers/websocket.py`: Identity guard in finally blocks — old handler's `disconnect()` no longer kills new connection on reconnect. TokenExpiredException handling added.
+> - `rest/websocket_manager.py`: Dedup `user_sessions` in `connect()`, orphan cleanup in `emit_to_user()`, explicit `ws.close()` in `disconnect()` to prevent phantom connections
+> - `rest/routers/system.py`: Fixed 4 config key underscore/space mismatches in `/api/config/client` + added `return_type="int"` to prevent string multiplication
+>
+> **Session 367 — Notification Admin Filter Toggle ("Not My Jobs" Mode)**:
+> - `rest/queue_auth.py`: Added `!self` authorization case (Case 2b) — admins can view jobs NOT belonging to them
+> - `rest/fifo_queue.py`: Added `get_jobs_excluding_user()` method
+> - `rest/routers/queues.py`: Wired `!`-prefix sentinel to exclusion method
+> - `rest/routers/notifications.py`: Added `exclude_own_jobs` param on senders-visible and bulk-delete endpoints
+> - `rest/db/repositories/notification_repository.py`: Added `exclude_job_ids` filtering in sender listing + bulk delete
+>
+> **Session 367b — Presentation Generator Agent (Phases 1-2 Foundation)**:
+> - `agents/presentation_generator/` (NEW — 10 files): `PresentationGeneratorJob` (AgenticJobBase), `PresentationConfig` with `from_config()`, 6 Pydantic state models, `PresentationOrchestratorAgent` (8-phase state machine), cosa_interface.py, voice_io.py
+> - `rest/routers/presentation_generator.py` (NEW): REST router at `/api/presentation-generator/submit`
+> - `rest/agentic_job_factory.py`: Factory branch for presentation generator
+>
+> **Session 367d — CJ Flow Persistence (Phases 3-5 Write-Through + Recovery + API)**:
+> - `rest/queue_util.py`: Wired `job_persistence.py` into `emit_job_state_transition()` — persistence fires after WS emit, filtered by `is_agentic_job_type()`. Changed `websocket_mgr=None` from early-return to conditional guard.
+> - `rest/routers/queues.py`: Added `GET /api/job-history` (paginated, role-based) and `GET /api/job-history/{job_id}` (detail with 403/404)
+>
+> **Session 368 — Bug Fix: WebSocket 503 "user_not_available" Notifications**:
+> - `rest/routers/notifications.py`: Added ungated OFFLINE DIAG dump for debugging user-not-available failures
+> - `rest/websocket_manager.py`: Added `[WS] STATE` summary logs after connect/disconnect
+> - `rest/routers/websocket.py`: Added auth_request handler to audio WS endpoint (~40 lines)
+>
+> **Other Router Standardization** (Sessions 365-368):
+> - Standardized auth imports and dependency injection across routers: `auth.py`, `claude_code.py`, `claude_code_queue.py`, `decision_proxy.py`, `deep_research.py`, `embeddings.py`, `io_files.py`, `jobs.py`, `mock_job.py`, `mode.py`, `speech.py`, `stats.py`, `swe_team.py`, `websocket_admin.py`
+>
+> **Files Modified (26) + New (10+1)**:
+> - 26 modified files across agents, memory, rest, and routers
+> - 10 new files in `agents/presentation_generator/`
+> - 1 new router `rest/routers/presentation_generator.py`
+> - Total: +899 insertions, -155 deletions
+
+---
+
+> **✅ SESSIONS 359-364 COMMITTED**: Config migration, CJ Flow persistence, CUDA OOM fix, WS logging guard (2026.03.14)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >
 > ### Accomplishments

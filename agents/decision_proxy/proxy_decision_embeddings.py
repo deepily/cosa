@@ -103,11 +103,21 @@ class ProxyDecisionEmbeddings:
         try:
             self._db = lancedb.connect( self.db_path )
 
+            schema = self._get_schema()
+            expected_columns = set( schema.names )
+
             if self.table_name in self._db.table_names():
                 self._table = self._db.open_table( self.table_name )
-                if self.debug: print( f"[ProxyDecisionEmbeddings] Opened existing table: {self.table_name}" )
+                existing_columns = set( self._table.schema.names )
+
+                if existing_columns != expected_columns:
+                    missing = expected_columns - existing_columns
+                    print( f"[ProxyDecisionEmbeddings] Schema mismatch — missing columns: {missing}. Dropping and recreating table." )
+                    self._db.drop_table( self.table_name )
+                    self._table = self._db.create_table( self.table_name, schema=schema )
+                else:
+                    if self.debug: print( f"[ProxyDecisionEmbeddings] Opened existing table: {self.table_name}" )
             else:
-                schema      = self._get_schema()
                 self._table = self._db.create_table( self.table_name, schema=schema )
                 if self.debug: print( f"[ProxyDecisionEmbeddings] Created new table: {self.table_name}" )
 

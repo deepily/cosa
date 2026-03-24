@@ -375,6 +375,43 @@ class FifoQueue:
 
         return filtered_jobs
 
+    def get_jobs_excluding_user( self, user_id: str ) -> list[Any]:
+        """
+        Get raw job objects for all users EXCEPT the specified user (NO authorization, NO formatting).
+
+        Inverse of get_jobs_for_user(). Pure data access method - performs NO authorization checks.
+        Authorization should be handled by calling code.
+
+        Requires:
+            - user_id is a valid user identifier string
+            - UserJobTracker singleton is initialized
+
+        Ensures:
+            - Returns list of job objects NOT matching user's job IDs
+            - Returns empty list if all jobs belong to the user
+            - Returns raw job objects (NOT HTML formatted)
+            - NO authorization checks performed
+
+        Args:
+            user_id: The user identifier whose jobs should be excluded
+
+        Returns:
+            list[Any]: List of job objects NOT belonging to the user
+
+        Raises:
+            - None (returns empty list if all jobs belong to user)
+        """
+        # Get job IDs associated with this user (to exclude)
+        user_job_ids = self.user_job_tracker.get_jobs_for_user( user_id )
+
+        # Filter queue_list to EXCLUDE jobs matching user's job IDs
+        filtered_jobs = [
+            job for job in self.queue_list
+            if not hasattr( job, 'id_hash' ) or job.id_hash not in user_job_ids
+        ]
+
+        return filtered_jobs
+
     def get_all_jobs( self ) -> list[Any]:
         """
         Get ALL raw job objects (NO authorization, NO formatting).

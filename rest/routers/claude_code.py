@@ -70,7 +70,12 @@ class InjectRequest( BaseModel ):
     message : str
 
 
-@router.post( "/dispatch", response_model=DispatchResponse )
+@router.post(
+    "/dispatch",
+    response_model = DispatchResponse,
+    summary        = "Dispatch Claude Code task",
+    description    = "Launch a Claude Agent SDK task in BOUNDED or INTERACTIVE mode. Returns task_id and WebSocket URL."
+)
 async def dispatch_task( request: DispatchRequest, background_tasks: BackgroundTasks ):
     """
     Dispatch a new Claude Code task.
@@ -336,7 +341,11 @@ async def _run_dispatch( task_id: str ):
                 pass
 
 
-@router.post( "/{task_id}/inject" )
+@router.post(
+    "/{task_id}/inject",
+    summary     = "Inject message into session",
+    description = "Send a follow-up message into an active INTERACTIVE session."
+)
 async def inject_message( task_id: str, request: InjectRequest ):
     """
     Inject a follow-up message into an Option B session.
@@ -375,7 +384,11 @@ async def inject_message( task_id: str, request: InjectRequest ):
         raise HTTPException( status_code=500, detail=f"Inject error: {str( e )}" )
 
 
-@router.post( "/{task_id}/interrupt" )
+@router.post(
+    "/{task_id}/interrupt",
+    summary     = "Interrupt active session",
+    description = "Interrupt the current response in an INTERACTIVE session."
+)
 async def interrupt_session( task_id: str ):
     """
     Interrupt the current response in an Option B session.
@@ -408,7 +421,11 @@ async def interrupt_session( task_id: str ):
         raise HTTPException( status_code=500, detail=f"Interrupt error: {str( e )}" )
 
 
-@router.post( "/{task_id}/end" )
+@router.post(
+    "/{task_id}/end",
+    summary     = "End interactive session",
+    description = "Gracefully end an INTERACTIVE session and close its WebSocket."
+)
 async def end_session( task_id: str ):
     """
     End an Option B session gracefully.
@@ -450,7 +467,11 @@ async def end_session( task_id: str ):
         raise HTTPException( status_code=500, detail=f"End session error: {str( e )}" )
 
 
-@router.get( "/{task_id}/status" )
+@router.get(
+    "/{task_id}/status",
+    summary     = "Get task status",
+    description = "Return current status, cost, and error state for a Claude Code task."
+)
 async def get_session_status( task_id: str ):
     """
     Get the current status of a task/session.

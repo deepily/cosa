@@ -62,7 +62,12 @@ def get_todo_queue():
 # Job Submission Endpoint
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@router.post( "/api/swe-team/submit", response_model=SweTeamSubmitResponse )
+@router.post(
+    "/api/swe-team/submit",
+    response_model = SweTeamSubmitResponse,
+    summary        = "Submit SWE team task",
+    description    = "Submit an engineering task to the SWE Team for async execution via CJ Flow."
+)
 async def submit_swe_team_task(
     request_body: SweTeamSubmitRequest,
     current_user: dict = Depends( get_current_user ),

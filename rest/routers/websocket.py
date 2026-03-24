@@ -17,7 +17,7 @@ import re
 from urllib.parse import unquote
 
 # Import dependencies
-from cosa.rest.auth import get_current_user
+from cosa.rest.auth import get_current_user, TokenExpiredException
 from cosa.rest.websocket_manager import WebSocketManager
 
 router = APIRouter(tags=["websocket"])
@@ -205,18 +205,64 @@ async def websocket_audio_endpoint(websocket: WebSocket, session_id: str):
         # Keep connection alive and handle incoming messages
         while True:
             try:
-                # Wait for messages from client (optional - for bidirectional communication)
+                # Wait for messages from client
                 data = await websocket.receive_text()
-                message = json.loads(data)
-                
-                if app_debug and app_verbose: 
-                    print(f"[WS-AUDIO] Received message from {session_id}: {message}")
-                    
+                message = json.loads( data )
+
+                if app_debug and app_verbose:
+                    print( f"[WS-AUDIO] Received message from {session_id}: {message}" )
+
+                # Handle auth_request from browser (mirrors queue endpoint auth)
+                if message.get( "type" ) == "auth_request" and "token" in message:
+                    token = message[ "token" ]
+                    if token.startswith( "Bearer " ):
+                        token = token[ 7: ]
+
+                    try:
+                        from cosa.rest.auth import verify_token
+                        user_info = await verify_token( token )
+                        auth_user_id = user_info[ "uid" ]
+
+                        # Update session with user association
+                        websocket_manager.session_to_user[ session_id ] = auth_user_id
+                        if auth_user_id not in websocket_manager.user_sessions:
+                            websocket_manager.user_sessions[ auth_user_id ] = []
+                        if session_id not in websocket_manager.user_sessions[ auth_user_id ]:
+                            websocket_manager.user_sessions[ auth_user_id ].append( session_id )
+                        if user_info.get( "email" ):
+                            websocket_manager.user_to_email[ auth_user_id ] = user_info[ "email" ]
+
+                        # Update subscriptions from auth message
+                        subscribed_events = message.get( "subscribed_events", audio_events )
+                        valid_events = [ e for e in subscribed_events if e == "*" or e in websocket_manager.available_events ]
+                        websocket_manager.session_subscriptions[ session_id ] = valid_events
+
+                        await websocket.send_json({
+                            "type"       : "auth_success",
+                            "user_id"    : auth_user_id,
+                            "session_id" : session_id
+                        })
+                        print( f"[WS-AUDIO] Authenticated session [{session_id}] for user [{auth_user_id}] ({user_info.get( 'email', '?' )})" )
+                        print( f"[WS] STATE after audio auth: {len( websocket_manager.active_connections )} active, {len( websocket_manager.user_sessions )} users: {list( websocket_manager.user_sessions.keys() )[ :3 ]}" )
+
+                    except Exception as auth_err:
+                        print( f"[WS-AUDIO] Auth failed for session [{session_id}]: {auth_err}" )
+                        await websocket.send_json({
+                            "type"    : "auth_error",
+                            "message" : str( auth_err )
+                        })
+
+                elif message.get( "type" ) == "sys_ping":
+                    await websocket.send_json({
+                        "type"      : "sys_pong",
+                        "timestamp" : datetime.now().isoformat()
+                    })
+
             except WebSocketDisconnect:
                 break
             except Exception as e:
-                if app_debug: 
-                    print(f"[WS-AUDIO] Error handling message from {session_id}: {e}")
+                if app_debug:
+                    print( f"[WS-AUDIO] Error handling message from {session_id}: {e}" )
                 break
                 
     except WebSocketDisconnect:
@@ -232,9 +278,13 @@ async def websocket_audio_endpoint(websocket: WebSocket, session_id: str):
                 pass
             del active_tasks[session_id]
         
-        # Clean up connection
-        websocket_manager.disconnect(session_id)
-        print(f"[WS-AUDIO] Audio WebSocket disconnected for session: {session_id}")
+        # Only disconnect if OUR websocket is still the active one
+        # (prevents race: reconnection with same session_id already replaced us)
+        if websocket_manager.active_connections.get( session_id ) is websocket:
+            websocket_manager.disconnect( session_id )
+            print( f"[WS-AUDIO] Audio WebSocket disconnected for session: {session_id}" )
+        else:
+            print( f"[WS-AUDIO] Skipping disconnect for {session_id} — replaced by new connection" )
 
 @router.websocket("/ws/queue/{session_id}")
 async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
@@ -389,19 +439,31 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
                 "session_id": session_id
             })
 
+        except TokenExpiredException:
+            print( f"[WS-QUEUE-AUTH] Token expired for session [{session_id}] — client should refresh" )
+            await websocket.send_json({
+                "type"    : "auth_error",
+                "message" : "Token expired"
+            })
+            await websocket.close()
+            return
         except Exception as e:
-            print(f"[WS-QUEUE-AUTH] ❌ Token verification failed for session [{session_id}]: {type(e).__name__}: {str(e)}")
+            print( f"[WS-QUEUE-AUTH] ❌ Token verification failed for session [{session_id}]: {type( e ).__name__}: {e}" )
             import traceback
             traceback.print_exc()
             await websocket.send_json({
-                "type": "auth_error",
-                "message": str(e)
+                "type"    : "auth_error",
+                "message" : str( e )
             })
             await websocket.close()
             return
 
+    except TokenExpiredException:
+        print( f"[WS-QUEUE] Token expired for session [{session_id}] — client should refresh" )
+        await websocket.close()
+        return
     except Exception as e:
-        print(f"[WS-QUEUE] ❌ Auth error for session [{session_id}]: {type(e).__name__}: {e}")
+        print( f"[WS-QUEUE] ❌ Auth error for session [{session_id}]: {type( e ).__name__}: {e}" )
         import traceback
         traceback.print_exc()
         await websocket.close()
@@ -451,9 +513,14 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
     except WebSocketDisconnect:
         pass
     finally:
-        websocket_manager.disconnect(session_id)
-        session_type = "listener" if session_id.startswith( "cc-listener-" ) else "browser"
-        print( f"[WS-QUEUE] Queue WebSocket disconnected for {session_type} session: {session_id}" )
+        # Only disconnect if OUR websocket is still the active one
+        # (prevents race: reconnection with same session_id already replaced us)
+        if websocket_manager.active_connections.get( session_id ) is websocket:
+            websocket_manager.disconnect( session_id )
+            session_type = "listener" if session_id.startswith( "cc-listener-" ) else "browser"
+            print( f"[WS-QUEUE] Queue WebSocket disconnected for {session_type} session: {session_id}" )
+        else:
+            print( f"[WS-QUEUE] Skipping disconnect for {session_id} — replaced by new connection" )
 
 
 def quick_smoke_test():

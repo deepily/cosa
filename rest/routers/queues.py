@@ -119,7 +119,11 @@ def get_notification_queue():
     import fastapi_app.main as main_module
     return main_module.jobs_notification_queue
 
-@router.post("/push")
+@router.post(
+    "/push",
+    summary     = "Push job to queue",
+    description = "Submit a new job to the todo queue. Requires question and websocket_id in request body."
+)
 async def push(
     request: Request,
     current_user: dict = Depends(get_current_user),
@@ -212,7 +216,11 @@ async def push(
         "result"       : result.get( "message", str( result ) ) if isinstance( result, dict ) else str( result )
     }
 
-@router.get("/get-queue/{queue_name}")
+@router.get(
+    "/get-queue/{queue_name}",
+    summary     = "Get queue contents",
+    description = "Retrieve jobs from a named queue (todo/run/done/dead) with role-based user filtering."
+)
 async def get_queue(
     queue_name: str,
     current_user: dict = Depends(get_current_user),
@@ -297,6 +305,9 @@ async def get_queue(
     if authorized_filter == "*":
         # Admin requesting ALL users' jobs
         jobs = queue.get_all_jobs()
+    elif authorized_filter.startswith( "!" ):
+        # Admin requesting all jobs EXCEPT their own ("!user_id" sentinel)
+        jobs = queue.get_jobs_excluding_user( authorized_filter[ 1: ] )
     else:
         # Specific user's jobs (could be self or other for admin)
         jobs = queue.get_jobs_for_user( authorized_filter )
@@ -386,7 +397,11 @@ async def get_queue(
         "total_jobs": len( structured_jobs )
     }
 
-@router.post("/reset-queues")
+@router.post(
+    "/reset-queues",
+    summary     = "Reset all queues",
+    description = "Clear all five queues (todo, run, done, dead, notification) and return items-cleared summary."
+)
 async def reset_queues(
     current_user: dict = Depends(get_current_user),
     todo_queue = Depends(get_todo_queue),
@@ -453,7 +468,11 @@ async def reset_queues(
         raise HTTPException( status_code=500, detail=f"Failed to reset queues: {str(e)}" )
 
 
-@router.get( "/get-job-interactions/{job_id}" )
+@router.get(
+    "/get-job-interactions/{job_id}",
+    summary     = "Get job interactions",
+    description = "Retrieve notification interaction history for a job with progress deduplication."
+)
 async def get_job_interactions(
     job_id: str,
     current_user: dict = Depends( get_current_user ),
@@ -566,7 +585,11 @@ async def get_job_interactions(
     return response
 
 
-@router.post( "/jobs/{job_id}/message" )
+@router.post(
+    "/jobs/{job_id}/message",
+    summary     = "Send message to job",
+    description = "Send a user-initiated message to a running agentic job via WebSocket notification."
+)
 async def send_job_message(
     job_id: str,
     request: Request,
@@ -739,7 +762,11 @@ async def send_job_message(
     }
 
 
-@router.post( "/jobs/{job_id}/cancel" )
+@router.post(
+    "/jobs/{job_id}/cancel",
+    summary     = "Cancel running job",
+    description = "Request graceful cancellation of a running agentic job at its next phase boundary."
+)
 async def cancel_job(
     job_id: str,
     current_user: dict = Depends( get_current_user ),
@@ -803,3 +830,90 @@ async def cancel_job(
         "job_id"  : job_id,
         "message" : "Cancellation requested. Job will stop at next checkpoint.",
     }
+
+
+# ===========================================================================
+# Job History (CJ Flow Persistence)
+# ===========================================================================
+
+
+@router.get(
+    "/job-history",
+    summary     = "Query job history",
+    description = "Paginated history of agentic jobs from PostgreSQL persistence. "
+                  "Admin sees all jobs; regular users see only their own."
+)
+async def get_job_history(
+    current_user: dict      = Depends( get_current_user ),
+    status: Optional[str]   = Query( None, description="Filter by status: pending, running, completed, failed, interrupted" ),
+    job_type: Optional[str] = Query( None, description="Filter by job type: deep_research, podcast, claude_code, swe_team, research_to_podcast" ),
+    limit: int              = Query( 20, ge=1, le=100, description="Results per page (max 100)" ),
+    offset: int             = Query( 0, ge=0, description="Pagination offset" )
+):
+    """
+    Query paginated job history with optional filters.
+
+    Requires:
+        - Authenticated user (Bearer token)
+
+    Ensures:
+        - Admin users see all jobs (user_id=None filter)
+        - Regular users see only their own jobs
+        - Results are paginated and sorted by created_at DESC
+        - Returns { jobs: [...], total: N, filtered_by: str, limit: N, offset: N }
+    """
+    from cosa.rest.job_persistence import query_job_history
+
+    # Admin sees all, regular user sees own only
+    user_id = None if is_admin( current_user ) else current_user[ "uid" ]
+
+    result = query_job_history(
+        user_id  = user_id,
+        status   = status,
+        job_type = job_type,
+        limit    = limit,
+        offset   = offset
+    )
+
+    return {
+        "jobs"        : result[ "jobs" ],
+        "total"       : result[ "total" ],
+        "filtered_by" : user_id or "all",
+        "limit"       : limit,
+        "offset"      : offset
+    }
+
+
+@router.get(
+    "/job-history/{job_id}",
+    summary     = "Get job detail",
+    description = "Retrieve a single job's full history record by ID hash."
+)
+async def get_job_history_detail(
+    job_id: str,
+    current_user: dict = Depends( get_current_user )
+):
+    """
+    Get a single job's persistence record.
+
+    Requires:
+        - Authenticated user (Bearer token)
+        - job_id is a valid id_hash string
+
+    Ensures:
+        - Returns full job dict if found and authorized
+        - 404 if job not found
+        - 403 if regular user accessing another user's job
+    """
+    from cosa.rest.job_persistence import get_job_by_id_hash
+
+    job = get_job_by_id_hash( job_id )
+
+    if job is None:
+        raise HTTPException( status_code=404, detail=f"Job not found: {job_id}" )
+
+    # Authorization: regular users can only see their own jobs
+    if not is_admin( current_user ) and job.get( "user_id" ) != current_user[ "uid" ]:
+        raise HTTPException( status_code=403, detail="Not authorized to view this job" )
+
+    return job

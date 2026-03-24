@@ -210,7 +210,11 @@ def resolve_sender_id( explicit_sender_id: Optional[str], message: str ) -> str:
 # Internally, the config system uses 'global_notification_recipient' to support
 # future multi-recipient routing. This naming mismatch is intentional.
 # API stability takes precedence over naming consistency.
-@router.post("/notify")
+@router.post(
+    "/notify",
+    summary     = "Send notification",
+    description = "Dispatch notification to a user via WebSocket. Supports fire-and-forget or SSE blocking mode for response-required notifications."
+)
 async def notify_user(
     authenticated_user_id: Annotated[str, Depends(require_api_key_or_jwt)],
     message: str = Query(..., description="Notification message text"),
@@ -401,6 +405,19 @@ async def notify_user(
         is_connected     = ws_manager.is_user_connected( target_system_id )
         connection_count = ws_manager.get_user_connection_count( target_system_id )
         print( f"[NOTIFY] WebSocket connection check: is_connected={is_connected}, count={connection_count}" )
+
+        # Always-on diagnostic when user appears offline (ungated — critical for debugging 503s)
+        if not is_connected:
+            ws_user_keys   = list( ws_manager.user_sessions.keys() )
+            ws_active_keys = list( ws_manager.active_connections.keys() )
+            print( f"[NOTIFY] ⚠️ OFFLINE DIAG target_system_id   = {target_system_id!r}" )
+            print( f"[NOTIFY] ⚠️ OFFLINE DIAG user_sessions keys  = {ws_user_keys}" )
+            print( f"[NOTIFY] ⚠️ OFFLINE DIAG active_connections  = {len( ws_active_keys )} sessions: {ws_active_keys[ :5 ]}" )
+            for uid, sessions in ws_manager.user_sessions.items():
+                active = [ s for s in sessions if s in ws_manager.active_connections ]
+                print( f"[NOTIFY] ⚠️ OFFLINE DIAG   user={uid!r} sessions={sessions} active={active}" )
+            print( f"[NOTIFY] ⚠️ OFFLINE DIAG user_to_email = {dict( ws_manager.user_to_email )}" )
+
         if connection_count > 0:
             user_session_ids  = ws_manager.user_sessions.get( target_system_id, [] )
             active_sessions   = [ s for s in user_session_ids if s in ws_manager.active_connections ]
@@ -702,7 +719,11 @@ async def notify_user(
         print(f"[NOTIFY] ❌ Notification error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Notification failed: {str(e)}")
 
-@router.post("/notify/response")
+@router.post(
+    "/notify/response",
+    summary     = "Submit notification response",
+    description = "Submit user response to a response-required notification. Signals the waiting SSE stream and persists to PostgreSQL."
+)
 async def submit_notification_response(
     request_body: Dict[str, Any] = Body(..., description="Request body with notification_id and response_value"),
     ws_manager: WebSocketManager = Depends(get_websocket_manager)
@@ -895,7 +916,11 @@ async def submit_notification_response(
         print(f"[NOTIFY] ❌ Response submission error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Response submission failed: {str(e)}")
 
-@router.get("/notifications/{user_id}")
+@router.get(
+    "/notifications/{user_id}",
+    summary     = "Get user notifications",
+    description = "Retrieve notifications for a user from the in-memory FIFO queue with optional played filter and count limit."
+)
 async def get_user_notifications(
     user_id: str,
     include_played: bool = Query(True, description="Include played notifications"),
@@ -953,7 +978,11 @@ async def get_user_notifications(
         print(f"[NOTIFY] Error getting notifications for {user_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get notifications: {str(e)}")
 
-@router.get("/notifications/{user_id}/next")
+@router.get(
+    "/notifications/{user_id}/next",
+    summary     = "Get next notification",
+    description = "Fetch the next unplayed notification for a user without modifying its played state."
+)
 async def get_next_notification(
     user_id: str,
     notification_queue: NotificationFifoQueue = Depends(get_notification_queue)
@@ -1002,7 +1031,11 @@ async def get_next_notification(
         print(f"[NOTIFY] Error getting next notification for {user_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get next notification: {str(e)}")
 
-@router.post("/notifications/{notification_id}/played")
+@router.post(
+    "/notifications/{notification_id}/played",
+    summary     = "Mark notification played",
+    description = "Mark a notification as played with timestamp. Persists to the io_tbl database."
+)
 async def mark_notification_played(
     notification_id: str,
     notification_queue: NotificationFifoQueue = Depends(get_notification_queue)
@@ -1050,7 +1083,11 @@ async def mark_notification_played(
         print(f"[NOTIFY] Error marking notification {notification_id} as played: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to mark notification as played: {str(e)}")
 
-@router.delete("/notifications/{notification_id}")
+@router.delete(
+    "/notifications/{notification_id}",
+    summary     = "Delete notification",
+    description = "Permanently remove a single notification from the FIFO queue and io_tbl database."
+)
 async def delete_notification(
     notification_id: str,
     notification_queue: NotificationFifoQueue = Depends(get_notification_queue)
@@ -1098,10 +1135,15 @@ async def delete_notification(
         raise HTTPException(status_code=500, detail=f"Failed to delete notification: {str(e)}")
 
 
-@router.delete( "/notifications/bulk/{user_email}" )
+@router.delete(
+    "/notifications/bulk/{user_email}",
+    summary     = "Bulk delete notifications",
+    description = "Delete all notifications for a user from PostgreSQL with optional time window filter."
+)
 async def bulk_delete_notifications(
     user_email: str,
-    hours: Optional[int] = Query( None, description="Filter to notifications within N hours (None = all)" )
+    hours: Optional[int] = Query( None, description="Filter to notifications within N hours (None = all)" ),
+    exclude_own_jobs: bool = Query( False, description="Only delete notifications NOT from user's own jobs (admin 'not mine' filter)" )
 ):
     """
     Bulk delete notifications for a user within the specified time window.
@@ -1115,6 +1157,8 @@ async def bulk_delete_notifications(
 
     Ensures:
         - All notifications matching user and time filter are permanently deleted
+        - When exclude_own_jobs is True, only deletes notifications NOT triggered by
+          user's own jobs (and NOT system notifications with NULL job_id)
         - Returns count of deleted notifications
 
     Raises:
@@ -1125,6 +1169,7 @@ async def bulk_delete_notifications(
     Args:
         user_email: User's email address
         hours: Optional filter - only delete notifications within N hours (None = all)
+        exclude_own_jobs: Whether to scope deletion to "not mine" notifications only
 
     Returns:
         JSON with deleted count and status
@@ -1149,22 +1194,32 @@ async def bulk_delete_notifications(
 
         user_id = uuid.UUID( user_data["id"] ) if isinstance( user_data["id"], str ) else user_data["id"]
 
+        # Build exclude_job_ids list if "not mine" filter is active
+        exclude_job_ids = None
+        if exclude_own_jobs:
+            from cosa.rest.queue_extensions import user_job_tracker
+            user_uid = user_data.get( "uid", "" )
+            exclude_job_ids = user_job_tracker.get_jobs_for_user( user_uid )
+
         with get_db() as session:
             repo = NotificationRepository( session )
             deleted_count = repo.bulk_delete_by_user(
-                user_email   = user_email,
-                recipient_id = user_id,
-                hours        = hours
+                user_email      = user_email,
+                recipient_id    = user_id,
+                hours           = hours,
+                exclude_job_ids = exclude_job_ids
             )
 
             filter_desc = f"within {hours} hours" if hours else "all time"
-            print( f"[NOTIFY] Bulk deleted {deleted_count} notifications for {user_email} ({filter_desc})" )
+            scope_desc  = " (not-mine only)" if exclude_own_jobs else ""
+            print( f"[NOTIFY] Bulk deleted {deleted_count} notifications for {user_email} ({filter_desc}){scope_desc}" )
 
             return {
-                "status"        : "success",
-                "user_email"    : user_email,
-                "hours_filter"  : hours,
-                "deleted_count" : deleted_count
+                "status"           : "success",
+                "user_email"       : user_email,
+                "hours_filter"     : hours,
+                "exclude_own_jobs" : exclude_own_jobs,
+                "deleted_count"    : deleted_count
             }
 
     except HTTPException:
@@ -1181,7 +1236,11 @@ async def bulk_delete_notifications(
 # HISTORY ENDPOINTS (Phase 6 - Sender-Aware Notification System)
 # =============================================================================
 
-@router.get( "/notifications/senders/{user_email}" )
+@router.get(
+    "/notifications/senders/{user_email}",
+    summary     = "List notification senders",
+    description = "Return all distinct senders who have sent notifications to a user with last activity and count."
+)
 async def get_senders_with_activity(
     user_email: str,
     hours: Optional[int] = Query( None, description="Filter to senders active within N hours" )
@@ -1256,7 +1315,11 @@ async def get_senders_with_activity(
         )
 
 
-@router.get( "/notifications/conversation/{sender_id}/{user_email}" )
+@router.get(
+    "/notifications/conversation/{sender_id}/{user_email}",
+    summary     = "Get sender conversation",
+    description = "Retrieve time-windowed conversation thread between a specific sender and recipient."
+)
 async def get_sender_conversation(
     sender_id: str,
     user_email: str,
@@ -1384,7 +1447,11 @@ async def get_sender_conversation(
         )
 
 
-@router.delete( "/notifications/conversation/{sender_id}/{user_email}" )
+@router.delete(
+    "/notifications/conversation/{sender_id}/{user_email}",
+    summary     = "Delete sender conversation",
+    description = "Permanently delete all notifications from a specific sender to a recipient."
+)
 async def delete_sender_conversation( sender_id: str, user_email: str ):
     """
     Delete all notifications in a conversation between sender and recipient.
@@ -1452,7 +1519,11 @@ async def delete_sender_conversation( sender_id: str, user_email: str ):
         )
 
 
-@router.get( "/notifications/conversation-by-date/{sender_id}/{user_email}" )
+@router.get(
+    "/notifications/conversation-by-date/{sender_id}/{user_email}",
+    summary     = "Get conversation by date",
+    description = "Return notifications grouped by date for accordion-style UI rendering."
+)
 async def get_sender_conversation_by_date(
     sender_id: str,
     user_email: str,
@@ -1581,7 +1652,11 @@ async def get_sender_conversation_by_date(
         )
 
 
-@router.delete( "/notifications/date/{sender_id}/{user_email}/{date_string}" )
+@router.delete(
+    "/notifications/date/{sender_id}/{user_email}/{date_string}",
+    summary     = "Soft-delete by date",
+    description = "Soft-delete all notifications from a sender on a specific date by setting is_hidden flag."
+)
 async def soft_delete_by_date( sender_id: str, user_email: str, date_string: str ):
     """
     Soft delete all notifications for a sender on a specific date.
@@ -1666,7 +1741,11 @@ async def soft_delete_by_date( sender_id: str, user_email: str, date_string: str
         )
 
 
-@router.get( "/notifications/sender-dates/{sender_id}/{user_email}" )
+@router.get(
+    "/notifications/sender-dates/{sender_id}/{user_email}",
+    summary     = "Get sender date summaries",
+    description = "Return lightweight date headers with counts for building accordion UI."
+)
 async def get_sender_date_summaries(
     sender_id: str,
     user_email: str,
@@ -1737,11 +1816,16 @@ async def get_sender_date_summaries(
         )
 
 
-@router.get( "/notifications/senders-visible/{user_email}" )
+@router.get(
+    "/notifications/senders-visible/{user_email}",
+    summary     = "List visible senders",
+    description = "Enhanced sender list respecting is_hidden flag with unread counts for notification badges."
+)
 async def get_visible_senders(
     user_email: str,
     hours: Optional[int] = Query( None, description="Filter to senders with activity within N hours" ),
-    include_hidden: bool = Query( False, description="Include hidden notifications in counts" )
+    include_hidden: bool = Query( False, description="Include hidden notifications in counts" ),
+    exclude_own_jobs: bool = Query( False, description="Exclude notifications from user's own jobs (admin 'not mine' filter)" )
 ):
     """
     Get list of senders with visible notifications for a user.
@@ -1756,6 +1840,8 @@ async def get_visible_senders(
     Ensures:
         - Returns list of sender activity summaries
         - Excludes senders with all notifications hidden (unless include_hidden)
+        - When exclude_own_jobs is True, excludes notifications triggered by user's own jobs
+          and system notifications (NULL job_id) — only shows "others'" notifications
         - Ordered by last_activity descending (most recent first)
         - Includes new_count for unread badges
 
@@ -1763,6 +1849,7 @@ async def get_visible_senders(
         user_email: User's email address
         hours: Optional filter for recent activity window
         include_hidden: Whether to include hidden notifications
+        exclude_own_jobs: Whether to exclude user's own job notifications (admin filter)
 
     Returns:
         List of sender activity summaries with counts
@@ -1780,11 +1867,19 @@ async def get_visible_senders(
 
         user_id = uuid.UUID( user_data["id"] ) if isinstance( user_data["id"], str ) else user_data["id"]
 
+        # Build exclude_job_ids list if "not mine" filter is active
+        exclude_job_ids = None
+        if exclude_own_jobs:
+            from cosa.rest.queue_extensions import user_job_tracker
+            user_uid = user_data.get( "uid", "" )
+            exclude_job_ids = user_job_tracker.get_jobs_for_user( user_uid )
+
         with get_db() as session:
             repo = NotificationRepository( session )
             activities = repo.get_sender_last_activities_visible(
                 recipient_id   = user_id,
-                include_hidden = include_hidden
+                include_hidden = include_hidden,
+                exclude_job_ids = exclude_job_ids
             )
 
             # Apply hours filter if specified
@@ -1800,7 +1895,8 @@ async def get_visible_senders(
                 if activity["last_activity"]:
                     activity["last_activity"] = activity["last_activity"].isoformat()
 
-            print( f"[NOTIFY] Returning {len( activities )} visible senders for {user_email}" )
+            filter_label = " (excluding own jobs)" if exclude_own_jobs else ""
+            print( f"[NOTIFY] Returning {len( activities )} visible senders for {user_email}{filter_label}" )
 
             return activities
 
@@ -1814,7 +1910,11 @@ async def get_visible_senders(
         )
 
 
-@router.get( "/notifications/active-conversation/{user_email}" )
+@router.get(
+    "/notifications/active-conversation/{user_email}",
+    summary     = "Get active conversation",
+    description = "Return the sender_id of the most recent notification for voice response routing."
+)
 async def get_active_conversation(
     user_email: str
 ):
@@ -1871,7 +1971,11 @@ async def get_active_conversation(
         )
 
 
-@router.get( "/notifications/project-sessions/{project}/{user_email}" )
+@router.get(
+    "/notifications/project-sessions/{project}/{user_email}",
+    summary     = "List project sessions",
+    description = "Return all Claude Code sessions for a project with activity counts and active status."
+)
 async def get_project_sessions(
     project: str,
     user_email: str
@@ -1938,7 +2042,11 @@ async def get_project_sessions(
 # GIST GENERATION ENDPOINT (Session 57 - Semantic Session Names)
 # =============================================================================
 
-@router.post( "/notifications/generate-gist" )
+@router.post(
+    "/notifications/generate-gist",
+    summary     = "Generate session gist",
+    description = "Use LLM to generate a concise semantic session name from notification messages."
+)
 async def generate_session_gist(
     request_body: Dict[ str, Any ] = Body( ..., description="Request body with messages and abstracts lists" )
 ):

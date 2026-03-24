@@ -74,7 +74,12 @@ def get_todo_queue():
 # Job Submission Endpoint
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@router.post( "/api/deep-research/submit", response_model=DeepResearchSubmitResponse )
+@router.post(
+    "/api/deep-research/submit",
+    response_model = DeepResearchSubmitResponse,
+    summary        = "Submit deep research job",
+    description    = "Create a deep research job and push to the CJ Flow todo queue."
+)
 async def submit_research(
     request_body: DeepResearchSubmitRequest,
     current_user: dict = Depends( get_current_user ),
@@ -186,7 +191,12 @@ async def submit_research(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@router.get( "/api/deep-research/report", response_class=PlainTextResponse )
+@router.get(
+    "/api/deep-research/report",
+    response_class = PlainTextResponse,
+    summary        = "Get research report",
+    description    = "Retrieve a research report by local path or GCS URI as raw Markdown."
+)
 async def get_report(
     path: str = Query( ..., description="Local file path or GCS URI (gs://bucket/path/file.md)" )
 ):
@@ -296,7 +306,11 @@ async def get_report(
             )
 
 
-@router.get( "/api/deep-research/health" )
+@router.get(
+    "/api/deep-research/health",
+    summary     = "Deep research health check",
+    description = "Report GCS availability and local research directory status."
+)
 async def deep_research_health():
     """
     Health check for deep research endpoints.

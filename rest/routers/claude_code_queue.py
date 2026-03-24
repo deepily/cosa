@@ -73,7 +73,12 @@ def get_user_job_tracker():
 # Queue Submission Endpoint
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@router.post( "/api/claude-code/queue/submit", response_model=ClaudeCodeQueueResponse )
+@router.post(
+    "/api/claude-code/queue/submit",
+    response_model = ClaudeCodeQueueResponse,
+    summary        = "Submit Claude Code queue job",
+    description    = "Submit a Claude Agent SDK task to the CJ Flow queue in BOUNDED or INTERACTIVE mode."
+)
 async def submit_claude_code_to_queue(
     request_body: ClaudeCodeQueueRequest,
     current_user: dict = Depends( get_current_user ),

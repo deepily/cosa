@@ -72,7 +72,12 @@ def get_todo_queue():
 # Job Submission Endpoint
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@router.post( "/submit", response_model=MockJobSubmitResponse )
+@router.post(
+    "/submit",
+    response_model = MockJobSubmitResponse,
+    summary        = "Submit mock job",
+    description    = "Submit a zero-cost mock job for queue UI testing with configurable parameters."
+)
 async def submit_mock_job(
     request: Request,
     request_body: MockJobSubmitRequest = MockJobSubmitRequest(),
@@ -328,7 +333,11 @@ async def _handle_expeditor_test( voice_command, current_user, todo_queue, beare
     )
 
 
-@router.get( "/health" )
+@router.get(
+    "/health",
+    summary     = "Mock job health check",
+    description = "Return availability status of the mock job endpoint."
+)
 async def mock_job_health():
     """
     Health check for mock job endpoint.

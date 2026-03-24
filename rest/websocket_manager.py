@@ -152,7 +152,8 @@ class WebSocketManager:
             self.session_to_user[session_id] = user_id
             if user_id not in self.user_sessions:
                 self.user_sessions[user_id] = []
-            self.user_sessions[user_id].append(session_id)
+            if session_id not in self.user_sessions[user_id]:
+                self.user_sessions[user_id].append( session_id )
             if email:
                 self.user_to_email[ user_id ] = email
 
@@ -167,7 +168,9 @@ class WebSocketManager:
             # Default: subscribe to all events
             self.session_subscriptions[session_id] = ["*"]
             print( f"[WS] Session {session_id} ({session_type}) subscribed to: all events (*)" )
-    
+
+        print( f"[WS] STATE after connect: {len( self.active_connections )} active, {len( self.user_sessions )} users: {list( self.user_sessions.keys() )[ :3 ]}" )
+
     def disconnect( self, session_id: str ):
         """
         Remove a WebSocket connection and clean up all associated data.
@@ -193,6 +196,17 @@ class WebSocketManager:
         print( f"[WS] Disconnecting {session_type} session {session_id} for user {user_id_tag}{email_suffix}" )
 
         if session_id in self.active_connections:
+            # Explicitly close the WebSocket so the browser receives a close frame
+            # and can trigger onclose → scheduleReconnect (prevents phantom connections)
+            ws = self.active_connections[session_id]
+            try:
+                if self.main_loop and self.main_loop.is_running():
+                    asyncio.run_coroutine_threadsafe(
+                        ws.close( code=1000, reason="Server disconnect" ),
+                        self.main_loop
+                    )
+            except Exception as e:
+                print( f"[WS] Error closing WebSocket for {session_id}: {e}" )
             del self.active_connections[session_id]
 
         # Clean up session timestamp
@@ -213,7 +227,9 @@ class WebSocketManager:
                 if not self.user_sessions[user_id]:
                     del self.user_sessions[user_id]
                     self.user_to_email.pop( user_id, None )
-    
+
+        print( f"[WS] STATE after disconnect: {len( self.active_connections )} active, {len( self.user_sessions )} users: {list( self.user_sessions.keys() )[ :3 ]}" )
+
     def register_session_user( self, session_id: str, user_id: str ):
         """
         Register a session-to-user association without a WebSocket connection.
@@ -533,6 +549,7 @@ class WebSocketManager:
 
         sent_count = 0
         disconnected = []
+        orphaned     = []
 
         sessions = list( self.user_sessions[ user_id ] )
         for session_id in sessions:
@@ -551,10 +568,15 @@ class WebSocketManager:
                 else:
                     if self.debug: print( f"[WS] emit_to_user: session {session_id} not subscribed to {event}" )
             else:
-                if self.debug: print( f"[WS] emit_to_user: session {session_id} not in active_connections" )
+                print( f"[WS] emit_to_user: session {session_id} not in active_connections (orphaned, cleaning up)" )
+                orphaned.append( session_id )
 
         # Clean up disconnected sessions
         for session_id in disconnected:
+            self.disconnect( session_id )
+
+        # Clean up orphaned sessions (in user_sessions but not in active_connections)
+        for session_id in orphaned:
             self.disconnect( session_id )
 
         if sent_count == 0:

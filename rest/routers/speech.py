@@ -162,7 +162,11 @@ def get_todo_queue():
     import fastapi_app.main as main_module
     return main_module.jobs_todo_queue
 
-@router.post("/upload-and-transcribe-mp3")
+@router.post(
+    "/upload-and-transcribe-mp3",
+    summary     = "Transcribe MP3 audio",
+    description = "Accept base64-encoded MP3, transcribe via Whisper, and queue result as a multimodal job."
+)
 async def upload_and_transcribe_mp3_file(
     request: Request,
     prefix: Optional[str] = Query(None),
@@ -301,7 +305,11 @@ async def upload_and_transcribe_mp3_file(
         print( f"[ERROR] MP3 transcription failed: {e}" )
         raise HTTPException( status_code=500, detail="Audio transcription failed. Please try uploading the file again or check that it's a valid audio format." )
 
-@router.post("/get-speech")
+@router.post(
+    "/get-speech",
+    summary     = "Synthesize speech (OpenAI)",
+    description = "Generate TTS audio via OpenAI and stream to the client's WebSocket session."
+)
 async def get_tts_audio(
     request: Request,
     ws_manager: WebSocketManager = Depends(get_websocket_manager),
@@ -422,7 +430,11 @@ async def get_tts_audio(
         print(f"[ERROR] TTS request failed: {e}")
         raise HTTPException(status_code=500, detail="Audio generation failed. Please try again, or check your connection and refresh the page.")
 
-@router.post("/get-speech-elevenlabs")
+@router.post(
+    "/get-speech-elevenlabs",
+    summary     = "Synthesize speech (ElevenLabs)",
+    description = "Generate low-latency TTS audio via ElevenLabs and stream to WebSocket."
+)
 async def get_tts_audio_elevenlabs(
     request: Request,
     ws_manager: WebSocketManager = Depends(get_websocket_manager),
@@ -573,7 +585,11 @@ async def get_tts_audio_elevenlabs(
         print(f"[ERROR] ElevenLabs TTS request failed: {e}")
         raise HTTPException(status_code=500, detail="Audio generation failed. Please try again, or check your connection and refresh the page.")
 
-@router.post("/upload-and-transcribe-wav")
+@router.post(
+    "/upload-and-transcribe-wav",
+    summary     = "Transcribe WAV audio",
+    description = "Accept a WAV file upload, transcribe via Whisper, and return transcription text."
+)
 async def upload_and_transcribe_wav_file(
     file: UploadFile = File(...),
     prefix: Optional[str] = Query(None),

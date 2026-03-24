@@ -8,6 +8,14 @@ inherently owned by any single queue class.
 from datetime import datetime
 from typing import Any, Optional
 
+from cosa.rest.job_persistence import (
+    is_agentic_job_type,
+    persist_job_created_from_metadata,
+    persist_job_started_from_metadata,
+    persist_job_completed_from_metadata,
+    persist_job_failed_from_metadata
+)
+
 
 def emit_job_state_transition(
     websocket_mgr: Any,
@@ -29,7 +37,8 @@ def emit_job_state_transition(
         - Emits 'job_state_transition' event to WebSocket
         - Targets specific user if user_id provided
         - Falls back to broadcast if no user_id
-        - Handles exceptions gracefully
+        - Persists state transition to PostgreSQL for agentic job types (fire-and-forget)
+        - Handles exceptions gracefully (both WS and persistence failures are logged, never raised)
 
     Args:
         websocket_mgr: WebSocket manager instance with emit() and emit_to_user_sync() methods
@@ -42,26 +51,41 @@ def emit_job_state_transition(
     Raises:
         - None (exceptions handled internally)
     """
-    if not websocket_mgr:
-        return
+    # --- WebSocket emission ---
+    if websocket_mgr:
+        data = {
+            'job_id'     : job_id,
+            'from_queue' : from_queue,
+            'to_queue'   : to_queue,
+            'timestamp'  : datetime.now().isoformat()
+        }
 
-    data = {
-        'job_id'     : job_id,
-        'from_queue' : from_queue,
-        'to_queue'   : to_queue,
-        'timestamp'  : datetime.now().isoformat()
-    }
+        if metadata:
+            data[ 'metadata' ] = metadata
 
-    if metadata:
-        data[ 'metadata' ] = metadata
+        try:
+            if user_id:
+                websocket_mgr.emit_to_user_sync( user_id, 'job_state_transition', data )
+            else:
+                websocket_mgr.emit( 'job_state_transition', data )
+        except Exception as e:
+            print( f"[ERROR] emit_job_state_transition failed: {e}" )
 
-    try:
-        if user_id:
-            websocket_mgr.emit_to_user_sync( user_id, 'job_state_transition', data )
-        else:
-            websocket_mgr.emit( 'job_state_transition', data )
-    except Exception as e:
-        print( f"[ERROR] emit_job_state_transition failed: {e}" )
+    # --- CJ Flow Persistence (fire-and-forget) ---
+    # Only persist agentic job types; sync agents are cached in LanceDB
+    agent_type = metadata.get( "agent_type" ) if metadata else None
+    if is_agentic_job_type( agent_type ):
+        try:
+            if from_queue == "pending" and to_queue == "todo":
+                persist_job_created_from_metadata( job_id, user_id, metadata )
+            elif from_queue == "todo" and to_queue == "run":
+                persist_job_started_from_metadata( job_id, metadata )
+            elif to_queue == "done":
+                persist_job_completed_from_metadata( job_id, metadata )
+            elif to_queue == "dead":
+                persist_job_failed_from_metadata( job_id, metadata or {} )
+        except Exception as e:
+            print( f"[WARN] CJ Flow persistence failed for {job_id}: {e}" )
 
 
 def quick_smoke_test():

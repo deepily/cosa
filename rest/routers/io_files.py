@@ -37,7 +37,11 @@ MEDIA_TYPES = {
 }
 
 
-@router.get( "/api/io/file" )
+@router.get(
+    "/api/io/file",
+    summary     = "Serve IO file",
+    description = "Serve files from the io/ directory with extension validation and traversal protection."
+)
 async def get_io_file(
     path: str = Query( ..., description="Relative path within io/ directory" )
 ):
@@ -145,7 +149,11 @@ async def get_io_file(
             )
 
 
-@router.get( "/api/io/health" )
+@router.get(
+    "/api/io/health",
+    summary     = "IO files health check",
+    description = "Report io/ directory status and file counts in research and podcast subdirectories."
+)
 async def io_files_health():
     """
     Health check for io files endpoint.

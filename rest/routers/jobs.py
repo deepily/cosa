@@ -35,7 +35,11 @@ def get_static_dir():
     import fastapi_app.main as main_module
     return main_module.static_dir
 
-@router.get("/api/delete-snapshot/{id}")
+@router.get(
+    "/api/delete-snapshot/{id}",
+    summary     = "Delete job snapshot",
+    description = "Delete a completed job snapshot by ID. Phase 1 stub."
+)
 async def delete_snapshot(id: str):
     """
     Delete a completed job snapshot.
@@ -73,7 +77,11 @@ async def delete_snapshot(id: str):
         "timestamp": datetime.now().isoformat()
     }
 
-@router.get("/get-answer/{id}")
+@router.get(
+    "/get-answer/{id}",
+    summary     = "Get job audio answer",
+    description = "Return audio for a completed job. Phase 1 stub serving placeholder audio."
+)
 async def get_answer(id: str):
     """
     Retrieve audio answer for completed job.

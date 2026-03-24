@@ -8,6 +8,8 @@ Provides two singleton engines:
 Both engines support lazy GPU loading, L2-normalized output, and configurable via lupin-app.ini.
 """
 
+import gc
+
 import torch
 import numpy as np
 from threading import Lock
@@ -120,6 +122,29 @@ class CodeEmbeddingEngine:
                 vram = vram_report( self._device )
                 print( f"  VRAM after load: allocated={vram[ 'allocated_gb' ]:.2f} GB, peak={vram[ 'peak_gb' ]:.2f} GB" )
 
+    def _run_with_cuda_retry( self, fn ):
+        """
+        Run fn() with single CUDA OOM retry.
+
+        Requires:
+            - fn is a callable performing GPU inference
+            - Called within self._inference_lock
+
+        Ensures:
+            - Returns fn() result on success
+            - On CUDA OOM: gc.collect + empty_cache, retries once
+            - Non-CUDA RuntimeErrors re-raised immediately
+        """
+        try:
+            return fn()
+        except ( torch.cuda.OutOfMemoryError, RuntimeError ) as e:
+            if "CUDA" not in str( e ) and "CUBLAS" not in str( e ):
+                raise
+            if self.debug: print( f"[WARN] CUDA OOM in {self.__class__.__name__}, clearing cache and retrying..." )
+            gc.collect()
+            torch.cuda.empty_cache()
+            return fn()
+
     def encode_query( self, queries: List[ str ] ) -> List[ List[ float ] ]:
         """
         Encode query strings with the code query prefix.
@@ -131,6 +156,7 @@ class CodeEmbeddingEngine:
             - Returns list of 768-dim L2-normalized embeddings
             - Prepends query prefix to each query
             - Thread-safe: serializes inference via _inference_lock
+            - CUDA OOM: gc.collect + empty_cache, retries once
 
         Args:
             queries: List of query strings to encode
@@ -146,7 +172,7 @@ class CodeEmbeddingEngine:
             timer = sw.Stopwatch( msg=f"Encoding {len( queries )} code queries..." )
 
         with self._inference_lock:
-            embeddings = self._model.encode( prefixed, normalize_embeddings=True )
+            embeddings = self._run_with_cuda_retry( lambda: self._model.encode( prefixed, normalize_embeddings=True ) )
 
         if self.debug and self.verbose:
             timer.print( "Done!", use_millis=True )
@@ -164,6 +190,7 @@ class CodeEmbeddingEngine:
             - Returns list of 768-dim L2-normalized embeddings
             - No prefix applied (asymmetric: documents have no prefix)
             - Thread-safe: serializes inference via _inference_lock
+            - CUDA OOM: gc.collect + empty_cache, retries once
 
         Args:
             code_snippets: List of code strings to encode
@@ -177,7 +204,7 @@ class CodeEmbeddingEngine:
             timer = sw.Stopwatch( msg=f"Encoding {len( code_snippets )} code snippets..." )
 
         with self._inference_lock:
-            embeddings = self._model.encode( code_snippets, normalize_embeddings=True )
+            embeddings = self._run_with_cuda_retry( lambda: self._model.encode( code_snippets, normalize_embeddings=True ) )
 
         if self.debug and self.verbose:
             timer.print( "Done!", use_millis=True )
@@ -371,6 +398,29 @@ class ProseEmbeddingEngine:
 
         return embeddings.cpu().numpy()
 
+    def _run_with_cuda_retry( self, fn ):
+        """
+        Run fn() with single CUDA OOM retry.
+
+        Requires:
+            - fn is a callable performing GPU inference
+            - Called within self._inference_lock
+
+        Ensures:
+            - Returns fn() result on success
+            - On CUDA OOM: gc.collect + empty_cache, retries once
+            - Non-CUDA RuntimeErrors re-raised immediately
+        """
+        try:
+            return fn()
+        except ( torch.cuda.OutOfMemoryError, RuntimeError ) as e:
+            if "CUDA" not in str( e ) and "CUBLAS" not in str( e ):
+                raise
+            if self.debug: print( f"[WARN] CUDA OOM in {self.__class__.__name__}, clearing cache and retrying..." )
+            gc.collect()
+            torch.cuda.empty_cache()
+            return fn()
+
     def encode_query( self, queries: List[ str ] ) -> List[ List[ float ] ]:
         """
         Encode query strings with the query prefix.
@@ -382,6 +432,7 @@ class ProseEmbeddingEngine:
             - Returns list of matryoshka_dim L2-normalized embeddings
             - Prepends query prefix to each query
             - Thread-safe: serializes inference via _inference_lock
+            - CUDA OOM: gc.collect + empty_cache, retries once
 
         Args:
             queries: List of query strings to encode
@@ -397,7 +448,7 @@ class ProseEmbeddingEngine:
             timer = sw.Stopwatch( msg=f"Encoding {len( queries )} prose queries..." )
 
         with self._inference_lock:
-            result = self._encode_batch( prefixed )
+            result = self._run_with_cuda_retry( lambda: self._encode_batch( prefixed ) )
 
         if self.debug and self.verbose:
             timer.print( "Done!", use_millis=True )
@@ -415,6 +466,7 @@ class ProseEmbeddingEngine:
             - Returns list of matryoshka_dim L2-normalized embeddings
             - Prepends document prefix to each document
             - Thread-safe: serializes inference via _inference_lock
+            - CUDA OOM: gc.collect + empty_cache, retries once
 
         Args:
             documents: List of document strings to encode
@@ -430,7 +482,7 @@ class ProseEmbeddingEngine:
             timer = sw.Stopwatch( msg=f"Encoding {len( documents )} prose documents..." )
 
         with self._inference_lock:
-            result = self._encode_batch( prefixed )
+            result = self._run_with_cuda_retry( lambda: self._encode_batch( prefixed ) )
 
         if self.debug and self.verbose:
             timer.print( "Done!", use_millis=True )

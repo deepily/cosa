@@ -54,7 +54,12 @@ def get_todo_queue():
 
 router = APIRouter(tags=["system"])
 
-@router.get("/", response_class=JSONResponse)
+@router.get(
+    "/",
+    response_class = JSONResponse,
+    summary        = "Root health check",
+    description    = "Basic health check returning service name, status, version, and timestamp."
+)
 async def health_check():
     """
     Basic health check endpoint for service status monitoring.
@@ -81,7 +86,12 @@ async def health_check():
         "version": "0.1.0"
     }
 
-@router.get("/health", response_class=JSONResponse)
+@router.get(
+    "/health",
+    response_class = JSONResponse,
+    summary        = "Lightweight health check",
+    description    = "Minimal health endpoint for high-frequency monitoring. Returns status and timestamp."
+)
 async def health():
     """
     Simplified health endpoint for lightweight monitoring checks.
@@ -105,7 +115,12 @@ async def health():
         "timestamp": datetime.now().isoformat()
     }
 
-@router.get( "/api/server-info", response_class=JSONResponse )
+@router.get(
+    "/api/server-info",
+    response_class = JSONResponse,
+    summary        = "Get server info",
+    description    = "Return current config block ID, masked database URL, and environment name."
+)
 async def get_server_info( config_mgr: ConfigurationManager = Depends( get_config_manager ) ):
     """
     Return current server configuration state for infrastructure monitoring.
@@ -134,7 +149,12 @@ async def get_server_info( config_mgr: ConfigurationManager = Depends( get_confi
     }
 
 
-@router.get( "/api/init", response_class=JSONResponse )
+@router.get(
+    "/api/init",
+    response_class = JSONResponse,
+    summary        = "Hot-reload configuration",
+    description    = "Reload configuration and optionally swap active config block and database connection at runtime."
+)
 async def init( config_block_id: Optional[ str ] = None ):
     """
     Refresh configuration and reload application resources without restart.
@@ -207,7 +227,11 @@ async def init( config_block_id: Optional[ str ] = None ):
             "timestamp" : datetime.now().isoformat()
         }
 
-@router.get("/api/get-session-id")
+@router.get(
+    "/api/get-session-id",
+    summary     = "Generate session ID",
+    description = "Generate and return a unique two-word session ID for WebSocket routing."
+)
 async def get_session_id(
     id_gen: TwoWordIdGenerator = Depends(get_id_generator)
 ):
@@ -245,7 +269,11 @@ async def get_session_id(
         "timestamp": datetime.now().isoformat()
     }
 
-@router.get("/api/auth-test")
+@router.get(
+    "/api/auth-test",
+    summary     = "Test authentication",
+    description = "Verify JWT authentication is functioning. Returns authenticated user details."
+)
 async def auth_test(current_user: dict = Depends(get_current_user)):
     """
     Test endpoint to verify authentication system functionality.
@@ -283,7 +311,11 @@ async def auth_test(current_user: dict = Depends(get_current_user)):
         "timestamp": datetime.now().isoformat()
     }
 
-@router.get("/api/websocket-sessions")
+@router.get(
+    "/api/websocket-sessions",
+    summary     = "List WebSocket sessions",
+    description = "Return info about all active WebSocket sessions including user counts and policy state."
+)
 async def get_websocket_sessions(
     current_user: dict = Depends(get_current_user)
 ):
@@ -338,7 +370,11 @@ async def get_websocket_sessions(
         "timestamp": datetime.now().isoformat()
     }
 
-@router.post("/api/websocket-sessions/cleanup")
+@router.post(
+    "/api/websocket-sessions/cleanup",
+    summary     = "Cleanup stale sessions",
+    description = "Remove WebSocket sessions older than the specified age limit."
+)
 async def cleanup_stale_sessions(
     max_age_hours: int = 24,
     current_user: dict = Depends(get_current_user)
@@ -383,7 +419,11 @@ async def cleanup_stale_sessions(
         "timestamp": datetime.now().isoformat()
     }
 
-@router.get("/api/debug/websocket-state")
+@router.get(
+    "/api/debug/websocket-state",
+    summary     = "Debug WebSocket state",
+    description = "Expose complete internal WebSocket manager state for troubleshooting. Debug endpoint."
+)
 async def get_websocket_state():
     """
     Get complete internal state of WebSocket manager for debugging.
@@ -469,7 +509,11 @@ async def get_websocket_state():
         "timestamp": datetime.now().isoformat()
     }
 
-@router.get("/api/config/client")
+@router.get(
+    "/api/config/client",
+    summary     = "Get client config",
+    description = "Return client-side timing configuration including token refresh, heartbeat, and timezone."
+)
 async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
     """
     Return client-side configuration parameters for authenticated users.
@@ -520,20 +564,20 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
 
     # Fetch from config with fallback defaults
     refresh_check_interval_mins = config_mgr.get(
-        "jwt_token_refresh_check_interval_mins",
-        default=10
+        "jwt token refresh check interval mins",
+        default=10, return_type="int"
     )
     expiry_threshold_mins = config_mgr.get(
-        "jwt_token_refresh_expiry_threshold_mins",
-        default=5
+        "jwt token refresh expiry threshold mins",
+        default=5, return_type="int"
     )
     dedup_window_secs = config_mgr.get(
-        "jwt_token_refresh_dedup_window_secs",
-        default=60
+        "jwt token refresh dedup window secs",
+        default=60, return_type="int"
     )
     heartbeat_interval_secs = config_mgr.get(
-        "websocket_heartbeat_interval_seconds",
-        default=30
+        "websocket heartbeat interval seconds",
+        default=30, return_type="int"
     )
     app_timezone = config_mgr.get(
         "app timezone",
@@ -558,7 +602,11 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
     }
 
 
-@router.get( "/api/config/similarity-confirmation" )
+@router.get(
+    "/api/config/similarity-confirmation",
+    summary     = "Get similarity confirmation toggle",
+    description = "Return the current runtime state of the similarity confirmation feature."
+)
 async def get_similarity_confirmation(
     current_user = Depends( get_current_user ),
     todo_queue   = Depends( get_todo_queue )
@@ -582,7 +630,11 @@ async def get_similarity_confirmation(
     return { "enabled": enabled }
 
 
-@router.post( "/api/config/similarity-confirmation" )
+@router.post(
+    "/api/config/similarity-confirmation",
+    summary     = "Set similarity confirmation toggle",
+    description = "Toggle the similarity confirmation feature at runtime. Returns new and previous values."
+)
 async def set_similarity_confirmation(
     body: SimilarityConfirmationRequest,
     current_user = Depends( get_current_user ),

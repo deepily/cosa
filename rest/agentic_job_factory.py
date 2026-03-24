@@ -180,6 +180,21 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             verbose         = verbose
         )
 
+    elif command == "agent router go to presentation generator":
+        from cosa.agents.presentation_generator.job import PresentationGeneratorJob
+        return PresentationGeneratorJob(
+            source_path             = args_dict.get( "source", "" ),
+            user_id                 = user_id,
+            user_email              = user_email,
+            session_id              = session_id,
+            target_duration_minutes = _parse_optional_int( args_dict.get( "target_duration_minutes" ) ),
+            audience                = args_dict.get( "audience" ),
+            theme                   = args_dict.get( "theme" ),
+            dry_run                 = _parse_boolean( args_dict.get( "dry_run" ) ),
+            debug                   = debug,
+            verbose                 = verbose
+        )
+
     elif command == "agent router go to swe team":
         from cosa.agents.swe_team.job import SweTeamJob
         return SweTeamJob(

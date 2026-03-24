@@ -2,7 +2,17 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Dict, Optional
 import os
+from jwt.exceptions import ExpiredSignatureError
 from .user_id_generator import get_user_info, email_to_system_id
+
+
+class TokenExpiredException( HTTPException ):
+    """Raised when a JWT access token has expired. Subclass of HTTPException for compatibility."""
+    def __init__( self ):
+        super().__init__(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token expired"
+        )
 
 # For now, we'll mock the Firebase Admin SDK
 # In production, you would use: import firebase_admin
@@ -195,10 +205,12 @@ async def verify_jwt_token(token: str) -> Dict:
 
     except HTTPException:
         raise
+    except ExpiredSignatureError:
+        raise TokenExpiredException()
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Token validation failed: {str(e)}"
+            detail=f"Token validation failed: {str( e )}"
         )
 
 
