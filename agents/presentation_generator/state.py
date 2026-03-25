@@ -83,6 +83,35 @@ class NarrativeSection( BaseModel ):
 
 
 # =============================================================================
+# Slide Outline (Phase 3 → Phase 4 intermediate)
+# =============================================================================
+
+class SlideOutline( BaseModel ):
+    """
+    Lightweight slide outline entry from outline generation.
+
+    Produced during Phase 3 (Outline), consumed by Gate 2 review
+    and Phase 4 (Elaborate). Carries just enough structure for
+    the "story spine" review without full slide content.
+
+    Requires:
+        - number is a positive integer
+        - arc_position is "opening", "body", or "closing"
+        - type is a valid slide type
+        - title is a non-empty string
+
+    Ensures:
+        - Maps cleanly to SlideModel fields during elaboration
+    """
+    number       : int
+    arc_position : str
+    type         : str
+    title        : str
+    visual_type  : str              = "text_only"
+    source_hint  : Optional[ str ]  = None
+
+
+# =============================================================================
 # Slide Models
 # =============================================================================
 
@@ -154,6 +183,55 @@ class PresentationModel( BaseModel ):
     theme            : str                        = "default"
     theme_overrides  : dict                       = Field( default_factory=dict )
 
+    def to_yaml( self ) -> str:
+        """
+        Serialize presentation to YAML string.
+
+        Ensures:
+            - Returns valid YAML with block style formatting
+            - Preserves field order and Unicode content
+            - Nested models (slides, presenter_notes) are fully expanded
+
+        Returns:
+            str: YAML representation of the presentation
+        """
+        import yaml
+        data = self.model_dump()
+        return yaml.dump(
+            data,
+            default_flow_style = False,
+            allow_unicode      = True,
+            sort_keys          = False,
+            width              = 120,
+        )
+
+    @classmethod
+    def from_yaml( cls, yaml_content: str ) -> "PresentationModel":
+        """
+        Deserialize presentation from YAML string.
+
+        Requires:
+            - yaml_content is a valid YAML string
+
+        Ensures:
+            - Returns a fully constructed PresentationModel
+            - Nested slides and presenter_notes are reconstructed
+
+        Args:
+            yaml_content: YAML string to parse
+
+        Returns:
+            PresentationModel instance
+
+        Raises:
+            ValueError: If YAML is invalid or missing required fields
+        """
+        import yaml
+        data = yaml.safe_load( yaml_content )
+        if not isinstance( data, dict ):
+            raise ValueError( f"Expected YAML dict, got {type( data )}" )
+        return cls( **data )
+
 
 # =============================================================================
 # Orchestrator Internal State Factory
@@ -176,15 +254,20 @@ def create_initial_state( source_path: str, user_id: str ) -> dict:
     return {
         "source_path"       : source_path,
         "source_content"    : None,
+        "source_format"     : None,
+        "raw_sections"      : None,
+        "word_count"        : None,
         "narrative_sections": None,
         "slide_outline"     : None,
         "elaborated_slides" : None,
         "presentation_model": None,
         "yaml_path"         : None,
         "marp_path"         : None,
-        "revision_count"    : 0,
-        "human_feedback"    : None,
-        "user_id"           : user_id,
+        "revision_count"          : 0,
+        "outline_revision_count"  : 0,
+        "elaborate_revision_count": 0,
+        "human_feedback"          : None,
+        "user_id"                 : user_id,
     }
 
 
@@ -226,7 +309,35 @@ def quick_smoke_test():
         assert section.proposed_slides == 2
         print( "  PASS" )
 
-        # Test 4: PresenterNotes
+        # Test 4: SlideOutline
+        print( "Testing SlideOutline model..." )
+        outline = SlideOutline(
+            number       = 3,
+            arc_position = "body",
+            type         = "key_point",
+            title        = "Three-Layer Cache Eliminates Cold Starts",
+            visual_type  = "diagram",
+            source_hint  = "Section: Caching Architecture"
+        )
+        assert outline.number == 3
+        assert outline.arc_position == "body"
+        assert outline.visual_type == "diagram"
+        assert outline.source_hint is not None
+        print( "  PASS" )
+
+        # Test 4b: SlideOutline defaults
+        print( "Testing SlideOutline defaults..." )
+        outline_minimal = SlideOutline(
+            number       = 1,
+            arc_position = "opening",
+            type         = "title",
+            title        = "My Talk"
+        )
+        assert outline_minimal.visual_type == "text_only"
+        assert outline_minimal.source_hint is None
+        print( "  PASS" )
+
+        # Test 5: PresenterNotes
         print( "Testing PresenterNotes model..." )
         notes = PresenterNotes(
             transition     = "So we've seen the problem...",
@@ -296,7 +407,39 @@ def quick_smoke_test():
         assert state[ "source_path" ] == "/path/to/doc.md"
         assert state[ "user_id" ] == "user123"
         assert state[ "revision_count" ] == 0
+        assert state[ "outline_revision_count" ] == 0
+        assert state[ "elaborate_revision_count" ] == 0
         assert state[ "yaml_path" ] is None
+        print( "  PASS" )
+
+        # Test 12: PresentationModel.to_yaml()
+        print( "Testing PresentationModel.to_yaml()..." )
+        pres_for_yaml = PresentationModel(
+            title            = "Test Talk",
+            duration_minutes = 10,
+            total_slides     = 1,
+            slides           = [ SlideModel(
+                number       = 1,
+                arc_position = "opening",
+                type         = "title",
+                title        = "Hello World",
+                presenter_notes = PresenterNotes( talking_points=[ "Welcome" ], timing_seconds=30 )
+            ) ]
+        )
+        yaml_str = pres_for_yaml.to_yaml()
+        assert "Test Talk" in yaml_str
+        assert "Hello World" in yaml_str
+        assert "talking_points" in yaml_str
+        print( "  PASS" )
+
+        # Test 13: PresentationModel.from_yaml() round-trip
+        print( "Testing PresentationModel.from_yaml() round-trip..." )
+        restored = PresentationModel.from_yaml( yaml_str )
+        assert restored.title == "Test Talk"
+        assert restored.total_slides == 1
+        assert len( restored.slides ) == 1
+        assert restored.slides[ 0 ].title == "Hello World"
+        assert restored.slides[ 0 ].presenter_notes.timing_seconds == 30
         print( "  PASS" )
 
         print( "\nAll Presentation Generator state model smoke tests passed" )

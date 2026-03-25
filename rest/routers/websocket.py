@@ -310,8 +310,9 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
     # Get dependencies from main module
     import fastapi_app.main as main_module
     websocket_manager = main_module.websocket_manager
-    app_debug = main_module.app_debug
-    
+    app_debug   = main_module.app_debug
+    app_verbose = main_module.app_verbose
+
     # URL decode session ID and validate format
     decoded_session_id = unquote(session_id)
     if not is_valid_session_id(decoded_session_id):
@@ -343,13 +344,19 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
             })
             await websocket.close()
             return
+        except WebSocketDisconnect as wd:
+            print( f"[WS-QUEUE-AUTH] Client disconnected during auth for session [{session_id}]: code={wd.code}" )
+            return
         except Exception as parse_error:
             print(f"[WS-QUEUE-AUTH] Parse error for session [{session_id}]: {parse_error}")
-            await websocket.send_json({
-                "type": "auth_error",
-                "message": f"Failed to parse authentication message: {str(parse_error)}"
-            })
-            await websocket.close()
+            try:
+                await websocket.send_json({
+                    "type": "auth_error",
+                    "message": f"Failed to parse authentication message: {str(parse_error)}"
+                })
+                await websocket.close()
+            except Exception:
+                pass  # Socket already closed
             return
 
         # SECURITY: Validate message structure first
@@ -466,7 +473,10 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
         print( f"[WS-QUEUE] ❌ Auth error for session [{session_id}]: {type( e ).__name__}: {e}" )
         import traceback
         traceback.print_exc()
-        await websocket.close()
+        try:
+            await websocket.close()
+        except Exception:
+            pass  # Socket already closed
         return
     
     try:

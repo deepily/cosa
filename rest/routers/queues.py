@@ -848,7 +848,9 @@ async def get_job_history(
     status: Optional[str]   = Query( None, description="Filter by status: pending, running, completed, failed, interrupted" ),
     job_type: Optional[str] = Query( None, description="Filter by job type: deep_research, podcast, claude_code, swe_team, research_to_podcast" ),
     limit: int              = Query( 20, ge=1, le=100, description="Results per page (max 100)" ),
-    offset: int             = Query( 0, ge=0, description="Pagination offset" )
+    offset: int             = Query( 0, ge=0, description="Pagination offset" ),
+    days: Optional[int]     = Query( None, ge=1, le=365, description="Time window in days (e.g. 7, 14, 30). None = all time." ),
+    exclude_ids: Optional[str] = Query( None, description="Comma-separated job IDs to exclude (for live queue deduplication)" )
 ):
     """
     Query paginated job history with optional filters.
@@ -860,6 +862,8 @@ async def get_job_history(
         - Admin users see all jobs (user_id=None filter)
         - Regular users see only their own jobs
         - Results are paginated and sorted by created_at DESC
+        - exclude_ids supports the overlay model: frontend passes live Done/Dead job IDs
+          so they are excluded from history results (no duplicates)
         - Returns { jobs: [...], total: N, filtered_by: str, limit: N, offset: N }
     """
     from cosa.rest.job_persistence import query_job_history
@@ -867,12 +871,17 @@ async def get_job_history(
     # Admin sees all, regular user sees own only
     user_id = None if is_admin( current_user ) else current_user[ "uid" ]
 
+    # Parse comma-separated exclude_ids into a list
+    exclude_list = [ eid.strip() for eid in exclude_ids.split( "," ) if eid.strip() ] if exclude_ids else None
+
     result = query_job_history(
-        user_id  = user_id,
-        status   = status,
-        job_type = job_type,
-        limit    = limit,
-        offset   = offset
+        user_id     = user_id,
+        status      = status,
+        job_type    = job_type,
+        limit       = limit,
+        offset      = offset,
+        days        = days,
+        exclude_ids = exclude_list
     )
 
     return {
@@ -917,3 +926,117 @@ async def get_job_history_detail(
         raise HTTPException( status_code=403, detail="Not authorized to view this job" )
 
     return job
+
+
+@router.delete(
+    "/job-history/{job_id}",
+    summary     = "Delete job from history",
+    description = "Hard delete a job history record. Admin or job owner only."
+)
+async def delete_job_history_endpoint(
+    job_id: str,
+    current_user: dict = Depends( get_current_user )
+):
+    """
+    Delete a single job from PostgreSQL persistence.
+
+    Requires:
+        - Authenticated user (Bearer token)
+        - job_id is a valid id_hash string
+        - User must be admin or the job's owner
+
+    Ensures:
+        - Returns { status: "deleted", job_id: str } on success
+        - 404 if job not found
+        - 403 if regular user deleting another user's job
+    """
+    from cosa.rest.job_persistence import get_job_by_id_hash, delete_job_history
+
+    job = get_job_by_id_hash( job_id )
+
+    if job is None:
+        raise HTTPException( status_code=404, detail=f"Job not found: {job_id}" )
+
+    # Authorization: regular users can only delete their own jobs
+    if not is_admin( current_user ) and job.get( "user_id" ) != current_user[ "uid" ]:
+        raise HTTPException( status_code=403, detail="Not authorized to delete this job" )
+
+    deleted = delete_job_history( job_id )
+
+    if not deleted:
+        raise HTTPException( status_code=500, detail="Failed to delete job from history" )
+
+    return { "status": "deleted", "job_id": job_id }
+
+
+@router.post(
+    "/job-history/{job_id}/retry",
+    summary     = "Retry a failed or interrupted job",
+    description = "Re-submit a failed or interrupted job to the todo queue as a new job."
+)
+async def retry_job_history(
+    job_id: str,
+    request: Request,
+    current_user: dict = Depends( get_current_user ),
+    todo_queue         = Depends( get_todo_queue )
+):
+    """
+    Re-submit a failed/interrupted job to the CJ Flow todo queue.
+
+    Requires:
+        - Authenticated user (Bearer token)
+        - job_id is a valid id_hash of a failed or interrupted job
+        - Request body contains JSON with "websocket_id" field
+        - User must be admin or the job's owner
+
+    Ensures:
+        - Creates a new todo entry with the original question_text
+        - Returns { status: "retried", original_job_id: str }
+        - 404 if job not found
+        - 403 if unauthorized
+        - 400 if job status is not failed or interrupted
+        - 400 if websocket_id missing from request body
+    """
+    import asyncio
+    from cosa.rest.job_persistence import get_job_by_id_hash
+
+    job = get_job_by_id_hash( job_id )
+
+    if job is None:
+        raise HTTPException( status_code=404, detail=f"Job not found: {job_id}" )
+
+    # Authorization: regular users can only retry their own jobs
+    if not is_admin( current_user ) and job.get( "user_id" ) != current_user[ "uid" ]:
+        raise HTTPException( status_code=403, detail="Not authorized to retry this job" )
+
+    # Only allow retry of terminal failure states
+    if job.get( "status" ) not in ( "failed", "interrupted" ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot retry job with status '{job.get( 'status' )}'. Only failed or interrupted jobs can be retried."
+        )
+
+    # Parse request body for websocket_id
+    try:
+        request_data = await request.json()
+    except Exception as e:
+        raise HTTPException( status_code=400, detail=f"Invalid JSON in request body: {str( e )}" )
+
+    websocket_id = request_data.get( "websocket_id" )
+    if not websocket_id or not isinstance( websocket_id, str ):
+        raise HTTPException( status_code=400, detail="Missing required field: websocket_id" )
+
+    question     = job.get( "question_text", "" )
+    user_id      = current_user[ "uid" ]
+    user_email   = current_user[ "email" ]
+
+    print( f"[API] /api/job-history/{job_id}/retry - re-submitting: '{question[:80]}', user: {user_id}" )
+
+    # Push to todo queue using the same pattern as POST /api/push
+    result = await asyncio.to_thread( todo_queue.push_job, question, websocket_id, user_id, user_email )
+
+    return {
+        "status"          : "retried",
+        "original_job_id" : job_id,
+        "result"          : result
+    }

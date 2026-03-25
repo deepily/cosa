@@ -932,11 +932,12 @@ class TodoFifoQueue( FifoQueue ):
 
     # Product name mapping for agentic command disambiguation
     PRODUCT_NAMES = {
-        "agent router go to deep research"      : "Deep Dive (investigate a topic)",
-        "agent router go to podcast generator"   : "PodMaker (create a podcast from a topic)",
-        "agent router go to research to podcast" : "Doc-to-Pod (convert existing research to podcast)",
-        "agent router go to claude code"         : "Claude Code (run a coding task)",
-        "agent router go to swe team"            : "SWE Team (multi-agent engineering team)",
+        "agent router go to deep research"            : "Deep Dive (investigate a topic)",
+        "agent router go to podcast generator"         : "PodMaker (create a podcast from a topic)",
+        "agent router go to research to podcast"       : "Doc-to-Pod (convert existing research to podcast)",
+        "agent router go to claude code"               : "Claude Code (run a coding task)",
+        "agent router go to presentation generator"    : "SlideCraft (create a presentation from a document)",
+        "agent router go to swe team"                  : "SWE Team (multi-agent engineering team)",
     }
 
     def _confirm_agentic_routing( self, command, args, user_id, user_email, original_question ):

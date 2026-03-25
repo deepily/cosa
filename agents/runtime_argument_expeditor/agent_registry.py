@@ -124,6 +124,43 @@ AGENTIC_AGENTS = {
             "task_type"        : "BOUNDED",
         },
     },
+    "agent router go to presentation generator" : {
+        "job_prefix"         : "pr",
+        "cli_module"         : "cosa.agents.presentation_generator",
+        "job_class_path"     : "cosa.agents.presentation_generator.job.PresentationGeneratorJob",
+        "display_name"       : "Presentation Generator",
+        "required_user_args" : [ "source" ],
+        "system_provided"    : [ "user_id", "user_email", "session_id" ],
+        "arg_mapping"        : {
+            "source"                  : "source",
+            "source_path"             : "source",
+            "document"                : "source",
+            "file"                    : "source",
+            "doc"                     : "source",
+            "target_duration_minutes" : "target_duration_minutes",
+            "duration"                : "target_duration_minutes",
+            "minutes"                 : "target_duration_minutes",
+            "audience"                : "audience",
+            "audience_context"        : "audience_context",
+            "theme"                   : "theme",
+        },
+        "fallback_questions" : {
+            "source"                  : "Which document should I convert to a presentation? Describe it or say the filename.",
+            "target_duration_minutes" : "How long should the presentation be in minutes? Say a number, or 'default' for 15 minutes.",
+            "audience"                : "Who is the target audience? Options: beginner, general, expert, or academic.",
+            "audience_context"        : "Any additional context about the audience? Say 'none' to skip.",
+            "theme"                   : "Which presentation theme? Say 'default' or a theme name.",
+        },
+        "fallback_defaults" : {
+            "target_duration_minutes" : "default",
+            "audience"                : "general",
+            "audience_context"        : "none",
+            "theme"                   : "default",
+        },
+        "special_handlers" : {
+            "source" : "fuzzy_file_match",
+        },
+    },
     "agent router go to swe team" : {
         "job_prefix"         : "swe",
         "cli_module"         : "cosa.agents.swe_team",
@@ -274,7 +311,7 @@ def quick_smoke_test():
     # Test 1: Registry structure
     print( "\n1. Testing registry structure..." )
     try:
-        assert len( AGENTIC_AGENTS ) == 5, f"Expected 5 agents, got {len( AGENTIC_AGENTS )}"
+        assert len( AGENTIC_AGENTS ) == 6, f"Expected 6 agents, got {len( AGENTIC_AGENTS )}"
         for key, entry in AGENTIC_AGENTS.items():
             assert "cli_module" in entry, f"Missing cli_module in {key}"
             assert "required_user_args" in entry, f"Missing required_user_args in {key}"

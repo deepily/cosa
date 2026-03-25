@@ -1,5 +1,44 @@
 # COSA Development History
 
+> **✅ SESSIONS 369-371c COMMITTED**: Presentation Generator Phases 3-5, CJ Flow Persistence Phase 6, WebSocket bug fixes (2026.03.24)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 370 — Presentation Generator Phase 3 (Expeditor + Ingest + Narrative Analysis)**:
+> - `agents/presentation_generator/__main__.py`: Full CLI rewrite with `--user-visible-args` expeditor protocol, dry-run mode
+> - `agents/presentation_generator/api_client.py` (NEW): `AsyncAnthropic` client with exponential backoff retry, per-request cost tracking (Opus/Sonnet pricing), 3 call methods (analysis, outline, elaboration)
+> - `agents/presentation_generator/prompts/narrative.py` (NEW): Narrative arc analysis system prompt, prompt builder with slide budget, JSON response parser with fallback
+> - `agents/presentation_generator/orchestrator.py`: `_ingest_async()` (markdown section parser, plain text paragraph parser, format auto-detection), `_analyze_async()` (Claude call → parse → NarrativeSection), Gate 1 voice review
+> - `agents/presentation_generator/state.py`: `NarrativeSection`, `NarrativeAnalysis` Pydantic models
+> - `agents/runtime_argument_expeditor/agent_registry.py`: Registry entry for presentation generator (6 agents total)
+> - `agents/runtime_argument_expeditor/expeditor.py`: Agent-aware `fuzzy_file_match` lookup
+> - `agents/notification_proxy/config.py`: Presentation generator proxy profile
+>
+> **Session 371 — CJ Flow Persistence Phase 6 (Job History UI)**:
+> - `rest/job_persistence.py`: Extended `query_job_history()` with `days` and `exclude_ids` filters, added `delete_job_history()`
+> - `rest/routers/queues.py`: `DELETE /api/job-history/{job_id}`, `POST /api/job-history/{job_id}/retry`, updated `GET` params
+>
+> **Session 371b — Bug Fix: Action-Required Card Stuck + WS Send-After-Close Crash**:
+> - `rest/routers/websocket.py`: Explicit `except WebSocketDisconnect` before generic handler (Fix 4), wrapped outer handler's `close()` in try/except for safe close
+>
+> **Session 371c — Presentation Generator Phases 4-5 (Outline, Elaborate, Serialize)**:
+> - `agents/presentation_generator/prompts/outline.py` (NEW): Outline generation prompt
+> - `agents/presentation_generator/prompts/elaboration.py` (NEW): Elaboration prompt for slide content
+> - `agents/presentation_generator/prompts/__init__.py`: Module exports for new prompts
+> - `agents/presentation_generator/orchestrator.py`: `_outline_async()`, `_elaborate_async()` with chunked fallback, `_serialize_async()` with thread-pool file I/O, Gate 2 + Gate 3 voice review, cost summary
+> - `agents/presentation_generator/state.py`: `SlideOutline` model, `to_yaml()`/`from_yaml()` on `PresentationModel`
+> - `agents/presentation_generator/job.py`: `audience_context` field
+> - `rest/agentic_job_factory.py`: Updated factory for audience_context
+> - `rest/todo_fifo_queue.py`: Presentation generator routing
+>
+> **Files Modified (13) + New (4)**:
+> - 13 modified files across agents, rest, and routers
+> - 4 new files in `agents/presentation_generator/`
+> - Total: +1,710 insertions, -117 deletions
+
+---
+
 > **✅ SESSIONS 365-368 COMMITTED**: Admin filter, Presentation Generator, CJ Flow persistence wiring, bug fixes (2026.03.23)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >

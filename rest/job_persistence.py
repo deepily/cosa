@@ -17,12 +17,13 @@ Usage:
         mark_interrupted_jobs,
         query_job_history,
         get_job_by_id_hash,
+        delete_job_history,
         is_agentic_job_type
     )
 
 Created: 2026-03-14
 """
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from sqlalchemy import update, select, func, and_
@@ -366,17 +367,19 @@ def get_active_job_ids_by_user():
 # ---------------------------------------------------------------------------
 
 def query_job_history( user_id=None, status=None, job_type=None,
-                       limit=20, offset=0 ):
+                       limit=20, offset=0, days=None, exclude_ids=None ):
     """
     Paginated filtered query of job history.
 
     Requires:
         - limit is a positive integer (max 100)
         - offset is a non-negative integer
+        - days is None or a positive integer (time window in days)
+        - exclude_ids is None or a list of id_hash strings to exclude
 
     Ensures:
         - Returns dict with 'jobs' list and 'total' count
-        - Filters applied for user_id, status, job_type when provided
+        - Filters applied for user_id, status, job_type, days, exclude_ids when provided
         - Results ordered by created_at DESC
         - Returns empty result on failure
     """
@@ -395,6 +398,11 @@ def query_job_history( user_id=None, status=None, job_type=None,
                 filters.append( JobHistory.status == status )
             if job_type:
                 filters.append( JobHistory.job_type == job_type )
+            if days is not None:
+                cutoff = datetime.now( timezone.utc ) - timedelta( days=days )
+                filters.append( JobHistory.created_at >= cutoff )
+            if exclude_ids:
+                filters.append( JobHistory.id_hash.not_in( exclude_ids ) )
 
             if filters:
                 query   = query.where( and_( *filters ) )
@@ -480,6 +488,30 @@ def get_job_by_id_hash( id_hash ):
     except Exception as e:
         print( f"[WARN] get_job_by_id_hash failed for {id_hash}: {e}" )
         return None
+
+
+def delete_job_history( id_hash ):
+    """
+    Hard delete a job history row by id_hash.
+
+    Requires:
+        - id_hash is a non-empty string
+
+    Ensures:
+        - Returns True if row was deleted, False if not found
+        - Never raises — returns False on failure
+    """
+    try:
+        with get_db() as session:
+            result = session.execute(
+                JobHistory.__table__.delete().where( JobHistory.id_hash == id_hash )
+            )
+            session.commit()
+            return result.rowcount > 0
+
+    except Exception as e:
+        print( f"[WARN] delete_job_history failed for {id_hash}: {e}" )
+        return False
 
 
 # ---------------------------------------------------------------------------

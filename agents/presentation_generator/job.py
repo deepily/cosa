@@ -55,6 +55,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
         session_id: str,
         target_duration_minutes: Optional[ int ] = None,
         audience: Optional[ str ] = None,
+        audience_context: Optional[ str ] = None,
         theme: Optional[ str ] = None,
         dry_run: bool = False,
         debug: bool = False,
@@ -80,6 +81,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
             session_id: WebSocket session for notifications
             target_duration_minutes: Override target duration (None = use INI default)
             audience: Override audience level (None = use INI default)
+            audience_context: Custom audience description (None = use INI default)
             theme: Override theme name (None = use INI default)
             dry_run: Simulate execution without API calls
             debug: Enable debug output
@@ -97,6 +99,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
         self.source_path             = source_path
         self.target_duration_minutes = target_duration_minutes
         self.audience                = audience
+        self.audience_context        = audience_context
         self.theme                   = theme
         self.dry_run                 = dry_run
 
@@ -199,10 +202,6 @@ class PresentationGeneratorJob( AgenticJobBase ):
         voice_io.set_job_id( self.id_hash )
 
         try:
-            # Handle dry-run mode with breadcrumb notifications
-            if self.dry_run:
-                return await self._execute_dry_run( voice_io, cosa_interface )
-
             # Validate source document exists
             import cosa.utils.util as cu
             if not self.source_path.startswith( "/" ):
@@ -239,6 +238,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
                 source_path = full_path,
                 user_id     = self.user_email,
                 config      = config,
+                dry_run     = self.dry_run,
                 debug       = self.debug,
                 verbose     = self.verbose,
             )
@@ -261,10 +261,11 @@ class PresentationGeneratorJob( AgenticJobBase ):
             self.artifacts[ "marp_path" ]        = self.marp_path
             self.artifacts[ "presentation_id" ]  = agent.presentation_id
 
-            # Build cost summary
+            # Build cost summary from API client
+            api_cost = agent.api_client.estimated_cost_usd if agent._api_client else 0.0
             self.cost_summary = {
-                "content_cost_usd" : 0.0,  # TODO: Calculate from API client
-                "total_cost_usd"   : 0.0,
+                "content_cost_usd" : api_cost,
+                "total_cost_usd"   : api_cost,
             }
             self.artifacts[ "cost_summary" ] = self.cost_summary
 

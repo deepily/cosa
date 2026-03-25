@@ -264,7 +264,7 @@ class RuntimeArgumentExpeditor:
             for arg_name in special:
                 handler = special_handlers[ arg_name ]
                 if handler == "fuzzy_file_match":
-                    value = self._handle_fuzzy_file_match( user_email )
+                    value = self._handle_fuzzy_file_match( user_email, agent_entry.get( "display_name" ) )
                 else:
                     value = self._ask_for_arg( arg_name, f"Please provide the '{arg_name}' argument.", user_email, abstract=request_abstract )
                 if value is None:
@@ -826,12 +826,13 @@ class RuntimeArgumentExpeditor:
 
         return answers
 
-    def _handle_fuzzy_file_match( self, user_email ):
+    def _handle_fuzzy_file_match( self, user_email, agent_display_name=None ):
         """
         Use fuzzy file matching to find a document by user description.
 
         Searches the user's deep research directory AND additional directories
-        from the 'podcast generator source search paths' config key.
+        from the agent-specific source search paths config key, falling back
+        to 'podcast generator source search paths'.
 
         Requires:
             - user_email is a valid email
@@ -863,8 +864,14 @@ class RuntimeArgumentExpeditor:
                     rel_path = f"io/deep-research/{user_email}/{f}"
                     docs_map[ rel_path ] = f"{research_dir}/{f}"
 
-        # Source 2: Additional search paths from config
-        search_paths_raw = config_mgr.get( "podcast generator source search paths", default="/src" )
+        # Source 2: Additional search paths from config (agent-specific key, fallback to podcast)
+        search_paths_raw = None
+        if agent_display_name:
+            agent_key = f"{agent_display_name.lower()} source search paths"
+            search_paths_raw = config_mgr.get( agent_key, default=None )
+            if self.debug and search_paths_raw: print( f"[Expeditor] Using agent-specific search paths: {agent_key}" )
+        if search_paths_raw is None:
+            search_paths_raw = config_mgr.get( "podcast generator source search paths", default="/src" )
         search_dirs = [ d.strip() for d in search_paths_raw.split( "," ) if d.strip() ]
 
         for search_dir in search_dirs:

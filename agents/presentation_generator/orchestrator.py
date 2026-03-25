@@ -21,8 +21,10 @@ Real implementations will be added in Phases 3-8.
 
 import asyncio
 import logging
+import os
+import re
 import uuid
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from datetime import datetime
 
 from .config import PresentationConfig
@@ -30,6 +32,7 @@ from .state import (
     OrchestratorState,
     PresentationModel,
     NarrativeSection,
+    SlideOutline,
     SlideModel,
     create_initial_state,
 )
@@ -64,6 +67,7 @@ class PresentationOrchestratorAgent:
         source_path : str,
         user_id     : str,
         config      : Optional[ PresentationConfig ] = None,
+        dry_run     : bool = False,
         debug       : bool = False,
         verbose     : bool = False
     ):
@@ -74,12 +78,14 @@ class PresentationOrchestratorAgent:
             source_path: Path to the source document (markdown/text)
             user_id: System user ID for event routing
             config: Presentation configuration (uses defaults if None)
+            dry_run: Run without API calls — ingest real, analyze/outline/elaborate mock
             debug: Enable debug output
             verbose: Enable verbose output
         """
         self.source_path = source_path
         self.user_id     = user_id
         self.config      = config or PresentationConfig()
+        self.dry_run     = dry_run
         self.debug       = debug
         self.verbose     = verbose
 
@@ -101,9 +107,28 @@ class PresentationOrchestratorAgent:
             "tokens_used" : 0,
         }
 
+        # Lazy-initialized clients
+        self._api_client = None
+
         if self.debug:
             print( f"[PresentationOrchestratorAgent] Initialized for: {source_path}" )
             print( f"[PresentationOrchestratorAgent] Presentation ID: {self.presentation_id}" )
+
+    # =========================================================================
+    # Lazy Properties
+    # =========================================================================
+
+    @property
+    def api_client( self ):
+        """Lazy-initialized API client for Claude calls."""
+        if self._api_client is None:
+            from .api_client import PresentationAPIClient
+            self._api_client = PresentationAPIClient(
+                config  = self.config,
+                debug   = self.debug,
+                verbose = self.verbose
+            )
+        return self._api_client
 
     # =========================================================================
     # External Control
@@ -261,76 +286,711 @@ class PresentationOrchestratorAgent:
     # Phase Stubs (to be implemented in Phases 3-8)
     # =========================================================================
 
-    async def _ingest_async( self ) -> str:
+    async def _ingest_async( self ) -> Optional[ str ]:
         """
         Phase 1: Ingest source document.
 
-        TODO (Phase 3): Read file, detect format, extract raw sections.
+        Reads the source file, detects its format (markdown/plaintext),
+        extracts raw sections, and stores metadata in presentation state.
+
+        Requires:
+            - self.source_path is set to a file path
+
+        Ensures:
+            - Returns raw file content string on success
+            - Returns None on file-not-found or read error
+            - Populates self._presentation_state with source_content,
+              source_format, raw_sections, word_count
 
         Returns:
-            str: Source document content
+            str or None: Source document content, or None on error
         """
-        if self.debug: print( "[Orchestrator] Phase 1: Ingest (stub)" )
-        await asyncio.sleep( 0.1 )  # Simulate work
-        return f"[stub] Content from: {self.source_path}"
+        import cosa.utils.util as cu
+
+        if self.debug: print( f"[Orchestrator] Phase 1: Ingest — {self.source_path}" )
+
+        # Resolve path (relative → absolute using project root)
+        path = self.source_path
+        if not path.startswith( "/" ):
+            path = cu.get_project_root() + "/" + path
+
+        # Read file in thread pool (non-blocking)
+        try:
+            content = await asyncio.to_thread( self._read_file, path )
+        except FileNotFoundError:
+            logger.error( f"Source document not found: {path}" )
+            await voice_io.notify( f"Error: Source document not found — {os.path.basename( path )}", priority="urgent" )
+            return None
+        except Exception as e:
+            logger.error( f"Failed to read source document: {e}" )
+            await voice_io.notify( f"Error reading source document: {str( e )[ :80 ]}", priority="urgent" )
+            return None
+
+        if not content or not content.strip():
+            logger.error( f"Source document is empty: {path}" )
+            await voice_io.notify( "Error: Source document is empty", priority="urgent" )
+            return None
+
+        # Detect format
+        source_format = self._detect_format( content )
+
+        # Extract raw sections
+        if source_format == "markdown":
+            raw_sections = self._parse_markdown_sections( content )
+        else:
+            raw_sections = self._parse_plaintext_sections( content )
+
+        # Calculate word count
+        word_count = len( content.split() )
+
+        # Store in presentation state
+        self._presentation_state[ "source_content" ] = content
+        self._presentation_state[ "source_format" ]  = source_format
+        self._presentation_state[ "raw_sections" ]   = raw_sections
+        self._presentation_state[ "word_count" ]     = word_count
+
+        if self.debug:
+            print( f"[Orchestrator] Ingested: {word_count} words, {len( raw_sections )} sections, format={source_format}" )
+
+        await voice_io.notify(
+            f"Document ingested: {word_count} words, {len( raw_sections )} sections",
+            priority="low"
+        )
+
+        return content
+
+    @staticmethod
+    def _read_file( path: str ) -> str:
+        """
+        Read a file and return its contents.
+
+        Requires:
+            - path is an absolute file path
+
+        Ensures:
+            - Returns file contents as string
+
+        Raises:
+            - FileNotFoundError if path does not exist
+        """
+        with open( path, "r", encoding="utf-8" ) as f:
+            return f.read()
+
+    @staticmethod
+    def _detect_format( content: str ) -> str:
+        """
+        Detect whether content is markdown or plain text.
+
+        Checks for markdown indicators: headings (#), code fences,
+        bullet lists (- or *), links, bold/italic markers.
+
+        Returns:
+            str: "markdown" or "plaintext"
+        """
+        markdown_indicators = [
+            r'^#{1,6}\s',      # Headings
+            r'^```',            # Code fences
+            r'^\s*[-*]\s',     # Bullet lists
+            r'\[.*?\]\(.*?\)', # Links
+            r'\*\*.*?\*\*',    # Bold
+        ]
+        lines = content[ :5000 ]  # Check first ~5000 chars for speed
+        matches = 0
+        for pattern in markdown_indicators:
+            if re.search( pattern, lines, re.MULTILINE ):
+                matches += 1
+        return "markdown" if matches >= 2 else "plaintext"
+
+    @staticmethod
+    def _parse_markdown_sections( content: str ) -> List[ Tuple[ str, str, int ] ]:
+        """
+        Parse markdown content into sections by heading boundaries.
+
+        Splits on heading patterns (# through ###). Skips YAML frontmatter
+        (--- delimited blocks at start of file).
+
+        Requires:
+            - content is a non-empty markdown string
+
+        Ensures:
+            - Returns list of (heading, body, heading_level) tuples
+            - If no headings found, returns single section with full content
+            - Heading level: 1=H1, 2=H2, 3=H3
+
+        Returns:
+            List of (heading, body_text, heading_level) tuples
+        """
+        # Strip YAML frontmatter if present
+        if content.startswith( "---" ):
+            end_idx = content.find( "---", 3 )
+            if end_idx != -1:
+                content = content[ end_idx + 3: ].strip()
+
+        # Split on heading lines (# through ###)
+        # Pattern matches heading line + captures level and text
+        heading_pattern = re.compile( r'^(#{1,3})\s+(.+)$', re.MULTILINE )
+        matches = list( heading_pattern.finditer( content ) )
+
+        if not matches:
+            # No headings — treat entire content as single section
+            return [ ( "(untitled)", content.strip(), 0 ) ]
+
+        sections = []
+
+        # Content before first heading (preamble)
+        preamble = content[ :matches[ 0 ].start() ].strip()
+        if preamble:
+            sections.append( ( "(preamble)", preamble, 0 ) )
+
+        # Extract sections between headings
+        for i, match in enumerate( matches ):
+            heading_level = len( match.group( 1 ) )
+            heading_text  = match.group( 2 ).strip()
+
+            # Body is content from after this heading to start of next heading (or end)
+            body_start = match.end()
+            body_end   = matches[ i + 1 ].start() if i + 1 < len( matches ) else len( content )
+            body       = content[ body_start:body_end ].strip()
+
+            sections.append( ( heading_text, body, heading_level ) )
+
+        return sections
+
+    @staticmethod
+    def _parse_plaintext_sections( content: str ) -> List[ Tuple[ str, str, int ] ]:
+        """
+        Parse plain text content into sections by double-newline boundaries.
+
+        Requires:
+            - content is a non-empty string
+
+        Ensures:
+            - Returns list of (heading, body, level) tuples
+            - Heading is auto-generated as "Section N"
+            - Level is always 0 for plain text
+
+        Returns:
+            List of (heading, body_text, 0) tuples
+        """
+        paragraphs = re.split( r'\n\s*\n', content.strip() )
+        paragraphs = [ p.strip() for p in paragraphs if p.strip() ]
+
+        if not paragraphs:
+            return [ ( "(empty)", "", 0 ) ]
+
+        sections = []
+        for i, para in enumerate( paragraphs, 1 ):
+            sections.append( ( f"Section {i}", para, 0 ) )
+
+        return sections
 
     async def _analyze_async( self, source_content: str ) -> List[ NarrativeSection ]:
         """
-        Phase 2: Analyze narrative structure.
+        Phase 2: Analyze narrative structure using Claude.
 
-        TODO (Phase 3): Call Claude with source content + narrative prompt.
+        Calls Claude API with the source content and narrative extraction prompt.
+        Parses the response into NarrativeSection models.
+
+        Requires:
+            - source_content is a non-empty string
+            - self._presentation_state has raw_sections from Phase 1
+
+        Ensures:
+            - Returns list of NarrativeSection models on success
+            - Returns empty list on API or parse failure
+            - Increments metrics["api_calls"]
 
         Returns:
             List[NarrativeSection]: Classified document sections
         """
-        if self.debug: print( "[Orchestrator] Phase 2: Analyze (stub)" )
-        await asyncio.sleep( 0.1 )
-        return []
+        from .prompts.narrative import (
+            NARRATIVE_ANALYSIS_SYSTEM_PROMPT,
+            get_narrative_analysis_prompt,
+            parse_analysis_response,
+        )
+        from .state import ArcPosition
 
-    async def _outline_async( self, narrative_sections: List[ NarrativeSection ] ) -> list:
+        raw_sections = self._presentation_state.get( "raw_sections", [] )
+
+        # Dry-run: generate mock NarrativeSections from parsed sections
+        if self.dry_run:
+            if self.debug: print( "[Orchestrator] Phase 2: Analyze — DRY RUN (mock)" )
+            arc_cycle = [ ArcPosition.SETUP, ArcPosition.ARGUMENT, ArcPosition.EVIDENCE,
+                          ArcPosition.CONCLUSION, ArcPosition.CTA ]
+            sections = []
+            for i, ( heading, body, level ) in enumerate( raw_sections or [] ):
+                sections.append( NarrativeSection(
+                    heading         = heading or f"Section {i + 1}",
+                    content         = ( body or "" )[ :200 ],
+                    arc_position    = arc_cycle[ i % len( arc_cycle ) ],
+                    proposed_slides = max( 1, len( ( body or "" ).split() ) // 100 ),
+                ) )
+            if not sections:
+                sections = [ NarrativeSection( heading="Mock Section", content="Mock content", arc_position=ArcPosition.ARGUMENT, proposed_slides=3 ) ]
+            await voice_io.notify( f"[DRY RUN] Mock analysis: {len( sections )} sections", priority="low" )
+            return sections
+
+        if self.debug: print( "[Orchestrator] Phase 2: Analyze — calling Claude" )
+
+        try:
+            # Build prompt
+            prompt = get_narrative_analysis_prompt(
+                source_content    = source_content,
+                raw_sections      = raw_sections,
+                target_duration   = self.config.target_duration_minutes,
+                slides_per_minute = self.config.slides_per_minute,
+                audience          = self.config.audience,
+                audience_context  = getattr( self.config, "audience_context", None ),
+            )
+
+            # Call Claude
+            response = await self.api_client.call_for_analysis(
+                system_prompt = NARRATIVE_ANALYSIS_SYSTEM_PROMPT,
+                user_message  = prompt,
+            )
+            self.metrics[ "api_calls" ] += 1
+
+            # Parse response into section dicts
+            section_dicts = parse_analysis_response( response.content )
+
+            if not section_dicts:
+                logger.warning( "Narrative analysis returned no sections" )
+                await voice_io.notify( "Warning: Narrative analysis returned no sections", priority="medium" )
+                return []
+
+            # Convert dicts to NarrativeSection models
+            narrative_sections = []
+            for sd in section_dicts:
+                # Map arc_position string to ArcPosition enum
+                try:
+                    arc_pos = ArcPosition( sd[ "arc_position" ] )
+                except ValueError:
+                    arc_pos = ArcPosition.ARGUMENT
+
+                section = NarrativeSection(
+                    heading         = sd[ "heading" ],
+                    content         = sd.get( "content_summary", "" ),
+                    arc_position    = arc_pos,
+                    proposed_slides = sd.get( "proposed_slide_count", 1 ),
+                )
+                narrative_sections.append( section )
+
+            # Calculate totals
+            total_proposed = sum( s.proposed_slides for s in narrative_sections )
+            slide_budget = int( self.config.target_duration_minutes * self.config.slides_per_minute )
+
+            if self.debug:
+                print( f"[Orchestrator] Narrative analysis: {len( narrative_sections )} sections, "
+                       f"{total_proposed} proposed slides (budget: {slide_budget})" )
+
+            await voice_io.notify(
+                f"Narrative analysis complete: {len( narrative_sections )} sections, "
+                f"{total_proposed} proposed slides",
+                priority="low"
+            )
+
+            return narrative_sections
+
+        except Exception as e:
+            logger.error( f"Narrative analysis failed: {e}" )
+            if self.debug:
+                import traceback
+                traceback.print_exc()
+            await voice_io.notify( f"Narrative analysis error: {str( e )[ :80 ]}", priority="urgent" )
+            return []
+
+    async def _outline_async( self, narrative_sections: List[ NarrativeSection ] ) -> List[ SlideOutline ]:
         """
         Phase 3: Generate slide outline with titles + visual types.
 
-        TODO (Phase 4): Call Claude with narrative sections.
+        Calls Claude to transform narrative sections into a slide-by-slide
+        outline with assertion-style titles and visual type assignments.
+
+        Requires:
+            - narrative_sections is a non-empty list of NarrativeSection models
+
+        Ensures:
+            - Returns list of SlideOutline models on success
+            - Returns empty list on API or parse failure
+            - Increments metrics["api_calls"]
 
         Returns:
-            list: Slide outline (title, visual_type) tuples
+            List[SlideOutline]: Slide outline entries
         """
-        if self.debug: print( "[Orchestrator] Phase 3: Outline (stub)" )
-        await asyncio.sleep( 0.1 )
-        return []
+        from .prompts.outline import (
+            OUTLINE_SYSTEM_PROMPT,
+            get_outline_prompt,
+            parse_outline_response,
+            SLIDE_TYPES,
+        )
 
-    async def _elaborate_async( self, slide_outline: list ) -> List[ SlideModel ]:
+        slide_budget = int( self.config.target_duration_minutes * self.config.slides_per_minute )
+
+        # Dry-run: generate mock SlideOutlines from narrative sections
+        if self.dry_run:
+            if self.debug: print( "[Orchestrator] Phase 3: Outline — DRY RUN (mock)" )
+            outlines = []
+            # Structural formula: 2 opening + N body + 3 closing
+            opening_types = [ ( "title", "text_only" ), ( "hook", "chart" ) ]
+            closing_types = [ ( "summary", "text_only" ), ( "cta", "text_only" ), ( "qa", "text_only" ) ]
+            body_count    = max( 1, slide_budget - len( opening_types ) - len( closing_types ) )
+
+            slide_num = 1
+            for stype, vtype in opening_types:
+                outlines.append( SlideOutline( number=slide_num, arc_position="opening", type=stype,
+                    title=f"[Mock] {stype.title()} Slide", visual_type=vtype ) )
+                slide_num += 1
+            for i in range( body_count ):
+                section = narrative_sections[ i % len( narrative_sections ) ] if narrative_sections else None
+                heading = section.heading if section else f"Body Point {i + 1}"
+                outlines.append( SlideOutline( number=slide_num, arc_position="body", type="key_point",
+                    title=f"[Mock] {heading}", visual_type="diagram" if i % 3 == 0 else "text_only",
+                    source_hint=heading ) )
+                slide_num += 1
+            for stype, vtype in closing_types:
+                outlines.append( SlideOutline( number=slide_num, arc_position="closing", type=stype,
+                    title=f"[Mock] {stype.title()} Slide", visual_type=vtype ) )
+                slide_num += 1
+
+            await voice_io.notify( f"[DRY RUN] Mock outline: {len( outlines )} slides", priority="low" )
+            return outlines
+
+        if self.debug: print( "[Orchestrator] Phase 3: Outline — calling Claude" )
+
+        human_feedback = self._presentation_state.get( "human_feedback" )
+
+        try:
+            # Build prompt
+            prompt = get_outline_prompt(
+                narrative_sections = narrative_sections,
+                slide_budget       = slide_budget,
+                title_style        = self.config.title_style,
+                audience           = self.config.audience,
+                audience_context   = getattr( self.config, "audience_context", None ),
+                human_feedback     = human_feedback,
+            )
+
+            # Call API
+            response = await self.api_client.call_for_outline(
+                system_prompt = OUTLINE_SYSTEM_PROMPT,
+                user_message  = prompt,
+            )
+
+            self.metrics[ "api_calls" ] += 1
+            if hasattr( response, "tokens_used" ):
+                self.metrics[ "tokens_used" ] += response.tokens_used
+
+            # Parse response
+            outline_dicts = parse_outline_response( response.content )
+
+            # Convert to SlideOutline models
+            outlines = []
+            for d in outline_dicts:
+                outlines.append( SlideOutline(
+                    number       = d[ "number" ],
+                    arc_position = d[ "arc_position" ],
+                    type         = d[ "type" ],
+                    title        = d[ "title" ],
+                    visual_type  = d[ "visual_type" ],
+                    source_hint  = d.get( "source_hint" ),
+                ) )
+
+            # Validate structural formula
+            opening_count = sum( 1 for o in outlines if o.arc_position == "opening" )
+            body_count    = sum( 1 for o in outlines if o.arc_position == "body" )
+            closing_count = sum( 1 for o in outlines if o.arc_position == "closing" )
+
+            if self.debug:
+                print( f"[Orchestrator] Outline: {len( outlines )} slides "
+                       f"({opening_count} opening, {body_count} body, {closing_count} closing)" )
+
+            if opening_count < 1 or closing_count < 1:
+                logger.warning( f"Structural formula issue: {opening_count} opening, {closing_count} closing" )
+
+            await voice_io.notify(
+                f"Outline generated: {len( outlines )} slides "
+                f"({opening_count} opening, {body_count} body, {closing_count} closing)",
+                priority="low"
+            )
+
+            return outlines
+
+        except Exception as e:
+            logger.error( f"Outline generation failed: {e}" )
+            if self.debug:
+                import traceback
+                traceback.print_exc()
+            await voice_io.notify( f"Outline generation error: {str( e )[ :80 ]}", priority="urgent" )
+            return []
+
+    async def _elaborate_async( self, slide_outline: List[ SlideOutline ] ) -> List[ SlideModel ]:
         """
         Phase 4: Elaborate full slide content with presenter notes.
 
-        TODO (Phase 4): Call Claude with outline + source.
+        Calls Claude to produce fully elaborated slides from the outline
+        and source document. Uses all-at-once strategy with chunked fallback
+        if the response is truncated.
+
+        Requires:
+            - slide_outline is a non-empty list of SlideOutline models
+            - self._presentation_state has source_content from Phase 1
+
+        Ensures:
+            - Returns list of SlideModel instances on success
+            - Returns empty list on API or parse failure
+            - Increments metrics["api_calls"]
 
         Returns:
             List[SlideModel]: Fully elaborated slides
         """
-        if self.debug: print( "[Orchestrator] Phase 4: Elaborate (stub)" )
-        await asyncio.sleep( 0.1 )
-        return []
+        from .prompts.elaboration import (
+            ELABORATION_SYSTEM_PROMPT,
+            get_elaboration_prompt,
+            parse_elaboration_response,
+        )
+        from .state import PresenterNotes
+
+        # Dry-run: generate mock SlideModels from outlines
+        if self.dry_run:
+            if self.debug: print( "[Orchestrator] Phase 4: Elaborate — DRY RUN (mock)" )
+            avg_timing = ( self.config.target_duration_minutes * 60 ) // max( 1, len( slide_outline ) )
+            slides = []
+            for o in slide_outline:
+                slides.append( SlideModel(
+                    number             = o.number,
+                    arc_position       = o.arc_position,
+                    type               = o.type,
+                    title              = o.title,
+                    visual_type        = o.visual_type,
+                    visual_description = f"[Mock visual: {o.visual_type}]" if o.visual_type != "text_only" else None,
+                    content_bullets    = [ f"[Mock bullet {i + 1}]" for i in range( 3 ) ] if o.type not in ( "title", "qa" ) else [],
+                    presenter_notes    = PresenterNotes(
+                        transition     = f"[Mock transition to slide {o.number}]" if o.number > 1 else None,
+                        talking_points = [ f"[Mock talking point {i + 1}]" for i in range( 2 ) ],
+                        timing_seconds = avg_timing,
+                    ),
+                ) )
+            await voice_io.notify( f"[DRY RUN] Mock elaboration: {len( slides )} slides", priority="low" )
+            return slides
+
+        if self.debug: print( "[Orchestrator] Phase 4: Elaborate — calling Claude" )
+
+        source_content = self._presentation_state.get( "source_content", "" )
+        human_feedback = self._presentation_state.get( "human_feedback" )
+
+        try:
+            # Build prompt
+            prompt = get_elaboration_prompt(
+                slide_outlines          = slide_outline,
+                source_content          = source_content,
+                target_duration_minutes = self.config.target_duration_minutes,
+                audience                = self.config.audience,
+                audience_context        = getattr( self.config, "audience_context", None ),
+                human_feedback          = human_feedback,
+            )
+
+            # Call API
+            response = await self.api_client.call_for_elaboration(
+                system_prompt = ELABORATION_SYSTEM_PROMPT,
+                user_message  = prompt,
+            )
+
+            self.metrics[ "api_calls" ] += 1
+            if hasattr( response, "tokens_used" ):
+                self.metrics[ "tokens_used" ] += response.tokens_used
+
+            # Check for truncation — chunked fallback if needed
+            slide_dicts = parse_elaboration_response( response.content )
+
+            if not slide_dicts and hasattr( response, "stop_reason" ) and response.stop_reason != "end_turn":
+                logger.warning( "Elaboration response truncated, attempting chunked fallback" )
+                await voice_io.notify( "Response truncated — retrying in batches...", priority="low" )
+                slide_dicts = await self._elaborate_chunked( slide_outline, source_content, human_feedback )
+
+            # Convert to SlideModel instances
+            slides = []
+            for d in slide_dicts:
+                notes_dict = d.get( "presenter_notes", {} )
+                notes = PresenterNotes(
+                    transition     = notes_dict.get( "transition" ),
+                    talking_points = notes_dict.get( "talking_points", [] ),
+                    timing_seconds = notes_dict.get( "timing_seconds", 60 ),
+                    emphasis       = notes_dict.get( "emphasis" ),
+                )
+                slides.append( SlideModel(
+                    number             = d[ "number" ],
+                    arc_position       = d[ "arc_position" ],
+                    type               = d[ "type" ],
+                    title              = d[ "title" ],
+                    subtitle           = d.get( "subtitle" ),
+                    visual_type        = d[ "visual_type" ],
+                    visual_description = d.get( "visual_description" ),
+                    content_bullets    = d.get( "content_bullets", [] ),
+                    presenter_notes    = notes,
+                ) )
+
+            # Calculate timing
+            total_timing = sum( s.presenter_notes.timing_seconds for s in slides )
+            total_minutes = total_timing / 60
+
+            if self.debug:
+                print( f"[Orchestrator] Elaboration: {len( slides )} slides, "
+                       f"{total_minutes:.1f}m estimated speaking time" )
+
+            await voice_io.notify(
+                f"Content elaborated: {len( slides )} slides, "
+                f"{total_minutes:.1f}m estimated speaking time",
+                priority="low"
+            )
+
+            return slides
+
+        except Exception as e:
+            logger.error( f"Elaboration failed: {e}" )
+            if self.debug:
+                import traceback
+                traceback.print_exc()
+            await voice_io.notify( f"Elaboration error: {str( e )[ :80 ]}", priority="urgent" )
+            return []
+
+    async def _elaborate_chunked(
+        self,
+        slide_outline: List[ SlideOutline ],
+        source_content: str,
+        human_feedback: Optional[ str ] = None,
+    ) -> List[ dict ]:
+        """
+        Chunked fallback for elaboration when all-at-once response is truncated.
+
+        Splits outline into batches of ~6 slides and calls API per batch.
+
+        Returns:
+            List of slide dicts (concatenated from all batches)
+        """
+        from .prompts.elaboration import (
+            ELABORATION_SYSTEM_PROMPT,
+            get_elaboration_prompt,
+            parse_elaboration_response,
+        )
+
+        batch_size = 6
+        all_dicts  = []
+
+        for i in range( 0, len( slide_outline ), batch_size ):
+            batch = slide_outline[ i : i + batch_size ]
+
+            if self.debug:
+                print( f"[Orchestrator] Chunked elaboration: slides {batch[ 0 ].number}-{batch[ -1 ].number}" )
+
+            prompt = get_elaboration_prompt(
+                slide_outlines          = batch,
+                source_content          = source_content,
+                target_duration_minutes = self.config.target_duration_minutes,
+                audience                = self.config.audience,
+                audience_context        = getattr( self.config, "audience_context", None ),
+                human_feedback          = human_feedback,
+            )
+
+            response = await self.api_client.call_for_elaboration(
+                system_prompt = ELABORATION_SYSTEM_PROMPT,
+                user_message  = prompt,
+            )
+            self.metrics[ "api_calls" ] += 1
+
+            batch_dicts = parse_elaboration_response( response.content )
+            all_dicts.extend( batch_dicts )
+
+        return all_dicts
 
     async def _serialize_async( self, elaborated_slides: List[ SlideModel ] ) -> Optional[ PresentationModel ]:
         """
         Phase 5: Serialize to YAML intermediate file.
 
-        TODO (Phase 5): Build PresentationModel, write YAML.
+        Builds a PresentationModel from elaborated slides and writes it to disk
+        as a YAML intermediate file for rendering phases.
+
+        Requires:
+            - elaborated_slides is a list of SlideModel instances
+
+        Ensures:
+            - Returns PresentationModel with all fields populated
+            - Writes YAML file to config-defined output path
+            - Stores yaml_path in _presentation_state for job to read
+            - Creates output directory if it doesn't exist
 
         Returns:
-            PresentationModel or None
+            PresentationModel or None on failure
         """
-        if self.debug: print( "[Orchestrator] Phase 5: Serialize (stub)" )
-        await asyncio.sleep( 0.1 )
-        return PresentationModel(
-            title            = "Stub Presentation",
-            duration_minutes = self.config.target_duration_minutes,
-            source_document  = self.source_path,
-            total_slides     = 0,
-            slides           = [],
-        )
+        if self.debug: print( "[Orchestrator] Phase 5: Serialize — building YAML" )
+
+        try:
+            # Derive title from first slide or source filename
+            if elaborated_slides and elaborated_slides[ 0 ].type == "title":
+                title = elaborated_slides[ 0 ].title
+            else:
+                title = os.path.splitext( os.path.basename( self.source_path ) )[ 0 ]
+
+            # Build PresentationModel
+            presentation = PresentationModel(
+                title            = title,
+                speaker          = "",
+                date             = datetime.now().strftime( "%Y-%m-%d" ),
+                duration_minutes = self.config.target_duration_minutes,
+                source_document  = self.source_path,
+                total_slides     = len( elaborated_slides ),
+                slides           = elaborated_slides,
+                theme            = self.config.default_theme,
+            )
+
+            # Serialize to YAML
+            yaml_content = presentation.to_yaml()
+
+            # Get output path
+            user_id = self._presentation_state.get( "user_id", "unknown" )
+            yaml_path = self.config.get_output_path( user_id, title, file_type="yaml" )
+
+            # Write to disk in thread pool (non-blocking)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor( None, self._write_yaml, yaml_path, yaml_content )
+
+            # Store path for job to read
+            self._presentation_state[ "yaml_path" ] = yaml_path
+
+            if self.debug:
+                print( f"[Orchestrator] YAML written: {yaml_path}" )
+                print( f"[Orchestrator] YAML size: {len( yaml_content )} chars" )
+
+            await voice_io.notify(
+                f"YAML serialized: {len( elaborated_slides )} slides → {os.path.basename( yaml_path )}",
+                priority="low"
+            )
+
+            return presentation
+
+        except Exception as e:
+            logger.error( f"Serialization failed: {e}" )
+            if self.debug:
+                import traceback
+                traceback.print_exc()
+            await voice_io.notify( f"Serialization error: {str( e )[ :80 ]}", priority="urgent" )
+            return None
+
+    @staticmethod
+    def _write_yaml( yaml_path: str, yaml_content: str ) -> None:
+        """
+        Write YAML content to disk, creating directories as needed.
+
+        Requires:
+            - yaml_path is an absolute file path
+            - yaml_content is a non-empty string
+
+        Ensures:
+            - Parent directory exists
+            - File is written with UTF-8 encoding
+        """
+        os.makedirs( os.path.dirname( yaml_path ), exist_ok=True )
+        with open( yaml_path, "w", encoding="utf-8" ) as f:
+            f.write( yaml_content )
 
     async def _render_text_async( self, presentation: Optional[ PresentationModel ] ) -> None:
         """
@@ -363,20 +1023,353 @@ class PresentationOrchestratorAgent:
     # Gate Stubs (to be implemented in Phases 3-4)
     # =========================================================================
 
-    async def _gate_1_narrative_review( self, sections: list ) -> bool:
-        """Gate 1: User reviews narrative arc mapping. Stub — auto-approve."""
-        if self.debug: print( "[Orchestrator] Gate 1: Narrative review (auto-approve)" )
-        return True
+    async def _gate_1_narrative_review( self, sections: List[ NarrativeSection ] ) -> bool:
+        """
+        Gate 1: User reviews narrative arc mapping.
 
-    async def _gate_2_outline_review( self, outline: list ) -> bool:
-        """Gate 2: User reviews slide titles + visual types. Stub — auto-approve."""
-        if self.debug: print( "[Orchestrator] Gate 2: Outline review (auto-approve)" )
-        return True
+        Presents the extracted narrative arc to the user via voice I/O.
+        Supports approve, revise (with feedback), or cancel.
 
-    async def _gate_3_content_review( self, slides: list ) -> bool:
-        """Gate 3: User reviews full structured content. Stub — auto-approve."""
-        if self.debug: print( "[Orchestrator] Gate 3: Content review (auto-approve)" )
-        return True
+        Requires:
+            - sections is a list of NarrativeSection models
+
+        Ensures:
+            - Returns True if user approves (proceed to outline)
+            - Returns False if user cancels (orchestrator stops)
+            - On revise: re-runs analysis with feedback, up to max_revisions
+
+        Args:
+            sections: List of NarrativeSection models from Phase 2
+
+        Returns:
+            bool: True to proceed, False to stop
+        """
+        if not sections:
+            if self.debug: print( "[Orchestrator] Gate 1: No sections to review, auto-approve" )
+            return True
+
+        if self.dry_run:
+            if self.debug: print( "[Orchestrator] Gate 1: DRY RUN — auto-approve" )
+            return True
+
+        revision_count = self._presentation_state.get( "revision_count", 0 )
+        max_revisions  = self.config.max_revisions
+
+        # Build summary for user
+        total_slides = sum( s.proposed_slides for s in sections )
+        slide_budget = int( self.config.target_duration_minutes * self.config.slides_per_minute )
+
+        summary_lines = [ f"**Narrative Arc Analysis** ({len( sections )} sections, {total_slides} proposed slides, budget: {slide_budget})\n" ]
+        for i, section in enumerate( sections, 1 ):
+            summary_lines.append(
+                f"{i}. **{section.heading}** — {section.arc_position.value} ({section.proposed_slides} slide{'s' if section.proposed_slides != 1 else ''})"
+            )
+
+        summary = "\n".join( summary_lines )
+
+        if self.debug: print( f"[Orchestrator] Gate 1: Presenting narrative arc for review" )
+
+        # Present to user via voice I/O
+        try:
+            result = await voice_io.present_choices(
+                questions=[ {
+                    "question" : "How does this narrative arc look for your presentation?",
+                    "header"   : "Narrative Arc",
+                    "multiSelect" : False,
+                    "options"  : [
+                        { "label": "Approve", "description": "Proceed to slide outline generation" },
+                        { "label": "Revise",  "description": f"Re-analyze with feedback ({max_revisions - revision_count} revisions remaining)" },
+                        { "label": "Cancel",  "description": "Stop presentation generation" },
+                    ]
+                } ],
+                title    = "Gate 1: Narrative Arc Review",
+                abstract = summary,
+            )
+
+            # Parse response
+            answer = result.get( "answers", {} ).get( "Narrative Arc", "Approve" )
+
+            if answer == "Cancel":
+                await voice_io.notify( "Presentation generation cancelled at Gate 1.", priority="medium" )
+                return False
+
+            elif answer == "Revise":
+                if revision_count >= max_revisions:
+                    await voice_io.notify(
+                        f"Maximum revisions ({max_revisions}) reached. Proceeding with current analysis.",
+                        priority="medium"
+                    )
+                    return True
+
+                # Get feedback via open-ended input
+                feedback = await voice_io.get_input(
+                    "What changes would you like to the narrative arc? For example: 'merge sections 3 and 4' or 'the conclusion needs more slides'."
+                )
+
+                if feedback:
+                    self._presentation_state[ "revision_count" ] = revision_count + 1
+                    self._presentation_state[ "human_feedback" ] = feedback
+
+                    await voice_io.notify( "Re-analyzing with your feedback...", priority="low" )
+
+                    # Re-run analysis with feedback appended
+                    source_content = self._presentation_state.get( "source_content", "" )
+                    new_sections = await self._analyze_async( source_content )
+                    self._presentation_state[ "narrative_sections" ] = new_sections
+
+                    # Recursive gate review with new sections
+                    return await self._gate_1_narrative_review( new_sections )
+
+                # Empty feedback — treat as approve
+                return True
+
+            else:
+                # Approve (default)
+                return True
+
+        except Exception as e:
+            # If voice I/O fails, auto-approve to not block the pipeline
+            logger.warning( f"Gate 1 voice I/O failed, auto-approving: {e}" )
+            if self.debug: print( f"[Orchestrator] Gate 1: Voice I/O error — auto-approve. {e}" )
+            return True
+
+    async def _gate_2_outline_review( self, outline: List[ SlideOutline ] ) -> bool:
+        """
+        Gate 2: User reviews slide titles + visual types (the "story spine").
+
+        Presents the slide outline grouped by position (opening/body/closing)
+        with assertion-style titles and visual types. Supports approve, revise
+        (with feedback), or cancel.
+
+        Requires:
+            - outline is a list of SlideOutline models
+
+        Ensures:
+            - Returns True if user approves (proceed to elaboration)
+            - Returns False if user cancels
+            - On revise: re-runs outline with feedback, up to max_revisions
+
+        Args:
+            outline: List of SlideOutline models from Phase 3
+
+        Returns:
+            bool: True to proceed, False to stop
+        """
+        if not outline:
+            if self.debug: print( "[Orchestrator] Gate 2: No outline to review, auto-approve" )
+            return True
+
+        if self.dry_run:
+            if self.debug: print( "[Orchestrator] Gate 2: DRY RUN — auto-approve" )
+            return True
+
+        revision_count = self._presentation_state.get( "outline_revision_count", 0 )
+        max_revisions  = self.config.max_revisions
+
+        # Build "story spine" summary grouped by position
+        opening = [ o for o in outline if o.arc_position == "opening" ]
+        body    = [ o for o in outline if o.arc_position == "body" ]
+        closing = [ o for o in outline if o.arc_position == "closing" ]
+
+        summary_lines = [
+            f"**Slide Outline** ({len( outline )} slides: "
+            f"{len( opening )} opening + {len( body )} body + {len( closing )} closing)\n"
+        ]
+
+        for label, group in [ ( "OPENING", opening ), ( "BODY", body ), ( "CLOSING", closing ) ]:
+            if group:
+                summary_lines.append( f"\n**{label}**:" )
+                for o in group:
+                    summary_lines.append( f"  {o.number}. [{o.type}] \"{o.title}\" ({o.visual_type})" )
+
+        summary = "\n".join( summary_lines )
+
+        if self.debug: print( "[Orchestrator] Gate 2: Presenting outline for review" )
+
+        try:
+            result = await voice_io.present_choices(
+                questions=[ {
+                    "question"    : "How does this slide outline look?",
+                    "header"      : "Slide Outline",
+                    "multiSelect" : False,
+                    "options"     : [
+                        { "label": "Approve", "description": "Proceed to content elaboration" },
+                        { "label": "Revise",  "description": f"Re-generate outline with feedback ({max_revisions - revision_count} revisions remaining)" },
+                        { "label": "Cancel",  "description": "Stop presentation generation" },
+                    ]
+                } ],
+                title    = "Gate 2: Slide Outline Review",
+                abstract = summary,
+            )
+
+            answer = result.get( "answers", {} ).get( "Slide Outline", "Approve" )
+
+            if answer == "Cancel":
+                await voice_io.notify( "Presentation generation cancelled at Gate 2.", priority="medium" )
+                return False
+
+            elif answer == "Revise":
+                if revision_count >= max_revisions:
+                    await voice_io.notify(
+                        f"Maximum revisions ({max_revisions}) reached. Proceeding with current outline.",
+                        priority="medium"
+                    )
+                    return True
+
+                feedback = await voice_io.get_input(
+                    "What changes would you like to the outline? For example: 'make slide 5 title more specific' or 'add a comparison slide before the summary'."
+                )
+
+                if feedback:
+                    self._presentation_state[ "outline_revision_count" ] = revision_count + 1
+                    self._presentation_state[ "human_feedback" ] = feedback
+
+                    await voice_io.notify( "Re-generating outline with your feedback...", priority="low" )
+
+                    narrative_sections = self._presentation_state.get( "narrative_sections", [] )
+                    new_outline = await self._outline_async( narrative_sections )
+                    self._presentation_state[ "slide_outline" ] = new_outline
+
+                    # Recursive gate review with new outline
+                    return await self._gate_2_outline_review( new_outline )
+
+                # Empty feedback — treat as approve
+                return True
+
+            else:
+                # Approve (default)
+                # Clear human_feedback so it doesn't carry into elaboration
+                self._presentation_state[ "human_feedback" ] = None
+                return True
+
+        except Exception as e:
+            logger.warning( f"Gate 2 voice I/O failed, auto-approving: {e}" )
+            if self.debug: print( f"[Orchestrator] Gate 2: Voice I/O error — auto-approve. {e}" )
+            return True
+
+    async def _gate_3_content_review( self, slides: List[ SlideModel ] ) -> bool:
+        """
+        Gate 3: User reviews full structured content.
+
+        Presents a condensed summary of all elaborated slides with bullet counts,
+        timing, and visual types. Supports approve, revise, or cancel.
+
+        Requires:
+            - slides is a list of SlideModel instances
+
+        Ensures:
+            - Returns True if user approves (proceed to serialization)
+            - Returns False if user cancels
+            - On revise: re-runs elaboration with feedback
+
+        Args:
+            slides: List of SlideModel instances from Phase 4
+
+        Returns:
+            bool: True to proceed, False to stop
+        """
+        if not slides:
+            if self.debug: print( "[Orchestrator] Gate 3: No slides to review, auto-approve" )
+            return True
+
+        if self.dry_run:
+            if self.debug: print( "[Orchestrator] Gate 3: DRY RUN — auto-approve" )
+            return True
+
+        revision_count = self._presentation_state.get( "elaborate_revision_count", 0 )
+        max_revisions  = self.config.max_revisions
+
+        # Build condensed summary
+        total_timing = sum( s.presenter_notes.timing_seconds for s in slides )
+        total_minutes = total_timing / 60
+
+        # Count visual types
+        visual_counts = {}
+        for s in slides:
+            if s.visual_type != "text_only":
+                visual_counts[ s.visual_type ] = visual_counts.get( s.visual_type, 0 ) + 1
+
+        visual_summary = ", ".join( f"{vt}: {ct}" for vt, ct in sorted( visual_counts.items() ) )
+        visual_total   = sum( visual_counts.values() )
+
+        summary_lines = [
+            f"**Full Content Review** ({len( slides )} slides, {total_minutes:.1f}m estimated)\n"
+        ]
+
+        for s in slides:
+            bullet_info = f"{len( s.content_bullets )} bullets" if s.content_bullets else "no bullets"
+            summary_lines.append(
+                f"  {s.number}. \"{s.title}\" — {s.type}, {s.visual_type}, "
+                f"{s.presenter_notes.timing_seconds}s, {bullet_info}"
+            )
+
+        summary_lines.append( f"\n**Total estimated**: {total_minutes:.1f}m (target: {self.config.target_duration_minutes}m)" )
+        if visual_total > 0:
+            summary_lines.append( f"**Slides with visuals**: {visual_total} of {len( slides )} ({visual_summary})" )
+
+        summary = "\n".join( summary_lines )
+
+        if self.debug: print( "[Orchestrator] Gate 3: Presenting content for review" )
+
+        try:
+            result = await voice_io.present_choices(
+                questions=[ {
+                    "question"    : "How does the elaborated content look?",
+                    "header"      : "Content Review",
+                    "multiSelect" : False,
+                    "options"     : [
+                        { "label": "Approve", "description": "Proceed to serialization" },
+                        { "label": "Revise",  "description": f"Re-elaborate with feedback ({max_revisions - revision_count} revisions remaining)" },
+                        { "label": "Cancel",  "description": "Stop presentation generation" },
+                    ]
+                } ],
+                title    = "Gate 3: Content Review",
+                abstract = summary,
+            )
+
+            answer = result.get( "answers", {} ).get( "Content Review", "Approve" )
+
+            if answer == "Cancel":
+                await voice_io.notify( "Presentation generation cancelled at Gate 3.", priority="medium" )
+                return False
+
+            elif answer == "Revise":
+                if revision_count >= max_revisions:
+                    await voice_io.notify(
+                        f"Maximum revisions ({max_revisions}) reached. Proceeding with current content.",
+                        priority="medium"
+                    )
+                    return True
+
+                feedback = await voice_io.get_input(
+                    "What changes would you like to the content? For example: 'slide 3 needs more data' or 'add a transition between slides 7 and 8'."
+                )
+
+                if feedback:
+                    self._presentation_state[ "elaborate_revision_count" ] = revision_count + 1
+                    self._presentation_state[ "human_feedback" ] = feedback
+
+                    await voice_io.notify( "Re-elaborating with your feedback...", priority="low" )
+
+                    slide_outline = self._presentation_state.get( "slide_outline", [] )
+                    new_slides = await self._elaborate_async( slide_outline )
+                    self._presentation_state[ "elaborated_slides" ] = new_slides
+
+                    # Recursive gate review with new slides
+                    return await self._gate_3_content_review( new_slides )
+
+                # Empty feedback — treat as approve
+                return True
+
+            else:
+                # Approve (default)
+                self._presentation_state[ "human_feedback" ] = None
+                return True
+
+        except Exception as e:
+            logger.warning( f"Gate 3 voice I/O failed, auto-approving: {e}" )
+            if self.debug: print( f"[Orchestrator] Gate 3: Voice I/O error — auto-approve. {e}" )
+            return True
 
     async def _gate_4_render_review( self, presentation: Optional[ PresentationModel ] ) -> bool:
         """Gate 4: User reviews final rendered output. Stub — auto-approve."""
