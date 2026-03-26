@@ -75,6 +75,7 @@ MODE_METADATA = {
     "research_to_podcast": { "display_name": "Research to Podcast", "description": "Convert existing research to podcast" },
     "claude_code"        : { "display_name": "Claude Code",         "description": "Run a coding task" },
     "swe_team"           : { "display_name": "SWE Team",            "description": "Multi-agent engineering team" },
+    "presentation"       : { "display_name": "Presentation",        "description": "Generate slides from a document" },
 }
 
 # Agentic mode keys → AGENTIC_AGENTS routing command strings
@@ -86,6 +87,7 @@ AGENTIC_MODE_MAP = {
     "research_to_podcast": "agent router go to research to podcast",
     "claude_code"        : "agent router go to claude code",
     "swe_team"           : "agent router go to swe team",
+    "presentation"       : "agent router go to presentation generator",
 }
 
 class TodoFifoQueue( FifoQueue ):

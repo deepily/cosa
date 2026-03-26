@@ -14,15 +14,16 @@ class NotificationItem:
     
     def __init__( self, message: str, type: str = "task", priority: str = "medium",
                  source: str = "claude_code", user_id: Optional[str] = None,
-                 id: Optional[str] = None, title: Optional[str] = None,
+                 id: Optional[str] = None, title: str = "",
                  response_requested: bool = False, response_type: Optional[str] = None,
                  response_default: Optional[str] = None, response_options: Optional[dict] = None,
                  timeout_seconds: Optional[int] = None, sender_id: Optional[str] = None,
-                 abstract: Optional[str] = None, suppress_ding: bool = False,
+                 abstract: str = "", suppress_ding: bool = False,
                  job_id: Optional[str] = None, queue_name: Optional[str] = None,
                  progress_group_id: Optional[str] = None,
                  prediction_hint: Optional[dict] = None,
-                 display_qualifier_widget: bool = False ) -> None:
+                 display_qualifier_widget: bool = False,
+                 session_name: Optional[str] = None ) -> None:
         """
         Initialize a notification item.
 
@@ -87,6 +88,9 @@ class NotificationItem:
 
         # Display qualifier widget expanded by default (yes/no comment input)
         self.display_qualifier_widget = display_qualifier_widget
+
+        # Human-readable session name for UI header display
+        self.session_name = session_name
 
     def _get_local_timestamp( self ) -> str:
         """Get timezone-aware timestamp using configured timezone from ConfigurationManager"""
@@ -171,7 +175,9 @@ class NotificationItem:
             # Prediction engine hint (null during cold start)
             "prediction_hint"            : self.prediction_hint,
             # Display qualifier widget expanded by default
-            "display_qualifier_widget"   : self.display_qualifier_widget
+            "display_qualifier_widget"   : self.display_qualifier_widget,
+            # Human-readable session name for UI header display
+            "session_name"               : self.session_name
         }
 
 
@@ -258,15 +264,16 @@ class NotificationFifoQueue( FifoQueue ):
     
     def push_notification( self, message: str, type: str = "task", priority: str = "medium",
                          source: str = "claude_code", user_id: Optional[str] = None,
-                         id: Optional[str] = None, title: Optional[str] = None,
+                         id: Optional[str] = None, title: str = "",
                          response_requested: bool = False, response_type: Optional[str] = None,
                          response_default: Optional[str] = None, response_options: Optional[dict] = None,
                          timeout_seconds: Optional[int] = None, sender_id: Optional[str] = None,
-                         abstract: Optional[str] = None, suppress_ding: bool = False,
+                         abstract: str = "", suppress_ding: bool = False,
                          job_id: Optional[str] = None, queue_name: Optional[str] = None,
                          progress_group_id: Optional[str] = None,
                          prediction_hint: Optional[dict] = None,
-                 display_qualifier_widget: bool = False ) -> NotificationItem:
+                 display_qualifier_widget: bool = False,
+                         session_name: Optional[str] = None ) -> NotificationItem:
         """
         Push a notification with priority handling and io_tbl logging.
 
@@ -308,7 +315,8 @@ class NotificationFifoQueue( FifoQueue ):
             queue_name         = queue_name,
             progress_group_id        = progress_group_id,
             prediction_hint          = prediction_hint,
-            display_qualifier_widget = display_qualifier_widget
+            display_qualifier_widget = display_qualifier_widget,
+            session_name             = session_name
         )
         
         # Priority handling - urgent/high go to front, but after other urgent/high

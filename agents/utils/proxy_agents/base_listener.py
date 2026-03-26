@@ -309,4 +309,8 @@ class BaseWebSocketListener:
                 except json.JSONDecodeError as e:
                     print( f"{self.LOG_PREFIX} Invalid JSON received: {e}" )
                 except Exception as e:
-                    print( f"{self.LOG_PREFIX} Error handling message: {e}" )
+                    log_msg = f"{self.LOG_PREFIX} Error handling message: {e}"
+                    if hasattr( self, '_log' ):
+                        self._log( log_msg )
+                    else:
+                        print( log_msg )

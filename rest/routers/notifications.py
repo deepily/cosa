@@ -235,6 +235,7 @@ async def notify_user(
     progress_group_id: Optional[str] = Query(None, description="Progress group ID for in-place DOM updates. Notifications sharing this ID update a single element instead of appending new ones."),
     prediction_hint_override: Optional[str] = Query(None, description="JSON override for prediction_hint (testing/debug). Bypasses PredictionEngine."),
     display_qualifier_widget: bool = Query(False, description="Render yes/no qualifier comment widget expanded by default with softer instructional text."),
+    session_name: Optional[str] = Query(None, description="Human-readable session name for UI header display. Updates sender-session-name span in notification history card."),
     notification_queue: NotificationFifoQueue = Depends(get_notification_queue),
     ws_manager: WebSocketManager = Depends(get_websocket_manager)
 ):
@@ -296,7 +297,7 @@ async def notify_user(
     # authenticated_user_id contains the validated user ID
 
     # Validate notification type
-    valid_types = ["task", "progress", "alert", "custom", "user_initiated_message"]
+    valid_types = ["task", "progress", "alert", "custom", "user_initiated_message", "session_topic"]
     if type not in valid_types:
         raise HTTPException(
             status_code=400,
@@ -364,6 +365,10 @@ async def notify_user(
                 status_code=400,
                 detail=f"Invalid JSON in prediction_hint_override: {str( e )}"
             )
+
+    # Normalize Optional[str] → str at the API boundary (FastAPI delivers None for absent query params)
+    title    = title or ""
+    abstract = abstract or ""
 
     # Resolve sender_id using precedence: explicit > extracted from [PREFIX] > default
     resolved_sender_id = resolve_sender_id( sender_id, message )
@@ -444,7 +449,8 @@ async def notify_user(
                 job_id                  = job_id,  # Agentic job ID for routing to job cards
                 queue_name              = queue_name,  # Queue for provisional job card registration
                 progress_group_id       = progress_group_id,  # In-place DOM update grouping
-                display_qualifier_widget = display_qualifier_widget  # Expanded comment widget
+                display_qualifier_widget = display_qualifier_widget,  # Expanded comment widget
+                session_name             = session_name  # Human-readable session name for UI header
             )
 
             # Persist to PostgreSQL for history loading
