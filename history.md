@@ -1,5 +1,31 @@
 # COSA Development History
 
+> **✅ SESSIONS 372-374 COMMITTED**: Voice injection bug fix, session_name pipeline, Presentation Generator mode map (2026.03.25)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 372 — Bug Fix: Voice Injection Silent Crash on Null Title**:
+> - `rest/notification_fifo_queue.py`: Changed `title: Optional[str] = None` → `title: str = ""` and `abstract: Optional[str] = None` → `abstract: str = ""` in both `NotificationItem.__init__()` and `push_notification()` — prevents `startswith()` crash when title is None
+> - `rest/routers/notifications.py`: Added API boundary normalization (`title = title or ""`, `abstract = abstract or ""`) to catch None from absent query params
+> - `agents/utils/proxy_agents/base_listener.py`: Enhanced error logging — checks for `_log` method before falling back to `print()`
+>
+> **Session 372b — session_name Pipeline (set_session_topic → UI Header)**:
+> - `rest/notification_fifo_queue.py`: Added `session_name: Optional[str] = None` parameter to `NotificationItem` and `push_notification()`, included in `to_dict()` serialization
+> - `rest/routers/notifications.py`: Added `session_name` query parameter to `/api/notify`, added `"session_topic"` to valid notification types, plumbed `session_name` through to `push_notification()`
+>
+> **Session 374 — Presentation Generator CJ Flow Mode Map**:
+> - `rest/todo_fifo_queue.py`: Added `"presentation"` entry to `MODE_METADATA` and `AGENTIC_MODE_MAP` — agent now visible in UI mode selector and routable through CJ Flow
+>
+> **Files Modified (4)**:
+> - `agents/utils/proxy_agents/base_listener.py` (+6/-1) — Enhanced error logging
+> - `rest/notification_fifo_queue.py` (+24/-8) — title/abstract defaults, session_name field
+> - `rest/routers/notifications.py` (+10/-2) — session_name param, session_topic type, boundary normalization
+> - `rest/todo_fifo_queue.py` (+2) — Presentation Generator mode map entries
+> - Total: +42 insertions, -11 deletions
+
+---
+
 > **✅ SESSIONS 369-371c COMMITTED**: Presentation Generator Phases 3-5, CJ Flow Persistence Phase 6, WebSocket bug fixes (2026.03.24)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >
