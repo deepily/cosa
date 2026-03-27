@@ -186,13 +186,19 @@ class PresentationGeneratorJob( AgenticJobBase ):
             str: Conversational summary of generation results
         """
         from cosa.agents.presentation_generator import voice_io, cosa_interface
-        from cosa.agents.presentation_generator.orchestrator import PresentationOrchestratorAgent
-        from cosa.agents.presentation_generator.config import PresentationConfig
-        from cosa.config.configuration_manager import ConfigurationManager
         import os
 
         # Re-establish core voice_io binding (import-order race: last configure() wins)
         voice_io.reconfigure()
+
+        # Handle dry-run mode with breadcrumb notifications
+        if self.dry_run:
+            return await self._execute_dry_run( voice_io, cosa_interface )
+
+        # Import presentation components (only needed for normal mode)
+        from cosa.agents.presentation_generator.orchestrator import PresentationOrchestratorAgent
+        from cosa.agents.presentation_generator.config import PresentationConfig
+        from cosa.config.configuration_manager import ConfigurationManager
 
         # Set sender_id and target_user for notifications
         cosa_interface.SENDER_ID   = cosa_interface._get_sender_id( suffix=self.base_id )
@@ -262,16 +268,55 @@ class PresentationGeneratorJob( AgenticJobBase ):
             self.artifacts[ "presentation_id" ]  = agent.presentation_id
 
             # Build cost summary from API client
-            api_cost = agent.api_client.estimated_cost_usd if agent._api_client else 0.0
+            api_cost = agent.api_client.cost_estimate.estimated_cost_usd if agent._api_client else 0.0
             self.cost_summary = {
                 "content_cost_usd" : api_cost,
                 "total_cost_usd"   : api_cost,
             }
             self.artifacts[ "cost_summary" ] = self.cost_summary
 
-            # Return conversational answer
+            # Build clickable links for notification abstract
+            import urllib.parse
+            import cosa.utils.util as cu
+            io_base = cu.get_project_root() + "/io/"
+
+            yaml_link = self.yaml_path
+            marp_link = self.marp_path
+            if self.yaml_path and self.yaml_path.startswith( io_base ):
+                rel_path  = self.yaml_path.replace( io_base, "" )
+                yaml_link = f"[View YAML](/app/docs?path={urllib.parse.quote( rel_path )})"
+            if self.marp_path and self.marp_path.startswith( io_base ):
+                rel_path  = self.marp_path.replace( io_base, "" )
+                marp_link = f"[View Presentation](/app/docs?path={urllib.parse.quote( rel_path )})"
+
+            # Build abstract and report_path for queue metadata → UI job card
             total_slides = presentation.total_slides
-            return f"Presentation complete! Generated {total_slides} slides, ~{config.target_duration_minutes} minutes. ID: {agent.presentation_id}"
+            duration_min = config.target_duration_minutes
+
+            completion_abstract = f"""**Presentation Complete!**
+
+**Slides**: {total_slides} slides, ~{duration_min} minutes
+
+**YAML**: {yaml_link}
+
+**Marp**: {marp_link}
+
+**Stats**: ${api_cost:.4f} | ID: {agent.presentation_id}"""
+
+            self.artifacts[ "abstract" ]    = completion_abstract
+            self.artifacts[ "report_path" ] = self.marp_path
+
+            # Notify completion (with job_id and queue_name for job card routing)
+            await voice_io.notify(
+                f"Presentation complete! {total_slides} slides, ~{duration_min} minutes.",
+                priority="medium",
+                abstract=completion_abstract,
+                job_id=self.id_hash,
+                queue_name="run"
+            )
+
+            # Return conversational answer
+            return f"Presentation complete! Generated {total_slides} slides, ~{duration_min} minutes. ID: {agent.presentation_id}"
 
         finally:
             voice_io.clear_job_id()
@@ -292,52 +337,60 @@ class PresentationGeneratorJob( AgenticJobBase ):
         """
         import os
 
+        # Set sender_id and target_user for notifications
+        cosa_interface.SENDER_ID   = cosa_interface._get_sender_id( suffix=self.base_id )
+        cosa_interface.TARGET_USER = self.user_email
+
+        # Set job_id for auto-injection into all notify() calls
+        voice_io.set_job_id( self.id_hash )
+
         filename = os.path.basename( self.source_path )
 
         if self.debug:
             print( f"[PresentationGeneratorJob] DRY RUN MODE for: {filename}" )
 
-        # Breadcrumb: Starting
-        await voice_io.notify( f"Dry run: Starting presentation simulation from {filename}", priority="low", job_id=self.id_hash )
-        await asyncio.sleep( 0.5 )
+        try:
+            # Breadcrumb: Starting
+            await voice_io.notify( f"Dry run: Starting presentation simulation from {filename}", priority="low", job_id=self.id_hash )
+            await asyncio.sleep( 0.5 )
 
-        # Breadcrumb: Phase 1 — Ingest
-        await voice_io.notify( "Dry run: Skipping document ingestion", priority="low", job_id=self.id_hash )
-        await asyncio.sleep( 0.5 )
+            # Breadcrumb: Phase 1 — Ingest
+            await voice_io.notify( "Dry run: Skipping document ingestion", priority="low", job_id=self.id_hash )
+            await asyncio.sleep( 0.5 )
 
-        # Breadcrumb: Phase 2 — Analyze
-        await voice_io.notify( "Dry run: Skipping narrative analysis", priority="low", job_id=self.id_hash )
-        await asyncio.sleep( 0.5 )
+            # Breadcrumb: Phase 2 — Analyze
+            await voice_io.notify( "Dry run: Skipping narrative analysis", priority="low", job_id=self.id_hash )
+            await asyncio.sleep( 0.5 )
 
-        # Breadcrumb: Phase 3 — Outline
-        await voice_io.notify( "Dry run: Skipping slide outline generation", priority="low", job_id=self.id_hash )
-        await asyncio.sleep( 0.5 )
+            # Breadcrumb: Phase 3 — Outline
+            await voice_io.notify( "Dry run: Skipping slide outline generation", priority="low", job_id=self.id_hash )
+            await asyncio.sleep( 0.5 )
 
-        # Breadcrumb: Phase 4 — Elaborate
-        await voice_io.notify( "Dry run: Skipping slide content elaboration", priority="low", job_id=self.id_hash )
-        await asyncio.sleep( 0.5 )
+            # Breadcrumb: Phase 4 — Elaborate
+            await voice_io.notify( "Dry run: Skipping slide content elaboration", priority="low", job_id=self.id_hash )
+            await asyncio.sleep( 0.5 )
 
-        # Breadcrumb: Phase 5 — Serialize
-        await voice_io.notify( "Dry run: Skipping YAML serialization", priority="low", job_id=self.id_hash )
-        await asyncio.sleep( 0.5 )
+            # Breadcrumb: Phase 5 — Serialize
+            await voice_io.notify( "Dry run: Skipping YAML serialization", priority="low", job_id=self.id_hash )
+            await asyncio.sleep( 0.5 )
 
-        # Set mock results
-        self.yaml_path = f"/io/presentations/{self.user_email}/dry-run-{self.id_hash}/presentation.yaml"
-        self.marp_path = f"/io/presentations/{self.user_email}/dry-run-{self.id_hash}/presentation.md"
+            # Set mock results
+            self.yaml_path = f"/io/presentations/{self.user_email}/dry-run-{self.id_hash}/presentation.yaml"
+            self.marp_path = f"/io/presentations/{self.user_email}/dry-run-{self.id_hash}/presentation.md"
 
-        # Store mock artifacts
-        self.artifacts[ "yaml_path" ]        = self.yaml_path
-        self.artifacts[ "marp_path" ]        = self.marp_path
-        self.artifacts[ "presentation_id" ]  = f"dry-run-{self.id_hash}"
+            # Store mock artifacts
+            self.artifacts[ "yaml_path" ]        = self.yaml_path
+            self.artifacts[ "marp_path" ]        = self.marp_path
+            self.artifacts[ "presentation_id" ]  = f"dry-run-{self.id_hash}"
 
-        # Mock cost summary
-        self.cost_summary = {
-            "content_cost_usd" : 0.0,
-            "total_cost_usd"   : 0.0,
-        }
-        self.artifacts[ "cost_summary" ] = self.cost_summary
+            # Mock cost summary
+            self.cost_summary = {
+                "content_cost_usd" : 0.0,
+                "total_cost_usd"   : 0.0,
+            }
+            self.artifacts[ "cost_summary" ] = self.cost_summary
 
-        completion_abstract = f"""**Dry Run Complete!**
+            completion_abstract = f"""**Dry Run Complete!**
 
 **YAML**: {self.yaml_path} (mock - not actually created)
 
@@ -345,15 +398,18 @@ class PresentationGeneratorJob( AgenticJobBase ):
 
 **Stats**: $0.00 | 15 slides | 3.0s (simulated)"""
 
-        # Notify completion
-        await voice_io.notify(
-            "Dry run complete! Presentation simulation finished.",
-            priority="medium",
-            abstract=completion_abstract,
-            job_id=self.id_hash
-        )
+            # Notify completion
+            await voice_io.notify(
+                "Dry run complete! Presentation simulation finished.",
+                priority="medium",
+                abstract=completion_abstract,
+                job_id=self.id_hash
+            )
 
-        return "Dry run complete. Presentation simulation finished."
+            return "Dry run complete. Presentation simulation finished."
+
+        finally:
+            voice_io.clear_job_id()
 
 
 def quick_smoke_test():

@@ -658,7 +658,7 @@ def get_api_key(key_name: str, project_root: str = None) -> Optional[str]:
         print_banner(f"ERROR: Key [{key_name}] not found at [{path}]")
         return None
 
-    return get_file_as_string(path)
+    return get_file_as_string(path).strip()
 
 
 def generate_domain_names(count: int = 10, remove_dots: bool = False, debug: bool = False) -> list[str]:

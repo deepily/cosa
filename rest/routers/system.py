@@ -213,6 +213,14 @@ async def init( config_block_id: Optional[ str ] = None ):
             print( "Reloading solution snapshots..." )
             main_module.snapshot_mgr.reload()
 
+        # Reset PredictionEngine singleton so it re-reads config (e.g., test LanceDB table)
+        try:
+            from cosa.agents.prediction_engine.prediction_engine import PredictionEngine, get_prediction_engine
+            PredictionEngine.reset()
+            get_prediction_engine( config_mgr=config_mgr )
+        except Exception as pe:
+            print( f"[INIT] PredictionEngine reset note: {pe}" )
+
         return {
             "status"          : "success",
             "config_block_id" : config_mgr.config_block_id,
@@ -226,6 +234,59 @@ async def init( config_block_id: Optional[ str ] = None ):
             "message"   : f"Init failed: {str( e )}",
             "timestamp" : datetime.now().isoformat()
         }
+
+@router.get(
+    "/api/prediction-engine/reset",
+    response_class = JSONResponse,
+    summary        = "Reset PredictionEngine singleton",
+    description    = "Destroy and re-create the PredictionEngine singleton with current config. Used by integration tests to ensure LanceDB table isolation between tests."
+)
+async def reset_prediction_engine( drop_table: bool = True ):
+    """
+    Lightweight endpoint to reset the PredictionEngine singleton.
+
+    Ensures:
+        - LanceDB table is dropped if it exists and drop_table=True (server has write permission)
+        - PredictionEngine singleton is destroyed and re-created
+        - New instance reads current config (e.g., test LanceDB table after hot-swap)
+        - No config reinit, DB swap, or snapshot reload (use /api/init for those)
+    """
+    try:
+        from cosa.agents.prediction_engine.prediction_engine import PredictionEngine, get_prediction_engine
+        import cosa.utils.util as cu
+
+        config_mgr  = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+        table_name  = config_mgr.get( "prediction engine lancedb table", default="prediction_decisions" )
+        table_dropped = False
+
+        # Drop LanceDB table (server process has write permission, test process may not)
+        if drop_table:
+            try:
+                import lancedb
+                lancedb_path = cu.get_project_root() + "/src/conf/long-term-memory/lupin.lancedb"
+                db = lancedb.connect( lancedb_path )
+                if table_name in db.table_names():
+                    db.drop_table( table_name )
+                    table_dropped = True
+            except Exception as drop_err:
+                print( f"[PE-RESET] Table drop note: {drop_err}" )
+
+        PredictionEngine.reset()
+        engine = get_prediction_engine( config_mgr=config_mgr )
+
+        return {
+            "status"        : "success",
+            "lancedb_table" : engine.lancedb_table,
+            "table_dropped" : table_dropped,
+            "timestamp"     : datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status"  : "error",
+            "message" : f"PredictionEngine reset failed: {str( e )}",
+            "timestamp": datetime.now().isoformat()
+        }
+
 
 @router.get(
     "/api/get-session-id",

@@ -1,5 +1,30 @@
 # COSA Development History
 
+> **✅ SESSIONS 376+378 COMMITTED**: Presentation Generator bug fixes (dry-run, cost attr, completion abstract, Docker notifications), PredictionEngine test isolation endpoint, API key strip fix (2026.03.26)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 376 — Bug Fixes: Presentation Generator + Docker Notifications**:
+> - `agents/presentation_generator/job.py`: Wired `_execute_dry_run()` call in `_execute()` (was dead code — dry run went through orchestrator without identity setup, causing `is_voice_available()` to cache False). Added identity setup (`SENDER_ID`, `TARGET_USER`) + `try/finally` cleanup in dry-run path.
+> - `agents/presentation_generator/job.py`: Fixed `estimated_cost_usd` AttributeError — wrong attribute chain `agent.api_client.estimated_cost_usd` → `agent.api_client.cost_estimate.estimated_cost_usd`
+> - `agents/presentation_generator/job.py`: Added completion abstract with clickable `/app/docs?path=` links (matching podcast pattern), `report_path` pointing to Marp output, `voice_io.notify()` with `queue_name="run"` for job card routing
+> - `utils/config_loader.py`: Added `LUPIN_API_KEY` env var support — direct key value bypasses config file lookup (for Docker/CI where `~/.lupin/config` unavailable). Updated `get_api_config()` conditional logic and `load_api_key()` priority chain.
+>
+> **Session 378 — UPE LanceDB Test Isolation + Warm Test Fix**:
+> - `rest/routers/system.py`: Added `PredictionEngine.reset()` + `get_prediction_engine()` to `/api/init` hot-swap endpoint
+> - `rest/routers/system.py`: Created new `GET /api/prediction-engine/reset` lightweight endpoint — drops LanceDB table + resets singleton. Needed because test process can't drop root-owned LanceDB files and `/api/init` is too heavy per-test (causes 429 rate limiting)
+> - `utils/util.py`: Fixed `get_api_key()` returning file contents with trailing `\n` — HTTP headers reject newlines. Added `.strip()` at source (system boundary normalization)
+>
+> **Files Modified (4)**:
+> - `agents/presentation_generator/job.py` (+96/-52) — Dry-run wiring, cost attr fix, completion abstract + links
+> - `rest/routers/system.py` (+61) — PredictionEngine reset in /api/init + new /api/prediction-engine/reset endpoint
+> - `utils/config_loader.py` (+13/-5) — LUPIN_API_KEY env var for Docker
+> - `utils/util.py` (+1/-1) — get_api_key() .strip() fix
+> - Total: +177 insertions, -52 deletions
+
+---
+
 > **✅ SESSIONS 372-374 COMMITTED**: Voice injection bug fix, session_name pipeline, Presentation Generator mode map (2026.03.25)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >

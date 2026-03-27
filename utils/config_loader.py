@@ -48,16 +48,19 @@ def get_api_config( env: Optional[str] = None ) -> Dict[str, str]:
         FileNotFoundError: If ~/.lupin/config not found and env vars not set
     """
     # Priority 1: Check environment variables (highest)
-    api_url = os.getenv( 'LUPIN_API_URL' )
+    api_url      = os.getenv( 'LUPIN_API_URL' )
     api_key_file = os.getenv( 'LUPIN_API_KEY_FILE' )
+    api_key_direct = os.getenv( 'LUPIN_API_KEY' )
 
     notification_recipient = os.getenv( 'LUPIN_DEV_EMAIL' )
 
-    if api_url and api_key_file:
-        # Both required env vars set - use them
+    if ( api_key_file or api_key_direct ) and ( api_url or api_key_direct ):
+        # Env vars set — use them (LUPIN_API_KEY bypasses file, handled by load_api_key)
+        # Default URL to localhost:7999 when LUPIN_API_KEY is set without LUPIN_API_URL
+        # (common in Docker where the server posts notifications to itself)
         result = {
-            'api_url': api_url,
-            'api_key_file': api_key_file
+            'api_url'      : api_url or 'http://localhost:7999',
+            'api_key_file' : api_key_file or '__direct__'
         }
         # Add global_notification_recipient if configured
         if notification_recipient:
@@ -172,6 +175,11 @@ def load_api_key( api_key_file: str ) -> str:
     Raises:
         ValueError: If file not found or key format invalid
     """
+    # Direct env var takes priority (for Docker/CI where config file unavailable)
+    direct_key = os.getenv( 'LUPIN_API_KEY' )
+    if direct_key and re.match( r'^ck_live_[A-Za-z0-9_-]{64,}$', direct_key ):
+        return direct_key
+
     key_file = Path( api_key_file )
 
     if not key_file.exists():
