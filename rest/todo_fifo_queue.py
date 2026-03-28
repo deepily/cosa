@@ -1164,7 +1164,30 @@ class TodoFifoQueue( FifoQueue ):
 
         if self.debug:
             print( f"[TODO-QUEUE] Added job, emitted pending→todo, and notified consumer: {item.id_hash}" )
-    
+
+    def delete_by_id_hash( self, id_hash: str ) -> bool:
+        """
+        Override parent's delete to notify consumer thread when a job is removed.
+
+        When a timed job is deleted while the consumer is sleeping until its
+        scheduled_at, the consumer needs to wake up and recalculate its timeout.
+
+        Requires:
+            - id_hash is a string
+
+        Ensures:
+            - Item is removed via parent method
+            - Consumer thread is notified to recalculate eligibility
+
+        Returns:
+            - bool: True if item was found and deleted, False otherwise
+        """
+        with self.condition:
+            result = super().delete_by_id_hash( id_hash )
+            if result:
+                self.condition.notify()  # Wake consumer to recalculate
+            return result
+
 def quick_smoke_test():
     """Quick smoke test to validate TodoFifoQueue functionality."""
     import cosa.utils.util as du

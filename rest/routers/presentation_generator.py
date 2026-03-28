@@ -16,7 +16,7 @@ Example:
 import os
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from cosa.rest.auth import get_current_user
 from cosa.rest.queue_extensions import user_job_tracker
@@ -37,6 +37,8 @@ class PresentationSubmitRequest( BaseModel ):
     audience                : Optional[ str ] = None
     theme                   : Optional[ str ] = None
     dry_run                 : bool            = False
+    scheduled_at            : Optional[ str ] = Field( None, description="ISO datetime for deferred execution (None = immediate)" )
+    monopolize              : bool            = Field( False, description="Run exclusively, block all other jobs until complete" )
 
 
 class PresentationSubmitResponse( BaseModel ):
@@ -186,6 +188,10 @@ async def submit_presentation_job(
 
     if job is None:
         raise HTTPException( status_code=500, detail="Failed to create presentation job" )
+
+    # Scheduling attributes pass-through (CJ Flow timed execution + monopolize)
+    if request.scheduled_at: job.scheduled_at = request.scheduled_at
+    if request.monopolize:   job.monopolize   = request.monopolize
 
     # Atomic: scope ID + index for user filtering BEFORE push
     job.id_hash = user_job_tracker.register_scoped_job( job.id_hash, user_id, session_id )

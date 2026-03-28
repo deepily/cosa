@@ -126,6 +126,19 @@ class QueueableJob( Protocol ):
     """Error message if job failed (None if successful)."""
 
     # =========================================================================
+    # Scheduling Attributes (CJ Flow Timed Execution + Monopolize + Pause)
+    # =========================================================================
+
+    scheduled_at: str
+    """When to run this job (ISO format local datetime string, or None for immediate)."""
+
+    monopolize: bool
+    """If True, this job runs exclusively — no other jobs process until it completes."""
+
+    paused: bool
+    """If True, this job is paused in the todo queue — consumer skips it until resumed."""
+
+    # =========================================================================
     # Required Methods
     # =========================================================================
 
@@ -214,6 +227,9 @@ def quick_smoke_test():
             is_cache_hit          = False
             status                = "pending"
             error                 = None
+            scheduled_at          = None
+            monopolize            = False
+            paused                = False
 
             def do_all( self ):
                 return "done"

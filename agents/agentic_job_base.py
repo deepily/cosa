@@ -57,6 +57,9 @@ class AgenticJobBase( ABC ):
         user_id: str,
         user_email: str,
         session_id: str,
+        scheduled_at: str = None,
+        monopolize: bool = False,
+        paused: bool = False,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -105,6 +108,11 @@ class AgenticJobBase( ABC ):
         # Results (populated by subclasses after execution)
         self.result       = None
         self.artifacts    = {}  # e.g., {"report_path": "...", "audio_path": "..."}
+
+        # Scheduling attributes (CJ Flow timed execution + monopolize + pause)
+        self.scheduled_at          = scheduled_at   # ISO datetime string or None (immediate)
+        self.monopolize            = monopolize      # Exclusive execution flag
+        self.paused                = paused          # Todo queue pause flag
 
         # For compatibility with queue UI display
         self.answer_conversational = None

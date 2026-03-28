@@ -435,6 +435,7 @@ class RunningFifoQueue( FifoQueue ):
 
                 metadata = {
                     'error'           : error_msg,
+                    'stack_trace'     : running_job.error,  # Job-reported error (no Python traceback)
                     # Phase 6.2: Card-rendering fields for client-side card creation
                     'question_text'   : running_job.last_question_asked,
                     'agent_type'      : running_job.job_type,
@@ -490,6 +491,7 @@ class RunningFifoQueue( FifoQueue ):
 
             metadata = {
                 'error'           : str( e ),
+                'stack_trace'     : traceback.format_exc(),
                 # Phase 6.2: Card-rendering fields for client-side card creation
                 'question_text'   : running_job.last_question_asked,
                 'agent_type'      : running_job.job_type,

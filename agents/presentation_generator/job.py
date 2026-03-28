@@ -224,7 +224,8 @@ class PresentationGeneratorJob( AgenticJobBase ):
             # Notify start
             await voice_io.notify(
                 f"Starting presentation generation from: {os.path.basename( full_path )}",
-                priority="medium"
+                priority="medium",
+                queue_name="run"
             )
 
             # Create config from INI
@@ -254,7 +255,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
             presentation = await agent.do_all_async()
 
             if presentation is None:
-                await voice_io.notify( "Presentation generation was cancelled.", priority="medium" )
+                await voice_io.notify( "Presentation generation was cancelled.", priority="medium", queue_name="run" )
                 return "Presentation generation was cancelled by the user."
 
             # Extract results from orchestrator state
@@ -268,10 +269,14 @@ class PresentationGeneratorJob( AgenticJobBase ):
             self.artifacts[ "presentation_id" ]  = agent.presentation_id
 
             # Build cost summary from API client
-            api_cost = agent.api_client.cost_estimate.estimated_cost_usd if agent._api_client else 0.0
+            cost_est = agent.api_client.cost_estimate if agent._api_client else None
+            api_cost = cost_est.estimated_cost_usd if cost_est else 0.0
             self.cost_summary = {
-                "content_cost_usd" : api_cost,
-                "total_cost_usd"   : api_cost,
+                "content_cost_usd"   : api_cost,
+                "total_cost_usd"     : api_cost,
+                "total_input_tokens" : cost_est.total_input_tokens if cost_est else 0,
+                "total_output_tokens": cost_est.total_output_tokens if cost_est else 0,
+                "total_api_calls"    : cost_est.total_api_calls if cost_est else 0,
             }
             self.artifacts[ "cost_summary" ] = self.cost_summary
 
@@ -351,27 +356,27 @@ class PresentationGeneratorJob( AgenticJobBase ):
 
         try:
             # Breadcrumb: Starting
-            await voice_io.notify( f"Dry run: Starting presentation simulation from {filename}", priority="low", job_id=self.id_hash )
+            await voice_io.notify( f"Dry run: Starting presentation simulation from {filename}", priority="low", job_id=self.id_hash, queue_name="run" )
             await asyncio.sleep( 0.5 )
 
             # Breadcrumb: Phase 1 — Ingest
-            await voice_io.notify( "Dry run: Skipping document ingestion", priority="low", job_id=self.id_hash )
+            await voice_io.notify( "Dry run: Skipping document ingestion", priority="low", job_id=self.id_hash, queue_name="run" )
             await asyncio.sleep( 0.5 )
 
             # Breadcrumb: Phase 2 — Analyze
-            await voice_io.notify( "Dry run: Skipping narrative analysis", priority="low", job_id=self.id_hash )
+            await voice_io.notify( "Dry run: Skipping narrative analysis", priority="low", job_id=self.id_hash, queue_name="run" )
             await asyncio.sleep( 0.5 )
 
             # Breadcrumb: Phase 3 — Outline
-            await voice_io.notify( "Dry run: Skipping slide outline generation", priority="low", job_id=self.id_hash )
+            await voice_io.notify( "Dry run: Skipping slide outline generation", priority="low", job_id=self.id_hash, queue_name="run" )
             await asyncio.sleep( 0.5 )
 
             # Breadcrumb: Phase 4 — Elaborate
-            await voice_io.notify( "Dry run: Skipping slide content elaboration", priority="low", job_id=self.id_hash )
+            await voice_io.notify( "Dry run: Skipping slide content elaboration", priority="low", job_id=self.id_hash, queue_name="run" )
             await asyncio.sleep( 0.5 )
 
             # Breadcrumb: Phase 5 — Serialize
-            await voice_io.notify( "Dry run: Skipping YAML serialization", priority="low", job_id=self.id_hash )
+            await voice_io.notify( "Dry run: Skipping YAML serialization", priority="low", job_id=self.id_hash, queue_name="run" )
             await asyncio.sleep( 0.5 )
 
             # Set mock results
@@ -385,8 +390,11 @@ class PresentationGeneratorJob( AgenticJobBase ):
 
             # Mock cost summary
             self.cost_summary = {
-                "content_cost_usd" : 0.0,
-                "total_cost_usd"   : 0.0,
+                "content_cost_usd"   : 0.0,
+                "total_cost_usd"     : 0.0,
+                "total_input_tokens" : 0,
+                "total_output_tokens": 0,
+                "total_api_calls"    : 0,
             }
             self.artifacts[ "cost_summary" ] = self.cost_summary
 
@@ -403,7 +411,8 @@ class PresentationGeneratorJob( AgenticJobBase ):
                 "Dry run complete! Presentation simulation finished.",
                 priority="medium",
                 abstract=completion_abstract,
-                job_id=self.id_hash
+                job_id=self.id_hash,
+                queue_name="run"
             )
 
             return "Dry run complete. Presentation simulation finished."

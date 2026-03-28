@@ -243,7 +243,8 @@ class ClaudeCodeJob( AgenticJobBase ):
         await cosa_interface.notify_progress(
             f"Starting Claude Code task: {self.prompt[ :60 ]}...",
             priority="low",
-            job_id=self.id_hash
+            job_id=self.id_hash,
+            queue_name="run"
         )
 
         if self.debug:
@@ -308,7 +309,8 @@ class ClaudeCodeJob( AgenticJobBase ):
                 f"Claude Code task complete. Cost: {cost_str}",
                 priority="medium",
                 abstract=completion_abstract,
-                job_id=self.id_hash
+                job_id=self.id_hash,
+                queue_name="run"
             )
 
             return f"Claude Code task completed. Cost: {cost_str}. {self.output_text[ :200 ] if self.output_text else ''}"
@@ -326,7 +328,8 @@ class ClaudeCodeJob( AgenticJobBase ):
             await cosa_interface.notify_progress(
                 f"Claude Code task failed: {error_msg[ :80 ]}",
                 priority="urgent",
-                job_id=self.id_hash
+                job_id=self.id_hash,
+                queue_name="run"
             )
 
             raise RuntimeError( f"Claude Code task failed: {error_msg}" )
@@ -383,7 +386,8 @@ class ClaudeCodeJob( AgenticJobBase ):
             await cosa_interface.notify_progress(
                 f"Dry run: {label}",
                 priority="low",
-                job_id=self.id_hash
+                job_id=self.id_hash,
+                queue_name="run"
             )
             await asyncio.sleep( delay )
 
@@ -421,7 +425,8 @@ This was a dry-run simulation. No actual Claude Code execution occurred."""
             f"Dry run complete: {self.id_hash}",
             priority="medium",
             abstract=completion_abstract,
-            job_id=self.id_hash
+            job_id=self.id_hash,
+            queue_name="run"
         )
 
         return self.output_text
@@ -477,7 +482,8 @@ This was a dry-run simulation. No actual Claude Code execution occurred."""
             await cosa_interface.notify_progress(
                 f"Dry run: {self.DRY_RUN_INTERACTIVE_LABELS[ 0 ]}",
                 priority="low",
-                job_id=self.id_hash
+                job_id=self.id_hash,
+                queue_name="run"
             )
             await asyncio.sleep( delay )
 
@@ -493,7 +499,8 @@ This was a dry-run simulation. No actual Claude Code execution occurred."""
             await cosa_interface.notify_progress(
                 f"Dry run: {self.DRY_RUN_INTERACTIVE_LABELS[ 1 ]}",
                 priority="low",
-                job_id=self.id_hash
+                job_id=self.id_hash,
+                queue_name="run"
             )
             await asyncio.sleep( delay )
 
@@ -502,7 +509,8 @@ This was a dry-run simulation. No actual Claude Code execution occurred."""
             await cosa_interface.notify_progress(
                 f"Dry run: {self.DRY_RUN_INTERACTIVE_LABELS[ 2 ]}",
                 priority="low",
-                job_id=self.id_hash
+                job_id=self.id_hash,
+                queue_name="run"
             )
             await asyncio.sleep( delay )
 
@@ -520,7 +528,8 @@ This was a dry-run simulation. No actual Claude Code execution occurred."""
             await cosa_interface.notify_progress(
                 f"Dry run: {self.DRY_RUN_INTERACTIVE_LABELS[ 3 ]}",
                 priority="low",
-                job_id=self.id_hash
+                job_id=self.id_hash,
+                queue_name="run"
             )
             await asyncio.sleep( delay )
 
@@ -536,7 +545,8 @@ This was a dry-run simulation. No actual Claude Code execution occurred."""
             await cosa_interface.notify_progress(
                 f"Dry run: {self.DRY_RUN_INTERACTIVE_LABELS[ 4 ]}",
                 priority="low",
-                job_id=self.id_hash
+                job_id=self.id_hash,
+                queue_name="run"
             )
             await asyncio.sleep( delay )
 
@@ -554,7 +564,8 @@ This was a dry-run simulation. No actual Claude Code execution occurred."""
             await cosa_interface.notify_progress(
                 f"Dry run: {self.DRY_RUN_INTERACTIVE_LABELS[ 5 ]}",
                 priority="low",
-                job_id=self.id_hash
+                job_id=self.id_hash,
+                queue_name="run"
             )
             await asyncio.sleep( delay )
 
@@ -597,7 +608,8 @@ This was a dry-run simulation. No actual Claude Code execution occurred."""
             await cosa_interface.notify_progress(
                 f"Dry run: {self.DRY_RUN_INTERACTIVE_LABELS[ 6 ]}",
                 priority="low",
-                job_id=self.id_hash
+                job_id=self.id_hash,
+                queue_name="run"
             )
             await asyncio.sleep( delay )
 
@@ -618,7 +630,8 @@ This was a dry-run simulation exercising MessageHistory and multi-turn context."
             f"Dry run complete: {self.id_hash}",
             priority="medium",
             abstract=completion_abstract,
-            job_id=self.id_hash
+            job_id=self.id_hash,
+            queue_name="run"
         )
 
         return self.output_text

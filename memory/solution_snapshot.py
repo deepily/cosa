@@ -254,6 +254,11 @@ class SolutionSnapshot( RunnableCode ):
         self.started_at            = ""
         self.completed_at          = ""
 
+        # Scheduling attributes (CJ Flow) — snapshots are always immediate, never monopolize/pause
+        self.scheduled_at          = None
+        self.monopolize            = False
+        self.paused                = False
+
         # Is there is no synonymous questions to be found then just recycle the current question
         # Handle corrupted data: ensure synonymous_questions is a valid dict/OrderedDict
         if not isinstance( synonymous_questions, dict ):

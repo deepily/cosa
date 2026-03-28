@@ -321,8 +321,10 @@ class DeepResearchJob( AgenticJobBase ):
             self.artifacts[ "report_path" ] = self.report_path
             self.artifacts[ "abstract" ]    = self.abstract
 
-            # Get cost summary
+            # Get cost summary and store in artifacts for persistence
             self.cost_summary = cost_tracker.get_summary()
+            from dataclasses import asdict
+            self.artifacts[ "cost_summary" ] = asdict( self.cost_summary )
 
             # Format completion message (SessionSummary is a dataclass)
             duration = self.cost_summary.duration_seconds
@@ -433,6 +435,8 @@ class DeepResearchJob( AgenticJobBase ):
             total_input_tokens  = 0,
             total_output_tokens = 0,
         )
+        from dataclasses import asdict
+        self.artifacts[ "cost_summary" ] = asdict( self.cost_summary )
 
         completion_abstract = f"""**🧪 Dry Run Complete!**
 

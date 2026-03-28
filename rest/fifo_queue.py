@@ -1,4 +1,5 @@
 from collections import OrderedDict
+from datetime import datetime
 from typing import Any, Optional
 import re
 from cosa.rest.queue_extensions import user_job_tracker
@@ -190,6 +191,81 @@ class FifoQueue:
             result = self.queue_list.pop( 0 )
             return result
     
+    def pop_next_eligible( self, now=None ) -> Optional[Any]:
+        """
+        Remove and return the first eligible job from the queue.
+
+        A job is eligible if: not paused AND (scheduled_at is None OR scheduled_at <= now).
+        Non-eligible jobs remain in their original queue positions.
+
+        Requires:
+            - now is a datetime or None (defaults to datetime.now())
+
+        Ensures:
+            - Returns first eligible job (removed from both queue_list and queue_dict)
+            - Returns None if no eligible jobs exist
+            - Non-eligible jobs stay in the queue unchanged
+
+        Raises:
+            - None
+        """
+        if now is None:
+            now = datetime.now()
+
+        for i, job in enumerate( self.queue_list ):
+            # Check paused flag (backward compat with legacy jobs)
+            if getattr( job, 'paused', False ):
+                continue
+
+            # Check scheduled_at (None = immediate = always eligible)
+            scheduled_at = getattr( job, 'scheduled_at', None )
+            if scheduled_at is not None:
+                try:
+                    scheduled_dt = datetime.fromisoformat( scheduled_at )
+                    if scheduled_dt > now:
+                        continue  # Not yet eligible
+                except ( ValueError, TypeError ):
+                    pass  # Unparseable → treat as immediate
+
+            # This job is eligible — remove and return it
+            del self.queue_dict[ job.id_hash ]
+            self.queue_list.pop( i )
+            return job
+
+        return None  # No eligible jobs found
+
+    def earliest_scheduled_at( self ):
+        """
+        Return the earliest scheduled_at datetime among non-paused queued jobs, or None.
+
+        Used by the consumer thread to calculate how long to sleep before the
+        next timed job becomes eligible. Paused jobs are ignored — they should
+        not affect the consumer's wake-up timer.
+
+        Requires:
+            - None
+
+        Ensures:
+            - Returns datetime of the earliest non-paused scheduled job
+            - Returns None if all jobs are immediate, paused, or queue is empty
+
+        Raises:
+            - None
+        """
+        earliest = None
+        for job in self.queue_list:
+            if getattr( job, 'paused', False ):
+                continue
+            scheduled_at = getattr( job, 'scheduled_at', None )
+            if scheduled_at is not None:
+                try:
+                    scheduled_dt = datetime.fromisoformat( scheduled_at )
+                    if earliest is None or scheduled_dt < earliest:
+                        earliest = scheduled_dt
+                except ( ValueError, TypeError ):
+                    pass  # Unparseable → skip
+        return earliest
+
     def head( self ) -> Optional[Any]:
         """
         Get the first item without removing it.

@@ -231,7 +231,8 @@ class PodcastGeneratorJob( AgenticJobBase ):
             # Notify start
             await voice_io.notify(
                 f"Starting podcast generation from: {os.path.basename( full_path )}",
-                priority="medium"
+                priority="medium",
+                queue_name="run"
             )
 
             # Create config from INI
@@ -261,7 +262,7 @@ class PodcastGeneratorJob( AgenticJobBase ):
             script = await agent.do_all_async()
 
             if script is None:
-                await voice_io.notify( "Podcast generation was cancelled.", priority="medium" )
+                await voice_io.notify( "Podcast generation was cancelled.", priority="medium", queue_name="run" )
                 return "Podcast generation was cancelled by the user."
 
             # Extract results from agent state
@@ -317,23 +318,23 @@ class PodcastGeneratorJob( AgenticJobBase ):
             print( f"[PodcastGeneratorJob] DRY RUN MODE for: {filename}" )
 
         # Breadcrumb: Starting
-        await voice_io.notify( f"🧪 Dry run: Starting podcast simulation from {filename}", priority="low", job_id=self.id_hash )
+        await voice_io.notify( f"🧪 Dry run: Starting podcast simulation from {filename}", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
         # Breadcrumb: Content analysis
-        await voice_io.notify( "🧪 Dry run: skipping content analysis", priority="low", job_id=self.id_hash )
+        await voice_io.notify( "🧪 Dry run: skipping content analysis", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
         # Breadcrumb: Script generation
-        await voice_io.notify( "🧪 Dry run: skipping script generation", priority="low", job_id=self.id_hash )
+        await voice_io.notify( "🧪 Dry run: skipping script generation", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
         # Breadcrumb: TTS generation
-        await voice_io.notify( "🧪 Dry run: skipping TTS generation (10 segments)", priority="low", job_id=self.id_hash )
+        await voice_io.notify( "🧪 Dry run: skipping TTS generation (10 segments)", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
         # Breadcrumb: Audio stitching
-        await voice_io.notify( "🧪 Dry run: skipping audio stitching", priority="low", job_id=self.id_hash )
+        await voice_io.notify( "🧪 Dry run: skipping audio stitching", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
         # Set mock results
@@ -366,7 +367,8 @@ class PodcastGeneratorJob( AgenticJobBase ):
             "🧪 Dry run complete! Podcast simulation finished.",
             priority="medium",
             abstract=completion_abstract,
-            job_id=self.id_hash
+            job_id=self.id_hash,
+            queue_name="run"
         )
 
         return "Dry run complete. Podcast simulation finished."

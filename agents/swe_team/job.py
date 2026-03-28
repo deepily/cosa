@@ -252,27 +252,21 @@ class SweTeamJob( AgenticJobBase ):
         cosa_interface.SESSION_ID   = self.id_hash
         cosa_interface.TARGET_USER  = self.user_email
 
-        # Live execution: build config and delegate to orchestrator
+        # Set job_id for auto-injection into all notify() calls
+        voice_io.set_job_id( self.id_hash )
+
+        # Live execution: build config from INI and delegate to orchestrator
         from cosa.agents.swe_team.config import SweTeamConfig
         from cosa.agents.swe_team.orchestrator import SweTeamOrchestrator
+        from cosa.config.configuration_manager import ConfigurationManager
 
-        # Per-job override takes priority, then INI config, then fallback to "shadow"
+        config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+        config = SweTeamConfig.from_config( config_mgr, debug=self.debug )
+        config.dry_run = False
+
+        # Per-job overrides take priority over INI values
         if self._trust_mode_override:
-            trust_mode = self._trust_mode_override
-        else:
-            trust_mode = "shadow"
-            try:
-                from cosa.config.configuration_manager import ConfigurationManager
-                cfg = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-                trust_mode = cfg.get( "swe team trust mode", default="shadow" )
-            except Exception:
-                pass
-
-        config = SweTeamConfig(
-            dry_run    = False,
-            trust_mode = trust_mode,
-        )
-
+            config.trust_mode = self._trust_mode_override
         if self.lead_model:
             config.lead_model = self.lead_model
         if self.worker_model:
@@ -308,6 +302,9 @@ class SweTeamJob( AgenticJobBase ):
             return result
 
         finally:
+            # Clear job_id to prevent leaking to subsequent jobs
+            voice_io.clear_job_id()
+
             # Clear orchestrator reference after execution
             self._orchestrator = None
 

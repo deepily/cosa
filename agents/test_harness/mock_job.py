@@ -76,6 +76,10 @@ class MockAgenticJob( AgenticJobBase ):
         fixed_sleep: Optional[ float ] = None,
         # Optional description for queue display
         description: Optional[ str ] = None,
+        # Scheduling attributes (CJ Flow timed execution + monopolize + pause)
+        scheduled_at: str = None,
+        monopolize: bool = False,
+        paused: bool = False,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -109,11 +113,14 @@ class MockAgenticJob( AgenticJobBase ):
             verbose: Enable verbose output
         """
         super().__init__(
-            user_id    = user_id,
-            user_email = user_email,
-            session_id = session_id,
-            debug      = debug,
-            verbose    = verbose
+            user_id      = user_id,
+            user_email   = user_email,
+            session_id   = session_id,
+            scheduled_at = scheduled_at,
+            monopolize   = monopolize,
+            paused       = paused,
+            debug        = debug,
+            verbose      = verbose
         )
 
         # Store configuration for API response

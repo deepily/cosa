@@ -39,28 +39,49 @@ def start_todo_producer_run_consumer_thread( todo_queue: Any, running_queue: Any
     """
     
     def consumer_worker():
-        """Main consumer worker function that processes jobs"""
+        """Main consumer worker function that processes jobs with timed execution support."""
         print( "[CONSUMER] Starting queue consumer thread..." )
         todo_queue.consumer_running = True
-        
+
         while todo_queue.consumer_running:
             try:
-                # Wait for jobs using condition variable (no polling!)
+                # Wait for eligible jobs using condition variable + dynamic timeout
                 with todo_queue.condition:
-                    while todo_queue.is_empty() and todo_queue.consumer_running:
-                        if todo_queue.debug:
-                            print( "[CONSUMER] Waiting for jobs..." )
-                        todo_queue.condition.wait()  # Sleep until notified
-                    
+                    job = None
+                    while todo_queue.consumer_running:
+                        now = datetime.now()
+                        job = todo_queue.pop_next_eligible( now )
+
+                        if job is not None:
+                            break  # Got an eligible job
+
+                        if todo_queue.is_empty():
+                            # Queue completely empty — wait indefinitely for a push
+                            if todo_queue.debug: print( "[CONSUMER] Queue empty, waiting for jobs..." )
+                            todo_queue.condition.wait()
+                        else:
+                            # Queue has items but none are eligible yet (all paused or future-scheduled)
+                            earliest = todo_queue.earliest_scheduled_at()
+                            if earliest is not None:
+                                timeout = max( 0.1, ( earliest - datetime.now() ).total_seconds() )
+                                if todo_queue.debug: print( f"[CONSUMER] Sleeping {timeout:.1f}s until next scheduled job" )
+                                todo_queue.condition.wait( timeout=timeout )
+                            else:
+                                # All jobs are paused (no scheduled times) — wait for a resume/push notify
+                                if todo_queue.debug: print( "[CONSUMER] All jobs paused, waiting for resume..." )
+                                todo_queue.condition.wait()
+
                     if not todo_queue.consumer_running:
                         break
-                    
-                    # Get job while holding the lock
-                    job = todo_queue.pop()  # Auto-emits 'todo_update'
-                
+
                 if job:
+                    # Monopolize placeholder (no-op in serial mode)
+                    # When Hybrid Fast Lane adds ThreadPoolExecutor, this will wait for
+                    # running_queue to drain before processing the monopolize job.
+                    if getattr( job, 'monopolize', False ) and todo_queue.debug:
+                        print( f"[CONSUMER] Monopolize job detected: {job.id_hash}" )
+
                     if todo_queue.debug:
-                        # Phase 2: Direct attribute access - Protocol guarantees this exists
                         print( f"[CONSUMER] Processing job: {job.last_question_asked}" )
 
                     # Emit job state transition (todo -> run) before moving to running queue
@@ -120,6 +141,8 @@ def quick_smoke_test():
         mock_todo_queue.consumer_running = True  # Start as True
         mock_todo_queue.condition = threading.Condition()
         mock_todo_queue.is_empty.return_value = True
+        mock_todo_queue.pop_next_eligible.return_value = None
+        mock_todo_queue.earliest_scheduled_at.return_value = None
         
         mock_running_queue = Mock()
         

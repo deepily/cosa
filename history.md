@@ -1,5 +1,56 @@
 # COSA Development History
 
+> **✅ SESSIONS 381b+381c COMMITTED**: CJ Flow Timed Execution + Monopolize + Pause/Resume (backend Phases 0-4), Agentic Job Consistency Remediation (2026.03.27)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 381b — CJ Flow: Timed Execution + Monopolize + Pause/Resume (Backend)**:
+> - `rest/queue_protocol.py`: Added `scheduled_at`, `monopolize`, `paused` fields to QueueableJob protocol
+> - `agents/agentic_job_base.py`, `agents/agent_base.py`, `memory/solution_snapshot.py`: Added 3 new protocol fields to all implementations
+> - `rest/fifo_queue.py`: New `pop_next_eligible()` scans for eligible jobs (not paused, scheduled time reached); `earliest_scheduled_at()` calculates dynamic wake-up timeout; `delete_by_id_hash()` override notifies consumer on removal
+> - `rest/queue_consumer.py`: Full rewrite — replaces `pop()` with `pop_next_eligible()`, dynamic `condition.wait(timeout=...)` for timed jobs, all-paused guard, monopolize placeholder
+> - `rest/todo_fifo_queue.py`: Pause/resume methods with consumer notification
+> - `rest/routers/queues.py`: New `PATCH /api/queue/todo/{id}/pause` and `/resume` endpoints; queue GET serialization updated
+> - `rest/routers/deep_research.py`, `podcast_generator.py`, `presentation_generator.py`, `swe_team.py`, `mock_job.py`: Added `scheduled_at`/`monopolize` request fields to all 5 routers
+> - `rest/job_persistence.py`: `scheduled_at` + `monopolize` added to JSONB metadata extraction
+> - `rest/running_fifo_queue.py`: Added `scheduled_at`/`monopolize` to dead-job metadata
+>
+> **Session 381c — Agentic Job Consistency Remediation**:
+> - `agents/swe_team/job.py`: Added `set_job_id()`/`clear_job_id()` in live execution path
+> - `agents/swe_team/config.py`: Added `from_config()` classmethod for INI-driven configuration
+> - `agents/podcast_generator/job.py`: Added `queue_name="run"` to all 8 notify calls (live + dry-run)
+> - `agents/claude_code/job.py`: Added `queue_name="run"` to all 13 `notify_progress()` calls
+> - `agents/presentation_generator/job.py`: Added `queue_name="run"` to all 9 notify calls (live + dry-run)
+> - `agents/test_harness/mock_job.py`: Updated with protocol fields and consistency fixes
+>
+> **Files Modified (22)**:
+> - `rest/queue_protocol.py` (+16) — 3 new protocol fields
+> - `agents/agentic_job_base.py` (+8) — Protocol field implementations
+> - `agents/agent_base.py` (+5) — Protocol field implementations
+> - `memory/solution_snapshot.py` (+5) — Protocol field implementations
+> - `rest/fifo_queue.py` (+76) — `pop_next_eligible()`, `earliest_scheduled_at()`, `delete_by_id_hash()` override
+> - `rest/queue_consumer.py` (+49/-4) — Full consumer loop rewrite with dynamic wake-up
+> - `rest/todo_fifo_queue.py` (+25/-1) — Pause/resume methods
+> - `rest/routers/queues.py` (+119) — Pause/resume endpoints, serialization updates
+> - `rest/routers/deep_research.py` (+6) — scheduled_at/monopolize fields
+> - `rest/routers/podcast_generator.py` (+12/-1) — scheduled_at/monopolize fields
+> - `rest/routers/presentation_generator.py` (+8/-1) — scheduled_at/monopolize fields
+> - `rest/routers/swe_team.py` (+6) — scheduled_at/monopolize fields
+> - `rest/routers/mock_job.py` (+6) — scheduled_at/monopolize fields
+> - `rest/job_persistence.py` (+3/-1) — Metadata extraction for new fields
+> - `rest/running_fifo_queue.py` (+2) — Dead-job metadata fields
+> - `agents/swe_team/config.py` (+69/-1) — `from_config()` classmethod
+> - `agents/swe_team/job.py` (+31/-5) — `set_job_id`/`clear_job_id` + INI-driven config
+> - `agents/claude_code/job.py` (+39/-4) — `queue_name="run"` on all 13 notify calls
+> - `agents/podcast_generator/job.py` (+18/-3) — `queue_name="run"` on all 8 notify calls
+> - `agents/presentation_generator/job.py` (+37/-4) — `queue_name="run"` on all 9 notify calls
+> - `agents/test_harness/mock_job.py` (+17/-2) — Protocol fields + consistency fixes
+> - `agents/deep_research/job.py` (+6/-1) — Cost summary in artifacts
+> - Total: +487 insertions, -76 deletions
+
+---
+
 > **✅ SESSIONS 376+378 COMMITTED**: Presentation Generator bug fixes (dry-run, cost attr, completion abstract, Docker notifications), PredictionEngine test isolation endpoint, API key strip fix (2026.03.26)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >

@@ -119,7 +119,8 @@ def _build_metadata_json( metadata ):
     rich_fields = [
         "response_text", "abstract", "report_link",
         "cost_summary", "artifacts", "answer_conversational",
-        "push_counter", "agent_type"
+        "push_counter", "agent_type", "stack_trace",
+        "scheduled_at", "monopolize"
     ]
 
     result = {}

@@ -45,6 +45,8 @@ class DeepResearchSubmitRequest( BaseModel ):
     dry_run: bool = Field( False, description="Simulate execution without API calls" )
     audience: Optional[ str ] = Field( None, description="Target audience level: beginner, general, expert, academic" )
     audience_context: Optional[ str ] = Field( None, description="Custom audience description" )
+    scheduled_at: Optional[ str ] = Field( None, description="ISO datetime for deferred execution (None = immediate)" )
+    monopolize: bool = Field( False, description="Run exclusively, block all other jobs until complete" )
 
 
 class DeepResearchSubmitResponse( BaseModel ):
@@ -161,6 +163,10 @@ async def submit_research(
         # Apply lead_model if specified (factory doesn't handle this)
         if request_body.lead_model:
             job.lead_model = request_body.lead_model
+
+        # Scheduling attributes pass-through (CJ Flow timed execution + monopolize)
+        if request_body.scheduled_at: job.scheduled_at = request_body.scheduled_at
+        if request_body.monopolize:   job.monopolize   = request_body.monopolize
 
         # Atomic: scope ID + index for user filtering BEFORE push (race condition prevention)
         job.id_hash = user_job_tracker.register_scoped_job( job.id_hash, user_id, session_id )

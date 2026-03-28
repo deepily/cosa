@@ -175,6 +175,11 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.started_at   = ""
         self.completed_at = ""
 
+        # Scheduling attributes (CJ Flow) — sync agents are always immediate, never monopolize/pause
+        self.scheduled_at = None
+        self.monopolize   = False
+        self.paused       = False
+
         self.execution_state = AgentBase.STATE_WAITING_TO_RUN
     
     @abc.abstractmethod

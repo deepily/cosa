@@ -20,6 +20,7 @@ from cosa.rest.auth import get_current_user
 from cosa.rest.queue_auth import authorize_queue_filter
 from cosa.rest.auth_middleware import is_admin
 from cosa.agents.agentic_job_base import AgenticJobBase
+from cosa.rest.queue_util import emit_job_state_transition
 
 router = APIRouter(prefix="/api", tags=["queues"])
 
@@ -384,6 +385,9 @@ async def get_queue(
             "status"       : job.status,
             "started_at"   : job.started_at,
             "error"        : job.error,
+            "scheduled_at" : getattr( job, 'scheduled_at', None ),
+            "monopolize"   : getattr( job, 'monopolize', False ),
+            "paused"       : getattr( job, 'paused', False ),
         }
         structured_jobs.append( job_data )
 
@@ -1039,4 +1043,119 @@ async def retry_job_history(
         "status"          : "retried",
         "original_job_id" : job_id,
         "result"          : result
+    }
+
+
+# =============================================================================
+# CJ Flow: Job Pause/Resume (Todo Queue Only)
+# =============================================================================
+
+
+@router.patch(
+    "/queue/todo/{job_id}/pause",
+    summary     = "Pause a todo queue job",
+    description = "Set paused=True on a todo queue job. Consumer skips it until resumed."
+)
+async def pause_job(
+    job_id: str,
+    current_user: dict = Depends( get_current_user ),
+    todo_queue         = Depends( get_todo_queue ),
+):
+    """
+    Pause a job in the todo queue.
+
+    A paused job remains in the queue but is skipped by the consumer during
+    eligibility checks. Resume the job to make it eligible again.
+
+    Requires:
+        - job_id identifies a job currently in the todo queue
+        - current_user is authenticated
+        - Job belongs to current user OR user is admin
+
+    Ensures:
+        - Job's paused flag is set to True
+        - Returns confirmation
+
+    Raises:
+        - HTTPException 404: Job not found in todo queue
+        - HTTPException 403: User does not own this job
+    """
+    user_id = current_user[ "uid" ]
+
+    print( f"[API] PATCH /api/queue/todo/{job_id}/pause - user: {user_id}" )
+
+    try:
+        job = todo_queue.get_by_id_hash( job_id )
+    except KeyError:
+        raise HTTPException( status_code=404, detail=f"Job not found in todo queue: {job_id}" )
+
+    if job.user_id != user_id and not is_admin( current_user ):
+        raise HTTPException( status_code=403, detail="Not authorized to pause this job" )
+
+    job.paused = True
+
+    print( f"[API] Job paused: {job_id} by user {user_id}" )
+
+    return {
+        "status"  : "paused",
+        "job_id"  : job_id,
+        "message" : "Job paused. Consumer will skip it until resumed."
+    }
+
+
+@router.patch(
+    "/queue/todo/{job_id}/resume",
+    summary     = "Resume a paused todo queue job",
+    description = "Set paused=False and notify consumer to recalculate eligibility."
+)
+async def resume_job(
+    job_id: str,
+    current_user: dict = Depends( get_current_user ),
+    todo_queue         = Depends( get_todo_queue ),
+):
+    """
+    Resume a paused job in the todo queue.
+
+    Clears the paused flag and notifies the consumer thread to recalculate
+    eligibility. If the job's scheduled_at has already passed, it becomes
+    immediately eligible.
+
+    Requires:
+        - job_id identifies a paused job in the todo queue
+        - current_user is authenticated
+        - Job belongs to current user OR user is admin
+
+    Ensures:
+        - Job's paused flag is set to False
+        - Consumer thread is notified to recalculate
+        - Returns confirmation
+
+    Raises:
+        - HTTPException 404: Job not found in todo queue
+        - HTTPException 403: User does not own this job
+    """
+    user_id = current_user[ "uid" ]
+
+    print( f"[API] PATCH /api/queue/todo/{job_id}/resume - user: {user_id}" )
+
+    try:
+        job = todo_queue.get_by_id_hash( job_id )
+    except KeyError:
+        raise HTTPException( status_code=404, detail=f"Job not found in todo queue: {job_id}" )
+
+    if job.user_id != user_id and not is_admin( current_user ):
+        raise HTTPException( status_code=403, detail="Not authorized to resume this job" )
+
+    job.paused = False
+
+    # Notify consumer to recalculate eligibility (may wake from timed sleep)
+    with todo_queue.condition:
+        todo_queue.condition.notify()
+
+    print( f"[API] Job resumed: {job_id} by user {user_id}" )
+
+    return {
+        "status"  : "resumed",
+        "job_id"  : job_id,
+        "message" : "Job resumed. Consumer will process it when eligible."
     }

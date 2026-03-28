@@ -33,6 +33,8 @@ class SweTeamSubmitRequest( BaseModel ):
     budget        : Optional[ float ] = Field( None, ge=0, description="Maximum budget in USD (None = use default)" )
     timeout       : Optional[ int ]   = Field( None, gt=0, description="Wall-clock timeout in seconds (None = use default)" )
     trust_mode    : Optional[ str ] = Field( None, description="Trust mode: disabled, shadow, suggest, active (None = use server default)" )
+    scheduled_at  : Optional[ str ] = Field( None, description="ISO datetime for deferred execution (None = immediate)" )
+    monopolize    : bool            = Field( False, description="Run exclusively, block all other jobs until complete" )
 
 
 class SweTeamSubmitResponse( BaseModel ):
@@ -146,6 +148,10 @@ async def submit_swe_team_task(
 
         if job is None:
             raise HTTPException( status_code=500, detail="Failed to create SWE Team job" )
+
+        # Scheduling attributes pass-through (CJ Flow timed execution + monopolize)
+        if request_body.scheduled_at: job.scheduled_at = request_body.scheduled_at
+        if request_body.monopolize:   job.monopolize   = request_body.monopolize
 
         # Atomic: scope ID + index for user filtering BEFORE push (race condition prevention)
         job.id_hash = user_job_tracker.register_scoped_job( job.id_hash, user_id, session_id )

@@ -22,7 +22,7 @@ import uuid
 import difflib
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from cosa.rest.auth import get_current_user
 from cosa.rest.queue_extensions import user_job_tracker
@@ -52,6 +52,8 @@ class PodcastSubmitRequest( BaseModel ):
     dry_run           : bool                    = False
     audience          : Optional[ str ]         = None
     audience_context  : Optional[ str ]         = None
+    scheduled_at      : Optional[ str ]         = Field( None, description="ISO datetime for deferred execution (None = immediate)" )
+    monopolize        : bool                    = Field( False, description="Run exclusively, block all other jobs until complete" )
 
 
 class PodcastSubmitResponse( BaseModel ):
@@ -547,6 +549,10 @@ async def submit_podcast_job(
         if request.max_segments:
             job.max_segments = request.max_segments
 
+        # Scheduling attributes pass-through (CJ Flow timed execution + monopolize)
+        if request.scheduled_at: job.scheduled_at = request.scheduled_at
+        if request.monopolize:   job.monopolize   = request.monopolize
+
         # Atomic: scope ID + index for user filtering BEFORE push (race condition prevention)
         job.id_hash = user_job_tracker.register_scoped_job( job.id_hash, user_id, session_id )
 
@@ -674,6 +680,10 @@ async def submit_podcast_job(
             # Apply max_segments if specified
             if request.max_segments:
                 job.max_segments = request.max_segments
+
+            # Scheduling attributes pass-through (CJ Flow timed execution + monopolize)
+            if request.scheduled_at: job.scheduled_at = request.scheduled_at
+            if request.monopolize:   job.monopolize   = request.monopolize
 
             # Inherit speculative ID (already registered with user_job_tracker)
             job.id_hash = spec_id
