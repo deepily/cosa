@@ -28,8 +28,8 @@ class SweTeamConfig:
     """
 
     # === Model Selection ===
-    lead_model   : str = "claude-opus-4-20250514"
-    worker_model : str = "claude-sonnet-4-20250514"
+    lead_model   : str = "claude-opus-4-6"
+    worker_model : str = "claude-sonnet-4-6"
 
     # === Execution Limits ===
     max_iterations_per_task   : int = 10
@@ -136,8 +136,8 @@ def quick_smoke_test():
         # Test 1: Default instantiation
         print( "Testing default config..." )
         config = SweTeamConfig()
-        assert config.lead_model == "claude-opus-4-20250514"
-        assert config.worker_model == "claude-sonnet-4-20250514"
+        assert config.lead_model == "claude-opus-4-6"
+        assert config.worker_model == "claude-sonnet-4-6"
         assert config.enabled is False
         print( "✓ Default config created" )
 

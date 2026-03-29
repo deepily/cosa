@@ -32,7 +32,7 @@ class PresentationConfig:
     """
 
     # Model selection
-    content_model            : str   = "claude-opus-4-20250514"
+    content_model            : str   = "claude-opus-4-6"
 
     # Presentation parameters
     target_duration_minutes  : int   = 15
@@ -71,7 +71,7 @@ class PresentationConfig:
             return val
 
         return cls(
-            content_model           = _get( "content model",           default="claude-opus-4-20250514" ),
+            content_model           = _get( "content model",           default="claude-opus-4-6" ),
             target_duration_minutes = _get( "target duration minutes", default=15,    return_type="int" ),
             slides_per_minute       = _get( "slides per minute",       default=1.0,   return_type="float" ),
             title_style             = _get( "title style",             default="assertion" ),
@@ -129,7 +129,7 @@ def quick_smoke_test():
         # Test 1: Default instantiation
         print( "Testing default instantiation..." )
         config = PresentationConfig()
-        assert config.content_model == "claude-opus-4-20250514"
+        assert config.content_model == "claude-opus-4-6"
         assert config.target_duration_minutes == 15
         assert config.slides_per_minute == 1.0
         assert config.title_style == "assertion"
@@ -158,7 +158,7 @@ def quick_smoke_test():
         from cosa.config.configuration_manager import ConfigurationManager
         config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         loaded = PresentationConfig.from_config( config_mgr, debug=True )
-        assert loaded.content_model == "claude-opus-4-20250514"
+        assert loaded.content_model == "claude-opus-4-6"
         assert loaded.target_duration_minutes == 15
         assert loaded.slides_per_minute == 1.0
         assert loaded.title_style == "assertion"

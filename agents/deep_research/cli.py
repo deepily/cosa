@@ -86,14 +86,14 @@ Examples:
         "--lead-model",
         type=str,
         default=None,
-        help="Model for lead agent (default: claude-opus-4-20250514)"
+        help="Model for lead agent (default: claude-opus-4-6)"
     )
 
     parser.add_argument(
         "--subagent-model",
         type=str,
         default=None,
-        help="Model for subagents (default: claude-sonnet-4-20250514)"
+        help="Model for subagents (default: claude-sonnet-4-6)"
     )
 
     parser.add_argument(

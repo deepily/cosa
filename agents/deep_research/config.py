@@ -27,8 +27,8 @@ class ResearchConfig:
     """
 
     # === Model Selection ===
-    lead_model     : str = "claude-opus-4-20250514"
-    subagent_model : str = "claude-sonnet-4-20250514"
+    lead_model     : str = "claude-opus-4-6"
+    subagent_model : str = "claude-sonnet-4-6"
 
     # === Scaling Heuristics ===
     max_subagents_simple   : int = 1
@@ -185,8 +185,8 @@ def quick_smoke_test():
         # Test 1: Default instantiation
         print( "Testing default config..." )
         config = ResearchConfig()
-        assert config.lead_model == "claude-opus-4-20250514"
-        assert config.subagent_model == "claude-sonnet-4-20250514"
+        assert config.lead_model == "claude-opus-4-6"
+        assert config.subagent_model == "claude-sonnet-4-6"
         print( "✓ Default config created" )
 
         # Test 2: get_max_subagents
@@ -227,7 +227,7 @@ def quick_smoke_test():
             from cosa.config.configuration_manager import ConfigurationManager
             cfg_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
             config_from_ini = ResearchConfig.from_config( cfg_mgr, debug=True )
-            assert config_from_ini.lead_model == "claude-opus-4-20250514"
+            assert config_from_ini.lead_model == "claude-opus-4-6"
             assert config_from_ini.max_subagents_simple == 1
             assert config_from_ini.feedback_timeout_seconds == 300
             assert isinstance( config_from_ini.stream_thoughts_to_voice, bool )

@@ -1094,6 +1094,22 @@ async def pause_job(
 
     job.paused = True
 
+    # Emit WebSocket event for UI update
+    try:
+        import fastapi_app.main as main_module
+        ws_manager = main_module.websocket_manager
+        ws_manager.emit_to_user_sync(
+            user_id = user_id,
+            event   = "job_paused",
+            data    = {
+                "job_id"    : job_id,
+                "paused"    : True,
+                "timestamp" : datetime.now().isoformat(),
+            },
+        )
+    except Exception as e:
+        print( f"[API] Warning: WebSocket emission failed for job_paused: {e}" )
+
     print( f"[API] Job paused: {job_id} by user {user_id}" )
 
     return {
@@ -1147,6 +1163,22 @@ async def resume_job(
         raise HTTPException( status_code=403, detail="Not authorized to resume this job" )
 
     job.paused = False
+
+    # Emit WebSocket event for UI update
+    try:
+        import fastapi_app.main as main_module
+        ws_manager = main_module.websocket_manager
+        ws_manager.emit_to_user_sync(
+            user_id = user_id,
+            event   = "job_resumed",
+            data    = {
+                "job_id"    : job_id,
+                "paused"    : False,
+                "timestamp" : datetime.now().isoformat(),
+            },
+        )
+    except Exception as e:
+        print( f"[API] Warning: WebSocket emission failed for job_resumed: {e}" )
 
     # Notify consumer to recalculate eligibility (may wake from timed sleep)
     with todo_queue.condition:

@@ -187,6 +187,32 @@ AGENTIC_AGENTS = {
             "dry_run"          : "no",
         },
     },
+
+    "agent router go to bug fix expediter" : {
+        "job_prefix"         : "bfe",
+        "cli_module"         : "cosa.agents.bug_fix_expediter",
+        "job_class_path"     : "cosa.agents.bug_fix_expediter.job.BugFixExpediterJob",
+        "display_name"       : "Bug Fix Expediter",
+        "required_user_args" : [ "dead_job_id" ],
+        "system_provided"    : [ "user_id", "user_email", "session_id" ],
+        "arg_mapping"        : {
+            "dead_job_id"   : "dead_job_id",
+            "job_id"        : "dead_job_id",
+            "failed_job"    : "dead_job_id",
+            "extra_context" : "extra_context",
+            "context"       : "extra_context",
+            "dry_run"       : "dry_run",
+        },
+        "fallback_questions" : {
+            "dead_job_id"   : "Which failed job would you like me to fix? Provide the job ID.",
+            "extra_context" : "Any additional context about the failure? Say 'none' to skip.",
+            "dry_run"       : "Would you like to enable dry run mode? Say 'yes' or 'no'.",
+        },
+        "fallback_defaults" : {
+            "extra_context" : "none",
+            "dry_run"       : "no",
+        },
+    },
 }
 
 
@@ -311,7 +337,7 @@ def quick_smoke_test():
     # Test 1: Registry structure
     print( "\n1. Testing registry structure..." )
     try:
-        assert len( AGENTIC_AGENTS ) == 6, f"Expected 6 agents, got {len( AGENTIC_AGENTS )}"
+        assert len( AGENTIC_AGENTS ) == 7, f"Expected 7 agents, got {len( AGENTIC_AGENTS )}"
         for key, entry in AGENTIC_AGENTS.items():
             assert "cli_module" in entry, f"Missing cli_module in {key}"
             assert "required_user_args" in entry, f"Missing required_user_args in {key}"

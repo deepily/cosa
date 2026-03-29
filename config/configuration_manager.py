@@ -733,7 +733,7 @@ class ConfigurationManager():
         for key in keys:
 
             # inserts blank line between different stems
-            stem = key.split( "_" )[ 0 ]
+            stem = key.split()[ 0 ]
             if stem != last_stem: print()
             last_stem = stem
 

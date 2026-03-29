@@ -4,3 +4,4 @@
 from . import narrative
 from . import outline
 from . import elaboration
+from . import visual

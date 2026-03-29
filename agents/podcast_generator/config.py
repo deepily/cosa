@@ -262,7 +262,7 @@ class PodcastConfig:
     """
 
     # === Model Selection ===
-    script_model : str = "claude-opus-4-20250514"
+    script_model : str = "claude-opus-4-6"
 
     # === Host Configuration ===
     host_a_personality : HostPersonality = field( default_factory=lambda: DEFAULT_CURIOUS_HOST )
@@ -429,7 +429,7 @@ class PodcastConfig:
 
         # Build kwargs
         config = cls(
-            script_model              = _get( "podcast script model",              "claude-opus-4-20250514" ),
+            script_model              = _get( "podcast script model",              "claude-opus-4-6" ),
             host_a_personality        = host_a,
             host_b_personality        = host_b,
             host_a_voice              = voice_a,
@@ -477,7 +477,7 @@ def quick_smoke_test():
         # Test 1: Default instantiation
         print( "Testing default config..." )
         config = PodcastConfig()
-        assert config.script_model == "claude-opus-4-20250514"
+        assert config.script_model == "claude-opus-4-6"
         assert config.target_duration_minutes == 10
         print( "✓ Default config created" )
 
@@ -612,7 +612,7 @@ def quick_smoke_test():
             from cosa.config.configuration_manager import ConfigurationManager
             cfg_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
             config_from_ini = PodcastConfig.from_config( cfg_mgr, debug=True )
-            assert config_from_ini.script_model == "claude-opus-4-20250514"
+            assert config_from_ini.script_model == "claude-opus-4-6"
             assert config_from_ini.host_a_personality.name == "Nora"
             assert config_from_ini.host_b_personality.name == "Quentin"
             assert len( config_from_ini.host_a_personality.typical_phrases ) > 0

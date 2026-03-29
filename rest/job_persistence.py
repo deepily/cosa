@@ -42,7 +42,8 @@ AGENTIC_JOB_TYPES = frozenset( {
     "podcast",
     "claude_code",
     "swe_team",
-    "research_to_podcast"
+    "research_to_podcast",
+    "bug_fix_expediter"
 } )
 
 

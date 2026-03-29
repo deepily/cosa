@@ -24,6 +24,7 @@ import logging
 import os
 import re
 import uuid
+import yaml
 from typing import Optional, List, Tuple
 from datetime import datetime
 
@@ -992,23 +993,272 @@ class PresentationOrchestratorAgent:
         with open( yaml_path, "w", encoding="utf-8" ) as f:
             f.write( yaml_content )
 
+    @staticmethod
+    def _write_marp( marp_path: str, marp_content: str ) -> None:
+        """
+        Write Marp Markdown content to disk, creating directories as needed.
+
+        Requires:
+            - marp_path is an absolute file path
+            - marp_content is a non-empty string
+
+        Ensures:
+            - Parent directory exists
+            - File is written with UTF-8 encoding
+        """
+        os.makedirs( os.path.dirname( marp_path ), exist_ok=True )
+        with open( marp_path, "w", encoding="utf-8" ) as f:
+            f.write( marp_content )
+
+    @staticmethod
+    def _load_theme_config( templates_path: str, theme_name: str, debug: bool = False ) -> dict:
+        """
+        Load theme configuration from YAML file.
+
+        Requires:
+            - templates_path is a relative path starting with /src/
+            - theme_name is a non-empty string (e.g., "default")
+
+        Ensures:
+            - Returns dict with "theme" key containing config
+            - Falls back to hardcoded defaults if file missing or invalid
+
+        Returns:
+            dict: Theme configuration
+        """
+        import cosa.utils.util as cu
+
+        theme_path = cu.get_project_root() + templates_path + theme_name + ".yaml"
+
+        if debug: print( f"[Orchestrator] Loading theme: {theme_path}" )
+
+        try:
+            if os.path.exists( theme_path ):
+                with open( theme_path, "r", encoding="utf-8" ) as f:
+                    config = yaml.safe_load( f )
+                if isinstance( config, dict ) and "theme" in config:
+                    if debug: print( f"[Orchestrator] Theme loaded: {theme_name}" )
+                    return config
+                else:
+                    logger.warning( f"Theme file missing 'theme' key: {theme_path}" )
+            else:
+                logger.warning( f"Theme file not found: {theme_path}" )
+
+        except Exception as e:
+            logger.error( f"Failed to load theme '{theme_name}': {e}" )
+
+        # Fallback to hardcoded defaults
+        if debug: print( "[Orchestrator] Using fallback default theme" )
+        from .renderers.marp_text_renderer import DEFAULT_THEME_CONFIG
+        return DEFAULT_THEME_CONFIG
+
     async def _render_text_async( self, presentation: Optional[ PresentationModel ] ) -> None:
         """
-        Phase 6: Render YAML to Marp Markdown.
+        Phase 6: Render PresentationModel to Marp Markdown file.
 
-        TODO (Phase 6): Load theme, generate Marp markdown.
+        Loads theme configuration, calls MarpTextRenderer to produce
+        Marp-compatible markdown, and writes to disk alongside the YAML.
+
+        Requires:
+            - presentation is a valid PresentationModel (not None)
+            - self.config has templates_path and default_theme set
+
+        Ensures:
+            - Marp markdown file written to config-defined output path
+            - self._presentation_state[ "marp_path" ] is set
+            - File contains valid Marp frontmatter + slide separators
         """
-        if self.debug: print( "[Orchestrator] Phase 6: Render Text (stub)" )
-        await asyncio.sleep( 0.1 )
+        if presentation is None:
+            logger.warning( "Phase 6: No presentation model — skipping text rendering" )
+            return
+
+        if self.debug: print( "[Orchestrator] Phase 6: Render Text — starting" )
+
+        try:
+            # Load theme configuration
+            theme_config = self._load_theme_config(
+                self.config.templates_path,
+                self.config.default_theme,
+                debug=self.debug
+            )
+
+            # Render Marp markdown (pure transformation, no I/O)
+            from .renderers import MarpTextRenderer
+            marp_content = MarpTextRenderer.render( presentation, theme_config )
+
+            # Get output path (.md alongside .yaml)
+            user_id   = self._presentation_state.get( "user_id", "unknown" )
+            marp_path = self.config.get_output_path( user_id, presentation.title, file_type="md" )
+
+            # Write to disk in thread pool (non-blocking)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor( None, self._write_marp, marp_path, marp_content )
+
+            # Store path for job to read
+            self._presentation_state[ "marp_path" ] = marp_path
+
+            if self.debug:
+                file_size = len( marp_content.encode( "utf-8" ) )
+                print( f"[Orchestrator] Marp written: {marp_path}" )
+                print( f"[Orchestrator] Marp stats: {presentation.total_slides} slides, {file_size:,} bytes" )
+
+            # Notify progress
+            await voice_io.notify(
+                f"Marp rendered: {presentation.total_slides} slides",
+                priority="low"
+            )
+
+        except Exception as e:
+            logger.error( f"Phase 6 failed: {e}", exc_info=True )
+            await voice_io.notify(
+                f"Marp rendering failed: {str( e )[ :100 ]}",
+                priority="urgent"
+            )
+            # Non-fatal — marp_path stays None, job delivers YAML only
 
     async def _render_visuals_async( self, presentation: Optional[ PresentationModel ] ) -> None:
         """
-        Phase 7: Render visual elements (Mermaid diagrams, etc.).
+        Phase 7: Replace visual placeholders in Marp file with rendered content.
 
-        TODO (Phase 7): For each slide with visual_type != text_only, call renderer.
+        Reads the Marp Markdown file (from Phase 6), finds all
+        <!-- VISUAL: type | description --> placeholders, dispatches each
+        to the appropriate visual renderer, and rewrites the file.
+
+        Requires:
+            - presentation is a valid PresentationModel
+            - self._presentation_state[ "marp_path" ] is set by Phase 6
+
+        Ensures:
+            - Marp file updated with rendered visuals (Mermaid blocks, placeholders)
+            - self._presentation_state[ "visuals_rendered" ] is set
         """
-        if self.debug: print( "[Orchestrator] Phase 7: Render Visuals (stub)" )
-        await asyncio.sleep( 0.1 )
+        marp_path = self._presentation_state.get( "marp_path" )
+
+        if presentation is None or marp_path is None:
+            logger.warning( "Phase 7: No presentation or marp_path — skipping visual rendering" )
+            return
+
+        if self.debug: print( "[Orchestrator] Phase 7: Render Visuals — starting" )
+
+        try:
+            # Read current Marp file
+            loop = asyncio.get_event_loop()
+            marp_content = await loop.run_in_executor( None, self._read_file, marp_path )
+            if marp_content is None:
+                logger.warning( f"Phase 7: Could not read Marp file: {marp_path}" )
+                return
+
+            # Find all visual placeholders
+            placeholder_pattern = re.compile( r"<!-- VISUAL: (\S+) \| (.+?) -->" )
+            matches = list( placeholder_pattern.finditer( marp_content ) )
+
+            if not matches:
+                if self.debug: print( "[Orchestrator] Phase 7: No visual placeholders found" )
+                self._presentation_state[ "visuals_rendered" ] = 0
+                return
+
+            # Build renderer registry
+            registry = self._build_visual_registry()
+
+            # Build slide title lookup from presentation
+            slide_titles = {}
+            for slide in presentation.slides:
+                if slide.visual_type != "text_only" and slide.visual_description:
+                    slide_titles[ slide.visual_description ] = slide.title
+
+            # Replace each placeholder
+            visuals_rendered = 0
+            replacements     = []
+
+            for match in matches:
+                visual_type = match.group( 1 )
+                visual_desc = match.group( 2 )
+                slide_title = slide_titles.get( visual_desc, "" )
+
+                renderer = registry.get( visual_type )
+                rendered = await renderer.render(
+                    visual_type        = visual_type,
+                    visual_description = visual_desc,
+                    api_client         = self.api_client if not self.dry_run else None,
+                    slide_title        = slide_title,
+                )
+
+                if rendered is None:
+                    # Fall back to placeholder
+                    from .renderers import PlaceholderRenderer
+                    fallback = PlaceholderRenderer()
+                    rendered = await fallback.render( visual_type, visual_desc )
+
+                replacements.append( ( match.group( 0 ), rendered ) )
+                visuals_rendered += 1
+
+                if self.debug: print( f"[Orchestrator] Visual {visuals_rendered}/{len( matches )}: {visual_type} for '{slide_title[ :30 ]}'" )
+
+            # Apply replacements
+            for original, replacement in replacements:
+                marp_content = marp_content.replace( original, replacement )
+
+            # Rewrite file
+            await loop.run_in_executor( None, self._write_marp, marp_path, marp_content )
+
+            self._presentation_state[ "visuals_rendered" ] = visuals_rendered
+
+            if self.debug:
+                print( f"[Orchestrator] Phase 7 complete: {visuals_rendered} visuals rendered" )
+
+            await voice_io.notify(
+                f"Visuals rendered: {visuals_rendered} visual{'s' if visuals_rendered != 1 else ''}",
+                priority="low"
+            )
+
+        except Exception as e:
+            logger.error( f"Phase 7 failed: {e}", exc_info=True )
+            await voice_io.notify(
+                f"Visual rendering failed: {str( e )[ :100 ]}",
+                priority="urgent"
+            )
+            # Non-fatal — visuals stay as placeholders
+
+    def _build_visual_registry( self ) -> "VisualRendererRegistry":
+        """
+        Build the visual renderer registry for Phase 7.
+
+        In dry_run mode, all types use PlaceholderRenderer (no API calls).
+
+        Returns:
+            VisualRendererRegistry: Configured registry
+        """
+        from .renderers import VisualRendererRegistry, MermaidRenderer, PlaceholderRenderer
+
+        fallback = PlaceholderRenderer()
+        registry = VisualRendererRegistry( fallback=fallback, debug=self.debug )
+
+        if not self.dry_run:
+            mermaid = MermaidRenderer( debug=self.debug, verbose=self.verbose )
+            registry.register( mermaid )
+
+        return registry
+
+    @staticmethod
+    def _read_file( file_path: str ) -> Optional[ str ]:
+        """
+        Read file content from disk.
+
+        Requires:
+            - file_path is an absolute path
+
+        Ensures:
+            - Returns file content string, or None on error
+
+        Returns:
+            str or None
+        """
+        try:
+            with open( file_path, "r", encoding="utf-8" ) as f:
+                return f.read()
+        except Exception as e:
+            logger.error( f"Failed to read file: {file_path}: {e}" )
+            return None
 
     async def _deliver_async( self, presentation: Optional[ PresentationModel ] ) -> None:
         """
@@ -1372,9 +1622,55 @@ class PresentationOrchestratorAgent:
             return True
 
     async def _gate_4_render_review( self, presentation: Optional[ PresentationModel ] ) -> bool:
-        """Gate 4: User reviews final rendered output. Stub — auto-approve."""
-        if self.debug: print( "[Orchestrator] Gate 4: Render review (auto-approve)" )
-        return True
+        """
+        Gate 4: User reviews final rendered output.
+
+        Presents a summary of rendered visuals to the user for approval.
+        In dry_run mode, auto-approves without voice interaction.
+
+        Requires:
+            - presentation is a PresentationModel (may be None)
+
+        Ensures:
+            - Returns True to proceed, False to cancel
+
+        Returns:
+            bool: True if approved, False if cancelled
+        """
+        if self.dry_run:
+            if self.debug: print( "[Orchestrator] Gate 4: DRY RUN — auto-approve" )
+            return True
+
+        visuals_rendered = self._presentation_state.get( "visuals_rendered", 0 )
+
+        if visuals_rendered == 0:
+            if self.debug: print( "[Orchestrator] Gate 4: No visuals — auto-approve" )
+            return True
+
+        # Build summary
+        marp_path = self._presentation_state.get( "marp_path", "N/A" )
+        summary = (
+            f"Visual rendering complete: {visuals_rendered} visual{'s' if visuals_rendered != 1 else ''} rendered.\n"
+            f"Marp file: {marp_path}\n\n"
+            f"Review the presentation and approve to proceed to delivery."
+        )
+
+        try:
+            response = await voice_io.present_choices(
+                question = f"Gate 4: {visuals_rendered} visuals rendered. Approve?",
+                choices  = [ "Approve", "Cancel" ],
+                abstract = summary,
+            )
+
+            if response and "cancel" in response.lower():
+                await voice_io.notify( "Presentation cancelled at Gate 4.", priority="medium" )
+                return False
+
+            return True
+
+        except Exception as e:
+            logger.warning( f"Gate 4 voice I/O failed: {e} — auto-approving" )
+            return True
 
 
 # =============================================================================

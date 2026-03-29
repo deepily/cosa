@@ -278,6 +278,39 @@ class PresentationAPIClient:
             call_type     = "elaboration",
         )
 
+    async def call_for_mermaid(
+        self,
+        system_prompt: str,
+        user_message: str,
+        max_tokens: int = 2048,
+        temperature: float = 0.3
+    ) -> APIResponse:
+        """
+        Generate Mermaid diagram code via Claude API.
+
+        Lower temperature and smaller max_tokens than content generation
+        for more deterministic, concise code output.
+
+        Requires:
+            - system_prompt is a non-empty string
+            - user_message is a non-empty string
+
+        Ensures:
+            - Returns APIResponse with Mermaid code in content
+            - Cost tracked in cost_estimate
+
+        Returns:
+            APIResponse with generated Mermaid content
+        """
+        return await self._call_api(
+            model         = self.config.content_model,
+            system_prompt = system_prompt,
+            user_message  = user_message,
+            max_tokens    = max_tokens,
+            temperature   = temperature,
+            call_type     = "mermaid",
+        )
+
     async def call_with_json_output(
         self,
         system_prompt: str,

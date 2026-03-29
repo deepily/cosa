@@ -215,6 +215,19 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             verbose        = verbose
         )
 
+    elif command == "agent router go to bug fix expediter":
+        from cosa.agents.bug_fix_expediter.job import BugFixExpediterJob
+        return BugFixExpediterJob(
+            dead_job_id   = args_dict.get( "dead_job_id", "" ),
+            user_id       = user_id,
+            user_email    = user_email,
+            session_id    = session_id,
+            extra_context = args_dict.get( "extra_context", "" ),
+            dry_run       = _parse_boolean( args_dict.get( "dry_run" ) ),
+            debug         = debug,
+            verbose       = verbose
+        )
+
     else:
         print( f"[agentic_job_factory] Unknown command: {command}" )
         return None

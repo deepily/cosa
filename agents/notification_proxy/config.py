@@ -110,6 +110,8 @@ TEST_PROFILES = {
         "source"                   : "/tmp/mock-source-document.md",
         "target_duration_minutes"  : "15",
         "theme"                    : "default",
+        "dead_job_id"              : "dr-mock1234::user1",
+        "extra_context"            : "none",
     },
     "swe_team" : {
         "description"      : "Auto-answer for SWE Team agent expediter questions",

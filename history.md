@@ -1,5 +1,40 @@
 # COSA Development History
 
+> **✅ SESSIONS 382+382b+382d+382e COMMITTED**: CJ Flow Phase 5 UI, Config Manager bug fix, Presentation Generator Phases 6-7, Bug Fix Expediter Phase 0.95+1 (2026.03.28)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 382 — CJ Flow Phase 5: Notifications UI + WebSocket Integration**:
+> - `rest/routers/queues.py`: Added WebSocket emission (`job_paused`/`job_resumed`) to pause/resume endpoints
+> - `rest/todo_fifo_queue.py`: Added `scheduled_at`, `monopolize`, `paused` to push metadata (cards created from WS events were missing these fields)
+>
+> **Session 382b — Bug Fix: Config Manager Visual Grouping**:
+> - `config/configuration_manager.py`: Fixed `key.split( "_" )[ 0 ]` → `key.split()[ 0 ]` — blank lines inserted between every key instead of only between prefix groups after space-separated key convention change
+>
+> **Session 382d — Presentation Generator Phases 6-7**:
+> - Phase 6 (Marp Text Rendering): Created `MarpTextRenderer` — stateless `@staticmethod` class converting `PresentationModel` → Marp Markdown. Frontmatter, slide type dispatch, presenter notes, visual placeholders. Default theme file (`templates/themes/default.yaml`). Orchestrator integration: `_render_text_async()` + `_load_theme_config()` + `_write_marp()`
+> - Phase 7 (Visual Rendering): Created `VisualRenderer` ABC + `VisualRendererRegistry` — type dispatch with PlaceholderRenderer fallback. `MermaidRenderer` — LLM-backed Mermaid code generation via Claude API. `PlaceholderRenderer` — visible TODO markers. `prompts/visual.py` — Mermaid system prompt + diagram type hints. `call_for_mermaid()` added to `PresentationAPIClient`. Orchestrator: `_render_visuals_async()` + Gate 4.
+> - Files created: `renderers/marp_text_renderer.py`, `renderers/visual_registry.py`, `renderers/placeholder.py`, `renderers/mermaid.py`, `prompts/visual.py`, `templates/themes/default.yaml`
+> - Files modified: `renderers/__init__.py`, `prompts/__init__.py`, `orchestrator.py`, `api_client.py`
+>
+> **Session 382e — Bug Fix Expediter Phase 0.95 (Model Update) + Phase 1 (Foundation)**:
+> - Phase 0.95: Updated all agentic job model defaults from `claude-opus-4-20250514`/`claude-sonnet-4-20250514` to `claude-opus-4-6`/`claude-sonnet-4-6`. 11 config/CLI files updated, cost tracker +3 model tiers
+> - Phase 1: Created `agents/bug_fix_expediter/` package (7 files): `__init__.py`, `config.py`, `state.py`, `cosa_interface.py`, `voice_io.py`, `dead_job_packager.py`, `job.py`. Created `rest/routers/bug_fix_expediter.py`. Registered in `agent_registry.py`, `agentic_job_factory.py`, `job_persistence.py`
+>
+> **Files Created (14)**:
+> - `agents/bug_fix_expediter/__init__.py`, `config.py`, `state.py`, `cosa_interface.py`, `voice_io.py`, `dead_job_packager.py`, `job.py`
+> - `agents/presentation_generator/renderers/marp_text_renderer.py`, `visual_registry.py`, `placeholder.py`, `mermaid.py`
+> - `agents/presentation_generator/prompts/visual.py`
+> - `agents/presentation_generator/templates/themes/default.yaml`
+> - `rest/routers/bug_fix_expediter.py`
+>
+> **Files Modified (21)**: `deep_research/cli.py`, `deep_research/config.py`, `cost_tracker.py`, `deep_research_to_podcast/__main__.py`, `deep_research_to_podcast/agent.py`, `notification_proxy/config.py`, `podcast_generator/config.py`, `test_podcast_generator.py`, `presentation_generator/api_client.py`, `presentation_generator/config.py`, `presentation_generator/orchestrator.py`, `prompts/__init__.py`, `renderers/__init__.py`, `agent_registry.py`, `swe_team/__main__.py`, `swe_team/config.py`, `configuration_manager.py`, `agentic_job_factory.py`, `job_persistence.py`, `routers/queues.py`, `todo_fifo_queue.py`
+>
+> Total: +467 insertions, -42 deletions across 21 modified + 14 new files
+
+---
+
 > **✅ SESSIONS 381b+381c COMMITTED**: CJ Flow Timed Execution + Monopolize + Pause/Resume (backend Phases 0-4), Agentic Job Consistency Remediation (2026.03.27)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >

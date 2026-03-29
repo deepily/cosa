@@ -940,6 +940,7 @@ class TodoFifoQueue( FifoQueue ):
         "agent router go to claude code"               : "Claude Code (run a coding task)",
         "agent router go to presentation generator"    : "SlideCraft (create a presentation from a document)",
         "agent router go to swe team"                  : "SWE Team (multi-agent engineering team)",
+        "agent router go to bug fix expediter"         : "Bug Fix Expediter (diagnose and fix a failed job)",
     }
 
     def _confirm_agentic_routing( self, command, args, user_id, user_email, original_question ):
@@ -1158,7 +1159,10 @@ class TodoFifoQueue( FifoQueue ):
         metadata = {
             'question_text' : item.last_question_asked,
             'agent_type'    : item.job_type,
-            'timestamp'     : item.created_date
+            'timestamp'     : item.created_date,
+            'scheduled_at'  : item.scheduled_at,
+            'monopolize'    : item.monopolize,
+            'paused'        : item.paused,
         }
         emit_job_state_transition( self.websocket_mgr, item.id_hash, 'pending', 'todo', user_id, metadata )
 

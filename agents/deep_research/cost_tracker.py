@@ -49,10 +49,14 @@ MODEL_NAME_TO_TIER = {
     "claude-sonnet-4-5-20250514" : ModelTier.SONNET_4_5,
     "claude-sonnet-4-20250514"   : ModelTier.SONNET_4_5,
     "claude-haiku-4-5-20250514"  : ModelTier.HAIKU_4_5,
-    # Aliases
+    # Aliases (short names)
     "claude-opus-4-5"   : ModelTier.OPUS_4_5,
     "claude-sonnet-4-5" : ModelTier.SONNET_4_5,
     "claude-haiku-4-5"  : ModelTier.HAIKU_4_5,
+    # Claude 4.6 family (same pricing tiers)
+    "claude-opus-4-6"           : ModelTier.OPUS_4_5,
+    "claude-sonnet-4-6"         : ModelTier.SONNET_4_5,
+    "claude-haiku-4-5-20251001" : ModelTier.HAIKU_4_5,
 }
 
 
