@@ -1,5 +1,43 @@
 # COSA Development History
 
+> **✅ SESSIONS 383+383b+384 COMMITTED**: Presentation Generator Phase 8, DR→Presentation bridge, BFE Phases 2-4, CJ Flow scheduling, SentenceTransformer fix (2026.03.30)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 383 — Presentation Generator Phase 8 (Delivery & Chaining)**:
+> - `presentation_generator/orchestrator.py`: Real `_deliver_async()` — artifact verification, delivery summary dict
+> - `presentation_generator/state.py`: Added `visuals_rendered`, `delivery_summary` to initial state
+> - Created `deep_research_to_presentation/` bridge module (5 files): `state.py`, `agent.py`, `job.py`, `__init__.py`, `__main__.py`
+> - `rest/routers/deep_research_to_presentation.py`: REST router (`POST /api/deep-research-to-presentation/submit`)
+> - `agent_registry.py`: 8th agent entry (`research_to_presentation`, prefix `rx-`)
+> - `agentic_job_factory.py`: Factory branch for `research_to_presentation`
+> - `job_persistence.py`: Added `presentation`, `research_to_presentation` to AGENTIC_JOB_TYPES
+> - `todo_fifo_queue.py`: MODE_METADATA, AGENTIC_MODE_MAP, PRODUCT_NAMES for `research_to_presentation`
+> - `notification_proxy/config.py`: 2 new test profiles + updated union profile
+>
+> **Session 383b — Bug Fixes + CJ Flow Scheduling UI/Voice**:
+> - `local_embedding_engine.py`: Added `local_files_only=True` to SentenceTransformer (prevents Hub calls)
+> - `rest/routers/claude_code_queue.py`: Added `scheduled_at` + `monopolize` fields to `ClaudeCodeQueueRequest` + pass-through
+> - `runtime_argument_expeditor/expeditor.py`: Scheduling section in confirmation summary + modification parser accepts scheduling args
+> - `rest/todo_fifo_queue.py`: Runtime scheduling arg extraction + voice-path normalization ("immediately"→None, "yes"→True)
+>
+> **Session 384 — Bug Fix Expediter Phases 2-4 (Diagnose → Propose → Fix)**:
+> - `bug_fix_expediter/orchestrator.py` (new): `BFEOrchestrator` with `run_diagnosis()`, `run_proposal()`, `run_fix()`
+> - `bug_fix_expediter/plan_writer.py` (new): `PlanWriter` class for structured markdown plans
+> - `bug_fix_expediter/prompts/` (new): `diagnosis.py`, `proposal.py`, `fix.py` prompt templates
+> - `bug_fix_expediter/config.py`: +`min_diagnosis_confidence` (0.7), +`max_file_changes_per_fix` (20)
+> - `bug_fix_expediter/job.py`: Full orchestrator pipeline wiring (replaces foundation stub)
+> - `bug_fix_expediter/__init__.py`: Exports for `BFEOrchestrator`, `PlanWriter`
+>
+> **Files Created (12)**: `orchestrator.py`, `plan_writer.py`, `prompts/{__init__,diagnosis,proposal,fix}.py`, `deep_research_to_presentation/{__init__,__main__,state,agent,job}.py`, `routers/deep_research_to_presentation.py`
+> **Files Modified (13)**: `__init__.py`, `config.py`, `job.py` (BFE), `notification_proxy/config.py`, `orchestrator.py`, `state.py` (PG), `agent_registry.py`, `expeditor.py`, `local_embedding_engine.py`, `agentic_job_factory.py`, `job_persistence.py`, `claude_code_queue.py`, `todo_fifo_queue.py`
+> **Commit**: 8db89ff
+>
+> Total: +4634 insertions, -37 deletions across 25 files
+
+---
+
 > **✅ SESSIONS 382+382b+382d+382e COMMITTED**: CJ Flow Phase 5 UI, Config Manager bug fix, Presentation Generator Phases 6-7, Bug Fix Expediter Phase 0.95+1 (2026.03.28)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >
