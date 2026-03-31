@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Optional
 
 from cosa.agents.agentic_job_base import AgenticJobBase
+from cosa.rest.job_state import JobState
 
 
 class DeepResearchToPresentationJob( AgenticJobBase ):
@@ -139,13 +140,13 @@ class DeepResearchToPresentationJob( AgenticJobBase ):
         if self.debug:
             print( f"[DeepResearchToPresentationJob] Starting do_all() for: {self.query[ :50 ]}..." )
 
-        self.status     = "running"
+        self.state      = JobState.RUNNING
         self.started_at = datetime.now().isoformat()
 
         try:
             result = asyncio.run( self._execute() )
 
-            self.status       = "completed"
+            self.state        = JobState.COMPLETED
             self.completed_at = datetime.now().isoformat()
             self.result       = result
             self.answer_conversational = result
@@ -157,7 +158,7 @@ class DeepResearchToPresentationJob( AgenticJobBase ):
             return result
 
         except Exception as e:
-            self.status       = "failed"
+            self.state        = JobState.FAILED
             self.completed_at = datetime.now().isoformat()
             self.error        = str( e )
 
@@ -419,7 +420,7 @@ def quick_smoke_test():
         assert job.target_duration_minutes == 15
         assert job.theme == "default"
         assert job.user_email == "test@test.com"
-        assert job.status == "pending"
+        assert job.state == JobState.PENDING
         print( "✓ All attributes set correctly" )
 
         # Test 7: Check JOB_TYPE and JOB_PREFIX

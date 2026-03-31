@@ -27,6 +27,7 @@ from datetime import datetime
 from typing import Optional, Tuple
 
 from cosa.agents.agentic_job_base import AgenticJobBase
+from cosa.rest.job_state import JobState
 
 
 class MockAgenticJob( AgenticJobBase ):
@@ -76,10 +77,9 @@ class MockAgenticJob( AgenticJobBase ):
         fixed_sleep: Optional[ float ] = None,
         # Optional description for queue display
         description: Optional[ str ] = None,
-        # Scheduling attributes (CJ Flow timed execution + monopolize + pause)
+        # Scheduling attributes (CJ Flow timed execution + monopolize)
         scheduled_at: str = None,
         monopolize: bool = False,
-        paused: bool = False,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -118,7 +118,6 @@ class MockAgenticJob( AgenticJobBase ):
             session_id   = session_id,
             scheduled_at = scheduled_at,
             monopolize   = monopolize,
-            paused       = paused,
             debug        = debug,
             verbose      = verbose
         )
@@ -241,13 +240,13 @@ class MockAgenticJob( AgenticJobBase ):
         if self.debug:
             print( f"[MockAgenticJob] Starting do_all() - {self.iterations} iterations, {self.sleep_seconds:.1f}s each" )
 
-        self.status     = "running"
+        self.state      = JobState.RUNNING
         self.started_at = datetime.now().isoformat()
 
         try:
             result = asyncio.run( self._execute() )
 
-            self.status       = "completed"
+            self.state        = JobState.COMPLETED
             self.completed_at = datetime.now().isoformat()
             self.result       = result
             self.answer_conversational = result
@@ -262,7 +261,7 @@ class MockAgenticJob( AgenticJobBase ):
             return result
 
         except Exception as e:
-            self.status       = "failed"
+            self.state        = JobState.FAILED
             self.completed_at = datetime.now().isoformat()
             self.error        = str( e )
 

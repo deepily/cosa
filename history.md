@@ -1,5 +1,36 @@
 # COSA Development History
 
+> **✅ SESSIONS 385+386 COMMITTED**: Unified Job State Machine + TestSuiteJob agent + scheduling timezone fix (2026.03.31)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 385 — CJ Flow: Unified Job State Machine**:
+> - `rest/job_state.py` (new): 9-state `JobState( str, Enum )` with frozen transition matrix, `validate_transition()`/`assert_valid_transition()`, convenience sets (TERMINAL, PRE_EXECUTION, ACTIVE), `STATE_TO_UI_CONTAINER` mapping
+> - `rest/queue_protocol.py`: `status: str` → `state: JobState`, removed `paused: bool`
+> - `agents/agentic_job_base.py`: Removed `paused` constructor param, updated to `state: JobState`
+> - `agents/agent_base.py`, `memory/solution_snapshot.py`: Updated to `JobState` protocol fields
+> - 9 agent job subclasses updated: `bug_fix_expediter`, `claude_code`, `deep_research`, `deep_research_to_podcast`, `deep_research_to_presentation`, `podcast_generator`, `presentation_generator`, `swe_team`, `mock_job`
+> - `rest/queue_util.py`: `emit_job_state_transition()` renamed `from_queue`/`to_queue` → `from_state`/`to_state` with transition validation
+> - `rest/job_persistence.py`, `rest/fifo_queue.py`, `rest/queue_consumer.py`, `rest/running_fifo_queue.py`, `rest/todo_fifo_queue.py`, `rest/routers/queues.py`: Updated for JobState enum throughout
+>
+> **Session 386 — TestSuiteJob: New CJ Flow Agentic Agent**:
+> - `agents/test_suite/` (new package): `job.py`, `voice_io.py`, `cosa_interface.py`, `__init__.py` — runs integration/E2E test suites as AgenticJob with `monopolize=True`
+> - `rest/routers/test_suite.py` (new): `POST /api/test-suite/submit` endpoint
+> - `rest/agentic_job_factory.py`: Factory branch for `test_suite` (9th agent)
+> - `agents/runtime_argument_expeditor/agent_registry.py`: Registry entry for `test_suite`
+> - `agents/notification_proxy/config.py`: Test profile for `test_suite` auto-answer
+>
+> **Session 386 — Bug Fix: Scheduled Jobs Execute Immediately**:
+> - `rest/fifo_queue.py`: `pop_next_eligible()` and `earliest_scheduled_at()` — timezone-aware UTC vs naive local comparison caused `TypeError`, caught by blanket `except`, treating scheduled jobs as immediate. Fix: `.astimezone().replace( tzinfo=None )` normalizes to naive-local
+>
+> **Files Created (4)**: `rest/job_state.py`, `agents/test_suite/{__init__,job,voice_io,cosa_interface}.py`, `rest/routers/test_suite.py`
+> **Files Modified (23)**: `queue_protocol.py`, `agentic_job_base.py`, `agent_base.py`, `solution_snapshot.py`, 9 agent jobs, `queue_util.py`, `job_persistence.py`, `fifo_queue.py`, `queue_consumer.py`, `running_fifo_queue.py`, `todo_fifo_queue.py`, `routers/queues.py`, `agentic_job_factory.py`, `agent_registry.py`, `notification_proxy/config.py`
+>
+> Total: +230 insertions, -131 deletions across 23 modified + 4 new files
+
+---
+
 > **✅ SESSIONS 383+383b+384 COMMITTED**: Presentation Generator Phase 8, DR→Presentation bridge, BFE Phases 2-4, CJ Flow scheduling, SentenceTransformer fix (2026.03.30)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >

@@ -157,6 +157,12 @@ TEST_PROFILES = {
         "description"  : "Auto-confirm for CRUD agent delete/update operations",
         "confirmation" : "yes",
     },
+    "test_suite" : {
+        "description"  : "Auto-answer for test suite agent expediter questions",
+        "test_types"   : "integration,e2e",
+        "pytest_args"  : "none",
+        "dry_run"      : "no",
+    },
     "proxy_integration_test" : {
         "description"             : "Union profile for proxy integration tests (expediter + CRUD)",
         "query"                   : "quantum computing breakthroughs 2026",

@@ -24,6 +24,7 @@ from typing import Optional
 
 from cosa.agents.agentic_job_base import AgenticJobBase
 from cosa.agents.deep_research.cost_tracker import SessionSummary
+from cosa.rest.job_state import JobState
 
 
 class DeepResearchJob( AgenticJobBase ):
@@ -137,7 +138,7 @@ class DeepResearchJob( AgenticJobBase ):
         if self.debug:
             print( f"[DeepResearchJob] Starting do_all() for: {self.query[ :50 ]}..." )
 
-        self.status     = "running"
+        self.state      = JobState.RUNNING
         self.started_at = datetime.now().isoformat()
 
         try:
@@ -145,7 +146,7 @@ class DeepResearchJob( AgenticJobBase ):
 
             # Check if cancellation was requested during execution
             if self._cancel_requested:
-                self.status                = "cancelled"
+                self.state                 = JobState.CANCELLED
                 self.completed_at          = datetime.now().isoformat()
                 self.error                 = "Cancelled by user request"
                 self.answer_conversational = result or "Research was cancelled by the user."
@@ -153,7 +154,7 @@ class DeepResearchJob( AgenticJobBase ):
                     print( f"[DeepResearchJob] Cancelled by user request" )
                 return self.answer_conversational
 
-            self.status       = "completed"
+            self.state        = JobState.COMPLETED
             self.completed_at = datetime.now().isoformat()
             self.result       = result
             self.answer_conversational = result
@@ -168,7 +169,7 @@ class DeepResearchJob( AgenticJobBase ):
             import traceback
             tb_str = traceback.format_exc()
 
-            self.status       = "failed"
+            self.state        = JobState.FAILED
             self.completed_at = datetime.now().isoformat()
             self.error        = f"{e}\n\n{tb_str}"
 
@@ -505,7 +506,7 @@ def quick_smoke_test():
         assert job.query == "test query for smoke test"
         assert job.budget == 1.00
         assert job.user_email == "test@test.com"
-        assert job.status == "pending"
+        assert job.state == JobState.PENDING
         print( "✓ All attributes set correctly" )
 
         # Test 7: Check JOB_TYPE and JOB_PREFIX

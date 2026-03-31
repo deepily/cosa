@@ -20,6 +20,8 @@ Generated on: 2025-01-22
 
 from typing import Protocol, runtime_checkable, Dict, Any
 
+from cosa.rest.job_state import JobState
+
 
 @runtime_checkable
 class QueueableJob( Protocol ):
@@ -119,8 +121,8 @@ class QueueableJob( Protocol ):
     is_cache_hit: bool
     """Whether this job was served from cache (for Time Saved Dashboard)."""
 
-    status: str
-    """Current job status: 'pending', 'running', 'completed', or 'failed'."""
+    state: JobState
+    """Unified lifecycle state (JobState enum). Replaces the former string 'status' field."""
 
     error: str
     """Error message if job failed (None if successful)."""
@@ -135,8 +137,8 @@ class QueueableJob( Protocol ):
     monopolize: bool
     """If True, this job runs exclusively — no other jobs process until it completes."""
 
-    paused: bool
-    """If True, this job is paused in the todo queue — consumer skips it until resumed."""
+    # NOTE: paused boolean removed — absorbed into JobState.PAUSED
+    # Check job.state == JobState.PAUSED instead of job.paused
 
     # =========================================================================
     # Required Methods
@@ -225,11 +227,10 @@ def quick_smoke_test():
             answer_conversational = "Test answer"
             job_type              = "MockJob"
             is_cache_hit          = False
-            status                = "pending"
+            state                 = JobState.PENDING
             error                 = None
             scheduled_at          = None
             monopolize            = False
-            paused                = False
 
             def do_all( self ):
                 return "done"

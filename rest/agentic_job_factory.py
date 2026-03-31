@@ -232,6 +232,36 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             verbose        = verbose
         )
 
+    elif command == "agent router go to test suite":
+        from cosa.agents.test_suite.job import TestSuiteJob
+
+        # Parse test_types: comma-separated string → list
+        test_types_raw = args_dict.get( "test_types", "integration,e2e" )
+        if isinstance( test_types_raw, str ):
+            test_types = [ t.strip() for t in test_types_raw.split( "," ) if t.strip() ]
+        else:
+            test_types = test_types_raw
+
+        # Parse pytest_args: JSON list or space-separated string → list
+        pytest_args_raw = args_dict.get( "pytest_args", "" )
+        if isinstance( pytest_args_raw, list ):
+            pytest_args = pytest_args_raw
+        elif pytest_args_raw and pytest_args_raw.lower() not in _SEMANTIC_NONE:
+            pytest_args = pytest_args_raw.split()
+        else:
+            pytest_args = []
+
+        return TestSuiteJob(
+            test_types  = test_types,
+            user_id     = user_id,
+            user_email  = user_email,
+            session_id  = session_id,
+            pytest_args = pytest_args,
+            dry_run     = _parse_boolean( args_dict.get( "dry_run" ) ),
+            debug       = debug,
+            verbose     = verbose
+        )
+
     elif command == "agent router go to bug fix expediter":
         from cosa.agents.bug_fix_expediter.job import BugFixExpediterJob
         return BugFixExpediterJob(

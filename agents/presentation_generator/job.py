@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import Optional
 
 from cosa.agents.agentic_job_base import AgenticJobBase
+from cosa.rest.job_state import JobState
 
 
 class PresentationGeneratorJob( AgenticJobBase ):
@@ -135,7 +136,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
         if self.debug:
             print( f"[PresentationGeneratorJob] Starting do_all() for: {self.source_path}" )
 
-        self.status     = "running"
+        self.state      = JobState.RUNNING
         self.started_at = datetime.now().isoformat()
 
         try:
@@ -143,7 +144,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
 
             # Check if cancellation was requested during execution
             if self._cancel_requested:
-                self.status                = "cancelled"
+                self.state                 = JobState.CANCELLED
                 self.completed_at          = datetime.now().isoformat()
                 self.error                 = "Cancelled by user request"
                 self.answer_conversational = result or "Presentation generation was cancelled by the user."
@@ -151,7 +152,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
                     print( "[PresentationGeneratorJob] Cancelled by user request" )
                 return self.answer_conversational
 
-            self.status       = "completed"
+            self.state        = JobState.COMPLETED
             self.completed_at = datetime.now().isoformat()
             self.result       = result
             self.answer_conversational = result
@@ -163,7 +164,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
             return result
 
         except Exception as e:
-            self.status       = "failed"
+            self.state        = JobState.FAILED
             self.completed_at = datetime.now().isoformat()
             self.error        = str( e )
 
@@ -479,7 +480,7 @@ def quick_smoke_test():
         assert job.target_duration_minutes == 15
         assert job.audience == "general"
         assert job.dry_run is True
-        assert job.status == "pending"
+        assert job.state == JobState.PENDING
         print( "  PASS" )
 
         print( "\nAll PresentationGeneratorJob smoke tests passed" )

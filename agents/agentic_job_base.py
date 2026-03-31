@@ -21,6 +21,8 @@ import uuid
 from datetime import datetime
 from typing import Optional, Dict, Any
 
+from cosa.rest.job_state import JobState
+
 
 class AgenticJobBase( ABC ):
     """
@@ -59,7 +61,6 @@ class AgenticJobBase( ABC ):
         session_id: str,
         scheduled_at: str = None,
         monopolize: bool = False,
-        paused: bool = False,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -97,7 +98,7 @@ class AgenticJobBase( ABC ):
         # Execution state tracking
         self.started_at   = None
         self.completed_at = None
-        self.status       = "pending"  # pending, running, completed, cancelled, failed
+        self.state        = JobState.PENDING
         self.error        = None
         self.is_cache_hit = False      # Agentic jobs are never cache hits
 
@@ -109,10 +110,9 @@ class AgenticJobBase( ABC ):
         self.result       = None
         self.artifacts    = {}  # e.g., {"report_path": "...", "audio_path": "..."}
 
-        # Scheduling attributes (CJ Flow timed execution + monopolize + pause)
+        # Scheduling attributes (CJ Flow timed execution + monopolize)
         self.scheduled_at          = scheduled_at   # ISO datetime string or None (immediate)
         self.monopolize            = monopolize      # Exclusive execution flag
-        self.paused                = paused          # Todo queue pause flag
 
         # For compatibility with queue UI display
         self.answer_conversational = None
@@ -287,7 +287,7 @@ class AgenticJobBase( ABC ):
         Returns:
             bool: True if status is "completed"
         """
-        return self.status == "completed"
+        return self.state == JobState.COMPLETED
 
     def formatter_ran_to_completion( self ) -> bool:
         """
@@ -391,7 +391,7 @@ class AgenticJobBase( ABC ):
 
     def __repr__( self ) -> str:
         """String representation for debugging."""
-        return f"<{self.__class__.__name__} id={self.id_hash} status={self.status}>"
+        return f"<{self.__class__.__name__} id={self.id_hash} state={self.state.value}>"
 
 
 def quick_smoke_test():
@@ -432,7 +432,7 @@ def quick_smoke_test():
                 return f"[Test] {self.query}"
 
             def do_all( self ):
-                self.status = "completed"
+                self.state = JobState.COMPLETED
                 self.answer_conversational = "Test complete"
                 return self.answer_conversational
 
@@ -469,7 +469,7 @@ def quick_smoke_test():
         print( "Testing do_all() execution..." )
         result = job.do_all()
         assert result == "Test complete"
-        assert job.status == "completed"
+        assert job.state == JobState.COMPLETED
         assert job.code_ran_to_completion() == True
         assert job.formatter_ran_to_completion() == True
         print( "✓ do_all() executed successfully" )

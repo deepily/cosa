@@ -31,6 +31,7 @@ from sqlalchemy import update, select, func, and_
 
 from cosa.rest.db.database import get_db
 from cosa.rest.postgres_models import JobHistory
+from cosa.rest.job_state import JobState
 from cosa.config.configuration_manager import ConfigurationManager
 
 
@@ -166,7 +167,7 @@ def persist_job_created_from_metadata( job_id, user_id, metadata ):
                 user_email      = metadata.get( "user_email" ),
                 session_id      = metadata.get( "session_id" ),
                 routing_command = metadata.get( "routing_command" ),
-                status          = "pending",
+                status          = JobState.PENDING.value,
                 question_text   = metadata.get( "question_text" ),
                 is_cache_hit    = metadata.get( "is_cache_hit", False ),
                 metadata_json   = _build_metadata_json( metadata )
@@ -200,7 +201,7 @@ def persist_job_started_from_metadata( job_id, metadata ):
                 update( JobHistory )
                 .where( JobHistory.id_hash == job_id )
                 .values(
-                    status     = "running",
+                    status     = JobState.RUNNING.value,
                     started_at = now,
                     updated_at = now
                 )
@@ -230,7 +231,7 @@ def persist_job_completed_from_metadata( job_id, metadata ):
     try:
         now = datetime.now( timezone.utc )
         values = {
-            "status"        : "completed",
+            "status"        : JobState.COMPLETED.value,
             "completed_at"  : now,
             "updated_at"    : now,
             "metadata_json" : _build_metadata_json( metadata )
@@ -277,7 +278,7 @@ def persist_job_failed_from_metadata( job_id, metadata ):
         now = datetime.now( timezone.utc )
         error_text = metadata.get( "error", "Unknown error" ) if metadata else "Unknown error"
         values = {
-            "status"       : "failed",
+            "status"       : JobState.FAILED.value,
             "error"        : error_text,
             "completed_at" : now,
             "updated_at"   : now,
@@ -323,9 +324,9 @@ def mark_interrupted_jobs():
         with get_db() as session:
             result = session.execute(
                 update( JobHistory )
-                .where( JobHistory.status.in_( [ "pending", "running" ] ) )
+                .where( JobHistory.status.in_( [ JobState.PENDING.value, JobState.RUNNING.value ] ) )
                 .values(
-                    status       = "interrupted",
+                    status       = JobState.INTERRUPTED.value,
                     completed_at = now,
                     updated_at   = now
                 )
@@ -353,7 +354,7 @@ def get_active_job_ids_by_user():
         with get_db() as session:
             rows = session.execute(
                 select( JobHistory.user_id, JobHistory.id_hash )
-                .where( JobHistory.status.in_( [ "pending", "running" ] ) )
+                .where( JobHistory.status.in_( [ JobState.PENDING.value, JobState.RUNNING.value ] ) )
             ).all()
 
             result = {}

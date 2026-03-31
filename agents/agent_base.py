@@ -17,6 +17,7 @@ from cosa.config.configuration_manager import ConfigurationManager
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.agents.two_word_id_generator import TwoWordIdGenerator
 from cosa.agents.io_models.utils.xml_parser_factory import XmlParserFactory
+from cosa.rest.job_state import JobState
 
 class CodeGenerationFailedException( Exception ):
     """
@@ -170,15 +171,14 @@ class AgentBase( RunnableCode, abc.ABC ):
         # QueueableJob protocol compliance - status tracking attributes
         self.answer       = ""
         self.error        = ""  # Must be str, not None (protocol requirement)
-        self.status       = "pending"
+        self.state        = JobState.PENDING
         self.is_cache_hit = False
         self.started_at   = ""
         self.completed_at = ""
 
-        # Scheduling attributes (CJ Flow) — sync agents are always immediate, never monopolize/pause
+        # Scheduling attributes (CJ Flow) — sync agents are always immediate, never monopolize
         self.scheduled_at = None
         self.monopolize   = False
-        self.paused       = False
 
         self.execution_state = AgentBase.STATE_WAITING_TO_RUN
     

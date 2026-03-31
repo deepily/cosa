@@ -4,6 +4,7 @@ from typing import Any, Optional
 import re
 from cosa.rest.queue_extensions import user_job_tracker
 from cosa.rest.queue_protocol import is_queueable_job
+from cosa.rest.job_state import JobState
 
 # Notification service imports for TTS migration (Session 97)
 from lupin_cli.notifications.notify_user_async import notify_user_async
@@ -214,7 +215,7 @@ class FifoQueue:
 
         for i, job in enumerate( self.queue_list ):
             # Check paused flag (backward compat with legacy jobs)
-            if getattr( job, 'paused', False ):
+            if job.state == JobState.PAUSED:
                 continue
 
             # Check scheduled_at (None = immediate = always eligible)
@@ -222,6 +223,13 @@ class FifoQueue:
             if scheduled_at is not None:
                 try:
                     scheduled_dt = datetime.fromisoformat( scheduled_at )
+                    # Normalize timezone for comparison:
+                    # JS sends UTC ISO strings ("...Z") → timezone-aware datetime.
+                    # datetime.now() is naive (local time). Comparing aware vs naive
+                    # raises TypeError (caught below, treating job as immediate — wrong).
+                    # Fix: make both naive-local for apples-to-apples comparison.
+                    if scheduled_dt.tzinfo is not None:
+                        scheduled_dt = scheduled_dt.astimezone().replace( tzinfo=None )
                     if scheduled_dt > now:
                         continue  # Not yet eligible
                 except ( ValueError, TypeError ):
@@ -254,12 +262,15 @@ class FifoQueue:
         """
         earliest = None
         for job in self.queue_list:
-            if getattr( job, 'paused', False ):
+            if job.state == JobState.PAUSED:
                 continue
             scheduled_at = getattr( job, 'scheduled_at', None )
             if scheduled_at is not None:
                 try:
                     scheduled_dt = datetime.fromisoformat( scheduled_at )
+                    # Normalize to naive-local (same as datetime.now() in consumer)
+                    if scheduled_dt.tzinfo is not None:
+                        scheduled_dt = scheduled_dt.astimezone().replace( tzinfo=None )
                     if earliest is None or scheduled_dt < earliest:
                         earliest = scheduled_dt
                 except ( ValueError, TypeError ):
@@ -703,7 +714,7 @@ def quick_smoke_test():
                     self.is_cache_hit         = False
                     self.started_at           = None
                     self.completed_at         = None
-                    self.status               = "pending"
+                    self.state                = "pending"
                     self.error                = None
 
                 def do_all( self ):
@@ -877,7 +888,7 @@ def quick_smoke_test():
                     self.is_cache_hit         = False
                     self.started_at           = None
                     self.completed_at         = None
-                    self.status               = "pending"
+                    self.state                = "pending"
                     self.error                = None
 
                 def do_all( self ):

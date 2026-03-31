@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import Optional
 
 from cosa.agents.agentic_job_base import AgenticJobBase
+from cosa.rest.job_state import JobState
 
 
 class BugFixExpediterJob( AgenticJobBase ):
@@ -114,7 +115,7 @@ class BugFixExpediterJob( AgenticJobBase ):
         """
         if self.debug: print( f"[BugFixExpediterJob] Starting do_all() for dead job: {self.dead_job_id}" )
 
-        self.status     = "running"
+        self.state      = JobState.RUNNING
         self.started_at = datetime.now().isoformat()
 
         try:
@@ -122,14 +123,14 @@ class BugFixExpediterJob( AgenticJobBase ):
 
             # Check if cancellation was requested during execution
             if self._cancel_requested:
-                self.status                = "cancelled"
+                self.state                 = JobState.CANCELLED
                 self.completed_at          = datetime.now().isoformat()
                 self.error                 = "Cancelled by user request"
                 self.answer_conversational = result or "Bug fix was cancelled."
                 if self.debug: print( "[BugFixExpediterJob] Cancelled by user request" )
                 return self.answer_conversational
 
-            self.status       = "completed"
+            self.state        = JobState.COMPLETED
             self.completed_at = datetime.now().isoformat()
             self.result       = result
             self.answer_conversational = result
@@ -144,7 +145,7 @@ class BugFixExpediterJob( AgenticJobBase ):
             import traceback
             tb_str = traceback.format_exc()
 
-            self.status       = "failed"
+            self.state        = JobState.FAILED
             self.completed_at = datetime.now().isoformat()
             self.error        = f"{e}\n\n{tb_str}"
 
@@ -384,7 +385,7 @@ def quick_smoke_test():
         # 6: Attributes
         assert job.dead_job_id == "dr-test1234::user123"
         assert job.user_email == "test@test.com"
-        assert job.status == "pending"
+        assert job.state == JobState.PENDING
         assert job.dry_run == False
         print( "✓ All attributes set correctly" )
 

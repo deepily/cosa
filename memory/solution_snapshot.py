@@ -18,6 +18,7 @@ import numpy as np
 from cosa.memory.embedding_manager import EmbeddingManager
 from cosa.memory.embedding_provider import get_embedding_provider
 from cosa.memory.normalizer import Normalizer
+from cosa.rest.job_state import JobState
 
 class SolutionSnapshot( RunnableCode ):
     """
@@ -250,14 +251,13 @@ class SolutionSnapshot( RunnableCode ):
         self.answer_is_correct     = answer_is_correct
 
         # QueueableJob protocol compliance - status tracking attributes
-        self.status                = "pending"
+        self.state                 = JobState.PENDING
         self.started_at            = ""
         self.completed_at          = ""
 
         # Scheduling attributes (CJ Flow) — snapshots are always immediate, never monopolize/pause
         self.scheduled_at          = None
         self.monopolize            = False
-        self.paused                = False
 
         # Is there is no synonymous questions to be found then just recycle the current question
         # Handle corrupted data: ensure synonymous_questions is a valid dict/OrderedDict

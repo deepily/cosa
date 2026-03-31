@@ -28,6 +28,7 @@ from datetime import datetime
 from typing import Optional
 
 from cosa.agents.agentic_job_base import AgenticJobBase
+from cosa.rest.job_state import JobState
 
 
 class ClaudeCodeJob( AgenticJobBase ):
@@ -188,13 +189,13 @@ class ClaudeCodeJob( AgenticJobBase ):
         if self.debug:
             print( f"[ClaudeCodeJob] Starting do_all() for: {self.prompt[ :50 ]}..." )
 
-        self.status     = "running"
+        self.state      = JobState.RUNNING
         self.started_at = datetime.now().isoformat()
 
         try:
             result = asyncio.run( self._execute() )
 
-            self.status       = "completed"
+            self.state        = JobState.COMPLETED
             self.completed_at = datetime.now().isoformat()
             self.result       = result
             self.answer_conversational = result
@@ -206,7 +207,7 @@ class ClaudeCodeJob( AgenticJobBase ):
             return result
 
         except Exception as e:
-            self.status       = "failed"
+            self.state        = JobState.FAILED
             self.completed_at = datetime.now().isoformat()
             self.error        = str( e )
 
@@ -703,7 +704,7 @@ def quick_smoke_test():
         assert job.project == "lupin"
         assert job.task_type == "BOUNDED"
         assert job.max_turns == 50
-        assert job.status == "pending"
+        assert job.state == JobState.PENDING
         print( "✓ All attributes set correctly" )
 
         # Test 7: Check JOB_TYPE and JOB_PREFIX

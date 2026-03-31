@@ -245,6 +245,31 @@ AGENTIC_AGENTS = {
             "dry_run"       : "no",
         },
     },
+
+    "agent router go to test suite" : {
+        "job_prefix"         : "ts",
+        "cli_module"         : None,
+        "job_class_path"     : "cosa.agents.test_suite.job.TestSuiteJob",
+        "display_name"       : "Test Suite",
+        "required_user_args" : [],
+        "system_provided"    : [ "user_id", "user_email", "session_id" ],
+        "arg_mapping"        : {
+            "test_types"  : "test_types",
+            "suites"      : "test_types",
+            "pytest_args" : "pytest_args",
+            "dry_run"     : "dry_run",
+        },
+        "fallback_questions" : {
+            "test_types"  : "Which test suites? Options: integration, e2e, or both.",
+            "pytest_args" : "Any extra pytest arguments? Say 'none' to skip.",
+            "dry_run"     : "Would you like to enable dry run mode? Say 'yes' or 'no'.",
+        },
+        "fallback_defaults" : {
+            "test_types"  : "integration,e2e",
+            "pytest_args" : "none",
+            "dry_run"     : "no",
+        },
+    },
 }
 
 
@@ -369,7 +394,7 @@ def quick_smoke_test():
     # Test 1: Registry structure
     print( "\n1. Testing registry structure..." )
     try:
-        assert len( AGENTIC_AGENTS ) == 8, f"Expected 8 agents, got {len( AGENTIC_AGENTS )}"
+        assert len( AGENTIC_AGENTS ) == 9, f"Expected 9 agents, got {len( AGENTIC_AGENTS )}"
         for key, entry in AGENTIC_AGENTS.items():
             assert "cli_module" in entry, f"Missing cli_module in {key}"
             assert "required_user_args" in entry, f"Missing required_user_args in {key}"

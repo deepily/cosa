@@ -23,6 +23,7 @@ from datetime import datetime
 from typing import Optional, List
 
 from cosa.agents.agentic_job_base import AgenticJobBase
+from cosa.rest.job_state import JobState
 
 
 class PodcastGeneratorJob( AgenticJobBase ):
@@ -139,7 +140,7 @@ class PodcastGeneratorJob( AgenticJobBase ):
         if self.debug:
             print( f"[PodcastGeneratorJob] Starting do_all() for: {self.research_path}" )
 
-        self.status     = "running"
+        self.state      = JobState.RUNNING
         self.started_at = datetime.now().isoformat()
 
         try:
@@ -147,7 +148,7 @@ class PodcastGeneratorJob( AgenticJobBase ):
 
             # Check if cancellation was requested during execution
             if self._cancel_requested:
-                self.status                = "cancelled"
+                self.state                 = JobState.CANCELLED
                 self.completed_at          = datetime.now().isoformat()
                 self.error                 = "Cancelled by user request"
                 self.answer_conversational = result or "Podcast generation was cancelled by the user."
@@ -155,7 +156,7 @@ class PodcastGeneratorJob( AgenticJobBase ):
                     print( f"[PodcastGeneratorJob] Cancelled by user request" )
                 return self.answer_conversational
 
-            self.status       = "completed"
+            self.state        = JobState.COMPLETED
             self.completed_at = datetime.now().isoformat()
             self.result       = result
             self.answer_conversational = result
@@ -167,7 +168,7 @@ class PodcastGeneratorJob( AgenticJobBase ):
             return result
 
         except Exception as e:
-            self.status       = "failed"
+            self.state        = JobState.FAILED
             self.completed_at = datetime.now().isoformat()
             self.error        = str( e )
 
@@ -423,7 +424,7 @@ def quick_smoke_test():
         assert job.target_languages == [ "en" ]
         assert job.max_segments == 5
         assert job.user_email == "test@test.com"
-        assert job.status == "pending"
+        assert job.state == JobState.PENDING
         print( "✓ All attributes set correctly" )
 
         # Test 7: Check JOB_TYPE and JOB_PREFIX

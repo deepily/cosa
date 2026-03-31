@@ -20,6 +20,7 @@ from cosa.rest.auth import get_current_user
 from cosa.rest.queue_auth import authorize_queue_filter
 from cosa.rest.auth_middleware import is_admin
 from cosa.agents.agentic_job_base import AgenticJobBase
+from cosa.rest.job_state import JobState
 from cosa.rest.queue_util import emit_job_state_transition
 
 router = APIRouter(prefix="/api", tags=["queues"])
@@ -346,7 +347,7 @@ async def get_queue(
                 "cost_summary"    : job.cost_summary if is_agentic_job else None,
                 "started_at"      : job.started_at,
                 "completed_at"    : job.completed_at,
-                "status"          : job.status,
+                "status"          : job.state.value if hasattr( job.state, 'value' ) else str( job.state ),
                 "error"           : job.error,
             }
 
@@ -382,12 +383,12 @@ async def get_queue(
             "user_id"      : authorized_filter,
             "session_id"   : job.session_id,
             "agent_type"   : job.job_type,  # Unified property replaces getattr() chain
-            "status"       : job.status,
+            "status"       : job.state.value if hasattr( job.state, 'value' ) else str( job.state ),
             "started_at"   : job.started_at,
             "error"        : job.error,
             "scheduled_at" : getattr( job, 'scheduled_at', None ),
             "monopolize"   : getattr( job, 'monopolize', False ),
-            "paused"       : getattr( job, 'paused', False ),
+            "paused"       : job.state == JobState.PAUSED,
         }
         structured_jobs.append( job_data )
 
@@ -1092,23 +1093,24 @@ async def pause_job(
     if job.user_id != user_id and not is_admin( current_user ):
         raise HTTPException( status_code=403, detail="Not authorized to pause this job" )
 
-    job.paused = True
+    job.state = JobState.PAUSED
 
-    # Emit WebSocket event for UI update
+    # Emit WebSocket event for UI update (state transition: queued/scheduled → paused)
     try:
         import fastapi_app.main as main_module
         ws_manager = main_module.websocket_manager
         ws_manager.emit_to_user_sync(
             user_id = user_id,
-            event   = "job_paused",
+            event   = "job_state_transition",
             data    = {
-                "job_id"    : job_id,
-                "paused"    : True,
-                "timestamp" : datetime.now().isoformat(),
+                "job_id"     : job_id,
+                "from_state" : JobState.QUEUED.value,
+                "to_state"   : JobState.PAUSED.value,
+                "timestamp"  : datetime.now().isoformat(),
             },
         )
     except Exception as e:
-        print( f"[API] Warning: WebSocket emission failed for job_paused: {e}" )
+        print( f"[API] Warning: WebSocket emission failed for pause transition: {e}" )
 
     print( f"[API] Job paused: {job_id} by user {user_id}" )
 
@@ -1162,23 +1164,24 @@ async def resume_job(
     if job.user_id != user_id and not is_admin( current_user ):
         raise HTTPException( status_code=403, detail="Not authorized to resume this job" )
 
-    job.paused = False
+    job.state = JobState.QUEUED
 
-    # Emit WebSocket event for UI update
+    # Emit WebSocket event for UI update (state transition: paused → queued)
     try:
         import fastapi_app.main as main_module
         ws_manager = main_module.websocket_manager
         ws_manager.emit_to_user_sync(
             user_id = user_id,
-            event   = "job_resumed",
+            event   = "job_state_transition",
             data    = {
-                "job_id"    : job_id,
-                "paused"    : False,
-                "timestamp" : datetime.now().isoformat(),
+                "job_id"     : job_id,
+                "from_state" : JobState.PAUSED.value,
+                "to_state"   : JobState.QUEUED.value,
+                "timestamp"  : datetime.now().isoformat(),
             },
         )
     except Exception as e:
-        print( f"[API] Warning: WebSocket emission failed for job_resumed: {e}" )
+        print( f"[API] Warning: WebSocket emission failed for resume transition: {e}" )
 
     # Notify consumer to recalculate eligibility (may wake from timed sleep)
     with todo_queue.condition:

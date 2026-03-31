@@ -34,6 +34,7 @@ from cosa.agents.io_models.utils.util_xml_pydantic import XMLParsingError
 from datetime import datetime
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.rest.queue_extensions import user_job_tracker
+from cosa.rest.job_state import JobState
 from cosa.rest.queue_util import emit_job_state_transition
 from cosa.rest.queue_protocol import is_queueable_job
 
@@ -77,6 +78,7 @@ MODE_METADATA = {
     "swe_team"           : { "display_name": "SWE Team",            "description": "Multi-agent engineering team" },
     "presentation"              : { "display_name": "Presentation",              "description": "Generate slides from a document" },
     "research_to_presentation"  : { "display_name": "Research to Presentation",  "description": "Research a topic and create slides" },
+    "test_suite"                : { "display_name": "Test Suite",                "description": "Run integration and E2E tests" },
 }
 
 # Agentic mode keys → AGENTIC_AGENTS routing command strings
@@ -90,6 +92,7 @@ AGENTIC_MODE_MAP = {
     "swe_team"                 : "agent router go to swe team",
     "presentation"             : "agent router go to presentation generator",
     "research_to_presentation" : "agent router go to research to presentation",
+    "test_suite"               : "agent router go to test suite",
 }
 
 class TodoFifoQueue( FifoQueue ):
@@ -944,6 +947,7 @@ class TodoFifoQueue( FifoQueue ):
         "agent router go to research to presentation"  : "Research-to-Slides (research a topic and create a presentation)",
         "agent router go to swe team"                  : "SWE Team (multi-agent engineering team)",
         "agent router go to bug fix expediter"         : "Bug Fix Expediter (diagnose and fix a failed job)",
+        "agent router go to test suite"                : "TestRunner (run integration and E2E test suites)",
     }
 
     def _confirm_agentic_routing( self, command, args, user_id, user_email, original_question ):
@@ -1075,7 +1079,7 @@ class TodoFifoQueue( FifoQueue ):
             'status'        : 'pending',
             'expediting'    : True
         }
-        emit_job_state_transition( self.websocket_mgr, spec_id, 'pending', 'todo', user_id, spec_metadata )
+        emit_job_state_transition( self.websocket_mgr, spec_id, JobState.PENDING, JobState.QUEUED, user_id, spec_metadata )
 
         if self.debug:
             print( f"[TODO-QUEUE] Speculative card emitted: {spec_id} (expediting=True)" )
@@ -1099,7 +1103,7 @@ class TodoFifoQueue( FifoQueue ):
 
         # ── Step 4: Handle cancel/timeout ────────────────────────────────
         if args_dict is None:
-            emit_job_state_transition( self.websocket_mgr, spec_id, 'todo', 'dead', user_id )
+            emit_job_state_transition( self.websocket_mgr, spec_id, JobState.QUEUED, JobState.CANCELLED, user_id )
             self.user_job_tracker.remove_job( spec_id )
             self._notify( "Job cancelled.", target_user=user_email )
             return "Agentic job cancelled by user or timeout."
@@ -1129,7 +1133,7 @@ class TodoFifoQueue( FifoQueue ):
         )
 
         if job is None:
-            emit_job_state_transition( self.websocket_mgr, spec_id, 'todo', 'dead', user_id )
+            emit_job_state_transition( self.websocket_mgr, spec_id, JobState.QUEUED, JobState.FAILED, user_id )
             self.user_job_tracker.remove_job( spec_id )
             self._notify( "Failed to create job.", target_user=user_email )
             return "Failed to create agentic job."
@@ -1182,9 +1186,9 @@ class TodoFifoQueue( FifoQueue ):
             'timestamp'     : item.created_date,
             'scheduled_at'  : item.scheduled_at,
             'monopolize'    : item.monopolize,
-            'paused'        : item.paused,
+            'paused'        : item.state == JobState.PAUSED,
         }
-        emit_job_state_transition( self.websocket_mgr, item.id_hash, 'pending', 'todo', user_id, metadata )
+        emit_job_state_transition( self.websocket_mgr, item.id_hash, JobState.PENDING, JobState.QUEUED, user_id, metadata )
 
         if self.debug:
             print( f"[TODO-QUEUE] Added job, emitted pending→todo, and notified consumer: {item.id_hash}" )

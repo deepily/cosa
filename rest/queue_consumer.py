@@ -11,6 +11,7 @@ import time
 from typing import Any
 from datetime import datetime
 import cosa.utils.util as du
+from cosa.rest.job_state import JobState
 from cosa.rest.queue_util import emit_job_state_transition
 
 
@@ -96,7 +97,7 @@ def start_todo_producer_run_consumer_thread( todo_queue: Any, running_queue: Any
                             'timestamp'     : job.created_date,
                             'started_at'    : datetime.now().isoformat()
                         }
-                        emit_job_state_transition( running_queue.websocket_mgr, job_id, 'todo', 'run', user_id, metadata )
+                        emit_job_state_transition( running_queue.websocket_mgr, job_id, JobState.QUEUED, JobState.RUNNING, user_id, metadata )
 
                     # Move to running queue
                     running_queue.push( job )  # Auto-emits 'run_update'

@@ -3,6 +3,7 @@ from cosa.agents.receptionist_agent import ReceptionistAgent
 from cosa.agents.weather_agent import WeatherAgent
 from cosa.crud_for_dataframes.agent import CrudForDataFramesAgent
 from cosa.rest.fifo_queue import FifoQueue
+from cosa.rest.job_state import JobState
 from cosa.rest.queue_util import emit_job_state_transition
 from cosa.rest.queue_protocol import is_queueable_job
 from cosa.agents.agent_base import AgentBase
@@ -237,14 +238,14 @@ class RunningFifoQueue( FifoQueue ):
                     'question_text'   : failed_job.last_question_asked,
                     'agent_type'      : failed_job.job_type,
                     'timestamp'       : failed_job.created_date,
-                    'status'          : 'failed',
+                    'status'          : JobState.FAILED.value,
                     'has_interactions' : bool( failed_job.session_id ),
                     'is_cache_hit'    : False,
                     'started_at'      : started_at,
                     'completed_at'    : completed_at,
                     'duration_seconds': duration_seconds
                 }
-                emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'dead', user_id, metadata )
+                emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.FAILED, user_id, metadata )
 
                 # Now pop and move to dead queue
                 self.pop()
@@ -301,14 +302,14 @@ class RunningFifoQueue( FifoQueue ):
             'question_text'   : running_job.last_question_asked,
             'agent_type'      : running_job.job_type,
             'timestamp'       : running_job.created_date,
-            'status'          : 'failed',
+            'status'          : JobState.FAILED.value,
             'has_interactions': bool( running_job.session_id ),
             'is_cache_hit'    : False,
             'started_at'      : started_at,
             'completed_at'    : completed_at,
             'duration_seconds': duration_seconds
         }
-        emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'dead', user_id, metadata )
+        emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.FAILED, user_id, metadata )
 
         self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
 
@@ -381,14 +382,14 @@ class RunningFifoQueue( FifoQueue ):
                     'question_text'   : running_job.last_question_asked,
                     'agent_type'      : running_job.job_type,
                     'timestamp'       : running_job.created_date,
-                    'status'          : 'completed',
+                    'status'          : JobState.COMPLETED.value,
                     'has_interactions': bool( running_job.session_id ),
                     'is_cache_hit'    : running_job.is_cache_hit,
                     'started_at'      : started_at,
                     'completed_at'    : completed_at,
                     'duration_seconds': duration_seconds
                 }
-                emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'done', user_id, metadata )
+                emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.COMPLETED, user_id, metadata )
 
                 # Move through queue system
                 self.pop()  # Auto-emits 'run_update'
@@ -441,14 +442,14 @@ class RunningFifoQueue( FifoQueue ):
                     'agent_type'      : running_job.job_type,
                     'timestamp'       : running_job.created_date,
                     # Session 107: Fix field parity between WebSocket and server-fetched cards
-                    'status'          : 'failed',
+                    'status'          : JobState.FAILED.value,
                     'has_interactions': bool( running_job.session_id ),
                     'is_cache_hit'    : False,
                     'started_at'      : started_at,
                     'completed_at'    : completed_at,
                     'duration_seconds': duration_seconds
                 }
-                emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'dead', user_id, metadata )
+                emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.FAILED, user_id, metadata )
 
                 self.pop()  # Auto-emits 'run_update'
                 self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
@@ -462,7 +463,7 @@ class RunningFifoQueue( FifoQueue ):
                 debug=self.debug
             )
 
-            running_job.status = "failed"
+            running_job.state = JobState.FAILED
             running_job.error  = str( e )
 
             # TTS Migration (Session 97): Use notification service instead of _emit_speech
@@ -497,14 +498,14 @@ class RunningFifoQueue( FifoQueue ):
                 'agent_type'      : running_job.job_type,
                 'timestamp'       : running_job.created_date,
                 # Session 107: Fix field parity between WebSocket and server-fetched cards
-                'status'          : 'failed',
+                'status'          : JobState.FAILED.value,
                 'has_interactions': bool( running_job.session_id ),
                 'is_cache_hit'    : False,
                 'started_at'      : started_at,
                 'completed_at'    : completed_at,
                 'duration_seconds': duration_seconds
             }
-            emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'dead', user_id, metadata )
+            emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.FAILED, user_id, metadata )
 
             self.pop()  # Auto-emits 'run_update'
             self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
@@ -633,7 +634,7 @@ class RunningFifoQueue( FifoQueue ):
                 'agent_type'      : running_job.job_type,
                 'timestamp'       : running_job.created_date,
                 # Session 107: Fix field parity between WebSocket and server-fetched cards
-                'status'          : 'completed',
+                'status'          : JobState.COMPLETED.value,
                 'has_interactions': bool( running_job.session_id ),
                 'is_cache_hit'       : running_job.is_cache_hit,
                 'answer_is_correct'  : running_job.answer_is_correct if isinstance( running_job, SolutionSnapshot ) else None,
@@ -641,7 +642,7 @@ class RunningFifoQueue( FifoQueue ):
                 'completed_at'       : completed_at,
                 'duration_seconds'   : duration_seconds
             }
-            emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'done', user_id, metadata )
+            emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.COMPLETED, user_id, metadata )
 
             self.pop()  # Auto-emits 'run_update'
             self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
@@ -714,7 +715,7 @@ class RunningFifoQueue( FifoQueue ):
             'agent_type'      : running_job.job_type,
             'timestamp'       : running_job.created_date,
             # Session 107: Fix field parity between WebSocket and server-fetched cards
-            'status'          : 'completed',
+            'status'          : JobState.COMPLETED.value,
             'has_interactions'  : bool( running_job.session_id ),
             'is_cache_hit'      : False,
             'answer_is_correct' : running_job.answer_is_correct,
@@ -722,7 +723,7 @@ class RunningFifoQueue( FifoQueue ):
             'completed_at'      : completed_at,
             'duration_seconds'  : duration_seconds
         }
-        emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'done', user_id, metadata )
+        emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.COMPLETED, user_id, metadata )
 
         self.pop()  # Auto-emits 'run_update'
         self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
@@ -929,13 +930,13 @@ class RunningFifoQueue( FifoQueue ):
             'is_cache_hit'      : True,
             'answer_is_correct' : cached_snapshot.answer_is_correct,
             # Session 107: Fix field parity between WebSocket and server-fetched cards
-            'status'            : 'completed',
+            'status'            : JobState.COMPLETED.value,
             'has_interactions'  : bool( original_job.session_id ),
             'started_at'        : started_at,
             'completed_at'      : completed_at,
             'duration_seconds'  : duration_seconds
         }
-        emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'done', user_id, metadata )
+        emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.COMPLETED, user_id, metadata )
 
         # Move job through the queue system properly
         self.pop()  # Remove from running queue, auto-emits 'run_update'
