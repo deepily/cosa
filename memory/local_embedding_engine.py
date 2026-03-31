@@ -88,12 +88,16 @@ class CodeEmbeddingEngine:
         Lazy-load the SentenceTransformer model onto GPU.
 
         Requires:
-            - Model is available on HuggingFace or locally cached
+            - Model is downloaded and available in local HuggingFace cache
 
         Ensures:
             - self._model is a loaded SentenceTransformer
             - Model is on the configured device with configured dtype
             - Thread-safe via double-checked locking on _inference_lock
+            - Never contacts HuggingFace Hub (local_files_only=True).
+              Without this, SentenceTransformer checks the Hub on every
+              load — problematic during rapid restart cycles in testing
+              and when the network is unreliable.
         """
         if self._model is not None:
             return
@@ -112,6 +116,7 @@ class CodeEmbeddingEngine:
             self._model = SentenceTransformer(
                 self._model_name,
                 trust_remote_code=True,
+                local_files_only=True,
                 device=self._device,
                 model_kwargs={ "torch_dtype": model_dtype }
             )

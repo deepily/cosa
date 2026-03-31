@@ -1262,12 +1262,69 @@ class PresentationOrchestratorAgent:
 
     async def _deliver_async( self, presentation: Optional[ PresentationModel ] ) -> None:
         """
-        Phase 8: Save final artifacts and send completion notification.
+        Phase 8: Verify and summarize all generated artifacts.
 
-        TODO (Phase 8): Save YAML, Marp MD, generated visuals.
+        The job (job.py) handles artifact collection, cost summary,
+        clickable links, and completion notifications. This method
+        verifies file existence and builds a delivery summary dict
+        for the job to read.
+
+        Requires:
+            - presentation is a valid PresentationModel
+            - _presentation_state has yaml_path and marp_path from Phases 5-6
+
+        Ensures:
+            - delivery_summary stored in _presentation_state
+            - All artifact paths verified on disk
+            - Total timing calculated from presenter notes
         """
-        if self.debug: print( "[Orchestrator] Phase 8: Deliver (stub)" )
-        await asyncio.sleep( 0.1 )
+        if presentation is None:
+            logger.warning( "Phase 8: No presentation model — skipping delivery" )
+            return
+
+        if self.debug: print( "[Orchestrator] Phase 8: Deliver — building summary" )
+
+        yaml_path        = self._presentation_state.get( "yaml_path" )
+        marp_path        = self._presentation_state.get( "marp_path" )
+        visuals_rendered = self._presentation_state.get( "visuals_rendered", 0 )
+
+        # Verify files exist
+        artifacts_verified = {}
+        for name, path in [ ( "yaml", yaml_path ), ( "marp", marp_path ) ]:
+            if path and os.path.exists( path ):
+                file_size = os.path.getsize( path )
+                artifacts_verified[ name ] = { "path": path, "size_bytes": file_size, "exists": True }
+            else:
+                artifacts_verified[ name ] = { "path": path, "size_bytes": 0, "exists": False }
+                if path: logger.warning( f"Phase 8: Artifact missing: {name} = {path}" )
+
+        # Calculate total estimated speaking time
+        total_timing = sum(
+            slide.presenter_notes.timing_seconds
+            for slide in presentation.slides
+            if slide.presenter_notes and slide.presenter_notes.timing_seconds
+        )
+
+        # Build delivery summary
+        delivery_summary = {
+            "total_slides"      : presentation.total_slides,
+            "total_timing_secs" : total_timing,
+            "total_timing_min"  : round( total_timing / 60, 1 ),
+            "visuals_rendered"  : visuals_rendered,
+            "artifacts"         : artifacts_verified,
+            "theme"             : presentation.theme,
+        }
+
+        self._presentation_state[ "delivery_summary" ] = delivery_summary
+
+        if self.debug:
+            print( f"[Orchestrator] Delivery summary:" )
+            print( f"  Slides: {presentation.total_slides}" )
+            print( f"  Est. duration: {delivery_summary[ 'total_timing_min' ]}m" )
+            print( f"  Visuals: {visuals_rendered}" )
+            for name, info in artifacts_verified.items():
+                status = "OK" if info[ "exists" ] else "MISSING"
+                print( f"  {name}: {status} ({info[ 'size_bytes' ]:,} bytes)" )
 
     # =========================================================================
     # Gate Stubs (to be implemented in Phases 3-4)

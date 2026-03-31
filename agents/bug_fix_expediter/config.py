@@ -27,7 +27,9 @@ class BugFixExpediterConfig:
 
     # === Execution Limits ===
     max_diagnosis_iterations  : int   = 3
+    min_diagnosis_confidence  : float = 0.7
     max_fix_attempts          : int   = 2
+    max_file_changes_per_fix  : int   = 20
     wall_clock_timeout_secs   : int   = 600
 
     # === Budget ===
@@ -67,7 +69,9 @@ class BugFixExpediterConfig:
             "lead_model"               : "bug fix expediter lead model",
             "worker_model"             : "bug fix expediter worker model",
             "max_diagnosis_iterations" : "bug fix expediter max diagnosis iterations",
+            "min_diagnosis_confidence" : "bug fix expediter min diagnosis confidence",
             "max_fix_attempts"         : "bug fix expediter max fix attempts",
+            "max_file_changes_per_fix" : "bug fix expediter max file changes per fix",
             "wall_clock_timeout_secs"  : "bug fix expediter wall clock timeout seconds",
             "budget_usd"               : "bug fix expediter budget usd",
             "feedback_timeout_seconds" : "bug fix expediter feedback timeout seconds",

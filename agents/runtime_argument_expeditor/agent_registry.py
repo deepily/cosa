@@ -161,6 +161,38 @@ AGENTIC_AGENTS = {
             "source" : "fuzzy_file_match",
         },
     },
+    "agent router go to research to presentation" : {
+        "job_prefix"         : "rx",
+        "cli_module"         : "cosa.agents.deep_research_to_presentation",
+        "job_class_path"     : "cosa.agents.deep_research_to_presentation.job.DeepResearchToPresentationJob",
+        "display_name"       : "Research to Presentation",
+        "required_user_args" : [ "query" ],
+        "system_provided"    : [ "user_email", "session_id", "user_id" ],
+        "arg_mapping"        : {
+            "topic"                   : "query",
+            "query"                   : "query",
+            "question"                : "query",
+            "budget"                  : "budget",
+            "target_duration_minutes" : "target_duration_minutes",
+            "duration"                : "target_duration_minutes",
+            "theme"                   : "theme",
+            "audience"                : "audience",
+            "audience_context"        : "audience_context",
+        },
+        "fallback_questions" : {
+            "query"                   : "What topic should I research and present? Describe the topic or question.",
+            "budget"                  : "Research budget in USD? Say a number, or 'default' for unlimited.",
+            "target_duration_minutes" : "How long should the presentation be? Say minutes, or 'default' for 15.",
+            "theme"                   : "Presentation theme? Say 'default' or a theme name.",
+        },
+        "fallback_defaults" : {
+            "budget"                  : "default",
+            "target_duration_minutes" : "default",
+            "theme"                   : "default",
+            "audience"                : "general",
+            "audience_context"        : "none",
+        },
+    },
     "agent router go to swe team" : {
         "job_prefix"         : "swe",
         "cli_module"         : "cosa.agents.swe_team",
@@ -337,7 +369,7 @@ def quick_smoke_test():
     # Test 1: Registry structure
     print( "\n1. Testing registry structure..." )
     try:
-        assert len( AGENTIC_AGENTS ) == 7, f"Expected 7 agents, got {len( AGENTIC_AGENTS )}"
+        assert len( AGENTIC_AGENTS ) == 8, f"Expected 8 agents, got {len( AGENTIC_AGENTS )}"
         for key, entry in AGENTIC_AGENTS.items():
             assert "cli_module" in entry, f"Missing cli_module in {key}"
             assert "required_user_args" in entry, f"Missing required_user_args in {key}"

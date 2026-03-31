@@ -196,6 +196,23 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             verbose                 = verbose
         )
 
+    elif command == "agent router go to research to presentation":
+        from cosa.agents.deep_research_to_presentation.job import DeepResearchToPresentationJob
+        return DeepResearchToPresentationJob(
+            query                   = args_dict.get( "query", "" ),
+            user_id                 = user_id,
+            user_email              = user_email,
+            session_id              = session_id,
+            budget                  = _parse_optional_float( args_dict.get( "budget" ) ),
+            target_duration_minutes = _parse_optional_int( args_dict.get( "target_duration_minutes" ) ),
+            theme                   = args_dict.get( "theme" ),
+            dry_run                 = _parse_boolean( args_dict.get( "dry_run" ) ),
+            audience                = args_dict.get( "audience" ),
+            audience_context        = args_dict.get( "audience_context" ),
+            debug                   = debug,
+            verbose                 = verbose,
+        )
+
     elif command == "agent router go to swe team":
         from cosa.agents.swe_team.job import SweTeamJob
         return SweTeamJob(

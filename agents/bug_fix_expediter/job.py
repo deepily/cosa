@@ -203,17 +203,64 @@ class BugFixExpediterJob( AgenticJobBase ):
                 priority="medium", job_id=self.id_hash, queue_name="run"
             )
 
-            # Phases 1-3: Orchestrator pipeline (Phase 2+ implementation)
+            # Phase 1: Diagnose (Lead agent analyzes failure)
+            from cosa.agents.bug_fix_expediter.orchestrator import BFEOrchestrator
+            from cosa.agents.bug_fix_expediter.config import BugFixExpediterConfig
+            from cosa.config.configuration_manager import ConfigurationManager
+
+            config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+            config     = BugFixExpediterConfig.from_config( config_mgr, debug=self.debug )
+
+            orchestrator = BFEOrchestrator(
+                dead_job_context = self.dead_job_context,
+                extra_context    = self.extra_context,
+                config           = config,
+                session_id       = self.session_id,
+                job_id           = self.id_hash,
+                cancel_check     = lambda: self._cancel_requested,
+                debug            = self.debug,
+                verbose          = self.verbose,
+            )
+
+            # Store orchestrator ref for external cancellation (AgenticJobBase protocol)
+            self._orchestrator = orchestrator
+
+            self.diagnosis = await orchestrator.run_diagnosis()
+            self.artifacts[ "diagnosis" ] = self.diagnosis.model_dump()
+
+            # Phase 2: Propose (Lead agent generates fix proposals)
+            proposed_fixes, selected_fix, plan_path = await orchestrator.run_proposal( self.diagnosis )
+
+            self.artifacts[ "proposed_fixes" ] = [ f.model_dump() for f in proposed_fixes ]
+            self.artifacts[ "plan_path" ]      = plan_path
+
+            if selected_fix:
+                self.artifacts[ "selected_fix" ] = selected_fix.model_dump()
+
+            # Phase 3: Fix (Coder + Tester apply and validate)
+            if selected_fix:
+                fix_result = await orchestrator.run_fix( self.diagnosis, selected_fix, plan_path )
+                self.artifacts[ "fix_result" ] = fix_result.model_dump()
+            else:
+                from cosa.agents.bug_fix_expediter.state import FixResult
+                fix_result = FixResult( applied=False, success=False, details="No fix selected" )
+
+            fix_summary = f"{len( proposed_fixes )} fix(es) proposed"
+            if selected_fix:
+                fix_summary += f", selected: '{selected_fix.title}'"
+            if fix_result.applied:
+                fix_summary += f", applied: {'success' if fix_result.success else 'failed'}"
+
             result = (
-                f"Bug Fix Expediter foundation complete. "
-                f"Dead job '{self.dead_job_id}' packaged successfully. "
-                f"Job type: {self.dead_job_context.job_type}, "
-                f"Error: {( self.dead_job_context.error or 'N/A' )[ :200 ]}. "
-                f"Orchestrator pipeline not yet implemented (Phase 2+)."
+                f"Bug Fix Expediter complete for '{self.dead_job_id}'. "
+                f"Root cause: {self.diagnosis.root_cause[ :150 ]}. "
+                f"{fix_summary}. "
+                f"Plan: {plan_path}. "
+                f"Retry pipeline not yet implemented (Phase 6+)."
             )
 
             await voice_io.notify(
-                "Bug Fix Expediter complete (foundation only).",
+                "Fix phase complete." if fix_result.applied else "No fix applied.",
                 priority="medium", job_id=self.id_hash, queue_name="run"
             )
 

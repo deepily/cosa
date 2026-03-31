@@ -75,19 +75,21 @@ MODE_METADATA = {
     "research_to_podcast": { "display_name": "Research to Podcast", "description": "Convert existing research to podcast" },
     "claude_code"        : { "display_name": "Claude Code",         "description": "Run a coding task" },
     "swe_team"           : { "display_name": "SWE Team",            "description": "Multi-agent engineering team" },
-    "presentation"       : { "display_name": "Presentation",        "description": "Generate slides from a document" },
+    "presentation"              : { "display_name": "Presentation",              "description": "Generate slides from a document" },
+    "research_to_presentation"  : { "display_name": "Research to Presentation",  "description": "Research a topic and create slides" },
 }
 
 # Agentic mode keys → AGENTIC_AGENTS routing command strings
 # When user selects an agentic mode, this maps directly to the command
 # that enters the `elif command in AGENTIC_AGENTS:` branch
 AGENTIC_MODE_MAP = {
-    "deep_research"      : "agent router go to deep research",
-    "podcast"            : "agent router go to podcast generator",
-    "research_to_podcast": "agent router go to research to podcast",
-    "claude_code"        : "agent router go to claude code",
-    "swe_team"           : "agent router go to swe team",
-    "presentation"       : "agent router go to presentation generator",
+    "deep_research"            : "agent router go to deep research",
+    "podcast"                  : "agent router go to podcast generator",
+    "research_to_podcast"      : "agent router go to research to podcast",
+    "claude_code"              : "agent router go to claude code",
+    "swe_team"                 : "agent router go to swe team",
+    "presentation"             : "agent router go to presentation generator",
+    "research_to_presentation" : "agent router go to research to presentation",
 }
 
 class TodoFifoQueue( FifoQueue ):
@@ -934,11 +936,12 @@ class TodoFifoQueue( FifoQueue ):
 
     # Product name mapping for agentic command disambiguation
     PRODUCT_NAMES = {
-        "agent router go to deep research"            : "Deep Dive (investigate a topic)",
+        "agent router go to deep research"             : "Deep Dive (investigate a topic)",
         "agent router go to podcast generator"         : "PodMaker (create a podcast from a topic)",
         "agent router go to research to podcast"       : "Doc-to-Pod (convert existing research to podcast)",
         "agent router go to claude code"               : "Claude Code (run a coding task)",
         "agent router go to presentation generator"    : "SlideCraft (create a presentation from a document)",
+        "agent router go to research to presentation"  : "Research-to-Slides (research a topic and create a presentation)",
         "agent router go to swe team"                  : "SWE Team (multi-agent engineering team)",
         "agent router go to bug fix expediter"         : "Bug Fix Expediter (diagnose and fix a failed job)",
     }
@@ -1101,6 +1104,19 @@ class TodoFifoQueue( FifoQueue ):
             self._notify( "Job cancelled.", target_user=user_email )
             return "Agentic job cancelled by user or timeout."
 
+        # ── Step 4.5: Extract runtime scheduling args (not agent-specific) ──
+        scheduled_at_raw = args_dict.pop( "scheduled_at", None )
+        monopolize_raw   = args_dict.pop( "monopolize", None )
+
+        # Normalize voice-path defaults: "immediately" → None, "no"/"yes" → bool
+        if scheduled_at_raw and str( scheduled_at_raw ).lower() in ( "immediately", "now", "none" ):
+            scheduled_at_raw = None
+
+        if isinstance( monopolize_raw, str ):
+            monopolize_raw = monopolize_raw.lower() in ( "yes", "true", "1" )
+        else:
+            monopolize_raw = bool( monopolize_raw ) if monopolize_raw else False
+
         # ── Step 5: Create real job and inherit speculative ID ────────────
         job = create_agentic_job(
             command    = command,
@@ -1120,6 +1136,10 @@ class TodoFifoQueue( FifoQueue ):
 
         # Override the job's auto-generated ID with the speculative ID
         job.id_hash = spec_id
+
+        # Apply runtime scheduling attributes (CJ Flow timed execution + monopolize)
+        if scheduled_at_raw: job.scheduled_at = scheduled_at_raw
+        if monopolize_raw:   job.monopolize   = monopolize_raw
 
         # Ding for new job
         self.websocket_mgr.emit( 'notification_sound_update', { 'soundFile': '/static/gentle-gong.mp3' } )

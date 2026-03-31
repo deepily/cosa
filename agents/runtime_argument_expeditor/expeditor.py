@@ -331,6 +331,13 @@ class RuntimeArgumentExpeditor:
 
             agent_name = agent_entry.get( "display_name", agent_entry[ "cli_module" ].split( "." )[ -1 ].replace( "_", " " ) )
 
+            # Runtime scheduling section (universal, not agent-specific)
+            summary_lines.append( "" )
+            summary_lines.append( "---" )
+            summary_lines.append( "**Scheduling**" )
+            summary_lines.append( f"- **run_at**: { args_dict.get( 'scheduled_at', 'immediately' ) }" )
+            summary_lines.append( f"- **exclusive_mode**: { 'yes' if args_dict.get( 'monopolize' ) else 'no' }" )
+
             abstract = f"**{agent_name} Job Summary**\n\n" + "\n".join( summary_lines )
             message  = f"Here's what I have for your {agent_name} job. Does this look right?"
 
@@ -421,6 +428,10 @@ class RuntimeArgumentExpeditor:
             fallback_keys = ", ".join( agent_entry.get( "fallback_questions", {} ).keys() )
             if fallback_keys:
                 arg_names_str = arg_names_str + ", " + fallback_keys if arg_names_str else fallback_keys
+
+            # Runtime scheduling args (universal across all agents)
+            runtime_arg_names = "scheduled_at, monopolize"
+            arg_names_str = arg_names_str + ", " + runtime_arg_names if arg_names_str else runtime_arg_names
 
             prompt = template_processed.format(
                 user_response = user_response,

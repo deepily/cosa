@@ -5,8 +5,9 @@ Stateless service module (functions, no class) following queue_util.py pattern.
 All persist_* functions are fire-and-forget: catch and log exceptions, never
 break the queue pipeline.
 
-Scope: AgenticJobBase subclasses only (deep_research, podcast, claude_code,
-swe_team, research_to_podcast). Sync agents are cached in LanceDB.
+Scope: AgenticJobBase subclasses only (deep_research, podcast, presentation,
+claude_code, swe_team, research_to_podcast, research_to_presentation,
+bug_fix_expediter). Sync agents are cached in LanceDB.
 
 Usage:
     from cosa.rest.job_persistence import (
@@ -40,9 +41,11 @@ from cosa.config.configuration_manager import ConfigurationManager
 AGENTIC_JOB_TYPES = frozenset( {
     "deep_research",
     "podcast",
+    "presentation",
     "claude_code",
     "swe_team",
     "research_to_podcast",
+    "research_to_presentation",
     "bug_fix_expediter"
 } )
 

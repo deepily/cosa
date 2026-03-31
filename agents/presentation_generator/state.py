@@ -268,6 +268,8 @@ def create_initial_state( source_path: str, user_id: str ) -> dict:
         "elaborate_revision_count": 0,
         "human_feedback"          : None,
         "user_id"                 : user_id,
+        "visuals_rendered"        : 0,
+        "delivery_summary"        : None,
     }
 
 

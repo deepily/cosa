@@ -27,12 +27,14 @@ router = APIRouter( tags=[ "claude-code-queue" ] )
 
 class ClaudeCodeQueueRequest( BaseModel ):
     """Request body for submitting a Claude Code task to the queue."""
-    prompt: str = Field( ..., min_length=1, description="The task prompt for Claude Code" )
-    project: str = Field( "lupin", description="Target project name (e.g., lupin, cosa)" )
-    task_type: str = Field( "BOUNDED", description="Task type: BOUNDED or INTERACTIVE" )
-    max_turns: int = Field( 50, ge=1, le=500, description="Maximum agentic turns" )
-    websocket_id: Optional[ str ] = Field( None, description="WebSocket session ID for notifications" )
-    dry_run: bool = Field( False, description="If True, simulate execution without running Claude Code" )
+    prompt         : str            = Field( ..., min_length=1, description="The task prompt for Claude Code" )
+    project        : str            = Field( "lupin", description="Target project name (e.g., lupin, cosa)" )
+    task_type      : str            = Field( "BOUNDED", description="Task type: BOUNDED or INTERACTIVE" )
+    max_turns      : int            = Field( 50, ge=1, le=500, description="Maximum agentic turns" )
+    websocket_id   : Optional[ str ] = Field( None, description="WebSocket session ID for notifications" )
+    dry_run        : bool           = Field( False, description="If True, simulate execution without running Claude Code" )
+    scheduled_at   : Optional[ str ] = Field( None, description="ISO datetime for delayed execution (e.g. 2026-03-31T02:00:00)" )
+    monopolize     : bool           = Field( False, description="If True, no other jobs run concurrently with this job" )
 
 
 class ClaudeCodeQueueResponse( BaseModel ):
@@ -162,6 +164,10 @@ async def submit_claude_code_to_queue(
             user_email = user_email,
             session_id = session_id
         )
+
+        # Scheduling attributes pass-through (CJ Flow timed execution + monopolize)
+        if request_body.scheduled_at: job.scheduled_at = request_body.scheduled_at
+        if request_body.monopolize:   job.monopolize   = request_body.monopolize
 
         # Atomic: scope ID + index for user filtering BEFORE push (race condition prevention)
         job.id_hash = user_job_tracker.register_scoped_job( job.id_hash, user_id, session_id )

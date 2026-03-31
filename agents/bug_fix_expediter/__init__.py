@@ -37,6 +37,8 @@ from .voice_io import (
 )
 
 from .dead_job_packager import package_dead_job
+from .orchestrator import BFEOrchestrator
+from .plan_writer import PlanWriter
 
 __all__ = [
     "BugFixExpediterConfig",
@@ -46,6 +48,8 @@ __all__ = [
     "set_cli_mode", "reset_voice_check", "is_voice_available", "get_mode_description",
     "voice_notify", "voice_ask_yes_no", "voice_get_input", "voice_choose",
     "package_dead_job",
+    "BFEOrchestrator",
+    "PlanWriter",
 ]
 
 __version__ = "0.1.0"
