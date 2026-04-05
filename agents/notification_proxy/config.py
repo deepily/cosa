@@ -112,6 +112,9 @@ TEST_PROFILES = {
         "theme"                    : "default",
         "dead_job_id"              : "dr-mock1234::user1",
         "extra_context"            : "none",
+        "pytest_args"              : "none",
+        "test_types"               : "integration,e2e",
+        "suites"                   : "all",
     },
     "presentation" : {
         "description"             : "Auto-answer for presentation generator expediter questions",
@@ -120,6 +123,9 @@ TEST_PROFILES = {
         "audience"                : "general",
         "audience_context"        : "none",
         "theme"                   : "default",
+    },
+    "presentation_gates" : {
+        "description"             : "Auto-approve presentation generator orchestrator gates 1-4 (Phase D live E2E)",
     },
     "research_to_presentation" : {
         "description"             : "Auto-answer for research-to-presentation chained workflow",

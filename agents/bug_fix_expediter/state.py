@@ -18,6 +18,7 @@ class BFEPhase( Enum ):
     DIAGNOSING           = "diagnosing"
     PROPOSING            = "proposing"
     FIXING               = "fixing"
+    COMMITTING           = "committing"
     RETRYING             = "retrying"
 
     # Waiting phases
@@ -103,11 +104,17 @@ class FixResult( BaseModel ):
 
     Ensures:
         - Clear success/failure signal for retry decision
+        - Phase 5 git fields populated after run_git_strategy() completes
     """
     applied        : bool
     success        : bool
-    details        : str  = ""
-    retry_eligible : bool = False
+    details        : str            = ""
+    retry_eligible : bool           = False
+    # Phase 5 additions (populated after run_git_strategy)
+    git_strategy   : Optional[ str ] = None   # "commit_only" | "branch_and_pr" | "branch_only" | None
+    commit_hash    : Optional[ str ] = None
+    branch_name    : Optional[ str ] = None
+    pr_url         : Optional[ str ] = None
 
 
 class BFEState( TypedDict ):
@@ -182,8 +189,9 @@ def quick_smoke_test():
         # 1: BFEPhase enum
         assert BFEPhase.PACKAGING.value == "packaging"
         assert BFEPhase.COMPLETED.value == "completed"
-        assert len( BFEPhase ) == 9
-        print( "✓ BFEPhase enum correct (9 values)" )
+        assert BFEPhase.COMMITTING.value == "committing"
+        assert len( BFEPhase ) == 10
+        print( "✓ BFEPhase enum correct (10 values)" )
 
         # 2: DeadJobContext
         ctx = DeadJobContext(
@@ -213,7 +221,18 @@ def quick_smoke_test():
         # 5: FixResult
         result = FixResult( applied=True, success=True, details="Key added" )
         assert result.retry_eligible == False
-        print( "✓ FixResult validates correctly" )
+        assert result.git_strategy is None
+        assert result.commit_hash is None
+        assert result.branch_name is None
+        assert result.pr_url is None
+        # Phase 5 git fields accept values
+        result_with_git = FixResult(
+            applied=True, success=True, details="Key added",
+            git_strategy="commit_only", commit_hash="abc1234"
+        )
+        assert result_with_git.git_strategy == "commit_only"
+        assert result_with_git.commit_hash == "abc1234"
+        print( "✓ FixResult validates correctly (+ Phase 5 git fields)" )
 
         # 6: create_initial_state
         state = create_initial_state( "dr-test::user1", "extra info" )

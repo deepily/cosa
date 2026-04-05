@@ -43,6 +43,9 @@ class BugFixExpediterConfig:
     auto_retry_on_fix         : bool  = False
     require_user_confirm      : bool  = True
 
+    # === Decision Proxy (Phase 5) ===
+    trust_mode                : str   = "shadow"   # "shadow" | "suggest" | "active"
+
     # === Feature Flags ===
     enabled                   : bool  = False
 
@@ -78,6 +81,7 @@ class BugFixExpediterConfig:
             "narrate_progress"         : "bug fix expediter narrate progress",
             "auto_retry_on_fix"        : "bug fix expediter auto retry on fix",
             "require_user_confirm"     : "bug fix expediter require user confirm",
+            "trust_mode"               : "bug fix expediter trust mode",
             "enabled"                  : "bug fix expediter enabled",
         }
 
@@ -119,7 +123,8 @@ def quick_smoke_test():
         assert config.worker_model == "claude-sonnet-4-6"
         assert config.max_fix_attempts == 2
         assert config.enabled == False
-        print( "✓ Default config values correct" )
+        assert config.trust_mode == "shadow"
+        print( "✓ Default config values correct (trust_mode=shadow)" )
 
         # 2: Custom values
         config = BugFixExpediterConfig( lead_model="custom-model", budget_usd=10.0, enabled=True )

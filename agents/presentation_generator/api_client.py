@@ -311,6 +311,72 @@ class PresentationAPIClient:
             call_type     = "mermaid",
         )
 
+    async def call_for_matplotlib(
+        self,
+        system_prompt: str,
+        user_message: str,
+        max_tokens: int = 4096,
+        temperature: float = 0.2
+    ) -> APIResponse:
+        """
+        Generate Matplotlib Python code via Claude API.
+
+        Higher max_tokens than Mermaid (code is more verbose) and lower
+        temperature for more deterministic code generation.
+
+        Requires:
+            - system_prompt is a non-empty string
+            - user_message is a non-empty string
+
+        Ensures:
+            - Returns APIResponse with Python code in content
+            - Cost tracked in cost_estimate
+
+        Returns:
+            APIResponse with generated Python code
+        """
+        return await self._call_api(
+            model         = self.config.content_model,
+            system_prompt = system_prompt,
+            user_message  = user_message,
+            max_tokens    = max_tokens,
+            temperature   = temperature,
+            call_type     = "matplotlib",
+        )
+
+    async def call_for_d2(
+        self,
+        system_prompt: str,
+        user_message: str,
+        max_tokens: int = 2048,
+        temperature: float = 0.3
+    ) -> APIResponse:
+        """
+        Generate D2 diagram code via Claude API.
+
+        Lower temperature and smaller max_tokens than content generation
+        for more deterministic, concise code output.
+
+        Requires:
+            - system_prompt is a non-empty string
+            - user_message is a non-empty string
+
+        Ensures:
+            - Returns APIResponse with D2 code in content
+            - Cost tracked in cost_estimate
+
+        Returns:
+            APIResponse with generated D2 content
+        """
+        return await self._call_api(
+            model         = self.config.content_model,
+            system_prompt = system_prompt,
+            user_message  = user_message,
+            max_tokens    = max_tokens,
+            temperature   = temperature,
+            call_type     = "d2",
+        )
+
     async def call_with_json_output(
         self,
         system_prompt: str,

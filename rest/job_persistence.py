@@ -47,7 +47,10 @@ AGENTIC_JOB_TYPES = frozenset( {
     "swe_team",
     "research_to_podcast",
     "research_to_presentation",
-    "bug_fix_expediter"
+    "bug_fix_expediter",
+    "test_suite",  # Added 2026-04-05 Session 389: scheduled test-suite jobs need DB persistence
+                   # to survive server reloads. Discovered when Phase D scheduled job was lost
+                   # repeatedly on uvicorn hot-reload.
 } )
 
 
@@ -554,11 +557,12 @@ def quick_smoke_test():
         assert is_agentic_job_type( "claude_code" ) is True
         assert is_agentic_job_type( "swe_team" ) is True
         assert is_agentic_job_type( "research_to_podcast" ) is True
+        assert is_agentic_job_type( "test_suite" ) is True
         assert is_agentic_job_type( "math" ) is False
         assert is_agentic_job_type( "calendar" ) is False
         assert is_agentic_job_type( None ) is False
         assert is_agentic_job_type( "" ) is False
-        print( "✓ Agentic job type filter working (5 agentic, 4 non-agentic)" )
+        print( "✓ Agentic job type filter working (6 agentic, 4 non-agentic)" )
 
         # Test 3: _build_metadata_json extraction
         print( "Testing _build_metadata_json()..." )

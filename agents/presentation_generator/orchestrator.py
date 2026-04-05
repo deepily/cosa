@@ -1160,6 +1160,11 @@ class PresentationOrchestratorAgent:
             # Build renderer registry
             registry = self._build_visual_registry()
 
+            # Create visuals directory for file-producing renderers (e.g., MatplotlibRenderer)
+            marp_dir    = os.path.dirname( marp_path )
+            visuals_dir = os.path.join( marp_dir, "visuals" )
+            os.makedirs( visuals_dir, exist_ok=True )
+
             # Build slide title lookup from presentation
             slide_titles = {}
             for slide in presentation.slides:
@@ -1170,7 +1175,7 @@ class PresentationOrchestratorAgent:
             visuals_rendered = 0
             replacements     = []
 
-            for match in matches:
+            for i, match in enumerate( matches ):
                 visual_type = match.group( 1 )
                 visual_desc = match.group( 2 )
                 slide_title = slide_titles.get( visual_desc, "" )
@@ -1181,6 +1186,8 @@ class PresentationOrchestratorAgent:
                     visual_description = visual_desc,
                     api_client         = self.api_client if not self.dry_run else None,
                     slide_title        = slide_title,
+                    output_dir         = visuals_dir,
+                    slide_index        = i,
                 )
 
                 if rendered is None:
@@ -1228,7 +1235,7 @@ class PresentationOrchestratorAgent:
         Returns:
             VisualRendererRegistry: Configured registry
         """
-        from .renderers import VisualRendererRegistry, MermaidRenderer, PlaceholderRenderer
+        from .renderers import VisualRendererRegistry, MermaidRenderer, PlaceholderRenderer, MatplotlibRenderer, D2Renderer, NanoBananaRenderer, VeoRenderer
 
         fallback = PlaceholderRenderer()
         registry = VisualRendererRegistry( fallback=fallback, debug=self.debug )
@@ -1236,6 +1243,25 @@ class PresentationOrchestratorAgent:
         if not self.dry_run:
             mermaid = MermaidRenderer( debug=self.debug, verbose=self.verbose )
             registry.register( mermaid )
+            matplotlib_renderer = MatplotlibRenderer( debug=self.debug, verbose=self.verbose )
+            registry.register( matplotlib_renderer )
+            d2_renderer = D2Renderer( debug=self.debug, verbose=self.verbose )
+            registry.register( d2_renderer )
+
+            # Gemini-backed renderers (shared client, shared API key)
+            # Wrapped in try/except because Gemini API key may not be configured
+            try:
+                from .gemini_client import GeminiImageClient
+                veo_model     = self.config.veo_model if hasattr( self, "config" ) else "veo-2.0-generate-001"
+                gemini_client = GeminiImageClient( video_model=veo_model, debug=self.debug )
+
+                nano_banana = NanoBananaRenderer( gemini_client=gemini_client, debug=self.debug, verbose=self.verbose )
+                registry.register( nano_banana )
+
+                veo = VeoRenderer( gemini_client=gemini_client, debug=self.debug, verbose=self.verbose )
+                registry.register( veo )
+            except Exception as e:
+                logger.warning( f"Gemini renderers unavailable (API key missing?): {e}" )
 
         return registry
 

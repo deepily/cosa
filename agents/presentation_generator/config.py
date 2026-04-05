@@ -50,6 +50,9 @@ class PresentationConfig:
     # Target audience
     audience                 : str   = "general"
 
+    # Video generation (Veo)
+    veo_model                : str   = "veo-2.0-generate-001"
+
     @classmethod
     def from_config( cls, config_mgr, debug=False ):
         """
@@ -80,6 +83,7 @@ class PresentationConfig:
             templates_path          = _get( "templates path",          default="/src/cosa/agents/presentation_generator/templates/themes/" ),
             output_dir_template     = _get( "output dir template",     default="io/presentations/{user}" ),
             audience                = _get( "audience",                default="general" ),
+            veo_model               = _get( "veo model",              default="veo-2.0-generate-001" ),
         )
 
     def get_output_path( self, user_id, topic, file_type="yaml" ):

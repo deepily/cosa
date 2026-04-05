@@ -33,7 +33,7 @@ class MermaidRenderer( VisualRenderer ):
         - Returns a ```mermaid code block on success
         - Returns None on API error (caller falls back to placeholder)
     """
-    SUPPORTED_TYPES = [ "diagram", "chart" ]
+    SUPPORTED_TYPES = [ "diagram" ]
 
     def __init__( self, debug: bool = False, verbose: bool = False ):
         """
@@ -195,7 +195,7 @@ def quick_smoke_test():
         # Test 6: SUPPORTED_TYPES
         print( "\nTest 6: Supported types..." )
         assert "diagram" in MermaidRenderer.SUPPORTED_TYPES
-        assert "chart" in MermaidRenderer.SUPPORTED_TYPES
+        assert "chart" not in MermaidRenderer.SUPPORTED_TYPES  # chart moved to MatplotlibRenderer
         print( "  PASS" )
 
         print( f"\n{'=' * 60}" )

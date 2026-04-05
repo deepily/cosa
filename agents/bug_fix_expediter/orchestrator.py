@@ -126,6 +126,21 @@ class BFEOrchestrator:
         # Progress tracking
         self._diagnosis_group_id = f"pg-{uuid.uuid4().hex[ :8 ]}"
 
+        # Phase 5: Trust proxy + last-files tracking
+        self.last_files_changed: list = []
+        self.proxy = None
+        try:
+            from cosa.agents.swe_team.proxy.engineering_strategy import EngineeringStrategy
+            self.proxy = EngineeringStrategy(
+                trust_mode = self.config.trust_mode,
+                debug      = self.debug,
+            )
+            if self.debug: print( f"[BFEOrchestrator] Trust proxy initialized (mode={self.config.trust_mode})" )
+        except ImportError as e:
+            if self.debug: print( f"[BFEOrchestrator] Trust proxy import failed: {e} — defaulting to L1/commit_only" )
+        except Exception as e:
+            if self.debug: print( f"[BFEOrchestrator] Trust proxy init failed: {e} — defaulting to L1/commit_only" )
+
     # =========================================================================
     # Public API
     # =========================================================================
@@ -1112,7 +1127,170 @@ class BFEOrchestrator:
                      f"**Details**: {fix_result.details}\n**Files**: {len( files_changed )}"
         )
 
+        # Phase 5: expose files_changed for run_git_strategy
+        self.last_files_changed = files_changed
+
         return fix_result
+
+    async def run_git_strategy(
+        self,
+        fix_result: FixResult,
+        files_changed: list,
+        plan_path: str,
+    ) -> FixResult:
+        """
+        Phase 5: Run git operations post-fix (commit / branch / PR).
+
+        Trust-to-git mapping:
+            - L1-L2 (shadow/suggest): commit_only on current branch
+            - L3+ (active): branch_and_pr via gh
+            - Proxy unavailable: commit_only (safe default)
+
+        Requires:
+            - fix_result is a FixResult
+            - files_changed is a list (may be empty)
+            - plan_path is a string path
+
+        Ensures:
+            - fix_result.git_strategy / commit_hash / branch_name / pr_url populated on success
+            - Plan document Git References section updated
+            - State transitions: FIXING → COMMITTING → COMPLETED
+            - Skipped (no-op) if fix not successful or no files changed
+
+        Args:
+            fix_result: FixResult from run_fix()
+            files_changed: Files modified by coder
+            plan_path: Path to plan document for git references update
+
+        Returns:
+            FixResult: Same instance with git fields populated
+        """
+        from cosa.agents.bug_fix_expediter import voice_io
+        from cosa.agents.bug_fix_expediter.git_ops import GitOps
+
+        # Guard: skip if fix didn't succeed or nothing to commit
+        if not fix_result.success or not files_changed:
+            if self.debug: print( f"[BFEOrchestrator] Skipping git strategy (success={fix_result.success}, files={len( files_changed )})" )
+            return fix_result
+
+        await self._emit_state( BFEPhase.FIXING, BFEPhase.COMMITTING )
+        await self._notify( voice_io, "Committing changes to git...", priority="medium" )
+
+        git_ops = GitOps( cwd=cu.get_project_root(), debug=self.debug )
+
+        # Determine trust level → strategy
+        trust_level = self._resolve_trust_level()
+        git_strategy = "branch_and_pr" if trust_level >= 3 else "commit_only"
+
+        commit_message = f"[BFE] Fix: {fix_result.details[ :60 ]}" if fix_result.details else "[BFE] Fix"
+
+        try:
+            if git_strategy == "commit_only":
+                # L1-L2: commit on current branch
+                result = await git_ops.commit_on_branch( files_changed, commit_message )
+                if result[ "success" ]:
+                    fix_result.git_strategy = "commit_only"
+                    fix_result.commit_hash  = result[ "commit_hash" ]
+                    await self._notify( voice_io, f"Committed {result[ 'commit_hash' ][ :8 ]}", priority="low" )
+                else:
+                    await self._notify( voice_io, f"Commit failed: {result[ 'error' ]}", priority="high" )
+
+            else:
+                # L3+: create fix branch + push + PR
+                original_branch = await git_ops.get_current_branch()
+                slug = self._generate_slug( fix_result.details or "fix" )
+
+                br_result = await git_ops.create_fix_branch( slug )
+                if not br_result[ "success" ]:
+                    await self._notify( voice_io, f"Branch creation failed: {br_result[ 'error' ]}", priority="high" )
+                    return self._finalize_git_strategy( fix_result, plan_path, voice_io )
+
+                fix_result.branch_name = br_result[ "branch_name" ]
+
+                push_result = await git_ops.commit_and_push( slug, files_changed, commit_message )
+                if not push_result[ "success" ]:
+                    await self._notify( voice_io, f"Push failed: {push_result[ 'error' ]}", priority="high" )
+                    if original_branch:
+                        await git_ops.checkout_branch( original_branch )
+                    return self._finalize_git_strategy( fix_result, plan_path, voice_io )
+
+                fix_result.commit_hash = push_result[ "commit_hash" ]
+                await self._notify( voice_io, f"Pushed to {slug}", priority="low" )
+
+                pr_result = await git_ops.create_pr(
+                    slug,
+                    f"[BFE] {fix_result.details[ :60 ]}" if fix_result.details else "[BFE] Automated fix",
+                    f"Automated fix from Bug Fix Expediter.\n\n**Details**: {( fix_result.details or 'N/A' )[ :500 ]}\n\n**Files changed**:\n" + "\n".join( f"- `{f}`" for f in files_changed[ :20 ] ),
+                )
+                if pr_result[ "success" ]:
+                    fix_result.git_strategy = "branch_and_pr"
+                    fix_result.pr_url       = pr_result[ "pr_url" ]
+                    await self._notify( voice_io, f"PR created: {pr_result[ 'pr_url' ]}", priority="low" )
+                else:
+                    fix_result.git_strategy = "branch_only"
+                    await self._notify( voice_io, f"PR creation failed: {pr_result[ 'error' ]} (branch left for manual PR)", priority="high" )
+
+                if original_branch:
+                    await git_ops.checkout_branch( original_branch )
+
+        except Exception as e:
+            logger.error( f"Git strategy error: {e}" )
+            await self._notify( voice_io, f"Git error: {e}", priority="urgent" )
+
+        return self._finalize_git_strategy( fix_result, plan_path, voice_io )
+
+    def _finalize_git_strategy( self, fix_result: FixResult, plan_path: str, voice_io ) -> FixResult:
+        """Update plan doc with git references; used by run_git_strategy as exit hook."""
+        try:
+            writer = PlanWriter( user_email=self.dead_job_context.user_email, debug=self.debug )
+            writer.update_git_references( plan_path, fix_result )
+        except Exception as e:
+            logger.warning( f"Plan git references update failed: {e}" )
+        return fix_result
+
+    def _resolve_trust_level( self ) -> int:
+        """
+        Return trust level 1-5 from the proxy, falling back to L1 on failure.
+
+        Ensures:
+            - Always returns int between 1 and 5
+            - L1 on any error (conservative default)
+        """
+        if self.proxy is None:
+            return 1
+        try:
+            tracker = getattr( self.proxy, "trust_tracker", None )
+            if tracker is None:
+                return 1
+            if hasattr( tracker, "get_level" ):
+                return int( tracker.get_level( "engineering" ) )
+            if hasattr( tracker, "level" ):
+                lvl = tracker.level
+                return int( lvl() if callable( lvl ) else lvl )
+        except Exception as e:
+            if self.debug: print( f"[BFEOrchestrator] trust level resolution failed: {e} — defaulting to L1" )
+        return 1
+
+    @staticmethod
+    def _generate_slug( text: str ) -> str:
+        """
+        Generate a fix/YYYY-MM-DD-{slug} branch name from text.
+
+        Requires:
+            - text is a string (may be empty)
+
+        Ensures:
+            - Returns string of form "fix/YYYY-MM-DD-{word1-word2-word3}"
+            - At least "fix/YYYY-MM-DD-fix" if text yields no words
+        """
+        import re
+        from datetime import datetime
+
+        cleaned = re.sub( r"[^a-z0-9\s]", "", ( text or "" ).lower() )
+        words   = cleaned.split()[ :3 ]
+        slug    = "-".join( words ) if words else "fix"
+        date_str = datetime.now().strftime( "%Y-%m-%d" )
+        return f"fix/{date_str}-{slug}"
 
     async def _delegate_to_coder( self, voice_io, prompt, guard, cosa_interface ) -> tuple:
         """

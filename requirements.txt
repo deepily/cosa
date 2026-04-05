@@ -206,6 +206,7 @@ sacrebleu==2.5.1
 safetensors==0.5.2
 scikit-learn==1.6.1
 scipy==1.15.2
+seaborn==0.13.2
 sentence-transformers==5.2.2
 sentencepiece==0.2.0
 shapely==2.1.0

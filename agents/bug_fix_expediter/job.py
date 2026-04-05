@@ -242,6 +242,13 @@ class BugFixExpediterJob( AgenticJobBase ):
             if selected_fix:
                 fix_result = await orchestrator.run_fix( self.diagnosis, selected_fix, plan_path )
                 self.artifacts[ "fix_result" ] = fix_result.model_dump()
+
+                # Phase 5: Git strategy (commit / branch / PR based on trust proxy)
+                if fix_result.success and orchestrator.last_files_changed:
+                    fix_result = await orchestrator.run_git_strategy(
+                        fix_result, orchestrator.last_files_changed, plan_path
+                    )
+                    self.artifacts[ "fix_result" ] = fix_result.model_dump()
             else:
                 from cosa.agents.bug_fix_expediter.state import FixResult
                 fix_result = FixResult( applied=False, success=False, details="No fix selected" )

@@ -271,11 +271,59 @@ class PlanWriter:
         else:
             if self.debug: print( f"[PlanWriter] Placeholder not found in {plan_path}" )
 
+    def update_git_references(
+        self,
+        plan_path: str,
+        fix_result,
+    ) -> None:
+        """
+        Update an existing plan document's Git References section (Phase 5).
+
+        Reads the plan file and replaces the placeholder with git strategy results.
+        Silently no-ops if plan file missing or placeholder already replaced.
+
+        Requires:
+            - plan_path is a string path
+            - fix_result has git_strategy, commit_hash, branch_name, pr_url attrs
+
+        Ensures:
+            - Placeholder text replaced with structured git references
+            - No-op (with debug log) if placeholder not found
+
+        Args:
+            plan_path: Path to existing plan file
+            fix_result: FixResult with Phase 5 git fields populated
+        """
+        if not os.path.exists( plan_path ):
+            if self.debug: print( f"[PlanWriter] Plan file not found: {plan_path}" )
+            return
+
+        content = open( plan_path ).read()
+
+        git_content = f"""**Strategy**: {fix_result.git_strategy or 'N/A'}
+**Commit**: {fix_result.commit_hash or 'N/A'}
+**Branch**: {fix_result.branch_name or 'N/A'}
+**PR**: {fix_result.pr_url or 'N/A'}"""
+
+        placeholder = "(Phase 5 — populated after git operations)"
+        if placeholder in content:
+            content = content.replace( placeholder, git_content )
+            with open( plan_path, "w" ) as f:
+                f.write( content )
+            if self.debug: print( f"[PlanWriter] Git references updated: {plan_path}" )
+        else:
+            if self.debug: print( f"[PlanWriter] Git placeholder not found in {plan_path}" )
+
     @staticmethod
     def _render_footer() -> str:
         """Render the plan document footer with placeholder sections."""
         return """## Implementation Log
 (Phase 4 — populated after fix is applied)
+
+---
+
+## Git References
+(Phase 5 — populated after git operations)
 
 ---
 

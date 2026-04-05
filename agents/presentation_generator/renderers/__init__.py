@@ -4,6 +4,10 @@
 from .marp_text_renderer import MarpTextRenderer
 from .visual_registry import VisualRenderer, VisualRendererRegistry
 from .mermaid import MermaidRenderer
+from .matplotlib_renderer import MatplotlibRenderer
+from .d2_renderer import D2Renderer
+from .nano_banana import NanoBananaRenderer
+from .veo_renderer import VeoRenderer
 from .placeholder import PlaceholderRenderer
 
 __all__ = [
@@ -11,5 +15,9 @@ __all__ = [
     "VisualRenderer",
     "VisualRendererRegistry",
     "MermaidRenderer",
+    "MatplotlibRenderer",
+    "D2Renderer",
+    "NanoBananaRenderer",
+    "VeoRenderer",
     "PlaceholderRenderer",
 ]

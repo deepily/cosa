@@ -728,6 +728,32 @@ class XmlPromptGenerator:
         """
         return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-max-segments.txt", requested_length=requested_length )
 
+    def get_renderer_names( self, requested_length: Optional[int]=None ) -> list:
+        """
+        Gets placeholder renderer names for presentation generation.
+
+        Requires:
+            - requested_length is None or positive integer
+
+        Ensures:
+            - Returns list of renderer names (mermaid, matplotlib, d2, veo, nano_banana + ASR variants)
+            - Length matches requested_length if specified
+        """
+        return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-renderer-names.txt", requested_length=requested_length )
+
+    def get_duration_minutes( self, requested_length: Optional[int]=None ) -> list:
+        """
+        Gets placeholder duration values in minutes for presentation/podcast generation.
+
+        Requires:
+            - requested_length is None or positive integer
+
+        Ensures:
+            - Returns list of duration values as strings (mix of numeric and word forms)
+            - Length matches requested_length if specified
+        """
+        return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-duration-minutes.txt", requested_length=requested_length )
+
     def get_agentic_templates( self, requested_length: Optional[int]=None ) -> list:
         """
         Gets placeholder agentic voice command templates.

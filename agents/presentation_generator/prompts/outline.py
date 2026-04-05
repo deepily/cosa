@@ -35,14 +35,23 @@ SLIDE_TYPES = [
 ]
 
 VISUAL_TYPES = [
-    "diagram",      # Architecture, flows, sequences (Mermaid)
-    "code_block",   # Code snippets, configs, CLI output
-    "chart",        # Data visualizations — bar, line, pie
-    "screenshot",   # UI, tool output (user-supplied placeholder)
-    "icon_only",    # Concept slides, transitions (emoji/icon)
-    "text_only",    # Quotes, key statements, definitions
-    "before_after", # Side-by-side comparisons
-    "table",        # Feature comparisons, data summaries
+    "diagram",          # Architecture, flows, sequences (Mermaid)
+    "code_block",       # Code snippets, configs, CLI output
+    "chart",            # Data visualizations — bar, line, pie
+    "screenshot",       # UI, tool output (user-supplied placeholder)
+    "icon_only",        # Concept slides, transitions (emoji/icon)
+    "text_only",        # Quotes, key statements, definitions
+    "before_after",     # Side-by-side comparisons
+    "table",            # Feature comparisons, data summaries
+    "flowchart_d2",     # D2 flowcharts (Phase 9B)
+    "architecture",     # D2 architecture diagrams (Phase 9B)
+    "hero_image",       # AI-generated hero images (Phase 10A)
+    "infographic",      # AI-generated infographics (Phase 10A)
+    "title_background", # AI-generated title backgrounds (Phase 10A)
+    "icon",             # AI-generated icons (Phase 10A)
+    "title_video",      # Veo ambient title video (Phase 10B)
+    "flow_animation",   # Veo process flow animation (Phase 10B)
+    "process_video",    # Veo educational process video (Phase 10B)
 ]
 
 STRUCTURAL_POSITIONS = [ "opening", "body", "closing" ]
@@ -91,6 +100,15 @@ Assign one visual type per slide from this list:
 | `text_only` | Quotes, key statements, definitions |
 | `before_after` | Side-by-side comparisons, improvements |
 | `table` | Feature comparisons, data summaries |
+| `flowchart_d2` | High-quality flowcharts (D2 rendering, prettier than diagram) |
+| `architecture` | System architecture diagrams (D2 containers + connections) |
+| `hero_image` | AI-generated hero/splash images for impact slides |
+| `infographic` | AI-generated visual summaries, information design |
+| `title_background` | AI-generated ambient backgrounds for title slides |
+| `icon` | AI-generated concept icons, visual accents |
+| `title_video` | Cinematic ambient video for title slides (5s loop) |
+| `flow_animation` | Animated process flow walkthrough (6s) |
+| `process_video` | Step-by-step educational video explanation (8s) |
 
 ## Visual Rhythm Rule
 
@@ -419,7 +437,7 @@ def quick_smoke_test():
 
         # Test 7: Constants
         print( "Testing constants..." )
-        assert len( VISUAL_TYPES ) == 8
+        assert len( VISUAL_TYPES ) == 17
         assert len( SLIDE_TYPES ) == 9
         assert len( STRUCTURAL_POSITIONS ) == 3
         print( "  ✓ Constants have expected counts" )

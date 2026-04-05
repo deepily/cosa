@@ -1,5 +1,6 @@
 import os
 import random
+import re
 import pandas as pd
 from xmlschema import XMLSchema
 from typing import Optional, Any
@@ -683,6 +684,10 @@ class XmlCoordinator:
             "document_paths"    : self.prompt_generator.get_document_paths,
             "claude_code_tasks" : self.prompt_generator.get_claude_code_tasks,
             "swe_team_tasks"    : self.prompt_generator.get_swe_team_tasks,
+            "audience_levels"   : self.prompt_generator.get_audience_levels,
+            "audience_contexts" : self.prompt_generator.get_audience_contexts,
+            "renderer_names"    : self.prompt_generator.get_renderer_names,
+            "duration_minutes"  : self.prompt_generator.get_duration_minutes,
         }
         getter = dispatch.get( getter_name )
         if getter is None:
@@ -714,58 +719,103 @@ class XmlCoordinator:
             du.print_banner( f"Building prompts for AGENTIC JOB command [{command_name}]", prepend_nl=True, end="\n" )
             counter = 1
 
+            # Normalize placeholder specs: support legacy string form AND dict form with per-placeholder args_key
+            #   legacy:   "DOCUMENT_PATH" : "document_paths"              → uses top-level config.args_key
+            #   new:      "DURATION_MINUTES" : { "source": "duration_minutes", "args_key": "target_duration_minutes" }
+            default_args_key  = config.get( "args_key", "" )
+            placeholder_specs = {}
+            for ph, spec in config[ "placeholders" ].items():
+                if isinstance( spec, str ):
+                    placeholder_specs[ ph ] = { "source": spec, "args_key": default_args_key }
+                else:
+                    placeholder_specs[ ph ] = { "source": spec[ "source" ], "args_key": spec.get( "args_key", default_args_key ) }
+
             # Get placeholder values via config-driven dispatch
             placeholder_values = {}
-            for placeholder, getter_name in config[ "placeholders" ].items():
-                placeholder_values[ placeholder ] = self._get_placeholder_values_by_name( getter_name )
+            for ph, spec in placeholder_specs.items():
+                placeholder_values[ ph ] = self._get_placeholder_values_by_name( spec[ "source" ] )
 
             # Load templates from external file
             template_path    = self.path_prefix + config[ "template_file" ]
             template_patterns = du.get_file_as_list( template_path, clean=True, skip_empty=True, skip_comments=True )
             if self.debug: print( f"  Loaded [{len( template_patterns )}] templates from [{config[ 'template_file' ]}]" )
 
-            # Generate prompts from templates
+            conditional_args              = config.get( "conditional_args", {} )
+            multi_placeholder_sample_size = 100  # per-template budget when >1 placeholder present
+
+            # Build word-boundary regex for each placeholder so AUDIENCE doesn't match inside AUDIENCE_CONTEXT
+            placeholder_patterns = { ph: re.compile( rf'\b{re.escape( ph )}\b' ) for ph in placeholder_specs }
+
+            # Generate prompts from templates — multi-placeholder aware
             for template in template_patterns:
 
-                # For each placeholder value, create a training example
-                for placeholder, values in placeholder_values.items():
-                    for value in values:
+                # Determine which placeholders are actually present in THIS template line (word-boundary match)
+                present_placeholders = [ ph for ph in placeholder_specs if placeholder_patterns[ ph ].search( template ) ]
 
-                        voice_command = template.replace( placeholder, value )
+                # Build list of (voice_command, args_value) pairs to emit for this template
+                emission_pairs = []
+                if not present_placeholders:
+                    # Template has no placeholders → emit once, no placeholder args
+                    emission_pairs.append( ( template, "" ) )
+                elif len( present_placeholders ) == 1:
+                    # Single-placeholder: iterate all values (preserves legacy coverage)
+                    ph   = present_placeholders[ 0 ]
+                    spec = placeholder_specs[ ph ]
+                    pat  = placeholder_patterns[ ph ]
+                    for v in placeholder_values[ ph ]:
+                        voice_command = pat.sub( lambda m, v=v: v, template )
+                        args_value    = f'{spec[ "args_key" ]}="{v}"' if spec[ "args_key" ] else ""
+                        emission_pairs.append( ( voice_command, args_value ) )
+                else:
+                    # Multi-placeholder: sample N combinations (cartesian would explode)
+                    for _ in range( multi_placeholder_sample_size ):
+                        voice_command = template
+                        args_parts    = []
+                        for ph in present_placeholders:
+                            v    = random.choice( placeholder_values[ ph ] )
+                            spec = placeholder_specs[ ph ]
+                            voice_command = placeholder_patterns[ ph ].sub( lambda m, v=v: v, voice_command )
+                            if spec[ "args_key" ]:
+                                args_parts.append( f'{spec[ "args_key" ]}="{v}"' )
+                        emission_pairs.append( ( voice_command, " ".join( args_parts ) ) )
 
-                        # Only populate args if placeholder was actually substituted
-                        args_key   = config.get( "args_key", "" )
-                        has_placeholder_in_template = placeholder in template
-                        args_value = f'{args_key}="{value}"' if args_key and has_placeholder_in_template else ""
+                # Emit each (voice_command, args_value) pair as a training example
+                for voice_command, args_value in emission_pairs:
 
-                        # Append conditional args when trigger patterns match the voice command
-                        conditional_args = config.get( "conditional_args", {} )
-                        for cond_arg_name, cond_config in conditional_args.items():
-                            cond_value  = cond_config[ "value" ]
-                            triggers    = cond_config[ "triggers" ]
-                            voice_lower = voice_command.lower()
-                            if any( trigger in voice_lower for trigger in triggers ):
-                                args_value += f' {cond_arg_name}="{cond_value}"'
+                    # Append conditional args when trigger patterns match the voice command
+                    # Two forms supported:
+                    #   dict form:  { "value": "True", "triggers": [...] }            — single boolean-ish flag
+                    #   list form:  [ { "value": "...", "triggers": [...] }, ... ]     — multi-value (first match wins)
+                    voice_lower = voice_command.lower()
+                    for cond_arg_name, cond_config in conditional_args.items():
+                        if isinstance( cond_config, list ):
+                            for spec in cond_config:
+                                if any( trigger in voice_lower for trigger in spec[ "triggers" ] ):
+                                    args_value += ( " " if args_value else "" ) + f'{cond_arg_name}="{spec[ "value" ]}"'
+                                    break  # first match wins
+                        else:
+                            if any( trigger in voice_lower for trigger in cond_config[ "triggers" ] ):
+                                args_value += ( " " if args_value else "" ) + f'{cond_arg_name}="{cond_config[ "value" ]}"'
 
-                        # Add natural language variation
-                        _, voice_command = self.prompt_generator.insert_interjection( voice_command, self.prompt_generator.interjections )
-                        _, voice_command = self.prompt_generator.prepend_salutation( voice_command, self.prompt_generator.salutations )
+                    # Add natural language variation
+                    _, voice_command = self.prompt_generator.insert_interjection( voice_command, self.prompt_generator.interjections )
+                    _, voice_command = self.prompt_generator.prepend_salutation( voice_command, self.prompt_generator.salutations )
 
-                        # Use shared agent_router_instruction_template with ALL agent router commands
-                        instruction = self.prompt_generator.agent_router_instruction_template.format( command_choices=self.prompt_generator.agent_router_commands )
-                        human_says  = self.prompt_generator.common_human_says_template.format( voice_command=voice_command )
-                        input_text  = self.prompt_generator.common_input_template.format( human_says=human_says, response_format=self.prompt_generator.common_response_format )
-                        output      = self.prompt_generator.common_output_template.format( command=command_name, args=args_value )
-                        prompt      = self.prompt_generator._get_prompt_instruction_format( instruction, input_text )
+                    # Use shared agent_router_instruction_template with ALL agent router commands
+                    instruction = self.prompt_generator.agent_router_instruction_template.format( command_choices=self.prompt_generator.agent_router_commands )
+                    human_says  = self.prompt_generator.common_human_says_template.format( voice_command=voice_command )
+                    input_text  = self.prompt_generator.common_input_template.format( human_says=human_says, response_format=self.prompt_generator.common_response_format )
+                    output      = self.prompt_generator.common_output_template.format( command=command_name, args=args_value )
+                    prompt      = self.prompt_generator._get_prompt_instruction_format( instruction, input_text )
 
-                        instructions.append( instruction )
-                        inputs.append( input_text )
-                        outputs.append( output )
-                        prompts.append( prompt )
-                        commands.append( command_name )
+                    instructions.append( instruction )
+                    inputs.append( input_text )
+                    outputs.append( output )
+                    prompts.append( prompt )
+                    commands.append( command_name )
 
-                        self._do_conditional_print( counter, voice_command )
-                        counter += 1
+                    self._do_conditional_print( counter, voice_command )
+                    counter += 1
 
             print()
 

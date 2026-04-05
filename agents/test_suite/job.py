@@ -31,9 +31,27 @@ import cosa.utils.util as cu
 
 # Valid suite types and their script paths (relative to project root)
 SUITE_SCRIPTS = {
-    "integration" : "src/tests/run-integration-tests.sh",
-    "e2e"         : "src/scripts/run-e2e-ui-tests.sh",
+    "unit"         : "src/tests/run-unit-tests.sh",
+    "smoke"        : "src/tests/run-smoke-tests.sh",
+    "smoke_direct" : "src/tests/run-smoke-direct.sh",
+    "websocket"    : "src/scripts/run-websocket-smoke-tests.sh",
+    "integration"  : "src/tests/run-integration-tests.sh",
+    "e2e"          : "src/scripts/run-e2e-ui-tests.sh",
+    "all"          : "src/tests/run-all-tests.sh",
 }
+
+# Per-suite max execution timeout (seconds). Process is killed if exceeded.
+# Values based on observed worst-case runtimes + 2x buffer. Tunable.
+SUITE_TIMEOUTS_SECONDS = {
+    "unit"         : 180,    #  3 min (fast, ~915 tests, no server)
+    "smoke"        : 600,    # 10 min (server-dependent, ~40 files)
+    "smoke_direct" : 1200,   # 20 min (longest: Phase D live ~10 min)
+    "websocket"    : 300,    #  5 min (~50 tests, server + WS)
+    "integration"  : 1200,   # 20 min (~43 tests, ~5-10 min observed)
+    "e2e"          : 2400,   # 40 min (~297 tests, ~17 min observed)
+    "all"          : 3600,   # 60 min (sequential pyramid, ~25-35 min observed)
+}
+SUITE_TIMEOUT_DEFAULT_SECONDS = 600  # 10 min fallback for unknown types
 
 # Regex to parse pytest summary line:
 #   "X passed, Y failed, Z skipped, W error in Ns"
@@ -482,7 +500,11 @@ class TestSuiteJob( AgenticJobBase ):
             }
 
         # Build command — pass through extra pytest args, never use --bg
-        cmd = [ "bash", script_path ] + self.pytest_args
+        # Strip --bg: harmful when running as a subprocess (detaches, breaks tracking)
+        sanitized_args = [ arg for arg in self.pytest_args if arg != "--bg" ]
+        if len( sanitized_args ) < len( self.pytest_args ):
+            print( f"[TestSuiteJob] WARNING: Stripped --bg flag from pytest_args (harmful for subprocess-tracked runs)" )
+        cmd = [ "bash", script_path ] + sanitized_args
 
         if self.debug: print( f"[TestSuiteJob] Running: {' '.join( cmd )}" )
 
@@ -498,7 +520,11 @@ class TestSuiteJob( AgenticJobBase ):
                 env={ **os.environ, "LUPIN_ROOT": project_root }
             )
 
-            # Poll loop for cancellation support
+            # Per-suite timeout (seconds)
+            timeout_secs = SUITE_TIMEOUTS_SECONDS.get( suite_type, SUITE_TIMEOUT_DEFAULT_SECONDS )
+            if self.debug: print( f"[TestSuiteJob] {suite_type} timeout: {timeout_secs}s" )
+
+            # Poll loop for cancellation support + timeout enforcement
             stdout_lines = []
             while True:
                 # Check for cancellation
@@ -520,6 +546,26 @@ class TestSuiteJob( AgenticJobBase ):
                         "error"     : "Cancelled by user",
                     }
 
+                # Check for timeout
+                elapsed = time.monotonic() - start_time
+                if elapsed > timeout_secs:
+                    print( f"[TestSuiteJob] TIMEOUT: {suite_type} exceeded {timeout_secs}s, killing process" )
+                    process.terminate()
+                    try:
+                        process.wait( timeout=10 )
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                    return {
+                        "passed"    : 0,
+                        "failed"    : 0,
+                        "skipped"   : 0,
+                        "errors"    : 1,
+                        "exit_code" : -2,
+                        "log_path"  : None,
+                        "duration"  : elapsed,
+                        "error"     : f"Timeout: {suite_type} exceeded {timeout_secs}s",
+                    }
+
                 # Read available output
                 line = process.stdout.readline()
                 if line:
@@ -536,8 +582,13 @@ class TestSuiteJob( AgenticJobBase ):
 
             # Determine log path from symlink
             log_symlinks = {
-                "integration" : "/tmp/integration-latest.log",
-                "e2e"         : "/tmp/e2e-ui-latest.log",
+                "unit"         : "/tmp/unit-latest.log",
+                "smoke"        : "/tmp/smoke-latest.log",
+                "smoke_direct" : "/tmp/smoke-direct-latest.log",
+                "websocket"    : "/tmp/websocket-latest.log",
+                "integration"  : "/tmp/integration-latest.log",
+                "e2e"          : "/tmp/e2e-ui-latest.log",
+                "all"          : "/tmp/all-tests-latest.log",
             }
             log_path = log_symlinks.get( suite_type )
             if log_path and not os.path.exists( log_path ):

@@ -26,7 +26,9 @@ class ModelTier( Enum ):
     HAIKU_4_5  = "haiku-4-5"
 
 
-# Pricing per 1M tokens (as of January 2026)
+# Pricing per 1M tokens — verified 2026-04-05 against https://platform.claude.com/docs/en/about-claude/pricing
+# Note: Opus 4.5 and 4.6 share the same pricing ($5/$25) per Anthropic's published table,
+# hence the claude-opus-4-6 → OPUS_4_5 tier mapping is deliberate (see MODEL_NAME_TO_TIER).
 MODEL_PRICING = {
     ModelTier.OPUS_4_5: {
         "input"  : 5.00,   # $5.00 per 1M input tokens
