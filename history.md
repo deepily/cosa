@@ -1,5 +1,32 @@
 # COSA Development History
 
+> **✅ SESSIONS 5946362f+a47f938e COMMITTED**: Render-only mode, 3 UI bug fixes, BFE Phase 6 automated repair loop (2026.04.07)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 5946362f — Phase D Postmortem + Sonnet Pivot + Render-Only Mode**:
+> - Pivoted automated testing default from Haiku to Sonnet (`claude-sonnet-4-6`). Sonnet: 15 slides, $0.46, 8/8 PASS
+> - 3 UI bug fixes: YAML 404 (added `.yaml`/`.yml` to MEDIA_TYPES in `io_files.py`), View Full Report 404 (relative artifact paths in `job.py`, absolute path stripping in `io_files.py`), Job interactions 404 (DB fallback in `queues.py`)
+> - Render-only pipeline: `render_from_yaml_async()` in orchestrator, `render_only` flag wired through job/config/router/factory/registry
+> - YAML auto-detect in voice routing (`expeditor.py`), `yaml_path` in queue metadata and done responses
+> - Presentation `SUITE_SCRIPTS` and stderr surfacing in `test_suite/job.py`
+>
+> **Session a47f938e — BFE Phase 6: Automated Repair Loop**:
+> - Dead Queue Watchdog (`dead_queue_watchdog.py`): failure classification (code bug vs infra), eligibility filter, BFE recursion prevention
+> - RepairAttemptTracker (`repair_attempt_tracker.py`): per-chain circuit breakers, cost budget, wall-clock timeout, semantic dedup via Gister + cosine similarity
+> - BFE resubmit pipeline: `_resubmit_original_job()` reconstructs original job with user identity
+> - `RESUBMITTING` phase + `resubmitted_job_id` added to BFE state
+> - Watchdog hook wired into `running_fifo_queue.py`
+>
+> **Files Created (2)**: `rest/dead_queue_watchdog.py`, `rest/repair_attempt_tracker.py`
+> **Files Modified (13)**: `bug_fix_expediter/job.py`, `bug_fix_expediter/state.py`, `presentation_generator/config.py`, `presentation_generator/job.py`, `presentation_generator/orchestrator.py`, `runtime_argument_expeditor/agent_registry.py`, `runtime_argument_expeditor/expeditor.py`, `test_suite/job.py`, `rest/agentic_job_factory.py`, `rest/routers/io_files.py`, `rest/routers/presentation_generator.py`, `rest/routers/queues.py`, `rest/running_fifo_queue.py`
+> **Commit**: 7a57ad9
+>
+> Total: +1,427 insertions, -57 deletions across 15 files
+
+---
+
 > **✅ SESSION 387 — Research Only**: PEFT/LoRA GCP migration thought experiment + GitHub Actions CI/CD plan (2026.03.31)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >
