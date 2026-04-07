@@ -74,11 +74,13 @@ class CostEstimate:
     total_api_calls     : int   = 0
     estimated_cost_usd  : float = 0.0
 
-    # Pricing per million tokens (approximate, as of 2025)
+    # Pricing per million tokens (as of 2026-04)
     OPUS_INPUT_PRICE    : float = 15.0
     OPUS_OUTPUT_PRICE   : float = 75.0
     SONNET_INPUT_PRICE  : float = 3.0
     SONNET_OUTPUT_PRICE : float = 15.0
+    HAIKU_INPUT_PRICE   : float = 0.80
+    HAIKU_OUTPUT_PRICE  : float = 4.0
 
     def add_usage( self, model: str, input_tokens: int, output_tokens: int ):
         """
@@ -94,9 +96,13 @@ class CostEstimate:
         self.total_api_calls += 1
 
         # Estimate cost based on model
-        if "opus" in model.lower():
+        model_lower = model.lower()
+        if "opus" in model_lower:
             cost = ( input_tokens * self.OPUS_INPUT_PRICE / 1_000_000 +
                      output_tokens * self.OPUS_OUTPUT_PRICE / 1_000_000 )
+        elif "haiku" in model_lower:
+            cost = ( input_tokens * self.HAIKU_INPUT_PRICE / 1_000_000 +
+                     output_tokens * self.HAIKU_OUTPUT_PRICE / 1_000_000 )
         else:  # Sonnet or other
             cost = ( input_tokens * self.SONNET_INPUT_PRICE / 1_000_000 +
                      output_tokens * self.SONNET_OUTPUT_PRICE / 1_000_000 )

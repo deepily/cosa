@@ -36,6 +36,7 @@ class PresentationSubmitRequest( BaseModel ):
     target_duration_minutes : Optional[ int ] = None
     audience                : Optional[ str ] = None
     theme                   : Optional[ str ] = None
+    content_model           : Optional[ str ] = Field( None, description="Override content model (e.g. claude-haiku-4-5-20251001 for automated tests)" )
     dry_run                 : bool            = False
     scheduled_at            : Optional[ str ] = Field( None, description="ISO datetime for deferred execution (None = immediate)" )
     monopolize              : bool            = Field( False, description="Run exclusively, block all other jobs until complete" )
@@ -176,6 +177,8 @@ async def submit_presentation_job(
         args_dict[ "audience" ] = request.audience
     if request.theme:
         args_dict[ "theme" ] = request.theme
+    if request.content_model:
+        args_dict[ "content_model" ] = request.content_model
 
     job = create_agentic_job(
         command    = "agent router go to presentation generator",

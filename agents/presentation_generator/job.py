@@ -58,6 +58,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
         audience: Optional[ str ] = None,
         audience_context: Optional[ str ] = None,
         theme: Optional[ str ] = None,
+        content_model: Optional[ str ] = None,
         dry_run: bool = False,
         debug: bool = False,
         verbose: bool = False
@@ -84,6 +85,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
             audience: Override audience level (None = use INI default)
             audience_context: Custom audience description (None = use INI default)
             theme: Override theme name (None = use INI default)
+            content_model: Override Claude model (None = use INI default, e.g. claude-haiku-4-5-20251001)
             dry_run: Simulate execution without API calls
             debug: Enable debug output
             verbose: Enable verbose output
@@ -102,6 +104,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
         self.audience                = audience
         self.audience_context        = audience_context
         self.theme                   = theme
+        self.content_model           = content_model
         self.dry_run                 = dry_run
 
         # Results (populated after execution)
@@ -240,6 +243,8 @@ class PresentationGeneratorJob( AgenticJobBase ):
                 config.audience = self.audience
             if self.theme is not None:
                 config.default_theme = self.theme
+            if self.content_model is not None:
+                config.content_model = self.content_model
 
             # Create orchestrator
             agent = PresentationOrchestratorAgent(

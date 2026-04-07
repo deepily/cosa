@@ -100,10 +100,15 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
     Returns:
         AgenticJobBase subclass instance, or None
     """
-    from cosa.agents.deep_research.job import DeepResearchJob
-    from cosa.agents.podcast_generator.job import PodcastGeneratorJob
-    from cosa.agents.deep_research_to_podcast.job import DeepResearchToPodcastJob
-    from cosa.agents.claude_code.job import ClaudeCodeJob
+    from cosa.agents.bug_fix_expediter.job              import BugFixExpediterJob
+    from cosa.agents.claude_code.job                     import ClaudeCodeJob
+    from cosa.agents.deep_research.job                   import DeepResearchJob
+    from cosa.agents.deep_research_to_podcast.job        import DeepResearchToPodcastJob
+    from cosa.agents.deep_research_to_presentation.job   import DeepResearchToPresentationJob
+    from cosa.agents.podcast_generator.job               import PodcastGeneratorJob
+    from cosa.agents.presentation_generator.job          import PresentationGeneratorJob
+    from cosa.agents.swe_team.job                        import SweTeamJob
+    from cosa.agents.test_suite.job                      import TestSuiteJob
 
     if command == "agent router go to deep research":
         return DeepResearchJob(
@@ -181,7 +186,6 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
         )
 
     elif command == "agent router go to presentation generator":
-        from cosa.agents.presentation_generator.job import PresentationGeneratorJob
         return PresentationGeneratorJob(
             source_path             = args_dict.get( "source", "" ),
             user_id                 = user_id,
@@ -191,13 +195,13 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             audience                = args_dict.get( "audience" ),
             audience_context        = args_dict.get( "audience_context" ),
             theme                   = args_dict.get( "theme" ),
+            content_model           = args_dict.get( "content_model" ),
             dry_run                 = _parse_boolean( args_dict.get( "dry_run" ) ),
             debug                   = debug,
             verbose                 = verbose
         )
 
     elif command == "agent router go to research to presentation":
-        from cosa.agents.deep_research_to_presentation.job import DeepResearchToPresentationJob
         return DeepResearchToPresentationJob(
             query                   = args_dict.get( "query", "" ),
             user_id                 = user_id,
@@ -214,7 +218,6 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
         )
 
     elif command == "agent router go to swe team":
-        from cosa.agents.swe_team.job import SweTeamJob
         return SweTeamJob(
             task           = args_dict.get( "task", args_dict.get( "prompt", "" ) ),
             user_id        = user_id,
@@ -233,8 +236,6 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
         )
 
     elif command == "agent router go to test suite":
-        from cosa.agents.test_suite.job import TestSuiteJob
-
         # Parse test_types: comma-separated string → list
         test_types_raw = args_dict.get( "test_types", "integration,e2e" )
         if isinstance( test_types_raw, str ):
@@ -263,7 +264,6 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
         )
 
     elif command == "agent router go to bug fix expediter":
-        from cosa.agents.bug_fix_expediter.job import BugFixExpediterJob
         return BugFixExpediterJob(
             dead_job_id   = args_dict.get( "dead_job_id", "" ),
             user_id       = user_id,

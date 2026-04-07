@@ -33,6 +33,7 @@ class PresentationConfig:
 
     # Model selection
     content_model            : str   = "claude-opus-4-6"
+    automated_content_model  : str   = "claude-haiku-4-5-20251001"
 
     # Presentation parameters
     target_duration_minutes  : int   = 15
@@ -75,6 +76,7 @@ class PresentationConfig:
 
         return cls(
             content_model           = _get( "content model",           default="claude-opus-4-6" ),
+            automated_content_model = _get( "automated content model", default="claude-haiku-4-5-20251001" ),
             target_duration_minutes = _get( "target duration minutes", default=15,    return_type="int" ),
             slides_per_minute       = _get( "slides per minute",       default=1.0,   return_type="float" ),
             title_style             = _get( "title style",             default="assertion" ),

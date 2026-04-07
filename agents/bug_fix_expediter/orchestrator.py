@@ -54,6 +54,7 @@ try:
         ToolUseBlock,
         ResultMessage,
         query as sdk_query,
+        RateLimitEvent,
     )
     SDK_AVAILABLE = True
 except ImportError:
@@ -318,6 +319,8 @@ class BFEOrchestrator:
                 elif isinstance( message, ResultMessage ):
                     msg_text = getattr( message, "text", str( message ) )[ :200 ]
                     await self._notify( voice_io, msg_text, priority="low" )
+                elif isinstance( message, RateLimitEvent ):
+                    logger.warning( f"Rate limited: retry_after={getattr( message, 'retry_after', '?' )}s" )
 
             raw_response = "".join( collected_text ).strip()
 
@@ -1336,6 +1339,8 @@ class BFEOrchestrator:
                 elif isinstance( message, ResultMessage ):
                     msg_text = getattr( message, "text", str( message ) )[ :200 ]
                     await self._notify( voice_io, msg_text, priority="low" )
+                elif isinstance( message, RateLimitEvent ):
+                    logger.warning( f"Rate limited: retry_after={getattr( message, 'retry_after', '?' )}s" )
 
             guard.check_iteration()
             coder_output = "".join( collected_text ).strip()
@@ -1390,6 +1395,8 @@ class BFEOrchestrator:
                             )
                 elif isinstance( message, TextBlock ):
                     collected_text.append( message.text )
+                elif isinstance( message, RateLimitEvent ):
+                    logger.warning( f"Rate limited: retry_after={getattr( message, 'retry_after', '?' )}s" )
 
             tester_output = "".join( collected_text ).strip()
             output_lower  = tester_output.lower()

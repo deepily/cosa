@@ -333,11 +333,13 @@ class TestSuiteJob( AgenticJobBase ):
             suite_lines = []
             for suite_type, result in self.suite_results.items():
                 icon = "PASS" if result[ "exit_code" ] == 0 else "FAIL"
-                suite_lines.append(
-                    f"- **{suite_type}**: {icon} — "
-                    f"{result[ 'passed' ]} passed, {result[ 'failed' ]} failed, "
-                    f"{result[ 'skipped' ]} skipped"
-                )
+                line = ( f"- **{suite_type}**: {icon} — "
+                         f"{result[ 'passed' ]} passed, {result[ 'failed' ]} failed, "
+                         f"{result[ 'skipped' ]} skipped" )
+                crash_output = result.get( "startup_crash_output" )
+                if crash_output:
+                    line += f"\n  **STARTUP CRASH** (exit={result[ 'exit_code' ]}): `{crash_output[ :200 ]}`"
+                suite_lines.append( line )
 
             overall = "ALL PASSED" if all_passed else "FAILURES DETECTED"
             abstract = f"**Test Suite Results: {overall}**\n\n" + "\n".join( suite_lines )
@@ -353,6 +355,11 @@ class TestSuiteJob( AgenticJobBase ):
             summary = f"Test suite run complete. {overall}.\n\n"
             for suite_type, result in self.suite_results.items():
                 summary += f"  {suite_type}: {result[ 'passed' ]} passed, {result[ 'failed' ]} failed, {result[ 'skipped' ]} skipped\n"
+                # Surface startup crash output when subprocess failed with no test results
+                crash_output = result.get( "startup_crash_output" )
+                if crash_output:
+                    summary += f"\n  ⚠ {suite_type} STARTUP CRASH (exit={result[ 'exit_code' ]}, 0 tests found):\n"
+                    summary += f"  {crash_output[ :500 ]}\n\n"
             summary += f"\n  Total: {total_passed} passed, {total_failed} failed, {total_skipped} skipped"
 
             return summary
@@ -599,6 +606,12 @@ class TestSuiteJob( AgenticJobBase ):
             parsed[ "exit_code" ] = exit_code
             parsed[ "log_path" ]  = log_path
             parsed[ "duration" ]  = duration
+
+            # Capture stdout tail when subprocess crashed with no test output
+            total_found = parsed[ "passed" ] + parsed[ "failed" ] + parsed[ "skipped" ] + parsed[ "errors" ]
+            if exit_code != 0 and total_found == 0:
+                tail_lines  = stdout_lines[ -20: ] if stdout_lines else [ "(no output captured)" ]
+                parsed[ "startup_crash_output" ] = "".join( tail_lines ).strip()
 
             if self.debug:
                 print( f"[TestSuiteJob] {suite_type} finished: exit={exit_code}, "

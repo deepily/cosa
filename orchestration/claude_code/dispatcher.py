@@ -55,7 +55,8 @@ try:
         TextBlock,
         ToolUseBlock,
         ToolResultBlock,
-        ResultMessage
+        ResultMessage,
+        RateLimitEvent
     )
     SDK_AVAILABLE = True
 except ImportError:
@@ -463,6 +464,8 @@ Use notify() for progress. Use converse() when you need input."""
                             for block in message.content:
                                 if hasattr( block, 'text' ):
                                     history.add_assistant_text( block.text )
+                        elif isinstance( message, RateLimitEvent ):
+                            if self.debug: print( f"[DEBUG] [{task.id}] Rate limited: retry_after={getattr( message, 'retry_after', '?' )}s" )
 
                         # Capture final result
                         if isinstance( message, ResultMessage ):

@@ -55,6 +55,7 @@ try:
         ToolUseBlock,
         ResultMessage,
         query as sdk_query,
+        RateLimitEvent,
     )
     SDK_AVAILABLE = True
 except ImportError:
@@ -625,6 +626,8 @@ Keep your response concise (3-5 sentences). Output ONLY the analysis, no preambl
                             collected_text.append( block.text )
                 elif isinstance( message, TextBlock ):
                     collected_text.append( message.text )
+                elif isinstance( message, RateLimitEvent ):
+                    logger.warning( f"Rate limited: retry_after={getattr( message, 'retry_after', '?' )}s" )
 
             return "".join( collected_text ).strip() or f"User messages:\n{messages_text}"
 
@@ -1187,6 +1190,8 @@ Example:
                             collected_text.append( block.text )
                 elif isinstance( message, TextBlock ):
                     collected_text.append( message.text )
+                elif isinstance( message, RateLimitEvent ):
+                    logger.warning( f"Rate limited: retry_after={getattr( message, 'retry_after', '?' )}s" )
 
             raw_response = "".join( collected_text ).strip()
 
@@ -1330,6 +1335,8 @@ Complete this task. When done, summarize what you did and list all files changed
                         { "message": getattr( message, "text", str( message ) ) },
                         team_io, role="coder", progress_group_id=coder_group_id,
                     )
+                elif isinstance( message, RateLimitEvent ):
+                    logger.warning( f"Rate limited: retry_after={getattr( message, 'retry_after', '?' )}s" )
 
                 if self._stop_requested:
                     break
@@ -1455,6 +1462,8 @@ IMPORTANT:
                         { "message": getattr( message, "text", str( message ) ) },
                         team_io, role="tester", progress_group_id=tester_group_id,
                     )
+                elif isinstance( message, RateLimitEvent ):
+                    logger.warning( f"Rate limited: retry_after={getattr( message, 'retry_after', '?' )}s" )
 
                 if self._stop_requested:
                     break
@@ -1604,6 +1613,8 @@ INSTRUCTIONS:
                         { "message": getattr( message, "text", str( message ) ) },
                         team_io, role="coder", progress_group_id=redelegate_group_id,
                     )
+                elif isinstance( message, RateLimitEvent ):
+                    logger.warning( f"Rate limited: retry_after={getattr( message, 'retry_after', '?' )}s" )
 
                 if self._stop_requested:
                     break
