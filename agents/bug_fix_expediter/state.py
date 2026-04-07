@@ -19,6 +19,7 @@ class BFEPhase( Enum ):
     PROPOSING            = "proposing"
     FIXING               = "fixing"
     COMMITTING           = "committing"
+    RESUBMITTING         = "resubmitting"
     RETRYING             = "retrying"
 
     # Waiting phases
@@ -111,10 +112,12 @@ class FixResult( BaseModel ):
     details        : str            = ""
     retry_eligible : bool           = False
     # Phase 5 additions (populated after run_git_strategy)
-    git_strategy   : Optional[ str ] = None   # "commit_only" | "branch_and_pr" | "branch_only" | None
-    commit_hash    : Optional[ str ] = None
-    branch_name    : Optional[ str ] = None
-    pr_url         : Optional[ str ] = None
+    git_strategy       : Optional[ str ] = None   # "commit_only" | "branch_and_pr" | "branch_only" | None
+    commit_hash        : Optional[ str ] = None
+    branch_name        : Optional[ str ] = None
+    pr_url             : Optional[ str ] = None
+    # Phase 6 additions (populated after resubmit_original_job)
+    resubmitted_job_id : Optional[ str ] = None
 
 
 class BFEState( TypedDict ):
@@ -190,8 +193,8 @@ def quick_smoke_test():
         assert BFEPhase.PACKAGING.value == "packaging"
         assert BFEPhase.COMPLETED.value == "completed"
         assert BFEPhase.COMMITTING.value == "committing"
-        assert len( BFEPhase ) == 10
-        print( "✓ BFEPhase enum correct (10 values)" )
+        assert len( BFEPhase ) == 11
+        print( "✓ BFEPhase enum correct (11 values)" )
 
         # 2: DeadJobContext
         ctx = DeadJobContext(

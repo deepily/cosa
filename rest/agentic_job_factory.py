@@ -196,6 +196,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             audience_context        = args_dict.get( "audience_context" ),
             theme                   = args_dict.get( "theme" ),
             content_model           = args_dict.get( "content_model" ),
+            render_only             = _parse_boolean( args_dict.get( "render_only" ) ),
             dry_run                 = _parse_boolean( args_dict.get( "dry_run" ) ),
             debug                   = debug,
             verbose                 = verbose

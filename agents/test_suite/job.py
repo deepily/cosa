@@ -37,7 +37,8 @@ SUITE_SCRIPTS = {
     "websocket"    : "src/scripts/run-websocket-smoke-tests.sh",
     "integration"  : "src/tests/run-integration-tests.sh",
     "e2e"          : "src/scripts/run-e2e-ui-tests.sh",
-    "all"          : "src/tests/run-all-tests.sh",
+    "all"            : "src/tests/run-all-tests.sh",
+    "presentation"   : "src/tests/run-presentation-regression.sh",
 }
 
 # Per-suite max execution timeout (seconds). Process is killed if exceeded.
@@ -49,7 +50,8 @@ SUITE_TIMEOUTS_SECONDS = {
     "websocket"    : 300,    #  5 min (~50 tests, server + WS)
     "integration"  : 1200,   # 20 min (~43 tests, ~5-10 min observed)
     "e2e"          : 2400,   # 40 min (~297 tests, ~17 min observed)
-    "all"          : 3600,   # 60 min (sequential pyramid, ~25-35 min observed)
+    "all"            : 3600,   # 60 min (sequential pyramid, ~25-35 min observed)
+    "presentation"   : 1800,   # 30 min (render-only + Sonnet; +Opus/R2P with flags)
 }
 SUITE_TIMEOUT_DEFAULT_SECONDS = 600  # 10 min fallback for unknown types
 

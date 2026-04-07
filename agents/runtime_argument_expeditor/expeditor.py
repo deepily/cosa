@@ -265,6 +265,10 @@ class RuntimeArgumentExpeditor:
                 handler = special_handlers[ arg_name ]
                 if handler == "fuzzy_file_match":
                     value = self._handle_fuzzy_file_match( user_email, agent_entry.get( "display_name" ) )
+                    # Auto-detect YAML → set render_only flag
+                    if value and value.lower().endswith( ( ".yaml", ".yml" ) ):
+                        final_args[ "render_only" ] = "true"
+                        if self.debug: print( f"[Expeditor] YAML detected → render_only=true" )
                 else:
                     value = self._ask_for_arg( arg_name, f"Please provide the '{arg_name}' argument.", user_email, abstract=request_abstract )
                 if value is None:
@@ -867,13 +871,24 @@ class RuntimeArgumentExpeditor:
         # Build docs_map: { relative_path → abs_path } from all search dirs
         docs_map = {}
 
+        # Supported file extensions for source documents and YAML intermediates
+        source_extensions = ( ".md", ".yaml", ".yml", ".txt" )
+
         # Source 1: Deep research directory
         research_dir = project_root + f"/io/deep-research/{user_email}"
         if os.path.exists( research_dir ):
             for f in os.listdir( research_dir ):
-                if f.endswith( ".md" ):
+                if f.endswith( source_extensions ):
                     rel_path = f"io/deep-research/{user_email}/{f}"
                     docs_map[ rel_path ] = f"{research_dir}/{f}"
+
+        # Source 1b: Presentations directory (YAML intermediates for re-render)
+        presentations_dir = project_root + f"/io/presentations/{user_email}"
+        if os.path.exists( presentations_dir ):
+            for f in os.listdir( presentations_dir ):
+                if f.endswith( ( ".yaml", ".yml" ) ):
+                    rel_path = f"io/presentations/{user_email}/{f}"
+                    docs_map[ rel_path ] = f"{presentations_dir}/{f}"
 
         # Source 2: Additional search paths from config (agent-specific key, fallback to podcast)
         search_paths_raw = None
@@ -892,14 +907,14 @@ class RuntimeArgumentExpeditor:
                 continue
             for root, _dirs, files in os.walk( abs_search_dir ):
                 for f in files:
-                    if f.endswith( ".md" ):
+                    if f.endswith( source_extensions ):
                         abs_path = os.path.join( root, f )
                         rel_path = os.path.relpath( abs_path, project_root )
                         if rel_path not in docs_map:
                             docs_map[ rel_path ] = abs_path
 
         if not docs_map:
-            if self.debug: print( f"[Expeditor] No markdown files found in any search directory" )
+            if self.debug: print( f"[Expeditor] No source files found in any search directory" )
             return self._ask_for_arg(
                 "research",
                 "No documents found. Please provide the path to a document.",

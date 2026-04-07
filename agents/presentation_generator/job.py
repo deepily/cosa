@@ -59,6 +59,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
         audience_context: Optional[ str ] = None,
         theme: Optional[ str ] = None,
         content_model: Optional[ str ] = None,
+        render_only: bool = False,
         dry_run: bool = False,
         debug: bool = False,
         verbose: bool = False
@@ -105,6 +106,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
         self.audience_context        = audience_context
         self.theme                   = theme
         self.content_model           = content_model
+        self.render_only             = render_only
         self.dry_run                 = dry_run
 
         # Results (populated after execution)
@@ -124,7 +126,8 @@ class PresentationGeneratorJob( AgenticJobBase ):
         """
         import os
         filename = os.path.basename( self.source_path )
-        return f"[Presentation] {filename}"
+        prefix   = "[Render] " if self.render_only else "[Presentation] "
+        return f"{prefix}{filename}"
 
     def do_all( self ) -> str:
         """
@@ -226,8 +229,9 @@ class PresentationGeneratorJob( AgenticJobBase ):
                 print( f"[PresentationGeneratorJob] Source document: {full_path}" )
 
             # Notify start
+            mode_label = "render-only" if self.render_only else "presentation generation"
             await voice_io.notify(
-                f"Starting presentation generation from: {os.path.basename( full_path )}",
+                f"Starting {mode_label} from: {os.path.basename( full_path )}",
                 priority="medium",
                 queue_name="run"
             )
@@ -257,8 +261,11 @@ class PresentationGeneratorJob( AgenticJobBase ):
             )
             self._orchestrator = agent  # Store ref for cancellation from API thread
 
-            # Run the full workflow
-            presentation = await agent.do_all_async()
+            # Branch: render-only (Phases 6-8) vs full pipeline (Phases 1-8)
+            if self.render_only:
+                presentation = await agent.render_from_yaml_async( full_path )
+            else:
+                presentation = await agent.do_all_async()
 
             if presentation is None:
                 await voice_io.notify( "Presentation generation was cancelled.", priority="medium", queue_name="run" )
@@ -315,7 +322,11 @@ class PresentationGeneratorJob( AgenticJobBase ):
 **Stats**: ${api_cost:.4f} | ID: {agent.presentation_id}"""
 
             self.artifacts[ "abstract" ]    = completion_abstract
-            self.artifacts[ "report_path" ] = self.marp_path
+            # Store relative paths (strip io_base prefix) for /app/docs URL generation
+            marp_rel = self.marp_path.replace( io_base, "" ) if self.marp_path and self.marp_path.startswith( io_base ) else self.marp_path
+            yaml_rel = self.yaml_path.replace( io_base, "" ) if self.yaml_path and self.yaml_path.startswith( io_base ) else self.yaml_path
+            self.artifacts[ "report_path" ] = marp_rel
+            self.artifacts[ "yaml_path" ]   = yaml_rel
 
             # Notify completion (with job_id and queue_name for job card routing)
             await voice_io.notify(

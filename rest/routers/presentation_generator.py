@@ -36,7 +36,8 @@ class PresentationSubmitRequest( BaseModel ):
     target_duration_minutes : Optional[ int ] = None
     audience                : Optional[ str ] = None
     theme                   : Optional[ str ] = None
-    content_model           : Optional[ str ] = Field( None, description="Override content model (e.g. claude-haiku-4-5-20251001 for automated tests)" )
+    content_model           : Optional[ str ] = Field( None, description="Override content model (e.g. claude-sonnet-4-6 for automated tests)" )
+    render_only             : bool            = Field( False, description="Render-only mode: source_path must be a YAML file, skips Phases 1-5" )
     dry_run                 : bool            = False
     scheduled_at            : Optional[ str ] = Field( None, description="ISO datetime for deferred execution (None = immediate)" )
     monopolize              : bool            = Field( False, description="Run exclusively, block all other jobs until complete" )
@@ -167,8 +168,21 @@ async def submit_presentation_job(
             detail=f"Source file not found: {source_path}"
         )
 
+    # Auto-detect render_only from YAML extension
+    is_yaml = source_path.lower().endswith( ( ".yaml", ".yml" ) )
+    render_only = request.render_only or is_yaml
+
+    # Validate: render_only requires YAML source
+    if render_only and not is_yaml:
+        raise HTTPException(
+            status_code=400,
+            detail="render_only mode requires a .yaml or .yml source file"
+        )
+
     # Create job using shared factory
     args_dict = { "source": full_path }
+    if render_only:
+        args_dict[ "render_only" ] = True
     if request.target_duration_minutes:
         args_dict[ "target_duration_minutes" ] = str( request.target_duration_minutes )
     if request.dry_run:

@@ -143,9 +143,11 @@ AGENTIC_AGENTS = {
             "audience"                : "audience",
             "audience_context"        : "audience_context",
             "theme"                   : "theme",
+            "render_only"             : "render_only",
+            "render"                  : "render_only",
         },
         "fallback_questions" : {
-            "source"                  : "Which document should I convert to a presentation? Describe it or say the filename.",
+            "source"                  : "Which document should I convert to a presentation, or which YAML to re-render? Describe it or say the filename.",
             "target_duration_minutes" : "How long should the presentation be in minutes? Say a number, or 'default' for 15 minutes.",
             "audience"                : "Who is the target audience? Options: beginner, general, expert, or academic.",
             "audience_context"        : "Any additional context about the audience? Say 'none' to skip.",

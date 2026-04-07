@@ -259,17 +259,31 @@ class BugFixExpediterJob( AgenticJobBase ):
             if fix_result.applied:
                 fix_summary += f", applied: {'success' if fix_result.success else 'failed'}"
 
+            await voice_io.notify(
+                "Fix phase complete." if fix_result.applied else "No fix applied.",
+                priority="medium", job_id=self.id_hash, queue_name="run"
+            )
+
+            # Phase 6: Resubmit original job if fix succeeded
+            resubmit_id = None
+            if fix_result.success and fix_result.applied:
+                resubmit_id = await self._resubmit_original_job( voice_io )
+                if resubmit_id:
+                    fix_result.resubmitted_job_id = resubmit_id
+                    self.artifacts[ "fix_result" ]       = fix_result.model_dump()
+                    self.artifacts[ "resubmitted_job_id" ] = resubmit_id
+
+            resubmit_msg = ""
+            if resubmit_id:
+                resubmit_msg = f" Resubmitted as {resubmit_id}."
+            elif fix_result.success and fix_result.applied:
+                resubmit_msg = " Resubmit skipped (no auto-fix config or queue unavailable)."
+
             result = (
                 f"Bug Fix Expediter complete for '{self.dead_job_id}'. "
                 f"Root cause: {self.diagnosis.root_cause[ :150 ]}. "
                 f"{fix_summary}. "
-                f"Plan: {plan_path}. "
-                f"Retry pipeline not yet implemented (Phase 6+)."
-            )
-
-            await voice_io.notify(
-                "Fix phase complete." if fix_result.applied else "No fix applied.",
-                priority="medium", job_id=self.id_hash, queue_name="run"
+                f"Plan: {plan_path}.{resubmit_msg}"
             )
 
             return result
@@ -283,6 +297,127 @@ class BugFixExpediterJob( AgenticJobBase ):
 
         finally:
             voice_io.clear_job_id()
+
+    async def _resubmit_original_job( self, voice_io ) -> Optional[ str ]:
+        """
+        Phase 6: Resubmit the original failed job after successful fix.
+
+        Reconstructs the original job using its persisted metadata and
+        pushes it to the todo queue as the original user.
+
+        Requires:
+            - self.dead_job_context is populated (Phase 0 completed)
+            - Fix was successful (caller must check)
+
+        Ensures:
+            - Returns resubmitted job's id_hash on success, None on failure
+            - Job is submitted as the original user (user_id, user_email, session_id)
+            - Notifications sent at each stage
+            - Never raises — returns None on any error
+
+        Returns:
+            str or None: Resubmitted job id_hash, or None if skipped/failed
+        """
+        from cosa.agents.bug_fix_expediter.state import BFEPhase
+
+        if self.dead_job_context is None:
+            if self.debug: print( "[BFE] Cannot resubmit: no dead_job_context" )
+            return None
+
+        ctx = self.dead_job_context
+
+        # Check if auto-fix resubmission is enabled
+        try:
+            from cosa.config.configuration_manager import ConfigurationManager
+            config_mgr   = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+            auto_enabled = config_mgr.get( "auto fix enabled", default=False, return_type="boolean" )
+            if not auto_enabled:
+                if self.debug: print( "[BFE] Auto-fix resubmit disabled in config" )
+                return None
+        except Exception as e:
+            if self.debug: print( f"[BFE] Config check failed, skipping resubmit: {e}" )
+            return None
+
+        await voice_io.notify(
+            f"Resubmitting original {ctx.job_type} job as {ctx.user_email}...",
+            priority="medium", job_id=self.id_hash, queue_name="run"
+        )
+
+        try:
+            from cosa.rest.agentic_job_factory import create_agentic_job
+            from cosa.rest.queue_extensions import user_job_tracker
+
+            # Use the original routing command to reconstruct the job
+            routing_command = ctx.routing_command
+            if not routing_command:
+                if self.debug: print( f"[BFE] No routing_command in dead job context, cannot resubmit" )
+                await voice_io.notify(
+                    "Cannot resubmit: original routing command not found in job history.",
+                    priority="high", job_id=self.id_hash, queue_name="run"
+                )
+                return None
+
+            # Extract original args from metadata_json
+            metadata  = ctx.metadata_json or {}
+            args_dict = metadata.get( "original_args", {} )
+
+            # If original_args not stored, reconstruct minimal args from question_text
+            if not args_dict:
+                args_dict = { "query": ctx.question_text }
+
+            # Create the job as the original user
+            new_job = create_agentic_job(
+                command    = routing_command,
+                args_dict  = args_dict,
+                user_id    = ctx.user_id,
+                user_email = ctx.user_email,
+                session_id = ctx.session_id,
+                debug      = self.debug,
+                verbose    = self.verbose,
+            )
+
+            if new_job is None:
+                await voice_io.notify(
+                    f"Resubmit failed: factory returned None for command '{routing_command}'.",
+                    priority="high", job_id=self.id_hash, queue_name="run"
+                )
+                return None
+
+            # Register scoped ID and push to todo queue
+            new_job.id_hash = user_job_tracker.register_scoped_job(
+                new_job.id_hash, ctx.user_id, ctx.session_id
+            )
+
+            # Get the todo queue from the app module singleton
+            import fastapi_app.main as main_module
+            todo_queue = main_module.jobs_todo_queue
+            if todo_queue is None:
+                await voice_io.notify(
+                    "Resubmit failed: todo queue not available.",
+                    priority="high", job_id=self.id_hash, queue_name="run"
+                )
+                return None
+
+            todo_queue.push( new_job )
+
+            await voice_io.notify(
+                f"Original job resubmitted as {new_job.id_hash}. Notifications will route to your UI.",
+                priority="high", job_id=new_job.id_hash, queue_name="todo"
+            )
+
+            if self.debug:
+                print( f"[BFE] Resubmitted job: {new_job.id_hash} "
+                       f"(type={ctx.job_type}, user={ctx.user_email})" )
+
+            return new_job.id_hash
+
+        except Exception as e:
+            print( f"[BFE] Resubmit failed: {e}" )
+            await voice_io.notify(
+                f"Resubmit failed: {str( e )[ :100 ]}",
+                priority="high", job_id=self.id_hash, queue_name="run"
+            )
+            return None
 
     async def _execute_dry_run( self, voice_io, cosa_interface ) -> str:
         """

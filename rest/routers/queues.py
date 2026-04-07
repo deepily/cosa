@@ -343,6 +343,7 @@ async def get_queue(
                 "is_cache_hit"    : job.is_cache_hit,  # For Time Saved Dashboard
                 # Phase 7: Agentic job artifacts for enhanced done cards
                 "report_path"     : job.artifacts.get( 'report_path' ) if is_agentic_job else None,
+                "yaml_path"       : job.artifacts.get( 'yaml_path' ) if is_agentic_job else None,
                 "abstract"        : job.artifacts.get( 'abstract' ) if is_agentic_job else None,
                 "cost_summary"    : job.cost_summary if is_agentic_job else None,
                 "started_at"      : job.started_at,
@@ -519,31 +520,56 @@ async def get_job_interactions(
         if job:
             break
 
+    # DB fallback when job not found in in-memory queues
+    db_job = None
     if not job:
-        print( f"[API] Job not found in any queue: {job_id}" )
-        raise HTTPException( status_code=404, detail=f"Job not found: {job_id}" )
+        from cosa.rest.job_persistence import get_job_by_id_hash
+        db_job = get_job_by_id_hash( job_id )
+        if not db_job:
+            print( f"[API] Job not found in any queue or DB: {job_id}" )
+            raise HTTPException( status_code=404, detail=f"Job not found: {job_id}" )
+        print( f"[API] Job {job_id} found in DB (not in memory)" )
 
-    # Authorization check — job.user_id is the single source of truth
-    job_owner = job.user_id
+    # Authorization check — db_job is a dict, job is an object
+    if job:
+        job_owner = job.user_id
+    else:
+        job_owner = db_job.get( "user_id" )
     if job_owner and job_owner != current_user["uid"] and not is_admin( current_user ):
         print( f"[API] Unauthorized access to job {job_id} by {current_user['uid']}" )
         raise HTTPException( status_code=403, detail="Not authorized to view this job" )
 
-    # Build response using unified interface properties
-    # All job types (SolutionSnapshot, AgenticJobBase) now have consistent attributes
-    response = {
-        "job_id"       : job_id,
-        "session_id"   : job.session_id,
-        "job_metadata" : {
-            "question"    : job.last_question_asked,
-            "answer"      : job.answer_conversational or job.answer,
-            "agent_type"  : job.job_type,  # Unified property replaces getattr() chain
-            "run_date"    : job.run_date,
-            "created_date": job.created_date
-        },
-        "interactions"      : [],
-        "interaction_count" : 0
-    }
+    # Build response from in-memory job or DB fallback
+    if job:
+        response = {
+            "job_id"       : job_id,
+            "session_id"   : job.session_id,
+            "job_metadata" : {
+                "question"    : job.last_question_asked,
+                "answer"      : job.answer_conversational or job.answer,
+                "agent_type"  : job.job_type,
+                "run_date"    : job.run_date,
+                "created_date": job.created_date
+            },
+            "interactions"      : [],
+            "interaction_count" : 0
+        }
+    else:
+        metadata   = db_job.get( "metadata_json" ) or {}
+        created_at = db_job.get( "created_at" )
+        response = {
+            "job_id"       : job_id,
+            "session_id"   : db_job.get( "session_id" ),
+            "job_metadata" : {
+                "question"    : db_job.get( "question_text" ),
+                "answer"      : metadata.get( "answer_conversational" ) or metadata.get( "response_text" ),
+                "agent_type"  : db_job.get( "job_type" ),
+                "run_date"    : created_at.isoformat() if hasattr( created_at, "isoformat" ) else created_at,
+                "created_date": created_at.isoformat() if hasattr( created_at, "isoformat" ) else created_at
+            },
+            "interactions"      : [],
+            "interaction_count" : 0
+        }
 
     # Query notifications by job_id (direct lookup - much simpler than time-window)
     try:

@@ -30,6 +30,8 @@ router = APIRouter( tags=[ "io-files" ] )
 MEDIA_TYPES = {
     ".md"   : "text/markdown; charset=utf-8",
     ".txt"  : "text/plain; charset=utf-8",
+    ".yaml" : "text/yaml; charset=utf-8",
+    ".yml"  : "text/yaml; charset=utf-8",
     ".mp3"  : "audio/mpeg",
     ".wav"  : "audio/wav",
     ".pdf"  : "application/pdf",
@@ -81,9 +83,11 @@ async def get_io_file(
     project_root = cu.get_project_root()
     io_base = project_root + "/io"
 
-    # Build full path - treat as relative to io/
-    if decoded_path.startswith( "/" ):
-        # Remove leading slash for relative path handling
+    # Strip absolute io_base prefix if present (legacy artifact paths from older jobs)
+    io_base_slash = io_base + "/"
+    if decoded_path.startswith( io_base_slash ):
+        decoded_path = decoded_path[ len( io_base_slash ): ]
+    elif decoded_path.startswith( "/" ):
         decoded_path = decoded_path.lstrip( "/" )
 
     full_path = os.path.join( io_base, decoded_path )
@@ -118,7 +122,7 @@ async def get_io_file(
     media_type = MEDIA_TYPES[ ext ]
 
     # For text files, use PlainTextResponse (better encoding handling)
-    if ext in [ ".md", ".txt", ".json" ]:
+    if ext in [ ".md", ".txt", ".json", ".yaml", ".yml" ]:
         try:
             with open( full_path, "r", encoding="utf-8" ) as f:
                 content = f.read()

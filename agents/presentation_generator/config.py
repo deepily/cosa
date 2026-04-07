@@ -33,7 +33,7 @@ class PresentationConfig:
 
     # Model selection
     content_model            : str   = "claude-opus-4-6"
-    automated_content_model  : str   = "claude-haiku-4-5-20251001"
+    automated_content_model  : str   = "claude-sonnet-4-6"
 
     # Presentation parameters
     target_duration_minutes  : int   = 15
@@ -76,7 +76,7 @@ class PresentationConfig:
 
         return cls(
             content_model           = _get( "content model",           default="claude-opus-4-6" ),
-            automated_content_model = _get( "automated content model", default="claude-haiku-4-5-20251001" ),
+            automated_content_model = _get( "automated content model", default="claude-sonnet-4-6" ),
             target_duration_minutes = _get( "target duration minutes", default=15,    return_type="int" ),
             slides_per_minute       = _get( "slides per minute",       default=1.0,   return_type="float" ),
             title_style             = _get( "title style",             default="assertion" ),
@@ -109,14 +109,18 @@ class PresentationConfig:
         output_dir = self.output_dir_template.replace( "{user}", user_id )
         base_path  = cu.get_project_root() + "/" + output_dir
 
-        # Sanitize topic for filename
-        sanitized = re.sub( r"[^a-zA-Z0-9_-]", "-", topic.lower() )[ :50 ].strip( "-" )
+        # Sanitize topic for filename slug (4-5 words max, lowercase-hyphenated)
+        sanitized = re.sub( r"[^a-zA-Z0-9 -]", "", topic.lower() ).strip()
+        words     = sanitized.split()[ :5 ]
+        slug      = "-".join( words ) if words else "untitled"
 
-        # Timestamp
-        timestamp = datetime.now().strftime( "%Y%m%d-%H%M%S" )
+        # Timestamp in project convention: YYYY.MM.DD-at-HH:MM-TZ
+        now = datetime.now().astimezone()
+        tz_name = now.strftime( "%Z" ) or "UTC"
+        timestamp = now.strftime( f"%Y.%m.%d-at-%H:%M-{tz_name}" )
 
-        # Build filename
-        filename = f"{timestamp}-{sanitized}.{file_type}"
+        # Build filename: 2026.04.07-at-16:33-EST-strategy-and-design.yaml
+        filename = f"{timestamp}-{slug}.{file_type}"
 
         return os.path.join( base_path, filename )
 

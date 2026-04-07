@@ -283,6 +283,72 @@ class PresentationOrchestratorAgent:
             await voice_io.notify( f"Presentation generation failed: {str( e )[ :100 ]}", priority="urgent" )
             raise
 
+    async def render_from_yaml_async( self, yaml_path: str ) -> Optional[ PresentationModel ]:
+        """
+        Render-only mode: load existing YAML intermediate, run Phases 6-8 only.
+
+        Skips content generation (Phases 1-5) and gates 1-3.
+        Gate 4 (rendered output review) still fires.
+
+        Requires:
+            - yaml_path is a valid path to a presentation YAML file
+            - File was produced by Phase 5 (PresentationModel.to_yaml())
+
+        Ensures:
+            - Phases 6-8 execute with the loaded PresentationModel
+            - New Marp + visuals output files are generated
+            - Returns PresentationModel on success, None if cancelled/failed
+        """
+        self.metrics[ "start_time" ] = datetime.now().isoformat()
+
+        try:
+            # Load YAML intermediate
+            await voice_io.notify( "Render-only: Loading YAML intermediate...", priority="low" )
+            with open( yaml_path, "r", encoding="utf-8" ) as f:
+                yaml_content = f.read()
+
+            presentation = PresentationModel.from_yaml( yaml_content )
+            if self.debug: print( f"[Orchestrator] Render-only: Loaded {presentation.total_slides} slides from {yaml_path}" )
+
+            # Populate state needed by rendering phases
+            self._presentation_state[ "yaml_path" ]         = yaml_path
+            self._presentation_state[ "presentation_model" ] = presentation
+
+            # Phase 6: Render Text
+            self.state = OrchestratorState.RENDERING_TEXT
+            await voice_io.notify( "Phase 6: Rendering Marp Markdown...", priority="low" )
+            await self._render_text_async( presentation )
+            if self._check_stop(): await self._handle_stop(); return None
+
+            # Phase 7: Render Visuals
+            self.state = OrchestratorState.RENDERING_VISUALS
+            await voice_io.notify( "Phase 7: Rendering visual elements...", priority="low" )
+            await self._render_visuals_async( presentation )
+            if self._check_stop(): await self._handle_stop(); return None
+
+            # Gate 4: Final rendered output review (stub — auto-approve)
+            gate4_approved = await self._gate_4_render_review( presentation )
+            if not gate4_approved: await self._handle_stop(); return None
+
+            # Phase 8: Deliver
+            self.state = OrchestratorState.DELIVERING
+            await voice_io.notify( "Phase 8: Delivering final artifacts...", priority="low" )
+            await self._deliver_async( presentation )
+
+            # Complete
+            self.state = OrchestratorState.COMPLETED
+            self.metrics[ "end_time" ] = datetime.now().isoformat()
+            await voice_io.notify( "Render-only complete!", priority="medium" )
+
+            return presentation
+
+        except Exception as e:
+            self.state = OrchestratorState.FAILED
+            self.metrics[ "end_time" ] = datetime.now().isoformat()
+            logger.error( f"Render-only failed: {e}" )
+            await voice_io.notify( f"Render-only failed: {str( e )[ :100 ]}", priority="urgent" )
+            raise
+
     # =========================================================================
     # Phase Stubs (to be implemented in Phases 3-8)
     # =========================================================================

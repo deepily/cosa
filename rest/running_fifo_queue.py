@@ -376,6 +376,7 @@ class RunningFifoQueue( FifoQueue ):
                     'response_text'   : running_job.answer_conversational,
                     'abstract'        : running_job.artifacts.get( 'abstract' ),
                     'report_link'     : running_job.artifacts.get( 'report_path' ),
+                    'yaml_path'       : running_job.artifacts.get( 'yaml_path' ),
                     'cost_summary'    : running_job.artifacts.get( 'cost_summary' ),
                     'error'           : None,
                     # Phase 6.2: Card-rendering fields for client-side card creation
@@ -454,6 +455,9 @@ class RunningFifoQueue( FifoQueue ):
                 self.pop()  # Auto-emits 'run_update'
                 self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
 
+                # Phase 6A: Evaluate for automated repair
+                self._evaluate_for_auto_fix( running_job )
+
         except Exception as e:
             # Unexpected exception during execution
             du.print_stack_trace(
@@ -510,7 +514,28 @@ class RunningFifoQueue( FifoQueue ):
             self.pop()  # Auto-emits 'run_update'
             self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
 
+            # Phase 6A: Evaluate for automated repair
+            self._evaluate_for_auto_fix( running_job )
+
         return running_job
+
+    def _evaluate_for_auto_fix( self, failed_job ):
+        """
+        Evaluate a failed job for automated BFE repair via the dead queue watchdog.
+
+        Called after a job is pushed to the dead queue. Silently no-ops if the
+        watchdog is not initialized or auto-fix is disabled.
+
+        Args:
+            failed_job: The job that just failed and was pushed to dead queue
+        """
+        try:
+            from cosa.rest.dead_queue_watchdog import get_watchdog
+            watchdog = get_watchdog()
+            if watchdog:
+                watchdog.evaluate( failed_job )
+        except Exception as e:
+            if self.debug: print( f"[RunningFifoQueue] Watchdog evaluation error: {e}" )
 
     def _handle_base_agent( self, running_job: AgentBase, truncated_question: str, agent_timer: sw.Stopwatch ) -> Any:
         """
