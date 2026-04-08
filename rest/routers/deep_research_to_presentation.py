@@ -51,6 +51,7 @@ class ResearchToPresentationSubmitRequest( BaseModel ):
     theme                   : Optional[ str ]   = Field( None, description="Presentation theme name" )
     audience                : Optional[ str ]   = Field( None, description="Target audience level" )
     audience_context        : Optional[ str ]   = Field( None, description="Custom audience description" )
+    lead_model              : Optional[ str ]   = Field( None, description="Override DR lead model (e.g. claude-haiku-4-5 for testing)" )
     dry_run                 : bool              = Field( False, description="Simulate execution without API calls" )
 
 
@@ -147,6 +148,8 @@ async def submit_research_to_presentation(
         args_dict[ "audience" ] = request.audience
     if request.audience_context is not None:
         args_dict[ "audience_context" ] = request.audience_context
+    if request.lead_model:
+        args_dict[ "lead_model" ] = request.lead_model
     if request.dry_run:
         args_dict[ "dry_run" ] = True
 

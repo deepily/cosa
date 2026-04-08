@@ -211,6 +211,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             budget                  = _parse_optional_float( args_dict.get( "budget" ) ),
             target_duration_minutes = _parse_optional_int( args_dict.get( "target_duration_minutes" ) ),
             theme                   = args_dict.get( "theme" ),
+            lead_model              = args_dict.get( "lead_model" ),
             dry_run                 = _parse_boolean( args_dict.get( "dry_run" ) ),
             audience                = args_dict.get( "audience" ),
             audience_context        = args_dict.get( "audience_context" ),

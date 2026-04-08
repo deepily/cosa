@@ -59,6 +59,7 @@ class DeepResearchToPresentationJob( AgenticJobBase ):
         budget: Optional[ float ] = None,
         target_duration_minutes: Optional[ int ] = None,
         theme: Optional[ str ] = None,
+        lead_model: Optional[ str ] = None,
         dry_run: bool = False,
         audience: Optional[ str ] = None,
         audience_context: Optional[ str ] = None,
@@ -105,6 +106,7 @@ class DeepResearchToPresentationJob( AgenticJobBase ):
         self.budget                  = budget
         self.target_duration_minutes = target_duration_minutes
         self.theme                   = theme
+        self.lead_model              = lead_model
         self.dry_run                 = dry_run
         self.audience                = audience
         self.audience_context        = audience_context
@@ -216,6 +218,7 @@ class DeepResearchToPresentationJob( AgenticJobBase ):
                 query                   = self.query,
                 user_email              = self.user_email,
                 budget                  = self.budget,
+                lead_model              = self.lead_model,
                 audience                = self.audience,
                 audience_context        = self.audience_context,
                 target_duration_minutes = self.target_duration_minutes,

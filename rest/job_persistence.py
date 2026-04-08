@@ -312,35 +312,154 @@ def persist_job_failed_from_metadata( job_id, metadata ):
 
 def mark_interrupted_jobs():
     """
-    Bulk UPDATE: set status='interrupted' for all pending/running jobs.
+    Mark in-flight jobs as interrupted at server startup.
 
-    Called at server startup to mark jobs that were in-flight when the
-    previous server instance stopped.
+    Distinguishes between:
+    - RUNNING jobs: legitimately interrupted (were mid-execution) → INTERRUPTED
+    - PENDING jobs with future scheduled_at: preserved for re-enqueue → stays PENDING
+    - PENDING jobs without scheduled_at or past scheduled_at → INTERRUPTED
+
+    Called at server startup by main.py.
 
     Ensures:
-        - All rows with status IN ('pending', 'running') updated to 'interrupted'
-        - Returns count of affected rows
-        - Never raises — returns 0 on failure
+        - RUNNING jobs always marked INTERRUPTED
+        - PENDING jobs with future scheduled_at are preserved
+        - Returns dict with counts: { "running": N, "pending_interrupted": N, "pending_preserved": N }
+        - Never raises — returns zeroed dict on failure
     """
     try:
         now = datetime.now( timezone.utc )
+        counts = { "running": 0, "pending_interrupted": 0, "pending_preserved": 0 }
+
         with get_db() as session:
+
+            # 1. Always mark RUNNING as interrupted (was mid-execution)
             result = session.execute(
                 update( JobHistory )
-                .where( JobHistory.status.in_( [ JobState.PENDING.value, JobState.RUNNING.value ] ) )
+                .where( JobHistory.status == JobState.RUNNING.value )
                 .values(
                     status       = JobState.INTERRUPTED.value,
                     completed_at = now,
                     updated_at   = now
                 )
             )
-            count = result.rowcount
-            if count > 0:
-                print( f"[INFO] Marked {count} interrupted job(s) from previous session" )
-            return count
+            counts[ "running" ] = result.rowcount
+
+            # 2. For PENDING jobs: check scheduled_at in metadata_json
+            pending_rows = session.execute(
+                select( JobHistory )
+                .where( JobHistory.status == JobState.PENDING.value )
+            ).scalars().all()
+
+            for row in pending_rows:
+                metadata     = row.metadata_json or {}
+                scheduled_at = metadata.get( "scheduled_at" )
+
+                if scheduled_at and _is_future_scheduled( scheduled_at, now ):
+                    # Preserve — will be restored by get_restorable_jobs()
+                    counts[ "pending_preserved" ] += 1
+                    print( f"[CJ-PERSIST] Preserving scheduled job {row.id_hash} "
+                           f"(scheduled_at={scheduled_at})" )
+                else:
+                    # No schedule or past schedule — mark interrupted
+                    row.status       = JobState.INTERRUPTED.value
+                    row.completed_at = now
+                    row.updated_at   = now
+                    counts[ "pending_interrupted" ] += 1
+
+        total = counts[ "running" ] + counts[ "pending_interrupted" ]
+        if total > 0:
+            print( f"[INFO] Marked {total} interrupted job(s) "
+                   f"(running={counts[ 'running' ]}, pending={counts[ 'pending_interrupted' ]})" )
+        if counts[ "pending_preserved" ] > 0:
+            print( f"[INFO] Preserved {counts[ 'pending_preserved' ]} scheduled job(s) for re-enqueue" )
+
+        return counts
+
     except Exception as e:
         print( f"[WARN] mark_interrupted_jobs failed: {e}" )
-        return 0
+        return { "running": 0, "pending_interrupted": 0, "pending_preserved": 0 }
+
+
+def _is_future_scheduled( scheduled_at_str, now=None ):
+    """
+    Check if a scheduled_at ISO datetime string is in the future.
+
+    Requires:
+        - scheduled_at_str is a non-empty string (ISO format)
+
+    Ensures:
+        - Returns True if scheduled_at is in the future
+        - Returns False on parse error or past timestamp
+
+    Args:
+        scheduled_at_str: ISO datetime string
+        now: Optional current time (defaults to UTC now)
+
+    Returns:
+        bool
+    """
+    if now is None:
+        now = datetime.now( timezone.utc )
+
+    try:
+        scheduled_dt = datetime.fromisoformat( scheduled_at_str )
+        # Normalize to UTC for comparison
+        if scheduled_dt.tzinfo is None:
+            scheduled_dt = scheduled_dt.replace( tzinfo=timezone.utc )
+        if now.tzinfo is None:
+            now = now.replace( tzinfo=timezone.utc )
+        return scheduled_dt > now
+    except ( ValueError, TypeError ):
+        return False
+
+
+def get_restorable_jobs():
+    """
+    Query pending jobs that have a future scheduled_at for re-enqueue at startup.
+
+    Called after mark_interrupted_jobs() to find jobs that were preserved
+    because they had a future scheduled_at.
+
+    Ensures:
+        - Returns list of dicts with job metadata sufficient for reconstruction
+        - Only returns jobs with status='pending' (preserved by mark_interrupted_jobs)
+        - Returns empty list on failure
+
+    Returns:
+        list of dicts with: id_hash, job_type, user_id, user_email, session_id,
+        routing_command, question_text, scheduled_at, metadata_json
+    """
+    try:
+        with get_db() as session:
+            rows = session.execute(
+                select( JobHistory )
+                .where( JobHistory.status == JobState.PENDING.value )
+            ).scalars().all()
+
+            restorable = []
+            for row in rows:
+                metadata     = row.metadata_json or {}
+                scheduled_at = metadata.get( "scheduled_at" )
+                if scheduled_at:
+                    restorable.append( {
+                        "id_hash"         : row.id_hash,
+                        "job_type"        : row.job_type,
+                        "user_id"         : row.user_id,
+                        "user_email"      : row.user_email or "",
+                        "session_id"      : row.session_id or "",
+                        "routing_command" : row.routing_command or "",
+                        "question_text"   : row.question_text or "",
+                        "scheduled_at"    : scheduled_at,
+                        "monopolize"      : metadata.get( "monopolize", False ),
+                        "metadata_json"   : metadata,
+                    } )
+
+            return restorable
+
+    except Exception as e:
+        print( f"[WARN] get_restorable_jobs failed: {e}" )
+        return []
 
 
 def get_active_job_ids_by_user():
