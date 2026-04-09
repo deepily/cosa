@@ -82,7 +82,7 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "lupin-fastapi",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": du.get_current_datetime_iso(),
         "version": "0.1.0"
     }
 
@@ -112,7 +112,7 @@ async def health():
     """
     return {
         "status": "ok",
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
 @router.get(
@@ -226,13 +226,13 @@ async def init( config_block_id: Optional[ str ] = None ):
             "config_block_id" : config_mgr.config_block_id,
             "database_url"    : new_db_url,
             "environment"     : os.environ.get( "LUPIN_ENV", "development" ),
-            "timestamp"       : datetime.now().isoformat()
+            "timestamp"       : du.get_current_datetime_iso()
         }
     except Exception as e:
         return {
             "status"    : "error",
             "message"   : f"Init failed: {str( e )}",
-            "timestamp" : datetime.now().isoformat()
+            "timestamp" : du.get_current_datetime_iso()
         }
 
 @router.get(
@@ -278,13 +278,13 @@ async def reset_prediction_engine( drop_table: bool = True ):
             "status"        : "success",
             "lancedb_table" : engine.lancedb_table,
             "table_dropped" : table_dropped,
-            "timestamp"     : datetime.now().isoformat()
+            "timestamp"     : du.get_current_datetime_iso()
         }
     except Exception as e:
         return {
             "status"  : "error",
             "message" : f"PredictionEngine reset failed: {str( e )}",
-            "timestamp": datetime.now().isoformat()
+            "timestamp": du.get_current_datetime_iso()
         }
 
 
@@ -327,7 +327,7 @@ async def get_session_id(
     
     return {
         "session_id": session_id,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
 @router.get(
@@ -369,7 +369,7 @@ async def auth_test(current_user: dict = Depends(get_current_user)):
         "status": "success",
         "message": "Authentication is working",
         "user": current_user,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
 @router.get(
@@ -428,7 +428,7 @@ async def get_websocket_sessions(
         "users_with_multiple_sessions": sum(1 for count in user_sessions.values() if count > 1),
         "single_session_policy": websocket_manager.single_session_per_user,
         "sessions": sessions,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
 @router.post(
@@ -477,7 +477,7 @@ async def cleanup_stale_sessions(
     return {
         "sessions_cleaned": cleaned,
         "max_age_hours": max_age_hours,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
 @router.get(
@@ -567,7 +567,7 @@ async def get_websocket_state():
             "orphaned_user_mappings": orphaned_users,
             "single_session_policy_enabled": websocket_manager.single_session_per_user
         },
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
 @router.get(

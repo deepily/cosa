@@ -18,9 +18,9 @@ Example:
 
 import asyncio
 import os
-import re
 import subprocess
 import time
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Optional, List, Dict
 
@@ -54,22 +54,6 @@ SUITE_TIMEOUTS_SECONDS = {
     "presentation"   : 1800,   # 30 min (render-only + Sonnet; +Opus/R2P with flags)
 }
 SUITE_TIMEOUT_DEFAULT_SECONDS = 600  # 10 min fallback for unknown types
-
-# Regex to parse pytest summary line:
-#   "X passed, Y failed, Z skipped, W error in Ns"
-# Each component is optional (pytest omits zero-count items)
-_PYTEST_SUMMARY_RE = re.compile(
-    r"=+\s+"
-    r"(?:(\d+)\s+passed)?"
-    r"(?:,?\s*(\d+)\s+failed)?"
-    r"(?:,?\s*(\d+)\s+skipped)?"
-    r"(?:,?\s*(\d+)\s+warnings?)?"
-    r"(?:,?\s*(\d+)\s+errors?)?"
-    r"(?:,?\s*(\d+)\s+deselected)?"
-    r"\s+in\s+[\d.]+s"
-    r"\s*=+"
-)
-
 
 class TestSuiteJob( AgenticJobBase ):
     """
@@ -206,7 +190,7 @@ class TestSuiteJob( AgenticJobBase ):
         if self.debug: print( f"[TestSuiteJob] Starting do_all() for: {self.test_types}" )
 
         self.state      = JobState.RUNNING
-        self.started_at = datetime.now().isoformat()
+        self.started_at = cu.get_current_datetime_iso()
 
         try:
             result = asyncio.run( self._execute() )
@@ -214,14 +198,14 @@ class TestSuiteJob( AgenticJobBase ):
             # Check if cancellation was requested during execution
             if self._cancel_requested:
                 self.state                 = JobState.CANCELLED
-                self.completed_at          = datetime.now().isoformat()
+                self.completed_at          = cu.get_current_datetime_iso()
                 self.error                 = "Cancelled by user request"
                 self.answer_conversational = result or "Test suite run was cancelled by the user."
                 if self.debug: print( "[TestSuiteJob] Cancelled by user request" )
                 return self.answer_conversational
 
             self.state        = JobState.COMPLETED
-            self.completed_at = datetime.now().isoformat()
+            self.completed_at = cu.get_current_datetime_iso()
             self.result       = result
             self.answer_conversational = result
 
@@ -232,16 +216,20 @@ class TestSuiteJob( AgenticJobBase ):
             return result
 
         except Exception as e:
+            import traceback
+            tb_str = traceback.format_exc()
+
             self.state        = JobState.FAILED
-            self.completed_at = datetime.now().isoformat()
-            self.error        = str( e )
+            self.completed_at = cu.get_current_datetime_iso()
+            self.error        = f"{type( e ).__name__}: {e}\n\n{tb_str}"
 
-            if self.debug:
-                print( f"[TestSuiteJob] Failed: {e}" )
-                import traceback
-                traceback.print_exc()
+            print( f"[TestSuiteJob] Failed: {e}" )
+            print( tb_str )
 
-            self.answer_conversational = f"Test suite run failed: {str( e )}"
+            self.answer_conversational = (
+                f"Test suite run failed: **{type( e ).__name__}**: {e}\n\n"
+                f"```\n{tb_str}\n```"
+            )
             return self.answer_conversational
 
     async def _execute( self ) -> str:
@@ -303,7 +291,8 @@ class TestSuiteJob( AgenticJobBase ):
                 self.suite_results[ suite_type ] = result
 
                 # Report per-suite results
-                status = "PASSED" if result[ "exit_code" ] == 0 else "FAILED"
+                suite_found  = result[ "passed" ] + result[ "failed" ] + result[ "skipped" ] + result[ "errors" ]
+                status       = "PASSED" if suite_found > 0 and ( result[ "failed" ] + result[ "errors" ] ) == 0 else "FAILED"
                 await voice_io.notify(
                     f"{suite_type}: {status} — {result[ 'passed' ]} passed, "
                     f"{result[ 'failed' ]} failed, {result[ 'skipped' ]} skipped",
@@ -315,7 +304,11 @@ class TestSuiteJob( AgenticJobBase ):
             total_passed  = sum( r[ "passed" ] for r in self.suite_results.values() )
             total_failed  = sum( r[ "failed" ] for r in self.suite_results.values() )
             total_skipped = sum( r[ "skipped" ] for r in self.suite_results.values() )
-            all_passed    = all( r[ "exit_code" ] == 0 for r in self.suite_results.values() )
+            total_errors  = sum( r[ "errors" ] for r in self.suite_results.values() )
+            total_found   = total_passed + total_failed + total_skipped + total_errors
+            # Determine pass/fail from parsed results, not exit code — exit code can be
+            # non-zero for warnings or cleanup even when all tests pass (335/0/0 false positive)
+            all_passed    = total_found > 0 and ( total_failed + total_errors ) == 0
 
             # Store artifacts + cost_summary (required by queues.py unified interface)
             self.cost_summary = {
@@ -331,20 +324,93 @@ class TestSuiteJob( AgenticJobBase ):
                 if result.get( "log_path" ):
                     self.artifacts[ f"{suite_type}_log" ] = result[ "log_path" ]
 
-            # Build abstract for completion notification
+            overall = "ALL PASSED" if all_passed else "FAILURES DETECTED"
+
+            # ─── Write full report to io/ for the document viewer ───
+            import urllib.parse
+            import pathlib
+
+            io_base    = project_root + "/io"
+            report_dir = io_base + "/test-suite"
+            pathlib.Path( report_dir ).mkdir( parents=True, exist_ok=True )
+
+            timestamp  = datetime.now().strftime( "%Y.%m.%d-at-%H:%M" )
+            suites_str = "-".join( self.test_types )
+            report_rel = f"test-suite/{timestamp}-{suites_str}-results.md"
+            report_abs = f"{io_base}/{report_rel}"
+
+            # Build markdown report with full stdout for each suite
+            report_lines = [
+                f"# Test Suite Report — {overall}",
+                f"",
+                f"**Date**: {datetime.now().strftime( '%Y-%m-%d %H:%M:%S' )}  ",
+                f"**Suites**: {', '.join( self.test_types )}  ",
+                f"**Total**: {total_passed} passed, {total_failed} failed, {total_skipped} skipped",
+                f"",
+                f"---",
+                f"",
+            ]
+
+            for suite_type, result in self.suite_results.items():
+                sf   = result[ "passed" ] + result[ "failed" ] + result[ "skipped" ] + result[ "errors" ]
+                icon = "PASS" if sf > 0 and ( result[ "failed" ] + result[ "errors" ] ) == 0 else "FAIL"
+                report_lines.append( f"## {suite_type} — {icon}" )
+                report_lines.append( f"" )
+                report_lines.append( f"| Metric | Count |" )
+                report_lines.append( f"|--------|-------|" )
+                report_lines.append( f"| Passed | {result[ 'passed' ]} |" )
+                report_lines.append( f"| Failed | {result[ 'failed' ]} |" )
+                report_lines.append( f"| Skipped | {result[ 'skipped' ]} |" )
+                report_lines.append( f"| Errors | {result[ 'errors' ]} |" )
+                report_lines.append( f"| Duration | {result[ 'duration' ]:.1f}s |" )
+                report_lines.append( f"" )
+
+                # Include full stdout from log file
+                log_path = result.get( "log_path" )
+                if log_path:
+                    try:
+                        full_output = pathlib.Path( log_path ).read_text()
+                        report_lines.append( f"<details><summary>Full output ({len( full_output.splitlines() )} lines)</summary>" )
+                        report_lines.append( f"" )
+                        report_lines.append( f"```" )
+                        report_lines.append( full_output )
+                        report_lines.append( f"```" )
+                        report_lines.append( f"</details>" )
+                    except ( FileNotFoundError, OSError ):
+                        report_lines.append( f"*(log file not available)*" )
+                else:
+                    crash_output = result.get( "startup_crash_output" )
+                    if crash_output:
+                        report_lines.append( f"**STARTUP CRASH** (exit={result[ 'exit_code' ]}):" )
+                        report_lines.append( f"```" )
+                        report_lines.append( crash_output )
+                        report_lines.append( f"```" )
+
+                report_lines.append( f"" )
+                report_lines.append( f"---" )
+                report_lines.append( f"" )
+
+            pathlib.Path( report_abs ).write_text( "\n".join( report_lines ) )
+            self.artifacts[ "report_path" ] = report_rel
+            self.report_path                = report_abs
+
+            # ─── Build abstract with summary ───
             suite_lines = []
             for suite_type, result in self.suite_results.items():
-                icon = "PASS" if result[ "exit_code" ] == 0 else "FAIL"
+                sf   = result[ "passed" ] + result[ "failed" ] + result[ "skipped" ] + result[ "errors" ]
+                icon = "PASS" if sf > 0 and ( result[ "failed" ] + result[ "errors" ] ) == 0 else "FAIL"
                 line = ( f"- **{suite_type}**: {icon} — "
                          f"{result[ 'passed' ]} passed, {result[ 'failed' ]} failed, "
                          f"{result[ 'skipped' ]} skipped" )
                 crash_output = result.get( "startup_crash_output" )
                 if crash_output:
-                    line += f"\n  **STARTUP CRASH** (exit={result[ 'exit_code' ]}): `{crash_output[ :200 ]}`"
+                    line += f"\n  **STARTUP CRASH** (exit={result[ 'exit_code' ]}): `{crash_output[ :500 ]}`"
                 suite_lines.append( line )
 
-            overall = "ALL PASSED" if all_passed else "FAILURES DETECTED"
-            abstract = f"**Test Suite Results: {overall}**\n\n" + "\n".join( suite_lines )
+            abstract = ( f"**Test Suite Results: {overall}**\n\n"
+                         + "\n".join( suite_lines )
+                         + f"\n\n**Total**: {total_passed} passed, {total_failed} failed, {total_skipped} skipped" )
+            self.artifacts[ "abstract" ] = abstract
 
             await voice_io.notify(
                 f"Test suite complete: {overall}",
@@ -354,15 +420,10 @@ class TestSuiteJob( AgenticJobBase ):
             )
 
             # Conversational answer
-            summary = f"Test suite run complete. {overall}.\n\n"
-            for suite_type, result in self.suite_results.items():
-                summary += f"  {suite_type}: {result[ 'passed' ]} passed, {result[ 'failed' ]} failed, {result[ 'skipped' ]} skipped\n"
-                # Surface startup crash output when subprocess failed with no test results
-                crash_output = result.get( "startup_crash_output" )
-                if crash_output:
-                    summary += f"\n  ⚠ {suite_type} STARTUP CRASH (exit={result[ 'exit_code' ]}, 0 tests found):\n"
-                    summary += f"  {crash_output[ :500 ]}\n\n"
-            summary += f"\n  Total: {total_passed} passed, {total_failed} failed, {total_skipped} skipped"
+            summary = ( f"Test suite run complete. {overall}.\n\n"
+                        + "\n".join( f"  {st}: {r[ 'passed' ]} passed, {r[ 'failed' ]} failed, {r[ 'skipped' ]} skipped"
+                                    for st, r in self.suite_results.items() )
+                        + f"\n\n  Total: {total_passed} passed, {total_failed} failed, {total_skipped} skipped" )
 
             return summary
 
@@ -513,6 +574,11 @@ class TestSuiteJob( AgenticJobBase ):
         sanitized_args = [ arg for arg in self.pytest_args if arg != "--bg" ]
         if len( sanitized_args ) < len( self.pytest_args ):
             print( f"[TestSuiteJob] WARNING: Stripped --bg flag from pytest_args (harmful for subprocess-tracked runs)" )
+
+        # Inject --junit-xml for structured result parsing (no brittle regex)
+        junit_xml_path = f"/tmp/{suite_type}-junit-{datetime.now().strftime( '%Y%m%d-%H%M%S' )}.xml"
+        sanitized_args += [ f"--junit-xml={junit_xml_path}" ]
+
         cmd = [ "bash", script_path ] + sanitized_args
 
         if self.debug: print( f"[TestSuiteJob] Running: {' '.join( cmd )}" )
@@ -589,7 +655,8 @@ class TestSuiteJob( AgenticJobBase ):
             exit_code = process.returncode
             stdout    = "".join( stdout_lines )
 
-            # Determine log path from symlink
+            # Write captured stdout to a log file (always, regardless of --bg mode)
+            # This ensures crash output is always available for post-mortem diagnosis
             log_symlinks = {
                 "unit"         : "/tmp/unit-latest.log",
                 "smoke"        : "/tmp/smoke-latest.log",
@@ -599,12 +666,22 @@ class TestSuiteJob( AgenticJobBase ):
                 "e2e"          : "/tmp/e2e-ui-latest.log",
                 "all"          : "/tmp/all-tests-latest.log",
             }
-            log_path = log_symlinks.get( suite_type )
-            if log_path and not os.path.exists( log_path ):
-                log_path = None
+            symlink_path = log_symlinks.get( suite_type )
+            log_path     = None
+            if symlink_path and stdout:
+                import pathlib
+                actual_log = f"/tmp/{suite_type}-{datetime.now().strftime( '%Y%m%d-%H%M%S' )}.log"
+                pathlib.Path( actual_log ).write_text( stdout )
+                pathlib.Path( symlink_path ).unlink( missing_ok=True )
+                pathlib.Path( symlink_path ).symlink_to( actual_log )
+                log_path = actual_log
 
-            # Parse pytest output
-            parsed = self._parse_pytest_output( stdout )
+            # Parse structured junit-xml report (falls back to zeros if file missing)
+            parsed = self._parse_junit_xml( junit_xml_path )
+            try:
+                os.unlink( junit_xml_path )
+            except OSError:
+                pass
             parsed[ "exit_code" ] = exit_code
             parsed[ "log_path" ]  = log_path
             parsed[ "duration" ]  = duration
@@ -636,24 +713,22 @@ class TestSuiteJob( AgenticJobBase ):
             }
 
     @staticmethod
-    def _parse_pytest_output( stdout: str ) -> Dict:
+    def _parse_junit_xml( xml_path: str ) -> Dict:
         """
-        Parse pytest summary output for pass/fail/skip/error counts.
+        Parse pytest junit-xml report for pass/fail/skip/error counts.
 
-        Handles various pytest summary formats:
-            "3 passed in 1.23s"
-            "10 passed, 2 failed, 1 skipped in 5.67s"
-            "5 passed, 3 failed, 1 error in 2.34s"
+        Uses pytest's built-in --junit-xml output for structured, order-independent
+        result extraction. No brittle regex parsing of text output.
 
         Requires:
-            - stdout is a string (may be empty)
+            - xml_path is a file path (may not exist if pytest crashed before writing)
 
         Ensures:
             - Returns dict with passed, failed, skipped, errors keys (all int)
-            - Returns zeros if summary line not found
+            - Returns zeros if file not found or unparseable
 
         Args:
-            stdout: Full pytest console output
+            xml_path: Path to the junit-xml report file
 
         Returns:
             dict: Parsed counts with keys: passed, failed, skipped, errors
@@ -665,14 +740,23 @@ class TestSuiteJob( AgenticJobBase ):
             "errors"  : 0,
         }
 
-        match = _PYTEST_SUMMARY_RE.search( stdout )
-        if match:
-            if match.group( 1 ): result[ "passed" ]  = int( match.group( 1 ) )
-            if match.group( 2 ): result[ "failed" ]  = int( match.group( 2 ) )
-            if match.group( 3 ): result[ "skipped" ] = int( match.group( 3 ) )
-            # group(4) = warnings (not tracked)
-            if match.group( 5 ): result[ "errors" ]  = int( match.group( 5 ) )
-            # group(6) = deselected (not tracked)
+        try:
+            tree      = ET.parse( xml_path )
+            root      = tree.getroot()
+            testsuite = root if root.tag == "testsuite" else root.find( "testsuite" )
+
+            if testsuite is not None:
+                tests    = int( testsuite.get( "tests", 0 ) )
+                failures = int( testsuite.get( "failures", 0 ) )
+                errors   = int( testsuite.get( "errors", 0 ) )
+                skipped  = int( testsuite.get( "skipped", 0 ) )
+
+                result[ "passed" ]  = tests - failures - errors - skipped
+                result[ "failed" ]  = failures
+                result[ "skipped" ] = skipped
+                result[ "errors" ]  = errors
+        except ( FileNotFoundError, ET.ParseError, ValueError ):
+            pass
 
         return result
 
@@ -735,15 +819,28 @@ def quick_smoke_test():
         assert TestSuiteJob.JOB_PREFIX == "ts"
         print( "  Class constants correct" )
 
-        # Test 9: Parse pytest output
-        print( "Testing _parse_pytest_output..." )
-        parsed = TestSuiteJob._parse_pytest_output(
-            "======== 195 passed, 3 failed, 32 skipped in 350.12s ========"
-        )
-        assert parsed[ "passed" ] == 195
+        # Test 9: Parse junit-xml output
+        print( "Testing _parse_junit_xml..." )
+        import tempfile
+        with tempfile.NamedTemporaryFile( mode="w", suffix=".xml", delete=False ) as f:
+            f.write( '<?xml version="1.0" encoding="utf-8"?>\n'
+                     '<testsuite name="pytest" errors="1" failures="3" skipped="32" tests="231" time="350.12">\n'
+                     '</testsuite>\n' )
+            xml_path = f.name
+        parsed = TestSuiteJob._parse_junit_xml( xml_path )
+        os.unlink( xml_path )
+        assert parsed[ "passed" ] == 195, f"Expected 195 passed, got {parsed[ 'passed' ]}"
         assert parsed[ "failed" ] == 3
         assert parsed[ "skipped" ] == 32
+        assert parsed[ "errors" ] == 1
         print( f"  Parsed: {parsed}" )
+
+        # Test 10: Missing XML file returns zeros (startup crash scenario)
+        print( "Testing _parse_junit_xml with missing file..." )
+        parsed = TestSuiteJob._parse_junit_xml( "/tmp/nonexistent-junit.xml" )
+        assert parsed[ "passed" ] == 0
+        assert parsed[ "failed" ] == 0
+        print( f"  Missing file returns zeros: {parsed}" )
 
         print( "\n  Smoke test completed successfully" )
 

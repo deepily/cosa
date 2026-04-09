@@ -118,6 +118,33 @@ def get_current_datetime(tz_name: str = "US/Eastern", format_str: str = '%Y-%m-%
     return tz_date.strftime(format_str)
 
 
+def get_current_datetime_iso( tz_name: str = "US/Eastern" ) -> str:
+    """
+    Get an ISO 8601 formatted datetime string with timezone offset.
+
+    Designed for frontend-facing timestamps where JavaScript's new Date()
+    needs to parse the string correctly regardless of browser timezone.
+
+    Requires:
+        - tz_name is a valid timezone string recognized by pytz
+
+    Ensures:
+        - Returns an ISO 8601 string with UTC offset (e.g., "2026-04-08T14:08:19.123456-04:00")
+        - Timezone-aware: JavaScript new Date() correctly handles the offset
+        - Consistent with the system's Eastern timezone convention
+
+    Args:
+        tz_name: The name of the timezone (default: "US/Eastern")
+
+    Returns:
+        An ISO 8601 formatted datetime string with timezone offset
+
+    Raises:
+        pytz.exceptions.UnknownTimeZoneError: If tz_name is not a valid timezone
+    """
+    return get_current_datetime_raw( tz_name ).isoformat()
+
+
 def get_current_date(tz_name: str = "US/Eastern", return_prose: bool = False, offset: int = 0) -> str:
     """
     Get the current date in the specified timezone with optional formatting.

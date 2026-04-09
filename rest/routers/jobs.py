@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from datetime import datetime
 import os
+import cosa.utils.util as du
 
 router = APIRouter(tags=["jobs"])
 
@@ -74,7 +75,7 @@ async def delete_snapshot(id: str):
         "status": "deleted",
         "id": id,
         "message": f"Snapshot {id} deleted successfully (STUB)",
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
 @router.get(

@@ -106,16 +106,13 @@ async def notify_progress(
         queue_name: Optional queue name for queue-specific routing
         progress_group_id: Optional group ID for in-place DOM updates
     """
-    await _dispatcher.notify(
-        message           = message,
-        sender_id         = SENDER_ID,
-        target_user       = TARGET_USER,
-        priority          = priority,
-        abstract          = abstract,
-        session_name      = session_name or SESSION_NAME,
-        job_id            = job_id,
-        queue_name        = queue_name,
-        progress_group_id = progress_group_id
+    _dispatcher.sender_id    = SENDER_ID
+    _dispatcher.session_name = session_name or SESSION_NAME
+    _dispatcher.target_user  = TARGET_USER
+    await _dispatcher.notify_progress(
+        message, priority=priority, abstract=abstract,
+        session_name=session_name or SESSION_NAME, job_id=job_id,
+        queue_name=queue_name, progress_group_id=progress_group_id
     )
 
 

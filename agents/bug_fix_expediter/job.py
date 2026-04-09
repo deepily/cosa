@@ -19,6 +19,7 @@ import asyncio
 from datetime import datetime
 from typing import Optional
 
+import cosa.utils.util as cu
 from cosa.agents.agentic_job_base import AgenticJobBase
 from cosa.rest.job_state import JobState
 
@@ -116,7 +117,7 @@ class BugFixExpediterJob( AgenticJobBase ):
         if self.debug: print( f"[BugFixExpediterJob] Starting do_all() for dead job: {self.dead_job_id}" )
 
         self.state      = JobState.RUNNING
-        self.started_at = datetime.now().isoformat()
+        self.started_at = cu.get_current_datetime_iso()
 
         try:
             result = asyncio.run( self._execute() )
@@ -124,14 +125,14 @@ class BugFixExpediterJob( AgenticJobBase ):
             # Check if cancellation was requested during execution
             if self._cancel_requested:
                 self.state                 = JobState.CANCELLED
-                self.completed_at          = datetime.now().isoformat()
+                self.completed_at          = cu.get_current_datetime_iso()
                 self.error                 = "Cancelled by user request"
                 self.answer_conversational = result or "Bug fix was cancelled."
                 if self.debug: print( "[BugFixExpediterJob] Cancelled by user request" )
                 return self.answer_conversational
 
             self.state        = JobState.COMPLETED
-            self.completed_at = datetime.now().isoformat()
+            self.completed_at = cu.get_current_datetime_iso()
             self.result       = result
             self.answer_conversational = result
 
@@ -146,7 +147,7 @@ class BugFixExpediterJob( AgenticJobBase ):
             tb_str = traceback.format_exc()
 
             self.state        = JobState.FAILED
-            self.completed_at = datetime.now().isoformat()
+            self.completed_at = cu.get_current_datetime_iso()
             self.error        = f"{e}\n\n{tb_str}"
 
             print( f"[BugFixExpediterJob] Failed: {e}" )

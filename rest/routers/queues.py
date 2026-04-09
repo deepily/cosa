@@ -15,6 +15,8 @@ from fastapi.responses import JSONResponse
 from datetime import datetime
 from typing import Dict, Any, Optional
 
+import cosa.utils.util as cu
+
 # Import dependencies
 from cosa.rest.auth import get_current_user
 from cosa.rest.queue_auth import authorize_queue_filter
@@ -336,6 +338,7 @@ async def get_queue(
                 "response_text"   : job.answer_conversational or job.answer,
                 "timestamp"       : job.run_date or job.created_date,
                 "user_id"         : authorized_filter,
+                "user_email"      : job.user_email,
                 "session_id"      : job.session_id,  # For job-notification correlation
                 "agent_type"      : job.job_type,  # Unified property replaces getattr() chain
                 "has_interactions": bool( job.session_id ),  # True if can query notifications
@@ -382,6 +385,7 @@ async def get_queue(
             "question_text": job.last_question_asked,
             "timestamp"    : job.run_date or job.created_date,
             "user_id"      : authorized_filter,
+            "user_email"   : job.user_email,
             "session_id"   : job.session_id,
             "agent_type"   : job.job_type,  # Unified property replaces getattr() chain
             "status"       : job.state.value if hasattr( job.state, 'value' ) else str( job.state ),
@@ -455,7 +459,7 @@ async def reset_queues(
             "status": "success",
             "message": "All queues have been reset",
             "user_id": user_id,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": cu.get_current_datetime_iso(),
             "queues_reset": {
                 "todo": f"cleared {initial_counts['todo']} items",
                 "run": f"cleared {initial_counts['run']} items", 
@@ -739,7 +743,7 @@ async def send_job_message(
                     "priority"          : priority,
                     "job_id"            : job_id,
                     "sender_id"         : f"user@{current_user[ 'email' ]}",
-                    "timestamp"         : datetime.now().isoformat(),
+                    "timestamp"         : cu.get_current_datetime_iso(),
                 },
             },
         )
@@ -776,7 +780,7 @@ async def send_job_message(
                 "priority"          : "low",
                 "job_id"            : job_id,
                 "sender_id"         : f"swe.lead@lupin",
-                "timestamp"         : datetime.now().isoformat(),
+                "timestamp"         : cu.get_current_datetime_iso(),
             },
         }
         ws_manager.emit_to_user_sync( user_id=user_id, event="notification_queue_update", data=echo_data )
@@ -860,6 +864,110 @@ async def cancel_job(
         "status"  : "cancel_requested",
         "job_id"  : job_id,
         "message" : "Cancellation requested. Job will stop at next checkpoint.",
+    }
+
+
+@router.delete(
+    "/queue/{queue_name}/{job_id}",
+    summary     = "Remove job from queue",
+    description = "Forcefully remove a job from run, done, or dead queue."
+)
+async def delete_queue_job(
+    queue_name: str,
+    job_id: str,
+    current_user: dict = Depends( get_current_user ),
+    running_queue = Depends( get_running_queue ),
+    done_queue    = Depends( get_done_queue ),
+    dead_queue    = Depends( get_dead_queue ),
+):
+    """
+    Forcefully remove a job from an in-memory queue.
+
+    For running jobs, also signals cancellation so the execution thread stops.
+    Emits a job_removed WebSocket event so other connected clients update.
+
+    Requires:
+        - queue_name is one of: 'run', 'done', 'dead'
+        - job_id identifies an existing job in the specified queue
+        - current_user is authenticated
+        - Job belongs to current user OR user is admin
+
+    Ensures:
+        - Job is removed from the specified queue
+        - Running jobs receive cancel signal before removal
+        - WebSocket event emitted for UI synchronization
+        - Returns confirmation with job_id and queue name
+
+    Raises:
+        - HTTPException 400: Invalid queue name
+        - HTTPException 404: Job not found in specified queue
+        - HTTPException 403: User does not own this job and is not admin
+
+    Args:
+        queue_name: Target queue ('run', 'done', 'dead')
+        job_id: Target job ID
+        current_user: Authenticated user info
+        running_queue: Running queue dependency
+        done_queue: Done queue dependency
+        dead_queue: Dead queue dependency
+
+    Returns:
+        dict: {status, job_id, queue}
+    """
+    user_id = current_user[ "uid" ]
+
+    # Validate queue name
+    queue_map = {
+        "run"  : running_queue,
+        "done" : done_queue,
+        "dead" : dead_queue
+    }
+    if queue_name not in queue_map:
+        raise HTTPException( status_code=400, detail=f"Invalid queue name for deletion: {queue_name}. Must be 'run', 'done', or 'dead'." )
+
+    queue = queue_map[ queue_name ]
+
+    print( f"[API] DELETE /api/queue/{queue_name}/{job_id} - user: {user_id}" )
+
+    # Validate job exists
+    try:
+        job = queue.get_by_id_hash( job_id )
+    except KeyError:
+        raise HTTPException( status_code=404, detail=f"Job not found in {queue_name} queue: {job_id}" )
+
+    # Validate ownership (user or admin)
+    if job.user_id != user_id and not is_admin( current_user ):
+        raise HTTPException( status_code=403, detail="Not authorized to remove this job" )
+
+    # For running jobs: signal cancellation before removal
+    if queue_name == "run" and isinstance( job, AgenticJobBase ):
+        job.request_cancel()
+        print( f"[API] Cancel signaled for running job {job_id} before removal" )
+
+    # Remove from queue
+    deleted = queue.delete_by_id_hash( job_id )
+    if not deleted:
+        raise HTTPException( status_code=404, detail=f"Failed to delete job {job_id} from {queue_name} queue" )
+
+    # Emit WebSocket event for UI synchronization
+    try:
+        import src.fastapi_app.main as main_module
+        ws_manager = main_module.websocket_manager
+        if ws_manager:
+            ws_manager.emit_to_user_sync( user_id, 'job_removed', {
+                'job_id'    : job_id,
+                'queue'     : queue_name,
+                'timestamp' : cu.get_current_datetime_iso()
+            } )
+    except Exception as e:
+        print( f"[API] Warning: Failed to emit job_removed event: {e}" )
+
+    print( f"[API] Job {job_id} removed from {queue_name} queue by user {user_id}" )
+
+    return {
+        "status" : "deleted",
+        "job_id" : job_id,
+        "queue"  : queue_name
     }
 
 
@@ -1132,7 +1240,7 @@ async def pause_job(
                 "job_id"     : job_id,
                 "from_state" : JobState.QUEUED.value,
                 "to_state"   : JobState.PAUSED.value,
-                "timestamp"  : datetime.now().isoformat(),
+                "timestamp"  : cu.get_current_datetime_iso(),
             },
         )
     except Exception as e:
@@ -1203,7 +1311,7 @@ async def resume_job(
                 "job_id"     : job_id,
                 "from_state" : JobState.PAUSED.value,
                 "to_state"   : JobState.QUEUED.value,
-                "timestamp"  : datetime.now().isoformat(),
+                "timestamp"  : cu.get_current_datetime_iso(),
             },
         )
     except Exception as e:

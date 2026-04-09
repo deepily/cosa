@@ -2,6 +2,7 @@ from fastapi import WebSocket
 from datetime import datetime
 from typing import Dict, Optional, List
 import asyncio
+import cosa.utils.util as du
 from cosa.config.configuration_manager import ConfigurationManager
 
 
@@ -57,6 +58,8 @@ class WebSocketManager:
         self.user_sessions: Dict[str, list] = {}
         # Cache user_id → email for debug logging (populated on connect, cleared on last disconnect)
         self.user_to_email: Dict[str, str] = {}
+        # Track which sessions belong to admin users (for targeted admin broadcasts)
+        self.session_is_admin: Dict[str, bool] = {}
         # Store reference to main event loop for thread-safe operations
         self.main_loop: Optional[asyncio.AbstractEventLoop] = None
         # Session management configuration
@@ -99,7 +102,7 @@ class WebSocketManager:
         self.main_loop = loop
         print( "[WS] Event loop reference stored for thread-safe operations" )
     
-    def connect( self, websocket: WebSocket, session_id: str, user_id: str = None, subscribed_events: List[str] = None, email: str = None ):
+    def connect( self, websocket: WebSocket, session_id: str, user_id: str = None, subscribed_events: List[str] = None, email: str = None, roles: list = None ):
         """
         Add a new WebSocket connection with optional user association.
         
@@ -156,6 +159,9 @@ class WebSocketManager:
                 self.user_sessions[user_id].append( session_id )
             if email:
                 self.user_to_email[ user_id ] = email
+
+        # Track admin status for targeted admin broadcasts
+        self.session_is_admin[ session_id ] = bool( roles and "admin" in roles )
 
         # Store event subscriptions
         session_type = "listener" if session_id.startswith( "cc-listener-" ) else "browser"
@@ -216,6 +222,9 @@ class WebSocketManager:
         # Clean up event subscriptions
         if session_id in self.session_subscriptions:
             del self.session_subscriptions[session_id]
+
+        # Clean up admin tracking
+        self.session_is_admin.pop( session_id, None )
 
         # Clean up user association
         if session_id in self.session_to_user:
@@ -285,7 +294,7 @@ class WebSocketManager:
         # Build message in format expected by queue.js
         message = {
             "type": event,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": du.get_current_datetime_iso(),
             **data
         }
         
@@ -359,7 +368,7 @@ class WebSocketManager:
             
         message = {
             "type": event,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": du.get_current_datetime_iso(),
             **data
         }
         
@@ -473,6 +482,48 @@ class WebSocketManager:
             print( f"[WS] Scheduled emission of {event} to user {user_id}{email_suffix}" )
         except Exception as e:
             print( f"[ERROR] Failed to schedule emission to user {user_id}: {e}" )
+
+    def emit_to_admins_sync( self, event: str, data: dict, exclude_user_id: str = None ):
+        """
+        Emit event to all connected admin sessions, optionally excluding one user.
+
+        Requires:
+            - event is a non-empty string event name
+            - data is a dictionary containing event data
+            - self.main_loop is set and running
+
+        Ensures:
+            - Sends event to all sessions where session_is_admin is True
+            - Skips sessions belonging to exclude_user_id (to avoid double delivery)
+            - Thread-safe via asyncio.run_coroutine_threadsafe
+            - Does not block calling thread
+
+        Raises:
+            - None (errors logged but not raised)
+        """
+        if not self.main_loop or not self.main_loop.is_running():
+            return
+
+        # Collect admin user_ids (deduplicated), excluding the specified user
+        admin_user_ids = set()
+        for session_id, is_admin in self.session_is_admin.items():
+            if not is_admin:
+                continue
+            user_id = self.session_to_user.get( session_id )
+            if user_id and user_id != exclude_user_id:
+                admin_user_ids.add( user_id )
+
+        for admin_uid in admin_user_ids:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self.emit_to_user( admin_uid, event, data ),
+                    self.main_loop
+                )
+                email_tag    = self.user_to_email.get( admin_uid, "" )
+                email_suffix = f" ({email_tag})" if email_tag else ""
+                if self.debug: print( f"[WS] Admin broadcast: {event} → {admin_uid}{email_suffix}" )
+            except Exception as e:
+                print( f"[ERROR] Failed to schedule admin emission to {admin_uid}: {e}" )
     
     def is_user_connected( self, user_id: str ) -> bool:
         """
@@ -543,7 +594,7 @@ class WebSocketManager:
 
         message = {
             "type": event,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": du.get_current_datetime_iso(),
             **data
         }
 
@@ -738,7 +789,7 @@ class WebSocketManager:
                 # Attempt to send a ping message
                 await websocket.send_json( {
                     "type": "sys_ping",
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": du.get_current_datetime_iso()
                 } )
             except:
                 # Connection is dead, mark for removal

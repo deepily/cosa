@@ -1,5 +1,30 @@
 # COSA Development History
 
+> **✅ SESSIONS 97f29034+a312ee22 COMMITTED**: CJ Flow UPE — Admin broadcast, timezone timestamps, delete endpoint, test suite hardening (2026.04.08)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session a312ee22 — Bug Fix: Queue Badge Counts + Process Owner Badge + Timestamps + Delete**:
+> - Badge counts: local `queueCounts` tracker replaces DOM counting on collapsed containers
+> - Process owner: `user_email` propagated through API responses (2 dicts in `queues.py`), all WebSocket metadata dicts (8 in `running_fifo_queue.py`, 2 in `todo_fifo_queue.py`, 1 in `queue_consumer.py`)
+> - Timezone: `get_current_datetime_iso()` added to `util.py` — returns Eastern ISO with offset. Replaced ~65 `datetime.now().isoformat()` calls across 20 files
+> - Delete endpoint: `DELETE /api/queue/{queue_name}/{job_id}` with owner/admin auth, `job_removed` WS event
+>
+> **Session 97f29034 — CJ Flow UPE + Test Suite Hardening**:
+> - WebSocket admin broadcast: `is_admin` stored in session metadata at connect, `emit_to_admins_sync()` broadcasts to admin sessions with `exclude_user_id`
+> - `websocket.py` +roles param for admin detection
+> - `cosa_interface.py`: `_dispatcher.notify()` → `_dispatcher.notify_progress()` (method fix)
+> - `test_suite/job.py`: Removed redundant "View Full Log" link, false positive fix (exit_code → parsed results for pass/fail)
+> - `system.py`: Timestamp fixes for `/api/config/client` and system endpoints
+>
+> **Files Modified (23)**: `util.py`, `queue_consumer.py`, `queue_util.py`, `running_fifo_queue.py`, `todo_fifo_queue.py`, `websocket_manager.py`, `routers/queues.py`, `routers/jobs.py`, `routers/system.py`, `routers/websocket.py`, `routers/websocket_admin.py`, `agentic_job_base.py`, `bug_fix_expediter/job.py`, `claude_code/job.py`, `deep_research/job.py`, `deep_research_to_podcast/job.py`, `deep_research_to_presentation/job.py`, `podcast_generator/job.py`, `presentation_generator/job.py`, `presentation_generator/orchestrator.py`, `swe_team/job.py`, `test_suite/cosa_interface.py`, `test_suite/job.py`
+> **Commit**: pending
+>
+> Total: +470 insertions, -162 deletions across 23 files
+
+---
+
 > **✅ SESSIONS 5946362f+a47f938e COMMITTED**: Render-only mode, 3 UI bug fixes, BFE Phase 6 automated repair loop (2026.04.07)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >

@@ -1077,7 +1077,8 @@ class TodoFifoQueue( FifoQueue ):
             'agent_type'    : display_name,
             'timestamp'     : du.get_current_time(),
             'status'        : 'pending',
-            'expediting'    : True
+            'expediting'    : True,
+            'user_email'    : user_email
         }
         emit_job_state_transition( self.websocket_mgr, spec_id, JobState.PENDING, JobState.QUEUED, user_id, spec_metadata )
 
@@ -1187,6 +1188,7 @@ class TodoFifoQueue( FifoQueue ):
             'scheduled_at'  : item.scheduled_at,
             'monopolize'    : item.monopolize,
             'paused'        : item.state == JobState.PAUSED,
+            'user_email'    : item.user_email,
         }
         emit_job_state_transition( self.websocket_mgr, item.id_hash, JobState.PENDING, JobState.QUEUED, user_id, metadata )
 

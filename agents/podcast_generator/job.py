@@ -22,6 +22,7 @@ import asyncio
 from datetime import datetime
 from typing import Optional, List
 
+import cosa.utils.util as cu
 from cosa.agents.agentic_job_base import AgenticJobBase
 from cosa.rest.job_state import JobState
 
@@ -141,7 +142,7 @@ class PodcastGeneratorJob( AgenticJobBase ):
             print( f"[PodcastGeneratorJob] Starting do_all() for: {self.research_path}" )
 
         self.state      = JobState.RUNNING
-        self.started_at = datetime.now().isoformat()
+        self.started_at = cu.get_current_datetime_iso()
 
         try:
             result = asyncio.run( self._execute() )
@@ -149,7 +150,7 @@ class PodcastGeneratorJob( AgenticJobBase ):
             # Check if cancellation was requested during execution
             if self._cancel_requested:
                 self.state                 = JobState.CANCELLED
-                self.completed_at          = datetime.now().isoformat()
+                self.completed_at          = cu.get_current_datetime_iso()
                 self.error                 = "Cancelled by user request"
                 self.answer_conversational = result or "Podcast generation was cancelled by the user."
                 if self.debug:
@@ -157,7 +158,7 @@ class PodcastGeneratorJob( AgenticJobBase ):
                 return self.answer_conversational
 
             self.state        = JobState.COMPLETED
-            self.completed_at = datetime.now().isoformat()
+            self.completed_at = cu.get_current_datetime_iso()
             self.result       = result
             self.answer_conversational = result
 
@@ -169,7 +170,7 @@ class PodcastGeneratorJob( AgenticJobBase ):
 
         except Exception as e:
             self.state        = JobState.FAILED
-            self.completed_at = datetime.now().isoformat()
+            self.completed_at = cu.get_current_datetime_iso()
             self.error        = str( e )
 
             if self.debug:

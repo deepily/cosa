@@ -12,6 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime
 from typing import Optional
 
+import cosa.utils.util as du
+
 # Import dependencies
 from cosa.rest.auth import get_current_user
 from cosa.rest.websocket_manager import WebSocketManager
@@ -82,7 +84,7 @@ async def get_websocket_sessions(
         "total_sessions": len(sessions),
         "total_users": total_users,
         "sessions": sessions,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
 @router.get(
@@ -127,7 +129,7 @@ async def get_websocket_stats(
         "connection_count": websocket_manager.get_connection_count(),
         "user_count": len(websocket_manager.user_sessions),
         "subscription_stats": subscription_stats,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
 @router.post(
@@ -176,7 +178,7 @@ async def cleanup_websocket_sessions(
     return {
         "sessions_cleaned": sessions_cleaned,
         "max_age_hours": max_age_hours,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
 @router.get(
@@ -270,7 +272,7 @@ async def disconnect_websocket_session(
     return {
         "session_id": session_id,
         "status": "disconnected",
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
 @router.put(
@@ -315,7 +317,7 @@ async def update_single_session_policy(
     
     return {
         "single_session_policy": enabled,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
 @router.get(
@@ -355,5 +357,5 @@ async def get_available_events(
     return {
         "available_events": sorted(list(websocket_manager.available_events)),
         "total_events": len(websocket_manager.available_events),
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }

@@ -95,7 +95,8 @@ def start_todo_producer_run_consumer_thread( todo_queue: Any, running_queue: Any
                             'question_text' : job.last_question_asked,
                             'agent_type'    : job.job_type,
                             'timestamp'     : job.created_date,
-                            'started_at'    : datetime.now().isoformat()
+                            'user_email'    : job.user_email,
+                            'started_at'    : du.get_current_datetime_iso()
                         }
                         emit_job_state_transition( running_queue.websocket_mgr, job_id, JobState.QUEUED, JobState.RUNNING, user_id, metadata )
 

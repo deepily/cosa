@@ -22,6 +22,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
+import cosa.utils.util as cu
 
 from cosa.agents.agentic_job_base import AgenticJobBase
 from cosa.rest.job_state import JobState
@@ -199,13 +200,13 @@ class SweTeamJob( AgenticJobBase ):
             print( f"[SweTeamJob] Starting do_all() for: {self.task[ :50 ]}..." )
 
         self.state      = JobState.RUNNING
-        self.started_at = datetime.now().isoformat()
+        self.started_at = cu.get_current_datetime_iso()
 
         try:
             result = asyncio.run( self._execute() )
 
             self.state        = JobState.COMPLETED
-            self.completed_at = datetime.now().isoformat()
+            self.completed_at = cu.get_current_datetime_iso()
             self.result       = result
             self.answer_conversational = result
 
@@ -217,7 +218,7 @@ class SweTeamJob( AgenticJobBase ):
 
         except Exception as e:
             self.state        = JobState.FAILED
-            self.completed_at = datetime.now().isoformat()
+            self.completed_at = cu.get_current_datetime_iso()
             self.error        = str( e )
 
             if self.debug:

@@ -8,6 +8,7 @@ inherently owned by any single queue class.
 from datetime import datetime
 from typing import Any, Optional
 
+import cosa.utils.util as du
 from cosa.rest.job_state import JobState, assert_valid_transition, STATE_TO_UI_CONTAINER
 from cosa.rest.job_persistence import (
     is_agentic_job_type,
@@ -66,7 +67,7 @@ def emit_job_state_transition(
             'job_id'     : job_id,
             'from_state' : from_state.value,
             'to_state'   : to_state.value,
-            'timestamp'  : datetime.now().isoformat()
+            'timestamp'  : du.get_current_datetime_iso()
         }
 
         if metadata:
@@ -75,6 +76,8 @@ def emit_job_state_transition(
         try:
             if user_id:
                 websocket_mgr.emit_to_user_sync( user_id, 'job_state_transition', data )
+                # Also notify admin users watching "all jobs" view
+                websocket_mgr.emit_to_admins_sync( 'job_state_transition', data, exclude_user_id=user_id )
             else:
                 websocket_mgr.emit( 'job_state_transition', data )
         except Exception as e:

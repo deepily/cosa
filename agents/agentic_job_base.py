@@ -21,6 +21,7 @@ import uuid
 from datetime import datetime
 from typing import Optional, Dict, Any
 
+import cosa.utils.util as cu
 from cosa.rest.job_state import JobState
 
 
@@ -93,7 +94,7 @@ class AgenticJobBase( ABC ):
         # Queue system required attributes (compatible with SolutionSnapshot/AgentBase)
         self.id_hash      = self._generate_id()
         self.push_counter = 0
-        self.run_date     = datetime.now().isoformat()
+        self.run_date     = cu.get_current_datetime_iso()
 
         # Execution state tracking
         self.started_at   = None

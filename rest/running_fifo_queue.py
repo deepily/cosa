@@ -222,7 +222,7 @@ class RunningFifoQueue( FifoQueue ):
                 self._notify( f"Job failed: {e}", job=failed_job, priority="urgent" )
 
                 # Build metadata matching _handle_error_case pattern
-                completed_at     = datetime.now().isoformat()
+                completed_at     = du.get_current_datetime_iso()
                 started_at       = failed_job.started_at
                 duration_seconds = None
                 if started_at:
@@ -241,6 +241,7 @@ class RunningFifoQueue( FifoQueue ):
                     'status'          : JobState.FAILED.value,
                     'has_interactions' : bool( failed_job.session_id ),
                     'is_cache_hit'    : False,
+                    'user_email'      : failed_job.user_email,
                     'started_at'      : started_at,
                     'completed_at'    : completed_at,
                     'duration_seconds': duration_seconds
@@ -286,7 +287,7 @@ class RunningFifoQueue( FifoQueue ):
         job_id  = running_job.id_hash
         user_id = running_job.user_id
 
-        completed_at = datetime.now().isoformat()
+        completed_at = du.get_current_datetime_iso()
         started_at   = running_job.started_at
         duration_seconds = None
         if started_at:
@@ -305,6 +306,7 @@ class RunningFifoQueue( FifoQueue ):
             'status'          : JobState.FAILED.value,
             'has_interactions': bool( running_job.session_id ),
             'is_cache_hit'    : False,
+            'user_email'      : running_job.user_email,
             'started_at'      : started_at,
             'completed_at'    : completed_at,
             'duration_seconds': duration_seconds
@@ -359,7 +361,7 @@ class RunningFifoQueue( FifoQueue ):
                 job_id  = running_job.id_hash
                 user_id = running_job.user_id
                 # Calculate completed_at timestamp for duration calculation
-                completed_at = datetime.now().isoformat()
+                completed_at = du.get_current_datetime_iso()
                 started_at   = running_job.started_at
 
                 # Calculate duration_seconds if both timestamps exist
@@ -386,6 +388,7 @@ class RunningFifoQueue( FifoQueue ):
                     'status'          : JobState.COMPLETED.value,
                     'has_interactions': bool( running_job.session_id ),
                     'is_cache_hit'    : running_job.is_cache_hit,
+                    'user_email'      : running_job.user_email,
                     'started_at'      : started_at,
                     'completed_at'    : completed_at,
                     'duration_seconds': duration_seconds
@@ -424,7 +427,7 @@ class RunningFifoQueue( FifoQueue ):
                 user_id = running_job.user_id
 
                 # Calculate timestamps for error case
-                completed_at = datetime.now().isoformat()
+                completed_at = du.get_current_datetime_iso()
                 started_at   = running_job.started_at
                 duration_seconds = None
                 if started_at:
@@ -446,6 +449,7 @@ class RunningFifoQueue( FifoQueue ):
                     'status'          : JobState.FAILED.value,
                     'has_interactions': bool( running_job.session_id ),
                     'is_cache_hit'    : False,
+                    'user_email'      : running_job.user_email,
                     'started_at'      : started_at,
                     'completed_at'    : completed_at,
                     'duration_seconds': duration_seconds
@@ -483,7 +487,7 @@ class RunningFifoQueue( FifoQueue ):
             user_id = running_job.user_id
 
             # Calculate timestamps for crash case
-            completed_at = datetime.now().isoformat()
+            completed_at = du.get_current_datetime_iso()
             started_at   = running_job.started_at
             duration_seconds = None
             if started_at:
@@ -505,6 +509,7 @@ class RunningFifoQueue( FifoQueue ):
                 'status'          : JobState.FAILED.value,
                 'has_interactions': bool( running_job.session_id ),
                 'is_cache_hit'    : False,
+                'user_email'      : running_job.user_email,
                 'started_at'      : started_at,
                 'completed_at'    : completed_at,
                 'duration_seconds': duration_seconds
@@ -635,7 +640,7 @@ class RunningFifoQueue( FifoQueue ):
             user_id = running_job.user_id
 
             # Calculate completed_at timestamp for duration calculation
-            completed_at = datetime.now().isoformat()
+            completed_at = du.get_current_datetime_iso()
             started_at   = running_job.started_at
 
             # Calculate duration_seconds if both timestamps exist
@@ -662,6 +667,7 @@ class RunningFifoQueue( FifoQueue ):
                 'status'          : JobState.COMPLETED.value,
                 'has_interactions': bool( running_job.session_id ),
                 'is_cache_hit'       : running_job.is_cache_hit,
+                'user_email'         : running_job.user_email,
                 'answer_is_correct'  : running_job.answer_is_correct if isinstance( running_job, SolutionSnapshot ) else None,
                 'started_at'         : started_at,
                 'completed_at'       : completed_at,
@@ -716,7 +722,7 @@ class RunningFifoQueue( FifoQueue ):
         user_id = running_job.user_id
 
         # Calculate completed_at timestamp for duration calculation
-        completed_at = datetime.now().isoformat()
+        completed_at = du.get_current_datetime_iso()
         started_at   = running_job.started_at
 
         # Calculate duration_seconds if both timestamps exist
@@ -743,6 +749,7 @@ class RunningFifoQueue( FifoQueue ):
             'status'          : JobState.COMPLETED.value,
             'has_interactions'  : bool( running_job.session_id ),
             'is_cache_hit'      : False,
+            'user_email'        : running_job.user_email,
             'answer_is_correct' : running_job.answer_is_correct,
             'started_at'        : started_at,
             'completed_at'      : completed_at,
@@ -929,7 +936,7 @@ class RunningFifoQueue( FifoQueue ):
         user_id = done_queue_entry.user_id
 
         # Calculate completed_at timestamp for duration calculation (cache retrieval time)
-        completed_at = datetime.now().isoformat()
+        completed_at = du.get_current_datetime_iso()
         started_at   = original_job.started_at
 
         # Calculate duration_seconds if both timestamps exist (will be very short for cache hits)
@@ -953,6 +960,7 @@ class RunningFifoQueue( FifoQueue ):
             'agent_type'      : cached_snapshot.job_type,
             'timestamp'       : cached_snapshot.created_date,
             'is_cache_hit'      : True,
+            'user_email'        : cached_snapshot.user_email,
             'answer_is_correct' : cached_snapshot.answer_is_correct,
             # Session 107: Fix field parity between WebSocket and server-fetched cards
             'status'            : JobState.COMPLETED.value,

@@ -13,6 +13,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from datetime import datetime
 import json
 import asyncio
+import cosa.utils.util as du
 import re
 from urllib.parse import unquote
 
@@ -133,7 +134,7 @@ async def auth_test(current_user: dict = Depends(get_current_user)):
         "user_id": current_user["uid"],
         "email": current_user["email"],
         "name": current_user["name"],
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
 @router.websocket("/ws/audio/{session_id}")
@@ -255,7 +256,7 @@ async def websocket_audio_endpoint(websocket: WebSocket, session_id: str):
                 elif message.get( "type" ) == "sys_ping":
                     await websocket.send_json({
                         "type"      : "sys_pong",
-                        "timestamp" : datetime.now().isoformat()
+                        "timestamp" : du.get_current_datetime_iso()
                     })
 
             except WebSocketDisconnect:
@@ -430,7 +431,7 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
 
             # Connect with user association and subscriptions
             print(f"[WS-QUEUE-AUTH] Connecting session [{session_id}] to user [{user_id}] in WebSocket manager...")
-            websocket_manager.connect( websocket, session_id, user_id, subscribed_events, email=user_info.get( "email" ) )
+            websocket_manager.connect( websocket, session_id, user_id, subscribed_events, email=user_info.get( "email" ), roles=user_info.get( "roles", [] ) )
             session_type = "listener" if session_id.startswith( "cc-listener-" ) else "browser"
             print( f"[WS-QUEUE] Authenticated {session_type} session [{session_id}] for user [{user_id}] ({user_info.get( 'email', '?' )})" )
 
@@ -485,7 +486,7 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
             "type": "connect",
             "message": f"Queue WebSocket connected for session {session_id}",
             "session_id": session_id,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": du.get_current_datetime_iso()
         })
         
         # PHASE 2: Real queue updates now come from COSA queues via websocket_manager
@@ -501,7 +502,7 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
                 if message.get("type") == "sys_ping":
                     await websocket.send_json({
                         "type": "sys_pong",
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": du.get_current_datetime_iso()
                     })
                 elif message.get("type") == "update_subscriptions":
                     # Handle subscription updates

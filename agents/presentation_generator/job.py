@@ -20,6 +20,7 @@ import asyncio
 from datetime import datetime
 from typing import Optional
 
+import cosa.utils.util as cu
 from cosa.agents.agentic_job_base import AgenticJobBase
 from cosa.rest.job_state import JobState
 
@@ -143,7 +144,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
             print( f"[PresentationGeneratorJob] Starting do_all() for: {self.source_path}" )
 
         self.state      = JobState.RUNNING
-        self.started_at = datetime.now().isoformat()
+        self.started_at = cu.get_current_datetime_iso()
 
         try:
             result = asyncio.run( self._execute() )
@@ -151,7 +152,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
             # Check if cancellation was requested during execution
             if self._cancel_requested:
                 self.state                 = JobState.CANCELLED
-                self.completed_at          = datetime.now().isoformat()
+                self.completed_at          = cu.get_current_datetime_iso()
                 self.error                 = "Cancelled by user request"
                 self.answer_conversational = result or "Presentation generation was cancelled by the user."
                 if self.debug:
@@ -159,7 +160,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
                 return self.answer_conversational
 
             self.state        = JobState.COMPLETED
-            self.completed_at = datetime.now().isoformat()
+            self.completed_at = cu.get_current_datetime_iso()
             self.result       = result
             self.answer_conversational = result
 
@@ -171,7 +172,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
 
         except Exception as e:
             self.state        = JobState.FAILED
-            self.completed_at = datetime.now().isoformat()
+            self.completed_at = cu.get_current_datetime_iso()
             self.error        = str( e )
 
             if self.debug:

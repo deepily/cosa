@@ -28,6 +28,7 @@ import yaml
 from typing import Optional, List, Tuple
 from datetime import datetime
 
+import cosa.utils.util as cu
 from .config import PresentationConfig
 from .state import (
     OrchestratorState,
@@ -198,7 +199,7 @@ class PresentationOrchestratorAgent:
         Returns:
             PresentationModel or None if cancelled/failed
         """
-        self.metrics[ "start_time" ] = datetime.now().isoformat()
+        self.metrics[ "start_time" ] = cu.get_current_datetime_iso()
 
         try:
             # Phase 1: Ingest
@@ -271,14 +272,14 @@ class PresentationOrchestratorAgent:
 
             # Complete
             self.state = OrchestratorState.COMPLETED
-            self.metrics[ "end_time" ] = datetime.now().isoformat()
+            self.metrics[ "end_time" ] = cu.get_current_datetime_iso()
             await voice_io.notify( "Presentation generation complete!", priority="medium" )
 
             return presentation_model
 
         except Exception as e:
             self.state = OrchestratorState.FAILED
-            self.metrics[ "end_time" ] = datetime.now().isoformat()
+            self.metrics[ "end_time" ] = cu.get_current_datetime_iso()
             logger.error( f"Presentation generation failed: {e}" )
             await voice_io.notify( f"Presentation generation failed: {str( e )[ :100 ]}", priority="urgent" )
             raise
@@ -299,7 +300,7 @@ class PresentationOrchestratorAgent:
             - New Marp + visuals output files are generated
             - Returns PresentationModel on success, None if cancelled/failed
         """
-        self.metrics[ "start_time" ] = datetime.now().isoformat()
+        self.metrics[ "start_time" ] = cu.get_current_datetime_iso()
 
         try:
             # Load YAML intermediate
@@ -337,14 +338,14 @@ class PresentationOrchestratorAgent:
 
             # Complete
             self.state = OrchestratorState.COMPLETED
-            self.metrics[ "end_time" ] = datetime.now().isoformat()
+            self.metrics[ "end_time" ] = cu.get_current_datetime_iso()
             await voice_io.notify( "Render-only complete!", priority="medium" )
 
             return presentation
 
         except Exception as e:
             self.state = OrchestratorState.FAILED
-            self.metrics[ "end_time" ] = datetime.now().isoformat()
+            self.metrics[ "end_time" ] = cu.get_current_datetime_iso()
             logger.error( f"Render-only failed: {e}" )
             await voice_io.notify( f"Render-only failed: {str( e )[ :100 ]}", priority="urgent" )
             raise
