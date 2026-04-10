@@ -1201,9 +1201,17 @@ class PredictionEngine:
             # Format decision_value based on response type
             import json
             if isinstance( actual_value, str ):
-                # Wrap bare strings for MC type so they're parseable by _parse_mc_decision_value
+                # MC responses arrive as JSON strings from the browser (e.g., '{"answers":{"Commit":"Commit only"}}')
+                # Try to parse and extract structured answers before falling back to _other wrapping
                 if response_type == RESPONSE_TYPE_MULTIPLE_CHOICE:
-                    decision_value = json.dumps( { "answers": { "_other": actual_value } } )
+                    try:
+                        parsed = json.loads( actual_value )
+                        if isinstance( parsed, dict ) and "answers" in parsed:
+                            decision_value = json.dumps( { "answers": parsed[ "answers" ] } )
+                        else:
+                            decision_value = json.dumps( { "answers": { "_other": actual_value } } )
+                    except ( json.JSONDecodeError, TypeError ):
+                        decision_value = json.dumps( { "answers": { "_other": actual_value } } )
                 else:
                     decision_value = actual_value
             elif isinstance( actual_value, dict ):

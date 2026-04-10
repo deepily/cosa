@@ -236,6 +236,10 @@ class FifoQueue:
                     pass  # Unparseable → treat as immediate
 
             # This job is eligible — remove and return it
+            if job.id_hash not in self.queue_dict:
+                print( f"[QUEUE] Warning: stale job in queue_list, removing: {job.id_hash}" )
+                self.queue_list.pop( i )
+                continue
             del self.queue_dict[ job.id_hash ]
             self.queue_list.pop( i )
             return job

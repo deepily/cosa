@@ -483,6 +483,47 @@ class WebSocketManager:
         except Exception as e:
             print( f"[ERROR] Failed to schedule emission to user {user_id}: {e}" )
 
+    def emit_to_session_sync( self, session_id: str, event: str, data: dict ):
+        """
+        Thread-safe synchronous wrapper for emit_to_session.
+
+        Used for cross-user delivery to CC listener sessions that authenticate
+        as a service account (different user_id than the target human user).
+
+        Requires:
+            - session_id is a non-empty string
+            - event is a non-empty string event name
+            - data is a dictionary containing event data
+            - self.main_loop is set and running
+
+        Ensures:
+            - Returns immediately if session not in active_connections (no-op)
+            - Schedules async emission to session on main event loop
+            - Does not block calling thread
+
+        Raises:
+            - None (errors logged but not raised)
+        """
+        if session_id not in self.active_connections:
+            return
+
+        if not self.main_loop:
+            print( f"[ERROR] No event loop reference - cannot emit {event} to session {session_id}" )
+            return
+
+        if not self.main_loop.is_running():
+            print( f"[ERROR] Event loop not running - cannot emit {event} to session {session_id}" )
+            return
+
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self.emit_to_session( session_id, event, data ),
+                self.main_loop
+            )
+            print( f"[WS] Scheduled emission of {event} to session {session_id}" )
+        except Exception as e:
+            print( f"[ERROR] Failed to schedule emission to session {session_id}: {e}" )
+
     def emit_to_admins_sync( self, event: str, data: dict, exclude_user_id: str = None ):
         """
         Emit event to all connected admin sessions, optionally excluding one user.

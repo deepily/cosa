@@ -377,8 +377,9 @@ class RunningFifoQueue( FifoQueue ):
                 metadata = {
                     'response_text'   : running_job.answer_conversational,
                     'abstract'        : running_job.artifacts.get( 'abstract' ),
-                    'report_link'     : running_job.artifacts.get( 'report_path' ),
-                    'yaml_path'       : running_job.artifacts.get( 'yaml_path' ),
+                    'report_link'                : running_job.artifacts.get( 'report_path' ),
+                    'remediation_snapshot_path'  : running_job.artifacts.get( 'remediation_snapshot_path' ),
+                    'yaml_path'                  : running_job.artifacts.get( 'yaml_path' ),
                     'cost_summary'    : running_job.artifacts.get( 'cost_summary' ),
                     'error'           : None,
                     # Phase 6.2: Card-rendering fields for client-side card creation

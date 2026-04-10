@@ -345,8 +345,9 @@ async def get_queue(
                 "has_audio_cache" : False,  # Will be determined by frontend cache check
                 "is_cache_hit"    : job.is_cache_hit,  # For Time Saved Dashboard
                 # Phase 7: Agentic job artifacts for enhanced done cards
-                "report_path"     : job.artifacts.get( 'report_path' ) if is_agentic_job else None,
-                "yaml_path"       : job.artifacts.get( 'yaml_path' ) if is_agentic_job else None,
+                "report_path"               : job.artifacts.get( 'report_path' ) if is_agentic_job else None,
+                "remediation_snapshot_path" : job.artifacts.get( 'remediation_snapshot_path' ) if is_agentic_job else None,
+                "yaml_path"                : job.artifacts.get( 'yaml_path' ) if is_agentic_job else None,
                 "abstract"        : job.artifacts.get( 'abstract' ) if is_agentic_job else None,
                 "cost_summary"    : job.cost_summary if is_agentic_job else None,
                 "started_at"      : job.started_at,
@@ -747,6 +748,28 @@ async def send_job_message(
                 },
             },
         )
+
+        # Cross-user delivery: CC listeners authenticate as a service account
+        # (different user_id), so emit_to_user_sync won't reach them.
+        if job_id:
+            listener_sid = f"cc-listener-{job_id}"
+            ws_manager.emit_to_session_sync(
+                session_id = listener_sid,
+                event      = "notification_queue_update",
+                data       = {
+                    "notification": {
+                        "id"                : notification_id,
+                        "id_hash"           : notification_id,
+                        "type"              : "user_initiated_message",
+                        "notification_type" : "user_initiated_message",
+                        "message"           : message_text,
+                        "priority"          : priority,
+                        "job_id"            : job_id,
+                        "sender_id"         : f"user@{current_user[ 'email' ]}",
+                        "timestamp"         : cu.get_current_datetime_iso(),
+                    },
+                },
+            )
 
         # Echo acknowledgment back to user as a progress notification
         # Persist to database so it appears in job interaction history

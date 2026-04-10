@@ -259,6 +259,13 @@ class NotificationFifoQueue( FifoQueue ):
                 if self.debug:
                     print( f"[NOTIFY-QUEUE] Broadcast notification to all users" )
 
+            # Cross-user delivery: CC listeners authenticate as a service account
+            # (different user_id), so emit_to_user_sync won't reach them.
+            # Target the listener session directly by its deterministic session ID.
+            if notification.job_id:
+                listener_sid = f"cc-listener-{notification.job_id}"
+                self.websocket_mgr.emit_to_session_sync( listener_sid, 'notification_queue_update', event_data )
+
         if self.debug:
             print( f"[NOTIFY-QUEUE] Pushed notification {notification.id_hash} with enhanced WebSocket emission" )
     
@@ -351,6 +358,11 @@ class NotificationFifoQueue( FifoQueue ):
                     self.websocket_mgr.emit( 'notification_queue_update', event_data )
                     if self.debug:
                         print( f"[NOTIFY-QUEUE] Broadcast priority notification to all users" )
+
+                # Cross-user delivery: CC listeners authenticate as a service account
+                if notification.job_id:
+                    listener_sid = f"cc-listener-{notification.job_id}"
+                    self.websocket_mgr.emit_to_session_sync( listener_sid, 'notification_queue_update', event_data )
         else:
             # Normal priority goes to end (use our overridden push method)
             self.push( notification )

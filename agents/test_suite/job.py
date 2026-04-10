@@ -17,6 +17,7 @@ Example:
 """
 
 import asyncio
+import json
 import os
 import subprocess
 import time
@@ -394,6 +395,35 @@ class TestSuiteJob( AgenticJobBase ):
             self.artifacts[ "report_path" ] = report_rel
             self.report_path                = report_abs
 
+            # ─── Write remediation snapshot JSON if any failures/errors ───
+            if total_failed + total_errors > 0:
+                snapshot = {
+                    "schema_version" : "1.0",
+                    "timestamp"      : timestamp,
+                    "suites_run"     : list( self.test_types ),
+                    "summary"        : {
+                        "total_passed"  : total_passed,
+                        "total_failed"  : total_failed,
+                        "total_skipped" : total_skipped,
+                        "total_errors"  : total_errors,
+                        "all_passed"    : False,
+                    },
+                    "failures"       : [],
+                }
+                for suite_type, result in self.suite_results.items():
+                    for fd in result.get( "failure_details", [] ):
+                        fd_copy            = dict( fd )
+                        fd_copy[ "suite" ] = suite_type
+                        snapshot[ "failures" ].append( fd_copy )
+
+                snapshot_rel = f"test-suite/{timestamp}-{suites_str}-remediation.json"
+                snapshot_abs = f"{io_base}/{snapshot_rel}"
+                pathlib.Path( snapshot_abs ).write_text(
+                    json.dumps( snapshot, indent=2 )
+                )
+                self.artifacts[ "remediation_snapshot_path" ] = snapshot_rel
+                self.artifacts[ "remediation_snapshot" ]      = snapshot
+
             # ─── Build abstract with summary ───
             suite_lines = []
             for suite_type, result in self.suite_results.items():
@@ -678,10 +708,11 @@ class TestSuiteJob( AgenticJobBase ):
 
             # Parse structured junit-xml report (falls back to zeros if file missing)
             parsed = self._parse_junit_xml( junit_xml_path )
-            try:
-                os.unlink( junit_xml_path )
-            except OSError:
-                pass
+            # TODO: Re-enable after debugging empty failures array
+            # try:
+            #     os.unlink( junit_xml_path )
+            # except OSError:
+            #     pass
             parsed[ "exit_code" ] = exit_code
             parsed[ "log_path" ]  = log_path
             parsed[ "duration" ]  = duration
@@ -741,9 +772,17 @@ class TestSuiteJob( AgenticJobBase ):
         }
 
         try:
-            tree      = ET.parse( xml_path )
-            root      = tree.getroot()
+            # Debug: check raw file content before parsing
+            with open( xml_path, "r" ) as f:
+                raw = f.read()
+            print( f"[DEBUG _parse_junit_xml] file={xml_path}, size={len( raw )}, has_failure={'<failure' in raw}, has_error={'<error' in raw}" )
+
+            # Use ET.fromstring() instead of ET.parse() — confirmed that ET.parse()
+            # strips <failure> children in the live server process (CPython C accelerator issue)
+            root      = ET.fromstring( raw )
             testsuite = root if root.tag == "testsuite" else root.find( "testsuite" )
+
+            print( f"[DEBUG _parse_junit_xml] root.tag={root.tag}, testsuite={'found' if testsuite is not None else 'None'}" )
 
             if testsuite is not None:
                 tests    = int( testsuite.get( "tests", 0 ) )
@@ -755,8 +794,35 @@ class TestSuiteJob( AgenticJobBase ):
                 result[ "failed" ]  = failures
                 result[ "skipped" ] = skipped
                 result[ "errors" ]  = errors
-        except ( FileNotFoundError, ET.ParseError, ValueError ):
-            pass
+
+                # Extract per-failure details for remediation snapshots
+                # Use root (not testsuite) to find testcases across ALL <testsuite> children
+                failure_details = []
+                loop_count      = 0
+                children_count  = 0
+                for testcase in root.iter( "testcase" ):
+                    loop_count += 1
+                    failure_el = testcase.find( "failure" )
+                    error_el   = testcase.find( "error" )
+                    el         = failure_el if failure_el is not None else error_el
+                    if el is not None:
+                        children_count += 1
+                    if loop_count <= 3 or el is not None:
+                        print( f"[DEBUG] tc={testcase.get( 'name', '?' )[:40]}, children={[c.tag for c in testcase]}, failure_el={failure_el}, error_el={error_el}" )
+                    if el is None:
+                        continue
+                    failure_details.append( {
+                        "classname" : testcase.get( "classname", "" ),
+                        "name"      : testcase.get( "name", "" ),
+                        "time"      : testcase.get( "time", "" ),
+                        "type"      : "FAILED" if failure_el is not None else "ERROR",
+                        "message"   : el.get( "message", "" ),
+                        "traceback" : ( el.text or "" ).strip(),
+                    } )
+                result[ "failure_details" ] = failure_details
+                print( f"[DEBUG _parse_junit_xml] loop_count={loop_count}, children_found={children_count}, failure_details={len( failure_details )}" )
+        except ( FileNotFoundError, ET.ParseError, ValueError ) as e:
+            print( f"[DEBUG _parse_junit_xml] EXCEPTION caught: {type( e ).__name__}: {e}" )
 
         return result
 

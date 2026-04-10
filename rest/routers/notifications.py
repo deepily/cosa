@@ -35,6 +35,18 @@ websocket_manager = None
 # {notification_id: {"event": asyncio.Event(), "response_data": None}}
 pending_responses = {}
 
+# ── Idempotency cache: prevents duplicate notifications from retry loops ──
+# Key: idempotency_key (UUID), Value: (response_dict, timestamp)
+# TTL: 60s, max entries: 1000
+import threading
+import time as time_mod
+from collections import OrderedDict
+
+_idempotency_cache = OrderedDict()
+_idempotency_lock  = threading.Lock()
+_IDEMPOTENCY_TTL   = 60   # seconds
+_IDEMPOTENCY_MAX   = 1000
+
 def get_notification_queue():
     """
     Dependency to get notification queue from main module.
@@ -236,6 +248,7 @@ async def notify_user(
     prediction_hint_override: Optional[str] = Query(None, description="JSON override for prediction_hint (testing/debug). Bypasses PredictionEngine."),
     display_qualifier_widget: bool = Query(False, description="Render yes/no qualifier comment widget expanded by default with softer instructional text."),
     session_name: Optional[str] = Query(None, description="Human-readable session name for UI header display. Updates sender-session-name span in notification history card."),
+    idempotency_key: Optional[str] = Query(None, description="UUID idempotency key to prevent duplicate notifications on retry. Same key = same notification, skip push/persist."),
     notification_queue: NotificationFifoQueue = Depends(get_notification_queue),
     ws_manager: WebSocketManager = Depends(get_websocket_manager)
 ):
@@ -426,34 +439,43 @@ async def notify_user(
         if connection_count > 0:
             user_session_ids  = ws_manager.user_sessions.get( target_system_id, [] )
             active_sessions   = [ s for s in user_session_ids if s in ws_manager.active_connections ]
-            listener_sessions = [ s for s in active_sessions if s.startswith( "cc-listener-" ) ]
+            # listener_sessions = [ s for s in active_sessions if s.startswith( "cc-listener-" ) ]
             browser_sessions  = [ s for s in active_sessions if not s.startswith( "cc-listener-" ) ]
             print( f"[NOTIFY]   Browser sessions  : {len( browser_sessions )} {browser_sessions}" )
-            print( f"[NOTIFY]   Listener sessions : {len( listener_sessions )} {listener_sessions}" )
+            # print( f"[NOTIFY]   Listener sessions : {len( listener_sessions )} {listener_sessions}" )
+
+            # Cross-user listener discovery: CC listeners authenticate as a service
+            # account, so they appear under a different user_id than the target user.
+            all_listener_sessions = [
+                s for s in ws_manager.active_connections
+                if s.startswith( "cc-listener-" )
+            ]
+            print( f"[NOTIFY]   All CC listeners  : {len( all_listener_sessions )} {all_listener_sessions}" )
 
         # =================================================================================
         # FIRE-AND-FORGET MODE (Phase 1 - existing behavior)
         # =================================================================================
         if not response_requested:
-            # Add to notification queue with state tracking and io_tbl logging
-            notification_item = notification_queue.push_notification(
-                message                 = message.strip(),
-                type                    = type,
-                priority                = priority,
-                source                  = "claude_code",
-                user_id                 = target_system_id,
-                title                   = title,  # Phase 2.2 - include title for consistency
-                sender_id               = resolved_sender_id,  # Sender-aware notification system
-                abstract                = abstract,  # Supplementary context for action-required cards
-                suppress_ding           = suppress_ding,  # Skip notification sound (conversational TTS)
-                job_id                  = job_id,  # Agentic job ID for routing to job cards
-                queue_name              = queue_name,  # Queue for provisional job card registration
-                progress_group_id       = progress_group_id,  # In-place DOM update grouping
-                display_qualifier_widget = display_qualifier_widget,  # Expanded comment widget
-                session_name             = session_name  # Human-readable session name for UI header
-            )
 
-            # Persist to PostgreSQL for history loading
+            # ── Idempotency check: skip duplicate push/persist on retries ──
+            if idempotency_key:
+                with _idempotency_lock:
+                    # Evict expired entries
+                    now = time_mod.time()
+                    while _idempotency_cache:
+                        oldest_key, ( _, ts ) = next( iter( _idempotency_cache.items() ) )
+                        if now - ts > _IDEMPOTENCY_TTL:
+                            _idempotency_cache.pop( oldest_key )
+                        else:
+                            break
+
+                    if idempotency_key in _idempotency_cache:
+                        cached_response, _ = _idempotency_cache[ idempotency_key ]
+                        print( f"[NOTIFY] Idempotency hit: {idempotency_key} — returning cached response" )
+                        return cached_response
+
+            # 1. Persist to PostgreSQL (unconditionally — preserves notification history)
+            db_notification_id = None
             try:
                 with get_db() as session:
                     repo = NotificationRepository( session )
@@ -469,6 +491,7 @@ async def notify_user(
                         job_id             = job_id,
                         progress_group_id  = progress_group_id
                     )
+                    db_notification_id = str( db_notification.id )
                     # Update state to delivered if user is connected
                     if is_connected:
                         repo.update_state( db_notification.id, "delivered" )
@@ -478,24 +501,58 @@ async def notify_user(
                 # Log but don't fail - FIFO queue is the primary delivery mechanism
                 print( f"[NOTIFY] ⚠️ Failed to persist to PostgreSQL (non-fatal): {db_error}" )
 
+            # 2. If user is offline, return immediately WITHOUT pushing to FIFO queue
             if not is_connected:
-                print(f"[NOTIFY] User {target_user} ({target_system_id}) is not connected - notification not delivered")
-                return {
+                print( f"[NOTIFY] User {target_user} ({target_system_id}) is not connected - notification not delivered" )
+                response_dict = {
                     "status"             : "user_not_available",
                     "message"            : f"User {target_user} is not connected to queue UI",
                     "target_user"        : target_user,
                     "target_system_id"   : target_system_id,
                     "connection_count"   : 0
                 }
+                # Cache for idempotency (retries will get the same response without re-persisting)
+                if idempotency_key:
+                    with _idempotency_lock:
+                        _idempotency_cache[ idempotency_key ] = ( response_dict, time_mod.time() )
+                        while len( _idempotency_cache ) > _IDEMPOTENCY_MAX:
+                            _idempotency_cache.popitem( last=False )
+                return response_dict
 
-            print(f"[NOTIFY] ✓ Notification queued for {target_user} ({target_system_id}) - {connection_count} connection(s)")
-            return {
+            # 3. User is connected — push to FIFO queue for live WebSocket delivery
+            notification_item = notification_queue.push_notification(
+                message                 = message.strip(),
+                type                    = type,
+                priority                = priority,
+                source                  = "claude_code",
+                user_id                 = target_system_id,
+                title                   = title,
+                sender_id               = resolved_sender_id,
+                abstract                = abstract,
+                suppress_ding           = suppress_ding,
+                job_id                  = job_id,
+                queue_name              = queue_name,
+                progress_group_id       = progress_group_id,
+                display_qualifier_widget = display_qualifier_widget,
+                session_name             = session_name
+            )
+
+            print( f"[NOTIFY] ✓ Notification queued for {target_user} ({target_system_id}) - {connection_count} connection(s)" )
+            print( f"[DIAG-JR] job_id={job_id!r} sender_id={resolved_sender_id!r} msg={message.strip()[:60]!r}" )
+            response_dict = {
                 "status"             : "queued",
                 "message"            : f"Notification queued for delivery to {target_user}",
                 "target_user"        : target_user,
                 "target_system_id"   : target_system_id,
                 "connection_count"   : connection_count
             }
+            # Cache for idempotency
+            if idempotency_key:
+                with _idempotency_lock:
+                    _idempotency_cache[ idempotency_key ] = ( response_dict, time_mod.time() )
+                    while len( _idempotency_cache ) > _IDEMPOTENCY_MAX:
+                        _idempotency_cache.popitem( last=False )
+            return response_dict
 
         # =================================================================================
         # RESPONSE-REQUIRED MODE (Phase 2.1 - new SSE blocking behavior)
