@@ -86,6 +86,7 @@ class TestSuiteJob( AgenticJobBase ):
         session_id: str,
         pytest_args: Optional[ List[ str ] ] = None,
         dry_run: bool = False,
+        auto_fix_on_failure: Optional[ bool ] = None,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -110,6 +111,12 @@ class TestSuiteJob( AgenticJobBase ):
             session_id: WebSocket session for notifications
             pytest_args: Optional extra pytest arguments (e.g., ["-v", "-k", "test_auth"])
             dry_run: Simulate execution without running tests
+            auto_fix_on_failure: Per-run override for the TestSuiteCompletionWatchdog.
+                None  → use INI default ("test fix expediter auto fix enabled")
+                True  → force-enable TFE auto-dispatch for this run only
+                False → force-disable TFE auto-dispatch for this run only
+                The override is read by TestSuiteCompletionWatchdog Gate 1 and
+                does NOT mutate the INI file.
             debug: Enable debug output
             verbose: Enable verbose output
         """
@@ -123,9 +130,10 @@ class TestSuiteJob( AgenticJobBase ):
         )
 
         # Test parameters
-        self.test_types   = test_types or [ "integration", "e2e" ]
-        self.pytest_args  = pytest_args or []
-        self.dry_run      = dry_run
+        self.test_types          = test_types or [ "integration", "e2e" ]
+        self.pytest_args         = pytest_args or []
+        self.dry_run             = dry_run
+        self.auto_fix_on_failure = auto_fix_on_failure
 
         # Results (populated after execution)
         self.suite_results = {}

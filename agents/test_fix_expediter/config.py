@@ -32,7 +32,10 @@ class TestFixExpediterConfig:
     worker_model                  : str   = "claude-sonnet-4-6"
 
     # === Feature Flag / Watchdog ===
-    auto_fix_enabled              : bool  = False
+    # Default flipped to True in Session 1cfcdf73 (2026-04-10) — TFE auto-dispatch
+    # is now opt-out via the per-run `auto_fix_on_failure` field on
+    # /api/test-suite/submit (or the test runner UI checkbox), not opt-in.
+    auto_fix_enabled              : bool  = True
 
     # === Clustering limits ===
     max_clusters                  : int   = 8
@@ -150,7 +153,7 @@ def quick_smoke_test():
         config = TestFixExpediterConfig()
         assert config.lead_model == "claude-opus-4-6"
         assert config.worker_model == "claude-sonnet-4-6"
-        assert config.auto_fix_enabled == False
+        assert config.auto_fix_enabled == True
         assert config.max_clusters == 8
         assert config.max_cluster_seed_failures == 50
         assert config.max_diagnosis_iterations == 4

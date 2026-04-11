@@ -28,11 +28,12 @@ router = APIRouter( tags=[ "test-suite" ] )
 
 class TestSuiteSubmitRequest( BaseModel ):
     """Request body for submitting a test suite job."""
-    test_types   : str            = Field( "integration,e2e", description="Comma-separated suite types: integration, e2e" )
-    pytest_args  : Optional[ str ] = Field( None, description="Space-separated extra pytest arguments (e.g., '-v -k test_auth')" )
-    dry_run      : bool           = Field( False, description="Simulate execution without running tests" )
-    websocket_id : Optional[ str ] = Field( None, description="WebSocket session ID for notifications" )
-    scheduled_at : Optional[ str ] = Field( None, description="ISO datetime for deferred execution (None = immediate)" )
+    test_types          : str             = Field( "integration,e2e", description="Comma-separated suite types: integration, e2e" )
+    pytest_args         : Optional[ str ] = Field( None, description="Space-separated extra pytest arguments (e.g., '-v -k test_auth')" )
+    dry_run             : bool            = Field( False, description="Simulate execution without running tests" )
+    websocket_id        : Optional[ str ] = Field( None, description="WebSocket session ID for notifications" )
+    scheduled_at        : Optional[ str ] = Field( None, description="ISO datetime for deferred execution (None = immediate)" )
+    auto_fix_on_failure : Optional[ bool ] = Field( None, description="Per-run override for the TestSuiteCompletionWatchdog. None = use INI default ('test fix expediter auto fix enabled'), True = force-enable TFE auto-dispatch, False = force-disable TFE auto-dispatch for this run only." )
 
 
 class TestSuiteSubmitResponse( BaseModel ):
@@ -121,6 +122,8 @@ async def submit_test_suite(
         }
         if request_body.pytest_args:
             args_dict[ "pytest_args" ] = request_body.pytest_args
+        if request_body.auto_fix_on_failure is not None:
+            args_dict[ "auto_fix_on_failure" ] = request_body.auto_fix_on_failure
 
         job = create_agentic_job(
             command    = "agent router go to test suite",

@@ -103,10 +103,20 @@ class TestSuiteCompletionWatchdog:
     def _evaluate_inner( self, completed_job ) -> Optional[ str ]:
         """Actual evaluation logic. May raise — caller catches in evaluate()."""
 
-        # Gate 1: master switch
-        if not self.enabled:
+        # Gate 1: master switch with per-run override
+        #
+        # Tri-state precedence:
+        #   override == False  → explicit per-run opt-out (skip regardless of INI)
+        #   override == True   → explicit per-run opt-in (proceed regardless of INI)
+        #   override is None   → no override; honor self.enabled (the INI default)
+        override = getattr( completed_job, "auto_fix_on_failure", None )
+        if override is False:
             if self.debug:
-                print( "[TestSuiteCompletionWatchdog] skip: disabled" )
+                print( "[TestSuiteCompletionWatchdog] skip: per-run override disabled auto-fix" )
+            return None
+        if override is None and not self.enabled:
+            if self.debug:
+                print( "[TestSuiteCompletionWatchdog] skip: disabled (INI default, no override)" )
             return None
 
         # Gate 2: must be a TestSuiteJob

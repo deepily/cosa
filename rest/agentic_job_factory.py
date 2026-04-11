@@ -56,6 +56,29 @@ def _parse_boolean( value, default=False ):
     return s in ( "yes", "true", "1", "enable", "enabled" )
 
 
+def _parse_optional_boolean( value ):
+    """
+    Parse a tri-state boolean: True / False / None.
+
+    Returns None for missing, empty, or semantic-none values (signals "use the
+    INI default"). Returns bool for explicit True/False (signals "override the
+    INI default for this run only").
+
+    Args:
+        value: bool, str, None, or other
+
+    Returns:
+        Optional[bool]: None if unset, True/False if explicitly set
+    """
+    if value is None: return None
+    if isinstance( value, bool ): return value
+    s = str( value ).strip().lower()
+    if s in _SEMANTIC_NONE: return None
+    if s in ( "yes", "true", "1", "enable", "enabled" ): return True
+    if s in ( "false", "0", "disable", "disabled", "off" ): return False
+    return None
+
+
 def _parse_optional_float( value, default=None ):
     """
     Safely parse a value to float, treating semantic strings as None.
@@ -259,14 +282,15 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             pytest_args = []
 
         job = TestSuiteJob(
-            test_types  = test_types,
-            user_id     = user_id,
-            user_email  = user_email,
-            session_id  = session_id,
-            pytest_args = pytest_args,
-            dry_run     = _parse_boolean( args_dict.get( "dry_run" ) ),
-            debug       = debug,
-            verbose     = verbose
+            test_types          = test_types,
+            user_id             = user_id,
+            user_email          = user_email,
+            session_id          = session_id,
+            pytest_args         = pytest_args,
+            dry_run             = _parse_boolean( args_dict.get( "dry_run" ) ),
+            auto_fix_on_failure = _parse_optional_boolean( args_dict.get( "auto_fix_on_failure" ) ),
+            debug               = debug,
+            verbose             = verbose
         )
 
     elif command == "agent router go to bug fix expediter":

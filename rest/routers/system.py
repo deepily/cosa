@@ -644,6 +644,10 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
         "app timezone",
         default="America/New_York"
     )
+    tfe_auto_fix_enabled = config_mgr.get(
+        "test fix expediter auto fix enabled",
+        default=False, return_type="boolean"
+    )
 
     return {
         # Convert minutes → milliseconds (for setInterval)
@@ -659,7 +663,11 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
         "websocket_heartbeat_interval_secs": int( heartbeat_interval_secs ),
 
         # IANA timezone name for client-side date/time formatting
-        "app timezone": app_timezone
+        "app timezone": app_timezone,
+
+        # TestFixExpediter auto-fix INI default — drives initial state of the
+        # "auto-fix on failure" checkbox in the test runner submission card
+        "test_fix_expediter_auto_fix_enabled": bool( tfe_auto_fix_enabled )
     }
 
 
