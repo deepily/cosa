@@ -1,6 +1,6 @@
 # COSA Development History
 
-> **⏳ SESSIONS 1b8c1cc0+1cfcdf73 PENDING**: TestFixExpediter (TFE) + shared fix primitives + CJ Flow persistence gaps + BFE Phase 6 dry-run (2026.04.10)
+> **✅ SESSIONS 1b8c1cc0+1cfcdf73 COMMITTED**: TestFixExpediter (TFE) + shared fix primitives + CJ Flow persistence gaps + BFE Phase 6 dry-run (2026.04.10)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >
 > ### Accomplishments
@@ -37,7 +37,7 @@
 >
 > **Files Modified (23)**: `agents/agent_base.py`, `agents/agentic_job_base.py`, `agents/bug_fix_expediter/{dead_job_packager,job,orchestrator,plan_writer,prompts/fix}.py`, `agents/deep_research/job.py`, `agents/podcast_generator/job.py`, `agents/presentation_generator/job.py`, `agents/test_suite/job.py`, `memory/solution_snapshot.py`, `rest/agentic_job_factory.py`, `rest/dead_queue_watchdog.py`, `rest/job_persistence.py`, `rest/routers/{deep_research,mock_job,podcast_generator,presentation_generator,queues}.py`, `rest/running_fifo_queue.py`, `rest/todo_fifo_queue.py`
 > **Files Created (19)**: `agents/shared/{__init__,plan_writer,git_strategist,fix_executor}.py`, `agents/test_fix_expediter/{__init__,cluster,config,cosa_interface,job,orchestrator,snapshot_loader,state,voice_io}.py`, `agents/test_fix_expediter/prompts/{__init__,cluster,diagnosis,fix,proposal}.py`, `rest/test_suite_completion_watchdog.py`
-> **Commit**: pending
+> **Commit**: a577cec
 >
 > **Test status (Lupin parent repo, CoSA working-tree paired with it)**: 3119 passed, 1 xfailed, zero regression across every intermediate commit. Baseline 2916 → 2954 (+38 scaffolding) → 2989 (+35 Phase 0) → 3006 (+17 Phase 1) → 3040 (+34 Phase 2) → 3072 (+32 Phase 3) → 3119 (+47 Phase 5+6+watchdog+PEFT+live). 76/76 BFE Phase 6 unit tests (58 pre-existing + 18 new for Session 1b8c1cc0 dry-run + persistence fixes) all green.
 >
