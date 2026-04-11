@@ -980,12 +980,18 @@ async def delete_queue_job(
     if not deleted:
         raise HTTPException( status_code=404, detail=f"Failed to delete job {job_id} from {queue_name} queue" )
 
-    # Emit WebSocket event for UI synchronization
+    # Emit WebSocket event for UI synchronization (canonical dual-emit:
+    # owner + watching admins, deduplicated). See
+    # WebSocketManager.emit_to_user_and_admins_sync for the rationale.
+    # NOTE: import path is `fastapi_app.main` not `src.fastapi_app.main` —
+    # PYTHONPATH already includes src/, so the `src.` prefix raises
+    # ModuleNotFoundError and silently swallowed every job_removed emit
+    # before today (Session 248e740e fix).
     try:
-        import src.fastapi_app.main as main_module
+        import fastapi_app.main as main_module
         ws_manager = main_module.websocket_manager
         if ws_manager:
-            ws_manager.emit_to_user_sync( user_id, 'job_removed', {
+            ws_manager.emit_to_user_and_admins_sync( user_id, 'job_removed', {
                 'job_id'    : job_id,
                 'queue'     : queue_name,
                 'timestamp' : cu.get_current_datetime_iso()
@@ -1260,11 +1266,12 @@ async def pause_job(
 
     job.state = JobState.PAUSED
 
-    # Emit WebSocket event for UI update (state transition: queued/scheduled → paused)
+    # Emit WebSocket event for UI update (state transition: queued/scheduled → paused).
+    # Canonical dual-emit so admin viewers also see the pause badge appear.
     try:
         import fastapi_app.main as main_module
         ws_manager = main_module.websocket_manager
-        ws_manager.emit_to_user_sync(
+        ws_manager.emit_to_user_and_admins_sync(
             user_id = user_id,
             event   = "job_state_transition",
             data    = {
@@ -1331,11 +1338,12 @@ async def resume_job(
 
     job.state = JobState.QUEUED
 
-    # Emit WebSocket event for UI update (state transition: paused → queued)
+    # Emit WebSocket event for UI update (state transition: paused → queued).
+    # Canonical dual-emit so admin viewers also see the pause badge clear.
     try:
         import fastapi_app.main as main_module
         ws_manager = main_module.websocket_manager
-        ws_manager.emit_to_user_sync(
+        ws_manager.emit_to_user_and_admins_sync(
             user_id = user_id,
             event   = "job_state_transition",
             data    = {

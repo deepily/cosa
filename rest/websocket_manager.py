@@ -442,23 +442,37 @@ class WebSocketManager:
     def emit_to_user_sync( self, user_id: str, event: str, data: dict ):
         """
         Thread-safe synchronous wrapper for emit_to_user.
-        
+
         This method is called by COSA queues which expect synchronous emit.
         Uses asyncio.run_coroutine_threadsafe to safely schedule the coroutine
         on the main event loop from any thread.
-        
+
+        WARNING — broadcast scope:
+            This method delivers ONLY to the named user's sessions. It is the
+            right primitive for events that should remain private to that user
+            (notification queue updates, response payloads — anything that
+            another admin should NOT see). For queue or job state events that
+            admins watching the system-wide view should also see — job_created,
+            job_removed, job_paused, job_resumed, job_state_transition — use
+            `emit_to_user_and_admins_sync` instead. The Session 248e740e bug
+            (admin browser stuck with 14 stale mock job cards from an E2E test
+            run) was caused by emitting `job_removed` only via this method,
+            which reached the test user's zero browser sessions and never told
+            the admin browser to remove the cards. The canonical dual-emit
+            method removes that discipline burden.
+
         Requires:
             - user_id is a non-empty string
             - event is a non-empty string event name
             - data is a dictionary containing event data
             - self.main_loop is set and running
-            
+
         Ensures:
             - Schedules async emission to user on main event loop
             - Does not block calling thread
             - Prints error messages if event loop unavailable
             - Prints confirmation when successfully scheduled
-            
+
         Raises:
             - None (errors logged but not raised)
         """
@@ -565,7 +579,48 @@ class WebSocketManager:
                 if self.debug: print( f"[WS] Admin broadcast: {event} → {admin_uid}{email_suffix}" )
             except Exception as e:
                 print( f"[ERROR] Failed to schedule admin emission to {admin_uid}: {e}" )
-    
+
+    def emit_to_user_and_admins_sync( self, user_id: str, event: str, data: dict ):
+        """
+        Canonical dual-emit for queue and job state events.
+
+        Delivers the event to the owning user AND every admin session watching
+        the global queue, deduplicating so the owner is never sent the event
+        twice (when the owner happens to also be an admin).
+
+        This is the right method to call for ANY event that signals a queue or
+        job mutation that admins watching the system-wide view should see:
+        job created, job removed, job paused, job resumed, job state
+        transitions, etc. Use this instead of calling emit_to_user_sync followed
+        by emit_to_admins_sync separately — that pattern was the source of the
+        Session 248e740e bug where pause/resume/delete events stranded cards in
+        admin browsers because callers forgot the second call.
+
+        Use emit_to_user_sync directly only for events that admins should NOT
+        see (private notifications, response payloads). Use emit() only for
+        truly system-wide events (notification sounds, time updates).
+
+        Requires:
+            - user_id is the owning user UUID (non-empty string)
+            - event is a non-empty string event name
+            - data is a JSON-serializable dict
+            - self.main_loop is set and running (matches the underlying primitives)
+
+        Ensures:
+            - Owner receives the event via emit_to_user_sync
+            - All admin sessions where session_is_admin is True receive the
+              event, deduplicated, with the owner's user_id excluded to prevent
+              double delivery when the owner is also an admin
+            - Both underlying calls are thread-safe via run_coroutine_threadsafe
+            - Errors in either call are logged but never raised
+            - No-op if main_loop is missing or stopped (matches existing primitives)
+
+        Raises:
+            - None (errors logged by underlying methods but not raised)
+        """
+        self.emit_to_user_sync( user_id, event, data )
+        self.emit_to_admins_sync( event, data, exclude_user_id=user_id )
+
     def is_user_connected( self, user_id: str ) -> bool:
         """
         Check if a specific user has any active WebSocket connections.

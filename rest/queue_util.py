@@ -75,9 +75,11 @@ def emit_job_state_transition(
 
         try:
             if user_id:
-                websocket_mgr.emit_to_user_sync( user_id, 'job_state_transition', data )
-                # Also notify admin users watching "all jobs" view
-                websocket_mgr.emit_to_admins_sync( 'job_state_transition', data, exclude_user_id=user_id )
+                # Canonical dual-emit (owner + watching admins, deduplicated).
+                # See WebSocketManager.emit_to_user_and_admins_sync for the
+                # rationale — Session 248e740e fix moved the dual-call burden
+                # off individual call sites and into one named method.
+                websocket_mgr.emit_to_user_and_admins_sync( user_id, 'job_state_transition', data )
             else:
                 websocket_mgr.emit( 'job_state_transition', data )
         except Exception as e:
