@@ -43,6 +43,7 @@ class DeepResearchSubmitRequest( BaseModel ):
     websocket_id: Optional[ str ] = Field( None, description="WebSocket session ID for notifications" )
     lead_model: Optional[ str ] = Field( None, description="Model for lead agent (None = use default)" )
     dry_run: bool = Field( False, description="Simulate execution without API calls" )
+    force_failure_mode: Optional[ str ] = Field( None, description="Phase 6 dry-run repair loop: 'code_bug' | 'infra_timeout' | 'rate_limit' to inject a failure at the end of dry-run" )
     audience: Optional[ str ] = Field( None, description="Target audience level: beginner, general, expert, academic" )
     audience_context: Optional[ str ] = Field( None, description="Custom audience description" )
     scheduled_at: Optional[ str ] = Field( None, description="ISO datetime for deferred execution (None = immediate)" )
@@ -144,6 +145,8 @@ async def submit_research(
             args_dict[ "budget" ] = str( request_body.budget )
         if request_body.dry_run:
             args_dict[ "dry_run" ] = True
+        if request_body.force_failure_mode:
+            args_dict[ "force_failure_mode" ] = request_body.force_failure_mode
         if request_body.audience:
             args_dict[ "audience" ] = request_body.audience
         if request_body.audience_context:

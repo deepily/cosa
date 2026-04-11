@@ -400,6 +400,19 @@ class RunningFifoQueue( FifoQueue ):
                 self.pop()  # Auto-emits 'run_update'
                 self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
 
+                # TFE auto-dispatch hook (Session 1cfcdf73, step 13 of TFE plan).
+                # If the completed job is a TestSuiteJob that finished with
+                # failures, the TestSuiteCompletionWatchdog will enqueue a TFE
+                # job to attempt automated remediation. All eligibility gating
+                # happens inside evaluate() — we never raise here.
+                try:
+                    from cosa.rest.test_suite_completion_watchdog import get_watchdog
+                    _tfe_watchdog = get_watchdog()
+                    if _tfe_watchdog is not None:
+                        _tfe_watchdog.evaluate( running_job )
+                except Exception as _tfe_e:
+                    if self.debug: print( f"[AGENTIC] TFE watchdog evaluate skipped: {_tfe_e}" )
+
                 # Log to I/O table (skip if not available)
                 try:
                     self.io_tbl.insert_io_row(

@@ -61,6 +61,7 @@ class PodcastGeneratorJob( AgenticJobBase ):
         target_languages: Optional[ List[ str ] ] = None,
         max_segments: Optional[ int ] = None,
         dry_run: bool = False,
+        force_failure_mode: Optional[ str ] = None,
         audience: Optional[ str ] = None,
         audience_context: Optional[ str ] = None,
         debug: bool = False,
@@ -101,12 +102,13 @@ class PodcastGeneratorJob( AgenticJobBase ):
         )
 
         # Podcast parameters
-        self.research_path    = research_path
-        self.target_languages = target_languages or [ "en" ]
-        self.max_segments     = max_segments
-        self.dry_run          = dry_run
-        self.audience         = audience
-        self.audience_context = audience_context
+        self.research_path      = research_path
+        self.target_languages   = target_languages or [ "en" ]
+        self.max_segments       = max_segments
+        self.dry_run            = dry_run
+        self.force_failure_mode = force_failure_mode
+        self.audience           = audience
+        self.audience_context   = audience_context
 
         # Results (populated after execution)
         self.audio_path    = None
@@ -355,6 +357,11 @@ class PodcastGeneratorJob( AgenticJobBase ):
             "total_cost_usd"  : 0.0,
         }
         self.artifacts[ "cost_summary" ] = self.cost_summary
+
+        # Phase 6 repair loop hook: deliberately fail the dry-run to exercise
+        # the dead-queue watchdog + BFE auto-fix pipeline.
+        if self.force_failure_mode:
+            await self._raise_forced_failure( voice_io )
 
         completion_abstract = f"""**🧪 Dry Run Complete!**
 

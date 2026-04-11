@@ -247,3 +247,20 @@ def quick_smoke_test():
 
 if __name__ == "__main__":
     quick_smoke_test()
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Register BFE prompt bundle into the shared FixExecutor prompt registry.
+# Session 1cfcdf73 (2026-04-10): Extract FixExecutor to shared/ for BFE+TFE
+# reuse. BFE's prompts self-register under key "bfe" at import time.
+# ─────────────────────────────────────────────────────────────────────────
+from cosa.agents.shared.fix_executor import register_fix_prompts
+
+register_fix_prompts(
+    "bfe",
+    build_fix_prompt        = build_fix_prompt,
+    build_verify_prompt     = build_verification_prompt,
+    build_redelegate_prompt = build_redelegation_prompt,
+    coder_system_prompt     = CODER_SYSTEM_PROMPT,
+    tester_system_prompt    = TESTER_SYSTEM_PROMPT,
+)

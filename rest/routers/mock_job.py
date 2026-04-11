@@ -12,7 +12,7 @@ Generated on: 2026-01-20
 import asyncio
 import uuid
 
-from typing import Optional, Tuple
+from typing import Literal, Optional, Tuple
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, Field
 
@@ -42,6 +42,11 @@ class MockJobSubmitRequest( BaseModel ):
     websocket_id: Optional[ str ] = Field( None, description="WebSocket session ID for notifications" )
     # Expeditor test mode
     voice_command: Optional[ str ] = Field( None, description="Test expeditor: provide a voice command to route through RuntimeArgumentExpeditor" )
+    # Phase 6 dry-run repair loop: deliberately fail the spawned dry-run job to exercise watchdog+BFE
+    force_failure_mode: Optional[ Literal[ "code_bug", "infra_timeout", "rate_limit" ] ] = Field(
+        None,
+        description="Force the spawned dry-run job to fail with a specific error category, landing it in the dead queue so the Phase 6 auto-fix loop can be exercised. Only honored when voice_command is set (expeditor path) and dry_run is True."
+    )
     scheduled_at: Optional[ str ] = Field( None, description="ISO datetime for deferred execution (None = immediate)" )
     monopolize: bool = Field( False, description="Run exclusively, block all other jobs until complete" )
 
@@ -128,10 +133,11 @@ async def submit_mock_job(
     # Expeditor test mode: route voice_command through expeditor pipeline
     if request_body.voice_command:
         return await _handle_expeditor_test(
-            voice_command = request_body.voice_command,
-            current_user  = current_user,
-            todo_queue    = todo_queue,
-            bearer_token  = bearer_token
+            voice_command      = request_body.voice_command,
+            current_user       = current_user,
+            todo_queue         = todo_queue,
+            bearer_token       = bearer_token,
+            force_failure_mode = request_body.force_failure_mode
         )
 
     # Validate ranges
@@ -213,7 +219,7 @@ async def submit_mock_job(
         )
 
 
-async def _handle_expeditor_test( voice_command, current_user, todo_queue, bearer_token=None ):
+async def _handle_expeditor_test( voice_command, current_user, todo_queue, bearer_token=None, force_failure_mode=None ):
     """
     Test the RuntimeArgumentExpeditor pipeline with a voice command.
 
@@ -223,15 +229,20 @@ async def _handle_expeditor_test( voice_command, current_user, todo_queue, beare
     Requires:
         - voice_command is a non-empty string
         - current_user has uid and email
+        - force_failure_mode is None or one of "code_bug", "infra_timeout", "rate_limit"
 
     Ensures:
         - Returns MockJobSubmitResponse with expeditor results in config
         - Creates job with dry_run=True
+        - When force_failure_mode is set, spawned job's dry-run path raises a matching
+          exception so the job lands in the dead queue (Phase 6 repair-loop testing)
 
     Args:
         voice_command: Voice command to test (e.g., "make me a podcast")
         current_user: Authenticated user from token
         todo_queue: Todo queue instance
+        bearer_token: Raw JWT for expeditor auth forwarding
+        force_failure_mode: Optional failure injection for Phase 6 dry-run repair loop
 
     Returns:
         MockJobSubmitResponse with expeditor results
@@ -309,6 +320,8 @@ async def _handle_expeditor_test( voice_command, current_user, todo_queue, beare
 
     # Create dry-run job
     args_dict[ "dry_run" ] = True
+    if force_failure_mode is not None:
+        args_dict[ "force_failure_mode" ] = force_failure_mode
     job = create_agentic_job(
         command    = matched_command,
         args_dict  = args_dict,
@@ -330,12 +343,13 @@ async def _handle_expeditor_test( voice_command, current_user, todo_queue, beare
         job_id         = job_id,
         queue_position = todo_queue.size() if job else 0,
         config         = {
-            "command"       : matched_command,
-            "voice_command" : voice_command,
-            "args_resolved" : { k: str( v ) for k, v in args_dict.items() if k not in ( "user_email", "session_id", "user_id", "no_confirm" ) },
-            "dry_run"       : True
+            "command"            : matched_command,
+            "voice_command"      : voice_command,
+            "args_resolved"      : { k: str( v ) for k, v in args_dict.items() if k not in ( "user_email", "session_id", "user_id", "no_confirm" ) },
+            "dry_run"            : True,
+            "force_failure_mode" : force_failure_mode
         },
-        message        = f"Expeditor test: {matched_command} (dry_run=True)"
+        message        = f"Expeditor test: {matched_command} (dry_run=True{', force_failure_mode=' + force_failure_mode if force_failure_mode else ''})"
     )
 
 

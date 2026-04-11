@@ -24,6 +24,7 @@ import time
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Optional, List, Dict
+from zoneinfo import ZoneInfo
 
 from cosa.agents.agentic_job_base import AgenticJobBase
 from cosa.rest.job_state import JobState
@@ -296,7 +297,8 @@ class TestSuiteJob( AgenticJobBase ):
                 status       = "PASSED" if suite_found > 0 and ( result[ "failed" ] + result[ "errors" ] ) == 0 else "FAILED"
                 await voice_io.notify(
                     f"{suite_type}: {status} — {result[ 'passed' ]} passed, "
-                    f"{result[ 'failed' ]} failed, {result[ 'skipped' ]} skipped",
+                    f"{result[ 'failed' ]} failed, {result[ 'errors' ]} errors, "
+                    f"{result[ 'skipped' ]} skipped",
                     priority="low",
                     queue_name="run"
                 )
@@ -316,6 +318,7 @@ class TestSuiteJob( AgenticJobBase ):
                 "suites_run"    : len( self.suite_results ),
                 "total_passed"  : total_passed,
                 "total_failed"  : total_failed,
+                "total_errors"  : total_errors,
                 "total_skipped" : total_skipped,
                 "all_passed"    : all_passed,
             }
@@ -335,7 +338,11 @@ class TestSuiteJob( AgenticJobBase ):
             report_dir = io_base + "/test-suite"
             pathlib.Path( report_dir ).mkdir( parents=True, exist_ok=True )
 
-            timestamp  = datetime.now().strftime( "%Y.%m.%d-at-%H:%M" )
+            # Timestamp in project-local timezone (America/New_York) with DST-aware
+            # -EST/-EDT suffix, per project filename convention. The container's system
+            # clock is UTC, so we explicitly convert rather than relying on datetime.now().
+            now_local  = datetime.now( ZoneInfo( "America/New_York" ) )
+            timestamp  = now_local.strftime( "%Y.%m.%d-at-%H:%M-%Z" )
             suites_str = "-".join( self.test_types )
             report_rel = f"test-suite/{timestamp}-{suites_str}-results.md"
             report_abs = f"{io_base}/{report_rel}"
@@ -344,9 +351,9 @@ class TestSuiteJob( AgenticJobBase ):
             report_lines = [
                 f"# Test Suite Report — {overall}",
                 f"",
-                f"**Date**: {datetime.now().strftime( '%Y-%m-%d %H:%M:%S' )}  ",
+                f"**Date**: {now_local.strftime( '%Y-%m-%d %H:%M:%S %Z' )}  ",
                 f"**Suites**: {', '.join( self.test_types )}  ",
-                f"**Total**: {total_passed} passed, {total_failed} failed, {total_skipped} skipped",
+                f"**Total**: {total_passed} passed, {total_failed} failed, {total_errors} errors, {total_skipped} skipped",
                 f"",
                 f"---",
                 f"",
@@ -431,7 +438,7 @@ class TestSuiteJob( AgenticJobBase ):
                 icon = "PASS" if sf > 0 and ( result[ "failed" ] + result[ "errors" ] ) == 0 else "FAIL"
                 line = ( f"- **{suite_type}**: {icon} — "
                          f"{result[ 'passed' ]} passed, {result[ 'failed' ]} failed, "
-                         f"{result[ 'skipped' ]} skipped" )
+                         f"{result[ 'errors' ]} errors, {result[ 'skipped' ]} skipped" )
                 crash_output = result.get( "startup_crash_output" )
                 if crash_output:
                     line += f"\n  **STARTUP CRASH** (exit={result[ 'exit_code' ]}): `{crash_output[ :500 ]}`"
@@ -439,7 +446,7 @@ class TestSuiteJob( AgenticJobBase ):
 
             abstract = ( f"**Test Suite Results: {overall}**\n\n"
                          + "\n".join( suite_lines )
-                         + f"\n\n**Total**: {total_passed} passed, {total_failed} failed, {total_skipped} skipped" )
+                         + f"\n\n**Total**: {total_passed} passed, {total_failed} failed, {total_errors} errors, {total_skipped} skipped" )
             self.artifacts[ "abstract" ] = abstract
 
             await voice_io.notify(
@@ -451,9 +458,9 @@ class TestSuiteJob( AgenticJobBase ):
 
             # Conversational answer
             summary = ( f"Test suite run complete. {overall}.\n\n"
-                        + "\n".join( f"  {st}: {r[ 'passed' ]} passed, {r[ 'failed' ]} failed, {r[ 'skipped' ]} skipped"
+                        + "\n".join( f"  {st}: {r[ 'passed' ]} passed, {r[ 'failed' ]} failed, {r[ 'errors' ]} errors, {r[ 'skipped' ]} skipped"
                                     for st, r in self.suite_results.items() )
-                        + f"\n\n  Total: {total_passed} passed, {total_failed} failed, {total_skipped} skipped" )
+                        + f"\n\n  Total: {total_passed} passed, {total_failed} failed, {total_errors} errors, {total_skipped} skipped" )
 
             return summary
 

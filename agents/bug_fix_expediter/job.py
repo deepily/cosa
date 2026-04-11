@@ -422,72 +422,125 @@ class BugFixExpediterJob( AgenticJobBase ):
 
     async def _execute_dry_run( self, voice_io, cosa_interface ) -> str:
         """
-        Execute dry-run mode with breadcrumb notifications.
+        Execute dry-run mode with breadcrumb notifications + Phase 6 resubmit.
 
-        Simulates the three-phase pipeline without making changes.
-        Sends low-priority notifications at each phase and returns mock results.
+        Simulates the three-phase pipeline (packaging → diagnosis → proposal → fix)
+        without calling real agents, then exercises the Phase 6 resubmit path
+        end-to-end so the full repair loop can be validated at $0 cost.
+
+        The dry-run "fix" strips any `force_failure_mode` from the original job's
+        `metadata_json.original_args` so the resubmitted job runs as a clean
+        dry-run. This simulates the BFE "repairing" the mock failure condition.
+
+        Requires:
+            - self.dead_job_id references a real row in job_history
+
+        Ensures:
+            - Breadcrumb notifications fired for all phases
+            - DeadJobContext packaged from real DB row
+            - _resubmit_original_job() called with a mocked successful FixResult
+            - artifacts["resubmitted_job_id"] populated on successful resubmit
+            - $0.00 cost, no git commits, no real agent calls
 
         Args:
             voice_io: Voice I/O module for notifications
             cosa_interface: COSA interface module for sender ID
 
         Returns:
-            str: Mock conversational summary
+            str: Mock conversational summary including resubmitted job id
         """
         import asyncio
+        from cosa.agents.bug_fix_expediter.dead_job_packager import package_dead_job
+        from cosa.agents.bug_fix_expediter.state import FixResult
 
         cosa_interface.SENDER_ID   = cosa_interface._get_sender_id( suffix=self.base_id )
         cosa_interface.TARGET_USER = self.user_email
 
+        # Set job_id for auto-injection into downstream notify() calls
+        voice_io.set_job_id( self.id_hash )
+
         if self.debug: print( f"[BugFixExpediterJob] DRY RUN MODE for dead job: {self.dead_job_id}" )
 
-        # Breadcrumb: Packaging
-        await voice_io.notify( "🧪 Dry run: Packaging dead job context...", priority="low", job_id=self.id_hash, queue_name="run" )
-        await asyncio.sleep( 1.0 )
+        try:
+            # Breadcrumb: Packaging (package REAL DeadJobContext so _resubmit_original_job works)
+            await voice_io.notify( "🧪 Dry run: Packaging dead job context...", priority="low", job_id=self.id_hash, queue_name="run" )
+            await asyncio.sleep( 1.0 )
+            self.dead_job_context = package_dead_job( self.dead_job_id, debug=self.debug )
 
-        # Breadcrumb: Diagnosis
-        await voice_io.notify( "🧪 Dry run: Diagnosing root cause...", priority="low", job_id=self.id_hash, queue_name="run" )
-        await asyncio.sleep( 1.0 )
+            if self.dead_job_context is None:
+                msg = f"Dry run: dead job not found: {self.dead_job_id}"
+                await voice_io.notify( msg, priority="high", job_id=self.id_hash, queue_name="run" )
+                return msg
 
-        # Breadcrumb: Proposal
-        await voice_io.notify( "🧪 Dry run: Generating fix proposals...", priority="low", job_id=self.id_hash, queue_name="run" )
-        await asyncio.sleep( 1.0 )
+            self.artifacts[ "dead_job_context" ] = self.dead_job_context.model_dump()
 
-        # Breadcrumb: Fix application
-        await voice_io.notify( "🧪 Dry run: Applying fix (simulated)...", priority="low", job_id=self.id_hash, queue_name="run" )
-        await asyncio.sleep( 1.0 )
+            # Breadcrumb: Diagnosis
+            await voice_io.notify( "🧪 Dry run: Diagnosing root cause...", priority="low", job_id=self.id_hash, queue_name="run" )
+            await asyncio.sleep( 1.0 )
 
-        # Breadcrumb: Retry
-        await voice_io.notify( "🧪 Dry run: Retry evaluation (simulated)...", priority="low", job_id=self.id_hash, queue_name="run" )
-        await asyncio.sleep( 1.0 )
+            self.artifacts[ "diagnosis" ] = {
+                "root_cause"     : "Simulated root cause (dry-run mock)",
+                "error_category" : "unknown",
+                "confidence"     : 0.0,
+            }
 
-        # Mock artifacts
-        self.artifacts[ "dead_job_context" ] = {
-            "id_hash"  : self.dead_job_id,
-            "job_type" : "unknown",
-            "status"   : "failed",
-            "error"    : "Simulated error for dry run",
-        }
-        self.artifacts[ "diagnosis" ] = {
-            "root_cause"     : "Simulated root cause",
-            "error_category" : "unknown",
-            "confidence"     : 0.0,
-        }
+            # Breadcrumb: Proposal
+            await voice_io.notify( "🧪 Dry run: Generating fix proposals...", priority="low", job_id=self.id_hash, queue_name="run" )
+            await asyncio.sleep( 1.0 )
 
-        completion_abstract = f"""**🧪 Dry Run Complete!**
+            # Breadcrumb: Fix application
+            await voice_io.notify( "🧪 Dry run: Applying fix (simulated)...", priority="low", job_id=self.id_hash, queue_name="run" )
+            await asyncio.sleep( 1.0 )
+
+            # Simulate "fix applied" by preparing the resubmit args:
+            #   1. Start from the exact args the job was originally submitted with
+            #      (now reliably persisted as metadata_json.original_args)
+            #   2. Strip force_failure_mode so the resubmitted job actually succeeds
+            #   3. Ensure dry_run=True so the resubmitted job stays in dry-run mode
+            metadata      = self.dead_job_context.metadata_json or {}
+            original_args = dict( metadata.get( "original_args" ) or {} )
+            original_args.pop( "force_failure_mode", None )
+            original_args[ "dry_run" ] = True
+            metadata[ "original_args" ] = original_args
+            self.dead_job_context.metadata_json = metadata
+            if self.debug: print( f"[BugFixExpediterJob] Dry-run fix: resubmit args = {original_args}" )
+
+            # Build mocked-successful FixResult so _resubmit_original_job is reached
+            fix_result = FixResult( applied=True, success=True, details="dry-run mock fix" )
+            self.artifacts[ "fix_result" ] = fix_result.model_dump()
+
+            # Phase 6: Resubmit original job (real code path, same as live _execute)
+            await voice_io.notify( "🧪 Dry run: Resubmitting original job (simulated fix applied)...", priority="low", job_id=self.id_hash, queue_name="run" )
+            resubmit_id = await self._resubmit_original_job( voice_io )
+            if resubmit_id:
+                fix_result.resubmitted_job_id = resubmit_id
+                self.artifacts[ "fix_result" ]         = fix_result.model_dump()
+                self.artifacts[ "resubmitted_job_id" ] = resubmit_id
+
+            resubmit_msg = ""
+            if resubmit_id:
+                resubmit_msg = f" Resubmitted as {resubmit_id}."
+            else:
+                resubmit_msg = " Resubmit skipped (auto fix disabled or queue unavailable)."
+
+            completion_abstract = f"""**🧪 Dry Run Complete!**
 
 **Dead Job**: {self.dead_job_id}
 **Diagnosis**: Simulated root cause (dry run)
-**Fix**: Not applied (dry run)
+**Fix**: Simulated success (dry run)
+**Resubmit**: {resubmit_id or "skipped"}
 **Stats**: $0.00 | 0 tokens | 5.0s (simulated)"""
 
-        await voice_io.notify(
-            "🧪 Dry run complete! No changes made.",
-            priority="medium", abstract=completion_abstract,
-            job_id=self.id_hash, queue_name="run"
-        )
+            await voice_io.notify(
+                "🧪 Dry run complete! Phase 6 loop validated.",
+                priority="medium", abstract=completion_abstract,
+                job_id=self.id_hash, queue_name="run"
+            )
 
-        return "Dry run complete. Bug fix simulation finished."
+            return f"Dry run complete. Bug fix simulation finished.{resubmit_msg}"
+
+        finally:
+            voice_io.clear_job_id()
 
 
 def quick_smoke_test():

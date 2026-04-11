@@ -108,21 +108,23 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
     from cosa.agents.podcast_generator.job               import PodcastGeneratorJob
     from cosa.agents.presentation_generator.job          import PresentationGeneratorJob
     from cosa.agents.swe_team.job                        import SweTeamJob
+    from cosa.agents.test_fix_expediter.job              import TestFixExpediterJob
     from cosa.agents.test_suite.job                      import TestSuiteJob
 
     if command == "agent router go to deep research":
-        return DeepResearchJob(
-            query            = args_dict.get( "query", "" ),
-            user_id          = user_id,
-            user_email       = user_email,
-            session_id       = session_id,
-            budget           = _parse_optional_float( args_dict.get( "budget" ) ),
-            no_confirm       = True,
-            dry_run          = _parse_boolean( args_dict.get( "dry_run" ) ),
-            audience         = args_dict.get( "audience" ),
-            audience_context = args_dict.get( "audience_context" ),
-            debug            = debug,
-            verbose          = verbose
+        job = DeepResearchJob(
+            query              = args_dict.get( "query", "" ),
+            user_id            = user_id,
+            user_email         = user_email,
+            session_id         = session_id,
+            budget             = _parse_optional_float( args_dict.get( "budget" ) ),
+            no_confirm         = True,
+            dry_run            = _parse_boolean( args_dict.get( "dry_run" ) ),
+            force_failure_mode = args_dict.get( "force_failure_mode" ),
+            audience           = args_dict.get( "audience" ),
+            audience_context   = args_dict.get( "audience_context" ),
+            debug              = debug,
+            verbose            = verbose
         )
 
     elif command == "agent router go to podcast generator":
@@ -134,17 +136,18 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             else:
                 languages = [ lang.strip() for lang in args_dict[ "languages" ].split( "," ) ]
 
-        return PodcastGeneratorJob(
-            research_path    = args_dict.get( "research", "" ),
-            user_id          = user_id,
-            user_email       = user_email,
-            session_id       = session_id,
-            target_languages = languages,
-            dry_run          = _parse_boolean( args_dict.get( "dry_run" ) ),
-            audience         = args_dict.get( "audience" ),
-            audience_context = args_dict.get( "audience_context" ),
-            debug            = debug,
-            verbose          = verbose
+        job = PodcastGeneratorJob(
+            research_path      = args_dict.get( "research", "" ),
+            user_id            = user_id,
+            user_email         = user_email,
+            session_id         = session_id,
+            target_languages   = languages,
+            dry_run            = _parse_boolean( args_dict.get( "dry_run" ) ),
+            force_failure_mode = args_dict.get( "force_failure_mode" ),
+            audience           = args_dict.get( "audience" ),
+            audience_context   = args_dict.get( "audience_context" ),
+            debug              = debug,
+            verbose            = verbose
         )
 
     elif command == "agent router go to research to podcast":
@@ -156,7 +159,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             else:
                 languages = [ lang.strip() for lang in args_dict[ "languages" ].split( "," ) ]
 
-        return DeepResearchToPodcastJob(
+        job = DeepResearchToPodcastJob(
             query            = args_dict.get( "query", "" ),
             user_id          = user_id,
             user_email       = user_email,
@@ -171,7 +174,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
         )
 
     elif command == "agent router go to claude code":
-        return ClaudeCodeJob(
+        job = ClaudeCodeJob(
             prompt          = args_dict.get( "prompt", "" ),
             project         = args_dict.get( "project", "lupin" ),
             user_id         = user_id,
@@ -186,7 +189,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
         )
 
     elif command == "agent router go to presentation generator":
-        return PresentationGeneratorJob(
+        job = PresentationGeneratorJob(
             source_path             = args_dict.get( "source", "" ),
             user_id                 = user_id,
             user_email              = user_email,
@@ -198,12 +201,13 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             content_model           = args_dict.get( "content_model" ),
             render_only             = _parse_boolean( args_dict.get( "render_only" ) ),
             dry_run                 = _parse_boolean( args_dict.get( "dry_run" ) ),
+            force_failure_mode      = args_dict.get( "force_failure_mode" ),
             debug                   = debug,
             verbose                 = verbose
         )
 
     elif command == "agent router go to research to presentation":
-        return DeepResearchToPresentationJob(
+        job = DeepResearchToPresentationJob(
             query                   = args_dict.get( "query", "" ),
             user_id                 = user_id,
             user_email              = user_email,
@@ -220,7 +224,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
         )
 
     elif command == "agent router go to swe team":
-        return SweTeamJob(
+        job = SweTeamJob(
             task           = args_dict.get( "task", args_dict.get( "prompt", "" ) ),
             user_id        = user_id,
             user_email     = user_email,
@@ -254,7 +258,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
         else:
             pytest_args = []
 
-        return TestSuiteJob(
+        job = TestSuiteJob(
             test_types  = test_types,
             user_id     = user_id,
             user_email  = user_email,
@@ -266,7 +270,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
         )
 
     elif command == "agent router go to bug fix expediter":
-        return BugFixExpediterJob(
+        job = BugFixExpediterJob(
             dead_job_id   = args_dict.get( "dead_job_id", "" ),
             user_id       = user_id,
             user_email    = user_email,
@@ -277,6 +281,35 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             verbose       = verbose
         )
 
+    elif command == "agent router go to test fix expediter":
+        # Parse optional original_test_types / original_pytest_args (comma-separated)
+        test_types_arg = args_dict.get( "original_test_types", [] )
+        if isinstance( test_types_arg, str ):
+            test_types_arg = [ s.strip() for s in test_types_arg.split( "," ) if s.strip() ]
+        pytest_args_arg = args_dict.get( "original_pytest_args", [] )
+        if isinstance( pytest_args_arg, str ):
+            pytest_args_arg = [ s.strip() for s in pytest_args_arg.split( " " ) if s.strip() ]
+
+        job = TestFixExpediterJob(
+            remediation_snapshot_path = args_dict.get( "remediation_snapshot_path", "" ),
+            source_test_suite_job_id  = args_dict.get( "source_test_suite_job_id", "" ),
+            user_id                   = user_id,
+            user_email                = user_email,
+            session_id                = session_id,
+            original_test_types       = test_types_arg,
+            original_pytest_args      = pytest_args_arg,
+            dry_run                   = _parse_boolean( args_dict.get( "dry_run" ) ),
+            debug                     = debug,
+            verbose                   = verbose,
+        )
+
     else:
         print( f"[agentic_job_factory] Unknown command: {command}" )
         return None
+
+    # Populate CJ Flow persistence fields on every constructed job so job_history
+    # persists both the routing command and the exact args_dict the job was built from.
+    # BFE's resubmit path reads these to reconstruct the original job faithfully.
+    job.routing_command = command
+    job.original_args   = dict( args_dict )
+    return job

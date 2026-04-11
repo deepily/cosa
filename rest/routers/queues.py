@@ -354,6 +354,9 @@ async def get_queue(
                 "completed_at"    : job.completed_at,
                 "status"          : job.state.value if hasattr( job.state, 'value' ) else str( job.state ),
                 "error"           : job.error,
+                "scheduled_at"    : getattr( job, 'scheduled_at', None ),
+                "monopolize"      : getattr( job, 'monopolize', False ),
+                "paused"          : job.state == JobState.PAUSED,
             }
 
             # Calculate duration for agentic jobs
@@ -893,7 +896,7 @@ async def cancel_job(
 @router.delete(
     "/queue/{queue_name}/{job_id}",
     summary     = "Remove job from queue",
-    description = "Forcefully remove a job from run, done, or dead queue."
+    description = "Forcefully remove a job from todo, run, done, or dead queue."
 )
 async def delete_queue_job(
     queue_name: str,
@@ -902,15 +905,18 @@ async def delete_queue_job(
     running_queue = Depends( get_running_queue ),
     done_queue    = Depends( get_done_queue ),
     dead_queue    = Depends( get_dead_queue ),
+    todo_queue    = Depends( get_todo_queue ),
 ):
     """
     Forcefully remove a job from an in-memory queue.
 
     For running jobs, also signals cancellation so the execution thread stops.
+    For todo jobs, the underlying TodoFifoQueue.delete_by_id_hash wakes the
+    consumer via condition.notify so it recalculates eligibility.
     Emits a job_removed WebSocket event so other connected clients update.
 
     Requires:
-        - queue_name is one of: 'run', 'done', 'dead'
+        - queue_name is one of: 'todo', 'run', 'done', 'dead'
         - job_id identifies an existing job in the specified queue
         - current_user is authenticated
         - Job belongs to current user OR user is admin
@@ -927,12 +933,13 @@ async def delete_queue_job(
         - HTTPException 403: User does not own this job and is not admin
 
     Args:
-        queue_name: Target queue ('run', 'done', 'dead')
+        queue_name: Target queue ('todo', 'run', 'done', 'dead')
         job_id: Target job ID
         current_user: Authenticated user info
         running_queue: Running queue dependency
         done_queue: Done queue dependency
         dead_queue: Dead queue dependency
+        todo_queue: Todo queue dependency
 
     Returns:
         dict: {status, job_id, queue}
@@ -941,12 +948,13 @@ async def delete_queue_job(
 
     # Validate queue name
     queue_map = {
+        "todo" : todo_queue,
         "run"  : running_queue,
         "done" : done_queue,
         "dead" : dead_queue
     }
     if queue_name not in queue_map:
-        raise HTTPException( status_code=400, detail=f"Invalid queue name for deletion: {queue_name}. Must be 'run', 'done', or 'dead'." )
+        raise HTTPException( status_code=400, detail=f"Invalid queue name for deletion: {queue_name}. Must be 'todo', 'run', 'done', or 'dead'." )
 
     queue = queue_map[ queue_name ]
 

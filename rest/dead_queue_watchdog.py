@@ -42,7 +42,10 @@ _INFRA_PATTERNS = {
         re.IGNORECASE
     ),
     FailureCategory.INFRA_RATE_LIMIT : re.compile(
-        r"RateLimitError|rate.limit|429|Too\s*Many\s*Requests|overloaded",
+        # Require explicit rate-limit keywords. Bare "429" was matching line numbers
+        # in tracebacks (e.g. 'File "x.py", line 429') and misclassifying code bugs.
+        r"RateLimitError|rate.limit|Too\s*Many\s*Requests|overloaded|"
+        r"\b(?:HTTP|status|code|error)\s*(?:code\s*)?429\b",
         re.IGNORECASE
     ),
     FailureCategory.INFRA_ENVIRONMENT: re.compile(
@@ -416,13 +419,22 @@ class DeadQueueWatchdog:
             f"repair_chain_id={job_id}"
         )
 
+        # Phase 6 dry-run repair loop: if the failed job was itself a dry-run
+        # mock, propagate dry_run=True to the spawned BFE so the whole repair
+        # loop runs at $0 cost. Production failures (dry_run=False) always
+        # spawn non-dry-run BFE jobs.
+        bfe_args = {
+            "dead_job_id"   : job_id,
+            "extra_context" : extra_context,
+        }
+        if getattr( failed_job, "dry_run", False ):
+            bfe_args[ "dry_run" ] = True
+            if self.debug: print( f"[Watchdog] Propagating dry_run=True to spawned BFE for {job_id}" )
+
         try:
             bfe_job = create_agentic_job(
                 command    = "agent router go to bug fix expediter",
-                args_dict  = {
-                    "dead_job_id"   : job_id,
-                    "extra_context" : extra_context,
-                },
+                args_dict  = bfe_args,
                 user_id    = user_id,
                 user_email = user_email,
                 session_id = session_id,

@@ -1182,13 +1182,16 @@ class TodoFifoQueue( FifoQueue ):
         user_id = item.user_id
 
         metadata = {
-            'question_text' : item.last_question_asked,
-            'agent_type'    : item.job_type,
-            'timestamp'     : item.created_date,
-            'scheduled_at'  : item.scheduled_at,
-            'monopolize'    : item.monopolize,
-            'paused'        : item.state == JobState.PAUSED,
-            'user_email'    : item.user_email,
+            'question_text'    : item.last_question_asked,
+            'agent_type'       : item.job_type,
+            'timestamp'        : item.created_date,
+            'scheduled_at'     : item.scheduled_at,
+            'monopolize'       : item.monopolize,
+            'paused'           : item.state == JobState.PAUSED,
+            'user_email'       : item.user_email,
+            'session_id'       : item.session_id,
+            'routing_command'  : item.routing_command,
+            'original_args'    : item.original_args,
         }
         emit_job_state_transition( self.websocket_mgr, item.id_hash, JobState.PENDING, JobState.QUEUED, user_id, metadata )
 

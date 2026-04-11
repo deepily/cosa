@@ -111,6 +111,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.inject_bugs           = inject_bugs
         self.df_path_key           = df_path_key
         self.routing_command       = routing_command
+        self.original_args         = None  # CJ Flow persistence field — agent jobs don't carry structured args
         self.user_id               = user_id
         self.user_email            = user_email  # Email for TTS notification routing
         self.session_id            = session_id  # WebSocket session ID for job-notification correlation

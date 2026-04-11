@@ -46,12 +46,13 @@ class PodcastSubmitRequest( BaseModel ):
     - If it looks like a path → direct mode (immediate job creation)
     - If it looks like text → description mode (fuzzy match + confirmation)
     """
-    research_source   : str
-    target_languages  : Optional[ List[ str ] ] = None
-    max_segments      : Optional[ int ]         = None
-    dry_run           : bool                    = False
-    audience          : Optional[ str ]         = None
-    audience_context  : Optional[ str ]         = None
+    research_source    : str
+    target_languages   : Optional[ List[ str ] ] = None
+    max_segments       : Optional[ int ]         = None
+    dry_run            : bool                    = False
+    force_failure_mode : Optional[ str ]         = Field( None, description="Phase 6 dry-run repair loop: 'code_bug' | 'infra_timeout' | 'rate_limit' to inject a failure at the end of dry-run" )
+    audience           : Optional[ str ]         = None
+    audience_context   : Optional[ str ]         = None
     scheduled_at      : Optional[ str ]         = Field( None, description="ISO datetime for deferred execution (None = immediate)" )
     monopolize        : bool                    = Field( False, description="Run exclusively, block all other jobs until complete" )
 
@@ -528,6 +529,8 @@ async def submit_podcast_job(
             args_dict[ "languages" ] = ",".join( request.target_languages )
         if request.dry_run:
             args_dict[ "dry_run" ] = True
+        if request.force_failure_mode:
+            args_dict[ "force_failure_mode" ] = request.force_failure_mode
         if request.audience:
             args_dict[ "audience" ] = request.audience
         if request.audience_context:
@@ -658,6 +661,8 @@ async def submit_podcast_job(
                 args_dict[ "languages" ] = ",".join( request.target_languages )
             if request.dry_run:
                 args_dict[ "dry_run" ] = True
+            if request.force_failure_mode:
+                args_dict[ "force_failure_mode" ] = request.force_failure_mode
             if request.audience:
                 args_dict[ "audience" ] = request.audience
             if request.audience_context:

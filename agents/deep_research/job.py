@@ -58,6 +58,7 @@ class DeepResearchJob( AgenticJobBase ):
         lead_model: Optional[ str ] = None,
         no_confirm: bool = True,  # Default to auto-approve in queue mode
         dry_run: bool = False,
+        force_failure_mode: Optional[ str ] = None,
         audience: Optional[ str ] = None,
         audience_context: Optional[ str ] = None,
         debug: bool = False,
@@ -99,13 +100,14 @@ class DeepResearchJob( AgenticJobBase ):
         )
 
         # Research parameters
-        self.query            = query
-        self.budget           = budget
-        self.lead_model       = lead_model
-        self.no_confirm       = no_confirm
-        self.dry_run          = dry_run
-        self.audience         = audience
-        self.audience_context = audience_context
+        self.query              = query
+        self.budget             = budget
+        self.lead_model         = lead_model
+        self.no_confirm         = no_confirm
+        self.dry_run            = dry_run
+        self.force_failure_mode = force_failure_mode
+        self.audience           = audience
+        self.audience_context   = audience_context
 
         # Results (populated after execution)
         self.report_path  = None
@@ -439,6 +441,11 @@ class DeepResearchJob( AgenticJobBase ):
         )
         from dataclasses import asdict
         self.artifacts[ "cost_summary" ] = asdict( self.cost_summary )
+
+        # Phase 6 repair loop hook: deliberately fail the dry-run to exercise
+        # the dead-queue watchdog + BFE auto-fix pipeline.
+        if self.force_failure_mode:
+            await self._raise_forced_failure( voice_io )
 
         completion_abstract = f"""**🧪 Dry Run Complete!**
 

@@ -115,9 +115,14 @@ class AgenticJobBase( ABC ):
         self.scheduled_at          = scheduled_at   # ISO datetime string or None (immediate)
         self.monopolize            = monopolize      # Exclusive execution flag
 
+        # CJ Flow persistence fields — populated by agentic_job_factory.create_agentic_job()
+        # so job_history persists routing_command and the exact args the job was submitted with.
+        # BFE's resubmit path reads these to reconstruct the original job faithfully.
+        self.routing_command : Optional[ str ]  = None
+        self.original_args   : Optional[ dict ] = None
+
         # For compatibility with queue UI display
         self.answer_conversational = None
-        self.routing_command       = self.JOB_TYPE
 
     def _generate_id( self ) -> str:
         """
@@ -389,6 +394,44 @@ class AgenticJobBase( ABC ):
         start = datetime.fromisoformat( self.started_at )
         end   = datetime.fromisoformat( self.completed_at )
         return ( end - start ).total_seconds()
+
+    async def _raise_forced_failure( self, voice_io ) -> None:
+        """
+        Phase 6 dry-run repair-loop hook — deliberately fail the job.
+
+        Subclasses that support the Phase 6 dry-run repair loop accept a
+        `force_failure_mode` constructor parameter and store it as
+        `self.force_failure_mode`. When that flag is set, their `_execute_dry_run()`
+        path calls this method at the end of the simulated breadcrumbs to raise
+        a matching exception so the job lands in the dead queue with a realistic
+        error signature. The dead-queue watchdog then classifies the failure
+        and triggers the Bug Fix Expediter auto-fix pipeline.
+
+        This method NEVER runs during live execution — it is gated behind
+        `self.dry_run == True` in the caller.
+
+        Requires:
+            - self.force_failure_mode in { "code_bug", "infra_timeout", "rate_limit" }
+
+        Raises:
+            - KeyError for "code_bug"
+            - asyncio.TimeoutError for "infra_timeout"
+            - Exception (with "RateLimitError: 429" prefix) for "rate_limit"
+            - ValueError for any other value
+        """
+        import asyncio
+        mode = getattr( self, "force_failure_mode", None )
+        await voice_io.notify(
+            f"🧪 Dry run: simulating {mode} failure for Phase 6 loop test",
+            priority="low", job_id=self.id_hash, queue_name="run"
+        )
+        if mode == "code_bug":
+            raise KeyError( "'source_path' — simulated mock failure for Phase 6 dry-run loop" )
+        if mode == "infra_timeout":
+            raise asyncio.TimeoutError( "simulated mock timeout for Phase 6 dry-run loop" )
+        if mode == "rate_limit":
+            raise Exception( "RateLimitError: 429 Too Many Requests — simulated for Phase 6 dry-run loop" )
+        raise ValueError( f"Unknown force_failure_mode: {mode}" )
 
     def __repr__( self ) -> str:
         """String representation for debugging."""

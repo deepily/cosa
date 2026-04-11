@@ -62,6 +62,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
         content_model: Optional[ str ] = None,
         render_only: bool = False,
         dry_run: bool = False,
+        force_failure_mode: Optional[ str ] = None,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -109,6 +110,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
         self.content_model           = content_model
         self.render_only             = render_only
         self.dry_run                 = dry_run
+        self.force_failure_mode      = force_failure_mode
 
         # Results (populated after execution)
         self.yaml_path    = None
@@ -415,6 +417,11 @@ class PresentationGeneratorJob( AgenticJobBase ):
                 "total_api_calls"    : 0,
             }
             self.artifacts[ "cost_summary" ] = self.cost_summary
+
+            # Phase 6 repair loop hook: deliberately fail the dry-run to exercise
+            # the dead-queue watchdog + BFE auto-fix pipeline.
+            if self.force_failure_mode:
+                await self._raise_forced_failure( voice_io )
 
             completion_abstract = f"""**Dry Run Complete!**
 

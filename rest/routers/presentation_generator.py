@@ -39,6 +39,7 @@ class PresentationSubmitRequest( BaseModel ):
     content_model           : Optional[ str ] = Field( None, description="Override content model (e.g. claude-sonnet-4-6 for automated tests)" )
     render_only             : bool            = Field( False, description="Render-only mode: source_path must be a YAML file, skips Phases 1-5" )
     dry_run                 : bool            = False
+    force_failure_mode      : Optional[ str ] = Field( None, description="Phase 6 dry-run repair loop: 'code_bug' | 'infra_timeout' | 'rate_limit' to inject a failure at the end of dry-run" )
     scheduled_at            : Optional[ str ] = Field( None, description="ISO datetime for deferred execution (None = immediate)" )
     monopolize              : bool            = Field( False, description="Run exclusively, block all other jobs until complete" )
 
@@ -187,6 +188,8 @@ async def submit_presentation_job(
         args_dict[ "target_duration_minutes" ] = str( request.target_duration_minutes )
     if request.dry_run:
         args_dict[ "dry_run" ] = True
+    if request.force_failure_mode:
+        args_dict[ "force_failure_mode" ] = request.force_failure_mode
     if request.audience:
         args_dict[ "audience" ] = request.audience
     if request.theme:

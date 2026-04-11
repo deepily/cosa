@@ -128,7 +128,8 @@ def _build_metadata_json( metadata ):
         "response_text", "abstract", "report_link",
         "cost_summary", "artifacts", "answer_conversational",
         "push_counter", "agent_type", "stack_trace",
-        "scheduled_at", "monopolize"
+        "scheduled_at", "monopolize",
+        "original_args",  # CJ Flow persistence: exact args a job was submitted with (for BFE resubmit)
     ]
 
     result = {}
@@ -237,18 +238,22 @@ def persist_job_completed_from_metadata( job_id, metadata ):
             "status"        : JobState.COMPLETED.value,
             "completed_at"  : now,
             "updated_at"    : now,
-            "metadata_json" : _build_metadata_json( metadata )
         }
 
-        # Calculate duration if we have a started_at
+        # Read existing row so we can MERGE metadata_json (preserve fields set at
+        # creation, e.g. original_args) and calculate duration_seconds in one pass.
         with get_db() as session:
             row = session.execute(
-                select( JobHistory.started_at )
+                select( JobHistory.started_at, JobHistory.metadata_json )
                 .where( JobHistory.id_hash == job_id )
-            ).scalar()
+            ).one_or_none()
 
-            if row is not None:
-                values[ "duration_seconds" ] = ( now - row ).total_seconds()
+            existing_metadata = ( row.metadata_json if row is not None else {} ) or {}
+            new_metadata      = _build_metadata_json( metadata )
+            values[ "metadata_json" ] = { **existing_metadata, **new_metadata }
+
+            if row is not None and row.started_at is not None:
+                values[ "duration_seconds" ] = ( now - row.started_at ).total_seconds()
 
             session.execute(
                 update( JobHistory )
@@ -285,17 +290,22 @@ def persist_job_failed_from_metadata( job_id, metadata ):
             "error"        : error_text,
             "completed_at" : now,
             "updated_at"   : now,
-            "metadata_json": _build_metadata_json( metadata )
         }
 
+        # Read existing row so we can MERGE metadata_json (preserve fields set at
+        # creation, e.g. original_args) and calculate duration_seconds in one pass.
         with get_db() as session:
             row = session.execute(
-                select( JobHistory.started_at )
+                select( JobHistory.started_at, JobHistory.metadata_json )
                 .where( JobHistory.id_hash == job_id )
-            ).scalar()
+            ).one_or_none()
 
-            if row is not None:
-                values[ "duration_seconds" ] = ( now - row ).total_seconds()
+            existing_metadata = ( row.metadata_json if row is not None else {} ) or {}
+            new_metadata      = _build_metadata_json( metadata )
+            values[ "metadata_json" ] = { **existing_metadata, **new_metadata }
+
+            if row is not None and row.started_at is not None:
+                values[ "duration_seconds" ] = ( now - row.started_at ).total_seconds()
 
             session.execute(
                 update( JobHistory )

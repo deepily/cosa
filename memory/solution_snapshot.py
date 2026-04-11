@@ -233,6 +233,7 @@ class SolutionSnapshot( RunnableCode ):
         self.answer_conversational = answer_conversational
         self.error                 = error
         self.routing_command       = routing_command
+        self.original_args         = None  # CJ Flow persistence field — snapshots replay prior runs, no args needed
         self.agent_class_name      = agent_class_name  # e.g., "MathAgent", "CalendarAgent", etc.
         self.user_id               = user_id
         self.user_email            = user_email  # Email for TTS notification routing

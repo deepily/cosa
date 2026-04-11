@@ -1,5 +1,83 @@
 # COSA Development History
 
+> **⏳ SESSIONS 1b8c1cc0+1cfcdf73 PENDING**: TestFixExpediter (TFE) + shared fix primitives + CJ Flow persistence gaps + BFE Phase 6 dry-run (2026.04.10)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 1cfcdf73 — TestFixExpediter end-to-end + shared fix primitives extraction**:
+> - **New `agents/shared/` peer package** (extracted from BFE so TFE can reuse it):
+>   - `plan_writer.py` — moved verbatim from BFE with standalone smoke test using `SimpleNamespace` mocks (zero back-dependency on `bug_fix_expediter/`)
+>   - `git_strategist.py` — `resolve_trust_level`, `generate_slug`, `commit_and_pr_single` (BFE) + new `commit_and_pr_multi` (TFE's one-branch-N-commits-one-PR strategy)
+>   - `fix_executor.py` — `FIX_PROMPT_BUILDERS` registry + polymorphic `FixExecutor.execute_fix()` retry loop; accepts `delegate_to_coder_fn` / `verify_fix_fn` callbacks so BFE's `patch.object(orchestrator, ...)` unit tests still work
+> - **BFE refactor**: `orchestrator.run_fix()` + `run_git_strategy()` → thin shims over shared engine. `bug_fix_expediter/plan_writer.py` reduced to re-export shim. `prompts/fix.py` self-registers into `shared.FIX_PROMPT_BUILDERS["bfe"]` at import time. All 58 pre-existing BFE Phase-6 unit tests green byte-for-byte through every extraction commit.
+> - **New `agents/test_fix_expediter/` package** (14 files): config, state, snapshot_loader, cluster, cosa_interface, voice_io, orchestrator, job, prompts/ (cluster, diagnosis, proposal, fix). `TestFixExpediterJob` extends `AgenticJobBase` with `JOB_TYPE="test_fix_expediter"`, `JOB_PREFIX="tfe"`. 6-phase pipeline: Phase 0 heuristic clustering (groups by `(normalized_classname, first_non_pytest_traceback_frame)`), Phase 1 diagnosis (test-aware prompts with 4 failure-mode categories), Phase 2 proposal (aggregated multi-select voice gate), Phase 3 fix (per-cluster `FixExecutor(prompt_builder_key="tfe")` + dedicated `_delegate_to_coder`/`_verify_fix`/`_build_tfe_*_options` mirroring BFE pattern to preserve test-patch surface), Phase 5 multi-cluster git via `GitStrategist.commit_and_pr_multi()`, Phase 6 async rerun with recursion guard (`metadata["triggered_by_tfe"] = self.job_id`)
+> - **New `rest/test_suite_completion_watchdog.py`**: 6 eligibility gates (enabled, job_type, snapshot valid, recursion guard, failure cap, repair tracker) wrapped in try/except so it can never crash the queue consumer. Hook in `running_fifo_queue.py` around line 401 fires after `jobs_done_queue.push()`. Module-level singleton via `init_watchdog()` / `get_watchdog()` / `reset_watchdog()`
+> - **Factory routing**: `agentic_job_factory.create_agentic_job()` TFE elif branch routes `"agent router go to test fix expediter"` → `TestFixExpediterJob`
+> - **Key scope deviations** (documented inline): `FixContext` uses `SimpleNamespace` duck-typed pass-through (not Pydantic); BFE's `_delegate_to_coder`/`_verify_fix` stayed on BFE orchestrator (TFE copies pattern); no `api_client.py`/`cost_tracker.py`/`rate_limiter.py` in TFE (follows BFE SDK-delegated pattern, not deep_research's direct-API); Phase 0 `llm_refine` uses pure-Python `_cap_enforce()` fallback (SDK wiring deferred)
+>
+> **Session 1b8c1cc0 Part 1 — BFE Phase 6 dry-run smoke test infrastructure**:
+> - `force_failure_mode: Literal[...]` threaded through `MockJobSubmitRequest`, DR/podcast/presentation REST request models, `agentic_job_factory.create_agentic_job()`, into each job constructor
+> - Shared `_raise_forced_failure(voice_io)` helper on `AgenticJobBase` — raises `KeyError` / `asyncio.TimeoutError` / `Exception("RateLimitError: 429...")` at end of dry-run breadcrumbs so jobs land in dead queue with realistic error signatures
+> - BFE `_execute_dry_run()` extended to package real `DeadJobContext`, strip `force_failure_mode` from `original_args`, build mocked successful `FixResult`, and call `_resubmit_original_job()` — so `dry_run=True` now exercises the full Phase 6 loop
+> - `dead_queue_watchdog._submit_bfe()` propagates `dry_run=True` to spawned BFE when failed job was dry-run mock
+>
+> **Session 1b8c1cc0 Part 2 — CJ Flow persistence gaps fix**:
+> - `routing_command` + `original_args` attributes added to `AgenticJobBase.__init__` (both default `None`); `original_args` added to `AgentBase.__init__` and `SolutionSnapshot.__init__` so every CJ-Flow-eligible job carries the attributes — enables `TodoFifoQueue.push()` to read them directly without defensive `getattr` fallbacks
+> - Removed stale `self.routing_command = self.JOB_TYPE` line from `AgenticJobBase` (was setting bare job_type instead of full routing command string)
+> - `agentic_job_factory.create_agentic_job()` refactored to direct-assignment pattern: each branch builds `job = FooJob(...)`, single tail sets `job.routing_command = command` and `job.original_args = dict(args_dict)` — no wrapper, no indirection
+> - `TodoFifoQueue.push()` metadata enriched with `session_id`, `routing_command`, `original_args` via direct attribute reads
+> - `job_persistence._build_metadata_json()` whitelists `original_args` in rich_fields; `persist_job_completed_from_metadata()` + `persist_job_failed_from_metadata()` now **merge** existing `metadata_json` instead of overwriting (preserves `original_args` through state transitions)
+> - `dead_job_packager.py` reverted to direct `row[key]` reads (dropped `_JOB_TYPE_TO_ROUTING_COMMAND` lookup + `or ""` coercions)
+> - BFE `_execute_dry_run()` resubmit args simplified to `{**original_args, dry_run: True}` with `force_failure_mode` popped
+>
+> **Session 1b8c1cc0 Part 3 — Bonus regex bugfix**:
+> - `dead_queue_watchdog.py` `INFRA_RATE_LIMIT` regex tightened — was matching bare `429` anywhere in error text (e.g. traceback `line 429`), misclassifying code-bug `KeyError` failures as rate-limit failures and routing them to `_direct_retry()` instead of `_submit_bfe()`
+> - New pattern requires HTTP context: `\b(?:HTTP|status|code|error)\s*(?:code\s*)?429\b`. `RateLimitError`, `rate.limit`, `Too Many Requests`, `overloaded` patterns still match; all classification unit tests pass
+>
+> **Files Modified (23)**: `agents/agent_base.py`, `agents/agentic_job_base.py`, `agents/bug_fix_expediter/{dead_job_packager,job,orchestrator,plan_writer,prompts/fix}.py`, `agents/deep_research/job.py`, `agents/podcast_generator/job.py`, `agents/presentation_generator/job.py`, `agents/test_suite/job.py`, `memory/solution_snapshot.py`, `rest/agentic_job_factory.py`, `rest/dead_queue_watchdog.py`, `rest/job_persistence.py`, `rest/routers/{deep_research,mock_job,podcast_generator,presentation_generator,queues}.py`, `rest/running_fifo_queue.py`, `rest/todo_fifo_queue.py`
+> **Files Created (19)**: `agents/shared/{__init__,plan_writer,git_strategist,fix_executor}.py`, `agents/test_fix_expediter/{__init__,cluster,config,cosa_interface,job,orchestrator,snapshot_loader,state,voice_io}.py`, `agents/test_fix_expediter/prompts/{__init__,cluster,diagnosis,fix,proposal}.py`, `rest/test_suite_completion_watchdog.py`
+> **Commit**: pending
+>
+> **Test status (Lupin parent repo, CoSA working-tree paired with it)**: 3119 passed, 1 xfailed, zero regression across every intermediate commit. Baseline 2916 → 2954 (+38 scaffolding) → 2989 (+35 Phase 0) → 3006 (+17 Phase 1) → 3040 (+34 Phase 2) → 3072 (+32 Phase 3) → 3119 (+47 Phase 5+6+watchdog+PEFT+live). 76/76 BFE Phase 6 unit tests (58 pre-existing + 18 new for Session 1b8c1cc0 dry-run + persistence fixes) all green.
+>
+> Total: +509 insertions, -745 deletions across 23 modified files + 19 new files
+>
+> **Parent Lupin commit context**: All tests, fixtures, planning docs (20 docs under `src/rnd/v0.1.6/2026.04.10-test-fix-expediter/`), user-facing guides (5 docs under `src/docs/agents/`), proxy Q&A script, PEFT training data, INI keys landed in Lupin parent repo — see Lupin `history.md` entries for Sessions 1cfcdf73 and 1b8c1cc0.
+
+---
+
+> **✅ SESSIONS bacc971a+6b8670e7+f28d32d1 COMMITTED**: Idempotency, cross-user WS delivery, remediation snapshots (2026.04.09)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session bacc971a — Bug Fix: 4x Duplicate Notifications + CBR Prediction JSON**:
+> - Server-side idempotency cache (OrderedDict, 60s TTL) for duplicate notification suppression
+> - Reordered persist-before-push in notifications.py (PostgreSQL first, FIFO queue only if connected)
+> - CBR prediction: `json.loads()` on string values before `_other` wrapping — extracts structured `answers` from browser JSON strings
+> - [DIAG-JR] diagnostic logging for job routing verification
+>
+> **Session 6b8670e7 — Bug Fix: CC Listener Sessions Not Appearing**:
+> - `emit_to_session_sync()` in WebSocketManager — sync wrapper for cross-user session targeting
+> - Cross-user CC listener delivery in `notification_fifo_queue.py` at both priority paths
+> - Cross-user delivery for `user_initiated_message` events in `queues.py`
+> - Cross-user diagnostic in `notifications.py` showing all CC listeners regardless of auth user
+>
+> **Session f28d32d1 — Test Suite Remediation Snapshots**:
+> - Enhanced `_parse_junit_xml()` for per-failure detail extraction (classname, test name, type, message, traceback)
+> - JSON snapshot writer in `do_all()` — produces `*-remediation.json` alongside markdown reports
+> - `remediation_snapshot_path` in API response (`queues.py`) and WS metadata (`running_fifo_queue.py`)
+> - `ET.fromstring()` fix (was `ET.parse()`), falsy Element bug fix (`el = failure_el if failure_el is not None else error_el`)
+> - Stale queue entry guard in `fifo_queue.py` `pop_next_eligible()`
+>
+> **Files Modified (8)**: `prediction_engine.py`, `test_suite/job.py`, `fifo_queue.py`, `notification_fifo_queue.py`, `routers/notifications.py`, `routers/queues.py`, `running_fifo_queue.py`, `websocket_manager.py`
+> **Commit**: 7618499
+>
+> Total: +250 insertions, -38 deletions across 8 files
+
+---
+
 > **✅ SESSIONS 97f29034+a312ee22 COMMITTED**: CJ Flow UPE — Admin broadcast, timezone timestamps, delete endpoint, test suite hardening (2026.04.08)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >
@@ -19,7 +97,7 @@
 > - `system.py`: Timestamp fixes for `/api/config/client` and system endpoints
 >
 > **Files Modified (23)**: `util.py`, `queue_consumer.py`, `queue_util.py`, `running_fifo_queue.py`, `todo_fifo_queue.py`, `websocket_manager.py`, `routers/queues.py`, `routers/jobs.py`, `routers/system.py`, `routers/websocket.py`, `routers/websocket_admin.py`, `agentic_job_base.py`, `bug_fix_expediter/job.py`, `claude_code/job.py`, `deep_research/job.py`, `deep_research_to_podcast/job.py`, `deep_research_to_presentation/job.py`, `podcast_generator/job.py`, `presentation_generator/job.py`, `presentation_generator/orchestrator.py`, `swe_team/job.py`, `test_suite/cosa_interface.py`, `test_suite/job.py`
-> **Commit**: pending
+> **Commit**: 4a97876
 >
 > Total: +470 insertions, -162 deletions across 23 files
 

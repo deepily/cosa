@@ -38,8 +38,12 @@ from cosa.agents.bug_fix_expediter.prompts.fix import (
     build_redelegation_prompt,
 )
 from cosa.agents.bug_fix_expediter.plan_writer import PlanWriter
+from cosa.agents.shared.git_strategist import GitStrategist
+from cosa.agents.shared.fix_executor import FixExecutor
 
-# SWE Team reuse — safety, hooks, test runner
+# SWE Team reuse — safety, hooks, test runner (kept for back-compat;
+# FixExecutor imports these directly, but existing BFE test fixtures may
+# reference the orchestrator-module-level names)
 from cosa.agents.swe_team.safety_limits import SafetyGuard, SafetyLimitError
 from cosa.agents.swe_team.hooks import build_can_use_tool, post_tool_hook
 from cosa.agents.swe_team.test_runner import run_pytest
@@ -961,15 +965,20 @@ class BFEOrchestrator:
         """
         Run the fix phase: Coder applies fix, Tester validates.
 
+        Session 1cfcdf73 (2026-04-10): Thin shim delegating to shared FixExecutor.
+        The BFE-specific concerns (state transitions, plan doc update, completion
+        notification, files_changed exposure) stay in this shim; the SDK loop,
+        retry logic, and escalation live in `shared/fix_executor.py`.
+
         Requires:
             - diagnosis is a valid DiagnosisResult
             - selected_fix is a valid ProposedFix
-            - SDK_AVAILABLE is True
+            - SDK_AVAILABLE is True (checked by FixExecutor)
 
         Ensures:
             - Returns FixResult with applied/success status
             - Plan document updated with implementation log
-            - Safety limits enforced via SafetyGuard
+            - Safety limits enforced via SafetyGuard (inside FixExecutor)
 
         Args:
             diagnosis: DiagnosisResult from diagnosis phase
@@ -985,7 +994,7 @@ class BFEOrchestrator:
             logger.error( "Claude Agent SDK not available — cannot run fix" )
             return FixResult( applied=False, success=False, details="SDK not installed" )
 
-        # State: PROPOSING → FIXING
+        # State: PROPOSING → FIXING (BFE-specific phase enum)
         await self._emit_state( BFEPhase.PROPOSING, BFEPhase.FIXING )
 
         await self._notify(
@@ -994,125 +1003,30 @@ class BFEOrchestrator:
             abstract=f"**Fix**: {selected_fix.title}\n**Type**: {selected_fix.fix_type}\n**Risk**: {selected_fix.risk_level}"
         )
 
-        # Create SafetyGuard for fix phase (fresh counters)
-        guard = SafetyGuard(
-            max_iterations = self.config.max_fix_attempts * 10,
-            max_failures   = self.config.max_fix_attempts + 1,
-            timeout_secs   = self.config.wall_clock_timeout_secs,
+        # Delegate the retry loop + escalation to shared FixExecutor.
+        # Pass BFE's _delegate_to_coder and _verify_fix as callbacks so
+        # unit test patches on those orchestrator methods continue to work.
+        executor = FixExecutor(
+            config                = self.config,
+            fix_context           = self.dead_job_context,
+            job_id                = self.job_id,
+            prompt_builder_key    = "bfe",
+            voice_io_module       = voice_io,
+            cosa_interface_module = cosa_interface,
+            notify_fn             = self._notify,
+            is_cancelled_fn       = self._is_cancelled,
+            delegate_to_coder_fn  = self._delegate_to_coder,
+            verify_fix_fn         = self._verify_fix,
+            debug                 = self.debug,
+            verbose               = self.verbose,
         )
 
-        coder_output  = ""
-        files_changed = []
-        fix_result    = FixResult( applied=False, success=False )
+        fix_result, files_changed = await executor.execute_fix(
+            diagnosis    = diagnosis,
+            selected_fix = selected_fix,
+        )
 
-        try:
-            # --- Initial coder delegation ---
-            prompt = build_fix_prompt( selected_fix, diagnosis, self.dead_job_context )
-
-            coder_output, files_changed = await self._delegate_to_coder(
-                voice_io, prompt, guard, cosa_interface
-            )
-
-            if not coder_output:
-                fix_result = FixResult( applied=False, success=False, details="Coder produced no output" )
-            else:
-                # --- Coder-Tester retry loop ---
-                for iteration in range( 1, self.config.max_fix_attempts + 1 ):
-
-                    if self._is_cancelled():
-                        fix_result = FixResult( applied=True, success=False, details="Cancelled during verification" )
-                        break
-
-                    if self.debug: print( f"[BFEOrchestrator] Verification iteration {iteration}/{self.config.max_fix_attempts}" )
-
-                    await self._notify(
-                        voice_io, f"Verifying fix (iteration {iteration}/{self.config.max_fix_attempts})...",
-                        priority="low"
-                    )
-
-                    # --- Tester verification ---
-                    passed, tester_output = await self._verify_fix(
-                        voice_io, selected_fix, coder_output, files_changed, guard, cosa_interface
-                    )
-
-                    if passed:
-                        guard.record_success()
-                        fix_result = FixResult(
-                            applied=True, success=True,
-                            details=f"Fix verified on iteration {iteration}",
-                            retry_eligible=True,
-                        )
-                        break
-
-                    # --- Max iterations check ---
-                    if iteration >= self.config.max_fix_attempts:
-                        guard.record_failure( "verification failed after max iterations" )
-
-                        # Escalate to user
-                        await self._notify( voice_io, "Fix verification exhausted — escalating.", priority="high" )
-
-                        try:
-                            escalation = await cosa_interface.present_choices(
-                                questions=[ {
-                                    "question"    : f"Fix '{selected_fix.title}' failed verification after {iteration} attempt(s). What next?",
-                                    "header"      : "Fix Escalation",
-                                    "multiSelect" : False,
-                                    "options"     : [
-                                        { "label": "Accept without tests", "description": "Keep the code changes, skip test validation" },
-                                        { "label": "Reject fix", "description": "Discard all changes from this fix attempt" },
-                                    ],
-                                } ],
-                                timeout  = self.config.feedback_timeout_seconds,
-                                title    = "Fix Verification Failed",
-                                abstract = f"**Fix**: {selected_fix.title}\n**Attempts**: {iteration}\n**Last failure**:\n{tester_output[ :500 ]}",
-                                job_id   = self.job_id,
-                            )
-
-                            choice = escalation.get( "answers", {} ).get( "Fix Escalation", "" )
-                            if choice == "Accept without tests":
-                                fix_result = FixResult(
-                                    applied=True, success=False,
-                                    details=f"Accepted without tests after {iteration} attempt(s)",
-                                    retry_eligible=True,
-                                )
-                            else:
-                                fix_result = FixResult(
-                                    applied=False, success=False,
-                                    details=f"Rejected by user after {iteration} verification attempt(s)",
-                                )
-                        except Exception as e:
-                            logger.warning( f"Escalation failed: {e}" )
-                            fix_result = FixResult( applied=False, success=False, details=f"Escalation failed: {e}" )
-
-                        break
-
-                    # --- Re-delegate with feedback ---
-                    await self._notify(
-                        voice_io, f"Tests failed — re-delegating to coder with feedback...",
-                        priority="low"
-                    )
-
-                    redelegate_prompt = build_redelegation_prompt(
-                        selected_fix, coder_output, tester_output, iteration + 1
-                    )
-                    coder_output, new_files = await self._delegate_to_coder(
-                        voice_io, redelegate_prompt, guard, cosa_interface
-                    )
-                    files_changed.extend( f for f in new_files if f not in files_changed )
-
-                    if not coder_output:
-                        guard.record_failure( "coder re-delegation produced no output" )
-                        fix_result = FixResult( applied=False, success=False, details="Coder re-delegation failed" )
-                        break
-
-        except SafetyLimitError as e:
-            logger.warning( f"Safety limit reached: {e}" )
-            await self._notify( voice_io, f"Safety limit: {e}", priority="urgent" )
-            fix_result = FixResult( applied=False, success=False, details=f"Safety limit: {e}" )
-
-        except Exception as e:
-            logger.error( f"Fix phase error: {e}" )
-            fix_result = FixResult( applied=False, success=False, details=str( e ) )
+        coder_output = executor.last_coder_output
 
         # --- Update plan document ---
         try:
@@ -1179,66 +1093,41 @@ class BFEOrchestrator:
         await self._emit_state( BFEPhase.FIXING, BFEPhase.COMMITTING )
         await self._notify( voice_io, "Committing changes to git...", priority="medium" )
 
-        git_ops = GitOps( cwd=cu.get_project_root(), debug=self.debug )
-
-        # Determine trust level → strategy
-        trust_level = self._resolve_trust_level()
-        git_strategy = "branch_and_pr" if trust_level >= 3 else "commit_only"
+        # Delegate to shared GitStrategist (Session 1cfcdf73 extraction)
+        git_ops       = GitOps( cwd=cu.get_project_root(), debug=self.debug )
+        strategist    = GitStrategist( debug=self.debug, verbose=self.verbose )
+        trust_level   = GitStrategist.resolve_trust_level( self.proxy )
 
         commit_message = f"[BFE] Fix: {fix_result.details[ :60 ]}" if fix_result.details else "[BFE] Fix"
+        pr_title       = f"[BFE] {fix_result.details[ :60 ]}" if fix_result.details else "[BFE] Automated fix"
+        pr_body        = (
+            f"Automated fix from Bug Fix Expediter.\n\n"
+            f"**Details**: {( fix_result.details or 'N/A' )[ :500 ]}\n\n"
+            f"**Files changed**:\n" + "\n".join( f"- `{f}`" for f in files_changed[ :20 ] )
+        )
 
-        try:
-            if git_strategy == "commit_only":
-                # L1-L2: commit on current branch
-                result = await git_ops.commit_on_branch( files_changed, commit_message )
-                if result[ "success" ]:
-                    fix_result.git_strategy = "commit_only"
-                    fix_result.commit_hash  = result[ "commit_hash" ]
-                    await self._notify( voice_io, f"Committed {result[ 'commit_hash' ][ :8 ]}", priority="low" )
-                else:
-                    await self._notify( voice_io, f"Commit failed: {result[ 'error' ]}", priority="high" )
+        async def _notify_fn( msg, priority="low" ):
+            await self._notify( voice_io, msg, priority=priority )
 
-            else:
-                # L3+: create fix branch + push + PR
-                original_branch = await git_ops.get_current_branch()
-                slug = self._generate_slug( fix_result.details or "fix" )
+        git_result = await strategist.commit_and_pr_single(
+            git_ops=git_ops,
+            files_changed=files_changed,
+            commit_message=commit_message,
+            pr_title=pr_title,
+            pr_body=pr_body,
+            trust_level=trust_level,
+            notify_fn=_notify_fn,
+        )
 
-                br_result = await git_ops.create_fix_branch( slug )
-                if not br_result[ "success" ]:
-                    await self._notify( voice_io, f"Branch creation failed: {br_result[ 'error' ]}", priority="high" )
-                    return self._finalize_git_strategy( fix_result, plan_path, voice_io )
-
-                fix_result.branch_name = br_result[ "branch_name" ]
-
-                push_result = await git_ops.commit_and_push( slug, files_changed, commit_message )
-                if not push_result[ "success" ]:
-                    await self._notify( voice_io, f"Push failed: {push_result[ 'error' ]}", priority="high" )
-                    if original_branch:
-                        await git_ops.checkout_branch( original_branch )
-                    return self._finalize_git_strategy( fix_result, plan_path, voice_io )
-
-                fix_result.commit_hash = push_result[ "commit_hash" ]
-                await self._notify( voice_io, f"Pushed to {slug}", priority="low" )
-
-                pr_result = await git_ops.create_pr(
-                    slug,
-                    f"[BFE] {fix_result.details[ :60 ]}" if fix_result.details else "[BFE] Automated fix",
-                    f"Automated fix from Bug Fix Expediter.\n\n**Details**: {( fix_result.details or 'N/A' )[ :500 ]}\n\n**Files changed**:\n" + "\n".join( f"- `{f}`" for f in files_changed[ :20 ] ),
-                )
-                if pr_result[ "success" ]:
-                    fix_result.git_strategy = "branch_and_pr"
-                    fix_result.pr_url       = pr_result[ "pr_url" ]
-                    await self._notify( voice_io, f"PR created: {pr_result[ 'pr_url' ]}", priority="low" )
-                else:
-                    fix_result.git_strategy = "branch_only"
-                    await self._notify( voice_io, f"PR creation failed: {pr_result[ 'error' ]} (branch left for manual PR)", priority="high" )
-
-                if original_branch:
-                    await git_ops.checkout_branch( original_branch )
-
-        except Exception as e:
-            logger.error( f"Git strategy error: {e}" )
-            await self._notify( voice_io, f"Git error: {e}", priority="urgent" )
+        # Apply git result fields to FixResult
+        if git_result.get( "git_strategy" ) is not None:
+            fix_result.git_strategy = git_result[ "git_strategy" ]
+        if git_result.get( "commit_hash" ) is not None:
+            fix_result.commit_hash = git_result[ "commit_hash" ]
+        if git_result.get( "branch_name" ) is not None:
+            fix_result.branch_name = git_result[ "branch_name" ]
+        if git_result.get( "pr_url" ) is not None:
+            fix_result.pr_url = git_result[ "pr_url" ]
 
         return self._finalize_git_strategy( fix_result, plan_path, voice_io )
 
@@ -1255,29 +1144,24 @@ class BFEOrchestrator:
         """
         Return trust level 1-5 from the proxy, falling back to L1 on failure.
 
+        Session 1cfcdf73: Thin shim delegating to shared GitStrategist. Kept on
+        BFEOrchestrator for backwards compatibility with existing unit tests
+        that call `orch._resolve_trust_level()`.
+
         Ensures:
             - Always returns int between 1 and 5
             - L1 on any error (conservative default)
         """
-        if self.proxy is None:
-            return 1
-        try:
-            tracker = getattr( self.proxy, "trust_tracker", None )
-            if tracker is None:
-                return 1
-            if hasattr( tracker, "get_level" ):
-                return int( tracker.get_level( "engineering" ) )
-            if hasattr( tracker, "level" ):
-                lvl = tracker.level
-                return int( lvl() if callable( lvl ) else lvl )
-        except Exception as e:
-            if self.debug: print( f"[BFEOrchestrator] trust level resolution failed: {e} — defaulting to L1" )
-        return 1
+        return GitStrategist.resolve_trust_level( self.proxy )
 
     @staticmethod
     def _generate_slug( text: str ) -> str:
         """
         Generate a fix/YYYY-MM-DD-{slug} branch name from text.
+
+        Session 1cfcdf73: Thin shim delegating to shared GitStrategist. Kept on
+        BFEOrchestrator for backwards compatibility with existing unit tests
+        that call `BFEOrchestrator._generate_slug(...)`.
 
         Requires:
             - text is a string (may be empty)
@@ -1286,14 +1170,7 @@ class BFEOrchestrator:
             - Returns string of form "fix/YYYY-MM-DD-{word1-word2-word3}"
             - At least "fix/YYYY-MM-DD-fix" if text yields no words
         """
-        import re
-        from datetime import datetime
-
-        cleaned = re.sub( r"[^a-z0-9\s]", "", ( text or "" ).lower() )
-        words   = cleaned.split()[ :3 ]
-        slug    = "-".join( words ) if words else "fix"
-        date_str = datetime.now().strftime( "%Y-%m-%d" )
-        return f"fix/{date_str}-{slug}"
+        return GitStrategist.generate_slug( text )
 
     async def _delegate_to_coder( self, voice_io, prompt, guard, cosa_interface ) -> tuple:
         """
