@@ -380,6 +380,61 @@ async def get_queue(
             "total_jobs": len( structured_jobs )
         }
 
+    # Step 5b: Handle dead queue — surface partial artifacts from failed-
+    # before-completion runs so users can recover diagnoses/plans that the
+    # job computed before dying. Previously fell through to the generic
+    # todo/run branch which only returned basic fields; dead TFE/BFE jobs
+    # that wrote a Phase 2 plan had no way to surface it to the UI.
+    # See: src/rnd/v0.1.6/2026.04.11-tfe-forensics-capture-plan.md (Fix 8b)
+    if queue_name == "dead":
+        structured_jobs = []
+        for job in jobs:
+            is_agentic_job = isinstance( job, AgenticJobBase )
+            job_data = {
+                "job_id"          : job.id_hash,
+                "question_text"   : job.last_question_asked,
+                "timestamp"       : job.run_date or job.created_date,
+                "user_id"         : authorized_filter,
+                "user_email"      : job.user_email,
+                "session_id"      : job.session_id,
+                "agent_type"      : job.job_type,
+                "status"          : job.state.value if hasattr( job.state, 'value' ) else str( job.state ),
+                "started_at"      : job.started_at,
+                "completed_at"    : job.completed_at,
+                "error"           : job.error,
+                "is_cache_hit"    : False,
+                "has_interactions": bool( job.session_id ),
+                "scheduled_at"    : getattr( job, 'scheduled_at', None ),
+                "monopolize"      : getattr( job, 'monopolize', False ),
+                "paused"          : job.state == JobState.PAUSED,
+                # Partial artifacts from failed-before-completion runs.
+                # Agents that died mid-pipeline may have populated any of these.
+                "plan_path"                : job.artifacts.get( 'plan_path' )                if is_agentic_job else None,
+                "remediation_snapshot_path": job.artifacts.get( 'remediation_snapshot_path' ) if is_agentic_job else None,
+                "report_path"              : job.artifacts.get( 'report_path' )              if is_agentic_job else None,
+                "yaml_path"                : job.artifacts.get( 'yaml_path' )                if is_agentic_job else None,
+                "cost_summary"             : job.cost_summary                                 if is_agentic_job else None,
+            }
+            # Calculate duration for agentic jobs when both timestamps exist
+            if is_agentic_job and job_data[ "started_at" ] and job_data[ "completed_at" ]:
+                try:
+                    start = datetime.fromisoformat( job_data[ "started_at" ] )
+                    end   = datetime.fromisoformat( job_data[ "completed_at" ] )
+                    job_data[ "duration_seconds" ] = ( end - start ).total_seconds()
+                except Exception:
+                    job_data[ "duration_seconds" ] = None
+            else:
+                job_data[ "duration_seconds" ] = None
+
+            structured_jobs.append( job_data )
+
+        return {
+            f"{queue_name}_jobs_metadata": structured_jobs,
+            "filtered_by" : authorized_filter,
+            "is_admin_view": is_admin( current_user ) and ( user_filter is not None ),
+            "total_jobs"  : len( structured_jobs ),
+        }
+
     # Step 6: Handle todo/run queues with metadata (Phase 7)
     # Using unified interface properties - all job types now have consistent attributes
     structured_jobs = []

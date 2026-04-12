@@ -1,5 +1,26 @@
 # COSA Development History
 
+> **✅ SESSION 248e740e COMMITTED**: TFE forensics capture — lifecycle states, persistence allowlist, dead-queue artifacts (2026.04.11)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 248e740e — TFE forensics capture fixes**:
+> - **`job.py` lifecycle overhaul**: Replaced bare `self.status` strings with `JobState` enum (`RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED`); full Python traceback captured into `self.error` on failure (was just `f"TFE failed: {e}"`); unconditional `print()` of traceback to stdout (not gated behind `self.debug`) so Docker logs always have forensics; cancellation support via `_cancel_requested` flag; `cu.get_current_datetime_iso()` timestamps replacing `datetime.now().isoformat()`
+> - **Voice routing fix (Fix 7)**: Root cause of `tfe-d9e6b50f`'s "Cannot resolve target_user" crash — TFE's `cosa_interface.py` delegates to BFE's dispatcher module, which reads `SENDER_ID` and `TARGET_USER` from its own module-level state. `_execute()` now sets `_bfe_ci.TARGET_USER = self.user_email` and `_bfe_ci.SENDER_ID` before entering the pipeline
+> - **Urgent crash notification (Fix 3)**: `_execute()` wraps pipeline in try/except that emits `voice_io.notify()` with `priority="urgent"` and full traceback in the `abstract` field before re-raising. Notify failure is caught separately so it never masks the original exception
+> - **Plan path artifact (Fix 8a)**: `self.artifacts["plan_path"]` set after Phase 2 proposal completes — survives if a later phase crashes (tfe-d9e6b50f had a complete plan on disk but no link in the UI)
+> - **`orchestrator.py` Fix 6**: Removed invalid `notification_type="progress"` kwarg from `notify_progress()` — the dispatcher sets `NotificationType.PROGRESS` internally; passing it as a kwarg caused `TypeError` on every call, resulting in hundreds of `[TFE notify error]` log lines per run with no actual progress notifications sent
+> - **`job_persistence.py`**: Added `"test_fix_expediter"` to `AGENTIC_JOB_TYPES` frozenset — without this, every TFE failure landed in the UI as "Unknown error" because the entire persistence layer was gated behind this allowlist
+> - **`queues.py` dead queue handler (Fix 8b)**: New dead-queue branch in `get_queue()` surfaces partial artifacts (`plan_path`, `remediation_snapshot_path`, `report_path`, `yaml_path`, `cost_summary`) from failed-before-completion agentic jobs. Previously fell through to the generic todo/run branch which only returned basic fields
+>
+> **Plan doc**: `src/rnd/v0.1.6/2026.04.11-tfe-forensics-capture-plan.md`
+>
+> **Files Modified (4)**: `agents/test_fix_expediter/job.py`, `agents/test_fix_expediter/orchestrator.py`, `rest/job_persistence.py`, `rest/routers/queues.py`
+> **Commit**: 0c9d40a
+
+---
+
 > **✅ SESSIONS 1b8c1cc0+1cfcdf73 COMMITTED**: TestFixExpediter (TFE) + shared fix primitives + CJ Flow persistence gaps + BFE Phase 6 dry-run (2026.04.10)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >

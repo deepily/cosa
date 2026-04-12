@@ -22,12 +22,14 @@ Example:
 """
 
 import asyncio
+import traceback
 from datetime import datetime
 from typing import Optional
 
 import cosa.utils.util as cu
 
 from cosa.agents.agentic_job_base import AgenticJobBase
+from cosa.rest.job_state import JobState
 
 
 class TestFixExpediterJob( AgenticJobBase ):
@@ -120,35 +122,68 @@ class TestFixExpediterJob( AgenticJobBase ):
         """
         Synchronous entry point for queue consumer.
 
-        Runs `_execute()` in an event loop, handles status + timestamps +
-        exception surfaces, and returns a conversational answer string.
+        Runs `_execute()` in an event loop, sets the `AgenticJobBase` lifecycle
+        state (`self.state`), captures full Python traceback into `self.error`
+        on failure, and returns a conversational answer string. Exception
+        handling follows the BFE pattern (`bug_fix_expediter/job.py:107-157`)
+        so dead TFE jobs carry complete forensic data for queue serialization
+        + job_history persistence.
 
         Returns:
             str: Conversational answer for UI display
         """
-        self.started_at = datetime.now().isoformat()
-        self.status     = "running"
+        if self.debug:
+            print( f"[TestFixExpediterJob] Starting do_all() for: {self.source_test_suite_job_id}" )
+
+        self.state      = JobState.RUNNING
+        self.started_at = cu.get_current_datetime_iso()
 
         try:
-            answer = asyncio.run( self._execute() )
-            self.status                 = "completed"
-            self.answer_conversational  = answer
-            return answer
+            result = asyncio.run( self._execute() )
+
+            if self._cancel_requested:
+                self.state                 = JobState.CANCELLED
+                self.completed_at          = cu.get_current_datetime_iso()
+                self.error                 = "Cancelled by user request"
+                self.answer_conversational = result or "TFE was cancelled by the user."
+                if self.debug: print( f"[TestFixExpediterJob] Cancelled by user request" )
+                return self.answer_conversational
+
+            self.state                 = JobState.COMPLETED
+            self.completed_at          = cu.get_current_datetime_iso()
+            self.result                = result
+            self.answer_conversational = result
+
+            if self.debug:
+                duration = self.get_execution_duration_seconds()
+                print( f"[TestFixExpediterJob] Completed in {duration:.1f}s" )
+
+            return result
 
         except Exception as e:
-            self.status                = "failed"
-            self.answer_conversational = f"TFE failed: {e}"
-            if self.debug:
-                import traceback
-                traceback.print_exc()
-            return self.answer_conversational
+            tb_str = traceback.format_exc()
 
-        finally:
-            self.completed_at = datetime.now().isoformat()
+            self.state        = JobState.FAILED
+            self.completed_at = cu.get_current_datetime_iso()
+            self.error        = f"{e}\n\n{tb_str}"
+
+            # Unconditional stdout (not gated behind self.debug) so dockered
+            # server logs always capture the traceback regardless of the
+            # job's debug flag. Production submissions run with debug=False.
+            print( f"[TestFixExpediterJob] Failed: {e}" )
+            print( tb_str )
+
+            self.answer_conversational = f"TFE failed: {str( e )}"
+            return self.answer_conversational
 
     async def _execute( self ) -> str:
         """
         Run the TFE pipeline.
+
+        Sets cosa-voice routing (SENDER_ID + TARGET_USER) for BFE's delegated
+        notification dispatcher, then wraps phase orchestration in a try/except
+        that emits an urgent voice notification with the full traceback on
+        crash before re-raising (do_all's handler captures self.error).
 
         **Step 6 scaffolding**: loads the snapshot, instantiates the
         orchestrator, walks the phase stubs, and returns a placeholder.
@@ -160,7 +195,21 @@ class TestFixExpediterJob( AgenticJobBase ):
             SnapshotLoadError,
         )
         from cosa.agents.test_fix_expediter.orchestrator import TFEOrchestrator
+        from cosa.agents.test_fix_expediter import voice_io
+        # TFE's cosa_interface.py is a thin delegator that forwards to BFE's
+        # cosa_interface module. BFE's dispatcher reads SENDER_ID and TARGET_USER
+        # from its OWN module-level state, so we must set them on BFE's module
+        # directly for TFE notifications to route correctly. This was the root
+        # cause of tfe-d9e6b50f's "present_choices failed: Cannot resolve
+        # target_user" crash at the Phase 2 voice gate.
+        # See: src/rnd/v0.1.6/2026.04.11-tfe-forensics-capture-plan.md (Fix 7)
+        from cosa.agents.bug_fix_expediter import cosa_interface as _bfe_ci
 
+        _bfe_ci.TARGET_USER = self.user_email
+        _bfe_ci.SENDER_ID   = _bfe_ci._get_sender_id( suffix=self.base_id )
+
+        # Config load has its own fallback; not inside the main try/except
+        # because using defaults is acceptable, not a TFE failure.
         try:
             from cosa.config.configuration_manager import ConfigurationManager
             config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
@@ -169,53 +218,81 @@ class TestFixExpediterJob( AgenticJobBase ):
             if self.debug: print( f"[TestFixExpediterJob] from_config failed, using defaults: {e}" )
             config = TestFixExpediterConfig()
 
-        # Load the remediation snapshot
         try:
-            self.remediation_context = load_from_path(
-                snapshot_path             = self.remediation_snapshot_path,
-                source_test_suite_job_id  = self.source_test_suite_job_id,
-                user_id                   = self.user_id,
-                user_email                = self.user_email,
-                session_id                = self.session_id,
-                original_test_types       = self.original_test_types,
-                original_pytest_args      = self.original_pytest_args,
+            # Load the remediation snapshot
+            try:
+                self.remediation_context = load_from_path(
+                    snapshot_path             = self.remediation_snapshot_path,
+                    source_test_suite_job_id  = self.source_test_suite_job_id,
+                    user_id                   = self.user_id,
+                    user_email                = self.user_email,
+                    session_id                = self.session_id,
+                    original_test_types       = self.original_test_types,
+                    original_pytest_args      = self.original_pytest_args,
+                )
+            except SnapshotLoadError as e:
+                raise RuntimeError( f"Failed to load remediation snapshot: {e}" )
+
+            # Instantiate the orchestrator
+            self.orchestrator = TFEOrchestrator(
+                remediation_context = self.remediation_context,
+                config              = config,
+                user_id             = self.user_id,
+                user_email          = self.user_email,
+                session_id          = self.session_id,
+                job_id              = self.id_hash,
+                dry_run             = self.dry_run,
+                debug               = self.debug,
+                verbose             = self.verbose,
             )
-        except SnapshotLoadError as e:
-            raise RuntimeError( f"Failed to load remediation snapshot: {e}" )
 
-        # Instantiate the orchestrator
-        self.orchestrator = TFEOrchestrator(
-            remediation_context = self.remediation_context,
-            config              = config,
-            user_id             = self.user_id,
-            user_email          = self.user_email,
-            session_id          = self.session_id,
-            job_id              = self.id_hash,
-            dry_run             = self.dry_run,
-            debug               = self.debug,
-            verbose             = self.verbose,
-        )
+            # Walk the phase stubs (step 6 — proves wiring end-to-end)
+            clusters = await self.orchestrator.run_phase0_cluster()
+            diagnoses = await self.orchestrator.run_phase1_diagnose()
+            _propose_result = await self.orchestrator.run_phase2_propose()
 
-        # Walk the phase stubs (step 6 — proves wiring end-to-end)
-        clusters = await self.orchestrator.run_phase0_cluster()
-        diagnoses = await self.orchestrator.run_phase1_diagnose()
-        _propose_result = await self.orchestrator.run_phase2_propose()
-        fix_results = await self.orchestrator.run_phase3_fix()
-        _git_result = await self.orchestrator.run_phase5_git()
-        validation_run_job_id = await self.orchestrator.run_phase6_validation()
+            # Fix 8a: Surface the Phase 2 plan path for dead-queue card. Storing
+            # it here (before Phase 3) ensures the artifact survives if a later
+            # phase crashes — tfe-d9e6b50f died at the Phase 2 voice gate with a
+            # complete plan on disk but no link to it in the UI.
+            if self.orchestrator.last_plan_path:
+                self.artifacts[ "plan_path" ] = self.orchestrator.last_plan_path
 
-        # Populate artifacts for UI
-        self.artifacts[ "remediation_snapshot_path" ] = self.remediation_snapshot_path
-        self.artifacts[ "source_test_suite_job_id" ] = self.source_test_suite_job_id
-        self.artifacts[ "cluster_count" ] = len( clusters )
-        self.artifacts[ "fix_count" ] = len( fix_results )
-        self.artifacts[ "validation_run_job_id" ] = validation_run_job_id
+            fix_results = await self.orchestrator.run_phase3_fix()
+            _git_result = await self.orchestrator.run_phase5_git()
+            validation_run_job_id = await self.orchestrator.run_phase6_validation()
 
-        return (
-            f"TFE scaffolding run complete ({len( clusters )} clusters stubbed, "
-            f"phases 0-6 walked). Full pipeline lands in steps 7-12. "
-            f"Source TestSuiteJob: {self.source_test_suite_job_id}."
-        )
+            # Populate artifacts for UI
+            self.artifacts[ "remediation_snapshot_path" ] = self.remediation_snapshot_path
+            self.artifacts[ "source_test_suite_job_id" ] = self.source_test_suite_job_id
+            self.artifacts[ "cluster_count" ] = len( clusters )
+            self.artifacts[ "fix_count" ] = len( fix_results )
+            self.artifacts[ "validation_run_job_id" ] = validation_run_job_id
+
+            return (
+                f"TFE scaffolding run complete ({len( clusters )} clusters stubbed, "
+                f"phases 0-6 walked). Full pipeline lands in steps 7-12. "
+                f"Source TestSuiteJob: {self.source_test_suite_job_id}."
+            )
+
+        except Exception as e:
+            # Emit urgent voice notification with full traceback in the abstract
+            # field (UI-only, not spoken via TTS) so the user gets in-UI access
+            # to the failure without having to grep docker logs. Re-raises so
+            # do_all()'s handler captures the traceback into self.error too.
+            # See: src/rnd/v0.1.6/2026.04.11-tfe-forensics-capture-plan.md (Fix 3)
+            tb_str = traceback.format_exc()
+            try:
+                await voice_io.notify(
+                    f"Test Fix Expediter error: {str( e )[ :100 ]}",
+                    priority = "urgent",
+                    job_id   = self.id_hash,
+                    abstract = tb_str,
+                )
+            except Exception as notify_err:
+                # Never let the notify failure mask the original exception
+                print( f"[TestFixExpediterJob] voice_io.notify failed during error path: {notify_err}" )
+            raise
 
 
 def quick_smoke_test():

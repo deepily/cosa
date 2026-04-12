@@ -158,9 +158,14 @@ class TFEOrchestrator:
 
         try:
             from cosa.agents.test_fix_expediter import cosa_interface, voice_io
+            # Fix 6: `notification_type` is NOT a valid kwarg for notify_progress.
+            # The dispatcher sets NotificationType.PROGRESS internally. Previously
+            # passed as a kwarg → TypeError caught below → hundreds of
+            # "[TFE notify error]" log lines per TFE run with no actual
+            # progress notifications sent. See plan:
+            # src/rnd/v0.1.6/2026.04.11-tfe-forensics-capture-plan.md
             await cosa_interface.notify_progress(
                 message,
-                notification_type="progress",
                 priority=priority,
                 abstract=abstract,
                 job_id=self.job_id,
