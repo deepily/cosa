@@ -205,6 +205,85 @@ def create_initial_state(
     )
 
 
+# ---------------------------------------------------------------------------
+# Checkpoint-resume infrastructure (Session 9056c113)
+# ---------------------------------------------------------------------------
+
+TFE_PHASE_ORDINALS = {
+    TFEPhase.LOADING      : 0,
+    TFEPhase.CLUSTERING   : 1,
+    TFEPhase.DIAGNOSING   : 2,
+    TFEPhase.PROPOSING    : 3,
+    TFEPhase.FIXING       : 4,
+    TFEPhase.COMMITTING   : 5,
+    TFEPhase.RESUBMITTING : 6,
+}
+
+
+class CheckpointData( TypedDict ):
+    """
+    Serialized mid-execution state for resume.
+
+    Stored in metadata_json["checkpoint"] when a TFE job transitions to STALLED.
+    Retrieved by the resume factory to reconstruct the orchestrator at the stall
+    phase and continue execution from the next phase.
+
+    Requires:
+        - phase_ordinal >= 0 and corresponds to a TFEPhase active phase
+        - state_snapshot is JSON-serializable (Pydantic models → dicts)
+
+    Ensures:
+        - Sufficient data to reconstruct orchestrator state via load_checkpoint()
+    """
+    phase_ordinal  : int     # Ordinal of last completed phase (0=loading, 1=clustering, ...)
+    phase_name     : str     # Human-readable (e.g., "proposing")
+    stall_reason   : str     # "voice_gate_timeout", "rate_limit", "user_cancel"
+    stalled_at     : str     # ISO timestamp
+    state_snapshot : dict    # Serialized TFEState (JSON-safe)
+    artifacts      : dict    # Paths to durable artifacts created so far
+    resume_count   : int     # How many times this job has been resumed (starts at 0)
+
+
+class VoiceGateTimeoutError( Exception ):
+    """
+    Voice gate timed out without user response.
+
+    Raised by cosa_interface when the blocking MCP call returns a timeout
+    response. Caught by the orchestrator to trigger checkpoint-and-stall.
+
+    Requires:
+        - phase is a valid TFEPhase value string
+
+    Ensures:
+        - Carries the phase where timeout occurred
+    """
+    def __init__( self, phase: str, message: str = "" ):
+        self.phase = phase
+        super().__init__( message or f"Voice gate timeout at {phase}" )
+
+
+class StalledException( Exception ):
+    """
+    Orchestrator requests a clean stall with checkpoint.
+
+    Raised when a voice gate times out and the orchestrator has saved its state.
+    Caught by job._execute() to transition the job to STALLED without treating
+    it as a failure.
+
+    Requires:
+        - checkpoint is a JSON-serializable dict matching CheckpointData schema
+        - phase is a valid TFEPhase value string
+
+    Ensures:
+        - job._execute() catches this and transitions to STALLED
+        - NOT treated as a failure — this is a clean yield point
+    """
+    def __init__( self, checkpoint: dict, phase: str, message: str = "" ):
+        self.checkpoint = checkpoint
+        self.phase      = phase
+        super().__init__( message or f"Stalled at {phase}" )
+
+
 def quick_smoke_test():
     """Quick smoke test for TFE state models."""
     import cosa.utils.util as cu

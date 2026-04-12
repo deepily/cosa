@@ -337,3 +337,51 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
     job.routing_command = command
     job.original_args   = dict( args_dict )
     return job
+
+
+def resume_job( job_id_hash, config_mgr=None ):
+    """
+    Reconstruct a stalled job from its checkpoint and original args.
+
+    Reads the checkpoint and original submission args from job_history,
+    reconstructs the job via the normal factory path, and attaches the
+    checkpoint for the orchestrator to load on execution.
+
+    Requires:
+        - job_id_hash references a stalled job with checkpoint data in DB
+
+    Ensures:
+        - Returns a fully constructed job with _resume_checkpoint attached
+        - Returns None if job cannot be resumed (not found, not stalled, etc.)
+    """
+    from cosa.rest.job_persistence import get_checkpoint_for_job, get_original_args_for_job
+
+    checkpoint = get_checkpoint_for_job( job_id_hash )
+    if not checkpoint:
+        print( f"[agentic_job_factory] No checkpoint found for {job_id_hash}" )
+        return None
+
+    job_info = get_original_args_for_job( job_id_hash )
+    if not job_info or not job_info.get( "routing_command" ):
+        print( f"[agentic_job_factory] No original args found for {job_id_hash}" )
+        return None
+
+    # Reconstruct via normal factory path
+    job = create_agentic_job(
+        command    = job_info[ "routing_command" ],
+        args_dict  = job_info[ "original_args" ],
+        user_id    = job_info[ "user_id" ],
+        user_email = job_info[ "user_email" ],
+        session_id = job_info[ "session_id" ],
+        config_mgr = config_mgr,
+    )
+
+    if job is None:
+        print( f"[agentic_job_factory] Factory returned None for {job_id_hash}" )
+        return None
+
+    # Attach checkpoint for _execute() to pick up
+    job._resume_checkpoint = checkpoint
+    job._resume_checkpoint[ "resume_count" ] = checkpoint.get( "resume_count", 0 ) + 1
+
+    return job

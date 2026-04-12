@@ -134,6 +134,7 @@ def _build_metadata_json( metadata ):
         "push_counter", "agent_type", "stack_trace",
         "scheduled_at", "monopolize",
         "original_args",  # CJ Flow persistence: exact args a job was submitted with (for BFE resubmit)
+        "checkpoint",     # Checkpoint-resume: serialized state for stalled jobs (Session 9056c113)
     ]
 
     result = {}
@@ -659,6 +660,81 @@ def delete_job_history( id_hash ):
 # ---------------------------------------------------------------------------
 # Smoke test
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Checkpoint-resume queries (Session 9056c113)
+# ---------------------------------------------------------------------------
+
+def get_checkpoint_for_job( id_hash ):
+    """
+    Retrieve checkpoint data for a stalled job.
+
+    Requires:
+        - id_hash is a valid job ID (e.g., "tfe-7c25082a::user_id")
+
+    Ensures:
+        - Returns checkpoint dict if job is stalled and has checkpoint data
+        - Returns None if job not found, not stalled, or no checkpoint
+        - Never raises — returns None on failure
+    """
+    try:
+        with get_db() as session:
+            row = session.execute(
+                select( JobHistory )
+                .where( JobHistory.id_hash == id_hash )
+            ).scalar()
+
+            if not row or row.status != JobState.STALLED.value:
+                return None
+
+            metadata = row.metadata_json or {}
+            # Check artifacts.checkpoint first (set during _execute stall path),
+            # then top-level checkpoint (set during metadata_json merge)
+            checkpoint = ( metadata.get( "artifacts" ) or {} ).get( "checkpoint" )
+            if not checkpoint:
+                checkpoint = metadata.get( "checkpoint" )
+            return checkpoint
+
+    except Exception as e:
+        print( f"[job_persistence] get_checkpoint_for_job failed: {e}" )
+        return None
+
+
+def get_original_args_for_job( id_hash ):
+    """
+    Retrieve original submission args and routing info for job reconstruction.
+
+    Requires:
+        - id_hash is a valid job ID
+
+    Ensures:
+        - Returns dict with original_args, routing_command, user_id, user_email, session_id
+        - Returns None if job not found
+        - Never raises — returns None on failure
+    """
+    try:
+        with get_db() as session:
+            row = session.execute(
+                select( JobHistory )
+                .where( JobHistory.id_hash == id_hash )
+            ).scalar()
+
+            if not row:
+                return None
+
+            metadata = row.metadata_json or {}
+            return {
+                "original_args"  : metadata.get( "original_args", {} ),
+                "routing_command" : row.routing_command,
+                "user_id"         : row.user_id,
+                "user_email"      : row.user_email,
+                "session_id"      : row.session_id,
+            }
+
+    except Exception as e:
+        print( f"[job_persistence] get_original_args_for_job failed: {e}" )
+        return None
+
 
 def quick_smoke_test():
     """

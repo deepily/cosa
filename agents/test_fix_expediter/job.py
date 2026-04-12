@@ -22,6 +22,7 @@ Example:
 """
 
 import asyncio
+import time
 import traceback
 from datetime import datetime
 from typing import Optional
@@ -29,6 +30,7 @@ from typing import Optional
 import cosa.utils.util as cu
 
 from cosa.agents.agentic_job_base import AgenticJobBase
+from cosa.agents.test_fix_expediter.state import StalledException
 from cosa.rest.job_state import JobState
 
 
@@ -141,6 +143,19 @@ class TestFixExpediterJob( AgenticJobBase ):
         try:
             result = asyncio.run( self._execute() )
 
+            # Checkpoint-resume: _execute() returns "__STALLED__" when
+            # a voice gate timed out and the orchestrator saved its state.
+            if result == "__STALLED__":
+                self.state                 = JobState.STALLED
+                self.completed_at          = cu.get_current_datetime_iso()
+                self.answer_conversational = (
+                    f"TFE stalled at voice gate. "
+                    f"{len( self.orchestrator.proposed_fixes )} proposals await your review. "
+                    f"Resume when ready."
+                )
+                if self.debug: print( f"[TestFixExpediterJob] Stalled — checkpoint saved" )
+                return self.answer_conversational
+
             if self._cancel_requested:
                 self.state                 = JobState.CANCELLED
                 self.completed_at          = cu.get_current_datetime_iso()
@@ -218,6 +233,8 @@ class TestFixExpediterJob( AgenticJobBase ):
             if self.debug: print( f"[TestFixExpediterJob] from_config failed, using defaults: {e}" )
             config = TestFixExpediterConfig()
 
+        self._start_time = time.time()
+
         try:
             # Load the remediation snapshot
             try:
@@ -246,7 +263,13 @@ class TestFixExpediterJob( AgenticJobBase ):
                 verbose             = self.verbose,
             )
 
-            # Walk the phase stubs (step 6 — proves wiring end-to-end)
+            # Resume from checkpoint if this is a resumed job
+            if hasattr( self, "_resume_checkpoint" ) and self._resume_checkpoint:
+                self.orchestrator.load_checkpoint( self._resume_checkpoint )
+                self.orchestrator.set_resume_phase( self._resume_checkpoint[ "phase_ordinal" ] )
+                print( f"[TFE] Resuming from phase ordinal {self._resume_checkpoint[ 'phase_ordinal' ]}" )
+
+            # Walk the phases (real implementations for P0/P1, stubs for P2-P6)
             clusters = await self.orchestrator.run_phase0_cluster()
             diagnoses = await self.orchestrator.run_phase1_diagnose()
             _propose_result = await self.orchestrator.run_phase2_propose()
@@ -264,16 +287,117 @@ class TestFixExpediterJob( AgenticJobBase ):
 
             # Populate artifacts for UI
             self.artifacts[ "remediation_snapshot_path" ] = self.remediation_snapshot_path
-            self.artifacts[ "source_test_suite_job_id" ] = self.source_test_suite_job_id
-            self.artifacts[ "cluster_count" ] = len( clusters )
-            self.artifacts[ "fix_count" ] = len( fix_results )
-            self.artifacts[ "validation_run_job_id" ] = validation_run_job_id
+            self.artifacts[ "source_test_suite_job_id" ]  = self.source_test_suite_job_id
+            self.artifacts[ "cluster_count" ]             = len( clusters )
+            self.artifacts[ "fix_count" ]                 = len( fix_results )
+            self.artifacts[ "validation_run_job_id" ]     = validation_run_job_id
+            if self.orchestrator.last_plan_path:
+                self.artifacts[ "plan_path" ] = self.orchestrator.last_plan_path
 
-            return (
-                f"TFE scaffolding run complete ({len( clusters )} clusters stubbed, "
-                f"phases 0-6 walked). Full pipeline lands in steps 7-12. "
-                f"Source TestSuiteJob: {self.source_test_suite_job_id}."
+            # ── Completion report (Phase 11 pattern: TTS + rich abstract) ──
+            n_clusters     = len( clusters )
+            n_failures     = len( self.orchestrator.remediation_context.failures )
+            n_proposed     = len( self.orchestrator.proposed_fixes )
+            n_selected     = len( self.orchestrator.selected_fixes )
+            n_fixed        = sum( 1 for r in fix_results if r.success )
+            n_failed_fixes = sum( 1 for r in fix_results if not r.success )
+            duration       = round( time.time() - self._start_time, 1 )
+            rerun_status   = (
+                f"Validation queued: {validation_run_job_id}"
+                if validation_run_job_id
+                else "No rerun (no successful fixes)"
             )
+
+            # Brief TTS message — outcome-aware
+            if n_fixed > 0:
+                tts_msg = (
+                    f"Test Fix Expediter complete. "
+                    f"{n_fixed} fix{'es' if n_fixed != 1 else ''} applied "
+                    f"across {n_clusters} cluster{'s' if n_clusters != 1 else ''}."
+                )
+            elif n_selected == 0:
+                tts_msg = (
+                    f"Test Fix Expediter complete. "
+                    f"{n_clusters} cluster{'s' if n_clusters != 1 else ''} diagnosed, "
+                    f"no fixes selected."
+                )
+            else:
+                tts_msg = (
+                    f"Test Fix Expediter complete. "
+                    f"{n_selected} fix{'es' if n_selected != 1 else ''} attempted, "
+                    f"{n_failed_fixes} failed."
+                )
+
+            # Rich markdown abstract (UI-only, not spoken)
+            lines = [ "**TFE Activity Report**", "" ]
+            lines.append( f"**Source**: `{self.source_test_suite_job_id}`" )
+            lines.append( f"**Clusters**: {n_clusters} (from {n_failures} failures)" )
+            lines.append(
+                f"**Proposed**: {n_proposed} | **Selected**: {n_selected} | "
+                f"**Fixed**: {n_fixed} | **Failed**: {n_failed_fixes}"
+            )
+            if self.orchestrator.last_plan_path:
+                lines.append( f"**Plan**: `{self.orchestrator.last_plan_path}`" )
+            lines.append( f"**Rerun**: {rerun_status}" )
+            lines.append( f"**Duration**: {duration}s" )
+
+            # Per-cluster diagnosis detail
+            if self.orchestrator.diagnoses:
+                lines.append( "" )
+                lines.append( "**Cluster Diagnoses:**" )
+                for cid, diag in self.orchestrator.diagnoses.items():
+                    conf = f"{diag.confidence:.0%}" if hasattr( diag, "confidence" ) else "?"
+                    lines.append(
+                        f"- **{cid}**: {diag.root_cause[ :120 ]} ({conf}, {diag.error_category})"
+                    )
+
+            completion_abstract = "\n".join( lines )
+
+            try:
+                await voice_io.notify(
+                    tts_msg,
+                    priority   = "medium",
+                    abstract   = completion_abstract,
+                    job_id     = self.id_hash,
+                    queue_name = "run",
+                )
+            except Exception as notify_err:
+                print( f"[TestFixExpediterJob] completion notify failed: {notify_err}" )
+
+            # Conversational answer
+            return (
+                f"TFE complete: {n_clusters} clusters, {n_proposed} proposed, "
+                f"{n_selected} selected, {n_fixed} fixed. {rerun_status}. "
+                f"Source: {self.source_test_suite_job_id}."
+            )
+
+        except StalledException as stall:
+            # Checkpoint-resume: voice gate timed out, orchestrator saved state.
+            # Persist checkpoint in artifacts for metadata_json serialization,
+            # notify the user, and return a sentinel for do_all() to detect.
+            self.artifacts[ "checkpoint" ] = stall.checkpoint
+            if stall.checkpoint.get( "artifacts", {} ).get( "plan_path" ):
+                self.artifacts[ "plan_path" ] = stall.checkpoint[ "artifacts" ][ "plan_path" ]
+
+            try:
+                await voice_io.notify(
+                    f"TFE stalled at {stall.phase} — resume when ready",
+                    priority   = "high",
+                    abstract   = (
+                        f"**TFE Stalled**\n\n"
+                        f"**Phase**: {stall.phase}\n"
+                        f"**Reason**: {stall.checkpoint[ 'stall_reason' ]}\n"
+                        f"**Clusters diagnosed**: {len( self.orchestrator.clusters )}\n"
+                        f"**Proposals awaiting review**: {len( self.orchestrator.proposed_fixes )}\n\n"
+                        f"Resume via UI 'Resume' button or API `POST /api/jobs/{self.id_hash}/resume`"
+                    ),
+                    job_id     = self.id_hash,
+                    queue_name = "todo",
+                )
+            except Exception as notify_err:
+                print( f"[TestFixExpediterJob] stall notify failed: {notify_err}" )
+
+            return "__STALLED__"
 
         except Exception as e:
             # Emit urgent voice notification with full traceback in the abstract

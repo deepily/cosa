@@ -1422,3 +1422,59 @@ async def resume_job(
         "job_id"  : job_id,
         "message" : "Job resumed. Consumer will process it when eligible."
     }
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint-resume: reconstruct a stalled job from its checkpoint
+# (Session 9056c113)
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/jobs/{id_hash}/resume-from-checkpoint",
+    summary     = "Resume a stalled job from its saved checkpoint",
+    description = "Reconstructs a stalled (voice-gate-timeout) job from its "
+                  "checkpoint in job_history, pushes to todo queue.",
+)
+async def resume_stalled_job(
+    id_hash: str,
+    current_user = Depends( get_current_user ),
+    todo_queue   = Depends( get_todo_queue ),
+):
+    """
+    Resume a stalled job from its checkpoint.
+
+    Requires:
+        - id_hash references a stalled job with checkpoint data in job_history
+
+    Ensures:
+        - New job reconstructed with checkpoint loaded on orchestrator
+        - Pushed to todo queue for consumer pickup
+        - Returns the new job ID and resume phase info
+    """
+    from cosa.rest.agentic_job_factory import resume_job
+
+    job = resume_job( id_hash, config_mgr=None )
+    if job is None:
+        raise HTTPException(
+            status_code = 404,
+            detail      = f"Job {id_hash} not found, not stalled, or has no checkpoint"
+        )
+
+    # Push to todo queue
+    todo_queue.push( job )
+
+    resume_info = job._resume_checkpoint
+    print(
+        f"[API] POST /api/jobs/{id_hash}/resume-from-checkpoint - "
+        f"new job: {job.id_hash}, "
+        f"resume from phase {resume_info.get( 'phase_name', '?' )}"
+    )
+
+    return {
+        "status"           : "resumed",
+        "resumed_job_id"   : job.id_hash,
+        "original_job_id"  : id_hash,
+        "resume_from_phase": resume_info.get( "phase_ordinal" ),
+        "phase_name"       : resume_info.get( "phase_name" ),
+        "resume_count"     : resume_info.get( "resume_count", 1 ),
+    }

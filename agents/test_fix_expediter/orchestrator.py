@@ -28,6 +28,8 @@ from cosa.agents.test_fix_expediter.state import (
     FailureCluster,
     TestDiagnosisResult,
     TFEProposedFix,
+    VoiceGateTimeoutError,
+    StalledException,
 )
 from cosa.agents.test_fix_expediter.prompts.diagnosis import (
     DIAGNOSIS_SYSTEM_PROMPT,
@@ -173,6 +175,97 @@ class TFEOrchestrator:
         except Exception as e:
             # Notification must never block the pipeline
             if self.debug: print( f"[TFE notify error] {e}" )
+
+    # ───────────────────────────────────────────────────────────────
+    # Checkpoint-resume (Session 9056c113)
+    # ───────────────────────────────────────────────────────────────
+
+    def save_checkpoint( self ) -> dict:
+        """
+        Serialize current pipeline state to a JSON-safe dict.
+
+        Requires:
+            - Called after at least one phase has completed
+
+        Ensures:
+            - Returns dict matching CheckpointData schema
+            - All Pydantic models converted to dicts via .model_dump()
+        """
+        from cosa.agents.test_fix_expediter.state import TFE_PHASE_ORDINALS
+        from datetime import datetime
+
+        state_snapshot = {
+            "source_test_suite_job_id"  : self.remediation_context.source_test_suite_job_id,
+            "remediation_snapshot_path" : self.remediation_context.snapshot_path,
+            "clusters"                  : [ c.model_dump() for c in self.clusters ],
+            "diagnoses"                 : { k: v.model_dump() for k, v in self.diagnoses.items() },
+            "proposed_fixes"            : [ p.model_dump() for p in self.proposed_fixes ],
+            "selected_fixes"            : [ s.model_dump() for s in self.selected_fixes ],
+            "fix_results"               : [ r.model_dump() if hasattr( r, "model_dump" ) else r
+                                            for r in self.fix_results ],
+            "files_changed_by_cluster"  : dict( self.files_changed_by_cluster ),
+            "last_plan_path"            : self.last_plan_path,
+            "branch_name"               : self.branch_name,
+            "commit_hashes"             : list( self.commit_hashes ),
+            "pr_url"                    : self.pr_url,
+            "validation_run_job_id"     : self.validation_run_job_id,
+        }
+
+        artifacts = {}
+        if self.last_plan_path: artifacts[ "plan_path" ] = self.last_plan_path
+
+        return {
+            "phase_ordinal"  : TFE_PHASE_ORDINALS.get( self.current_phase, -1 ),
+            "phase_name"     : self.current_phase.value,
+            "stall_reason"   : "voice_gate_timeout",
+            "stalled_at"     : datetime.now().isoformat(),
+            "state_snapshot" : state_snapshot,
+            "artifacts"      : artifacts,
+            "resume_count"   : 0,
+        }
+
+    def load_checkpoint( self, data: dict ) -> None:
+        """
+        Restore pipeline state from a previously saved checkpoint.
+
+        Requires:
+            - data matches CheckpointData schema
+            - self.remediation_context is already loaded (snapshot_loader ran)
+
+        Ensures:
+            - All instance attributes restored to checkpoint values
+            - Pydantic models reconstructed from dicts
+        """
+        snap = data[ "state_snapshot" ]
+
+        self.clusters                  = [ FailureCluster( **c ) for c in snap.get( "clusters", [] ) ]
+        self.diagnoses                 = { k: TestDiagnosisResult( **v )
+                                           for k, v in snap.get( "diagnoses", {} ).items() }
+        self.proposed_fixes            = [ TFEProposedFix( **p ) for p in snap.get( "proposed_fixes", [] ) ]
+        self.selected_fixes            = [ TFEProposedFix( **s ) for s in snap.get( "selected_fixes", [] ) ]
+        self.fix_results               = snap.get( "fix_results", [] )
+        self.files_changed_by_cluster  = snap.get( "files_changed_by_cluster", {} )
+        self.last_plan_path            = snap.get( "last_plan_path" )
+        self.branch_name               = snap.get( "branch_name" )
+        self.commit_hashes             = snap.get( "commit_hashes", [] )
+        self.pr_url                    = snap.get( "pr_url" )
+        self.validation_run_job_id     = snap.get( "validation_run_job_id" )
+        self.current_phase             = TFEPhase( data[ "phase_name" ] )
+
+    def set_resume_phase( self, phase_ordinal: int ) -> None:
+        """
+        Mark phases up to phase_ordinal as already completed so phase
+        methods skip work that has already been done.
+
+        Requires:
+            - phase_ordinal >= 0
+            - load_checkpoint() has already been called
+
+        Ensures:
+            - self._resume_from_ordinal is set
+            - Phase methods check this to skip completed work
+        """
+        self._resume_from_ordinal = phase_ordinal
 
     # ───────────────────────────────────────────────────────────────
     # Phase 0: Cluster (step 7)
@@ -558,7 +651,18 @@ class TFEOrchestrator:
 
         # Aggregate voice gate — user selects a subset
         if all_proposals and not self._is_cancelled():
-            self.selected_fixes = await self._proposal_voice_gate( all_proposals )
+            try:
+                self.selected_fixes = await self._proposal_voice_gate( all_proposals )
+            except VoiceGateTimeoutError:
+                checkpoint = self.save_checkpoint()
+                raise StalledException(
+                    checkpoint = checkpoint,
+                    phase      = TFEPhase.PROPOSING.value,
+                    message    = (
+                        f"Voice gate timeout at Phase 2 — "
+                        f"{len( all_proposals )} proposals await review"
+                    ),
+                )
         else:
             self.selected_fixes = []
 
@@ -900,6 +1004,9 @@ class TFEOrchestrator:
                 abstract = self._render_proposal_abstract( proposals ),
                 job_id   = self.job_id,
             )
+        except VoiceGateTimeoutError:
+            # Don't auto-select — let the stall propagate up
+            raise
         except Exception as e:
             logger.warning( f"[TFE] Voice gate failed: {e} — auto-selecting all" )
             return list( proposals )

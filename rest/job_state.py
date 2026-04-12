@@ -35,6 +35,7 @@ class JobState( str, Enum ):
     FAILED      = "failed"        # Finished with error (dead queue)
     INTERRUPTED = "interrupted"   # Server restart killed it
     CANCELLED   = "cancelled"     # User-initiated cancellation (dead queue)
+    STALLED     = "stalled"      # Voice gate timeout — waiting for user, resumable
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +47,8 @@ VALID_TRANSITIONS = {
     JobState.QUEUED      : frozenset( { JobState.RUNNING, JobState.PAUSED, JobState.SCHEDULED, JobState.CANCELLED } ),
     JobState.SCHEDULED   : frozenset( { JobState.QUEUED, JobState.PAUSED, JobState.CANCELLED } ),
     JobState.PAUSED      : frozenset( { JobState.QUEUED, JobState.SCHEDULED, JobState.CANCELLED } ),
-    JobState.RUNNING     : frozenset( { JobState.COMPLETED, JobState.FAILED, JobState.CANCELLED, JobState.INTERRUPTED } ),
+    JobState.RUNNING     : frozenset( { JobState.COMPLETED, JobState.FAILED, JobState.CANCELLED, JobState.INTERRUPTED, JobState.STALLED } ),
+    JobState.STALLED     : frozenset( { JobState.RUNNING, JobState.CANCELLED } ),
     JobState.COMPLETED   : frozenset(),
     JobState.FAILED      : frozenset(),
     JobState.CANCELLED   : frozenset(),
@@ -60,6 +62,7 @@ VALID_TRANSITIONS = {
 TERMINAL_STATES       = frozenset( { JobState.COMPLETED, JobState.FAILED, JobState.CANCELLED, JobState.INTERRUPTED } )
 PRE_EXECUTION_STATES  = frozenset( { JobState.PENDING, JobState.QUEUED, JobState.SCHEDULED, JobState.PAUSED } )
 ACTIVE_STATES         = frozenset( { JobState.RUNNING } )
+RESUMABLE_STATES      = frozenset( { JobState.STALLED } )
 
 # ---------------------------------------------------------------------------
 # State → frontend UI container mapping
@@ -75,6 +78,7 @@ STATE_TO_UI_CONTAINER = {
     JobState.FAILED      : "dead",
     JobState.CANCELLED   : "dead",
     JobState.INTERRUPTED : "dead",
+    JobState.STALLED     : "todo",
 }
 
 
