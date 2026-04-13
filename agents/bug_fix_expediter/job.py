@@ -16,6 +16,7 @@ Example:
 """
 
 import asyncio
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -51,6 +52,8 @@ class BugFixExpediterJob( AgenticJobBase ):
         session_id: str,
         extra_context: str = "",
         dry_run: bool = False,
+        lead_model_override:   Optional[ str ] = None,
+        worker_model_override: Optional[ str ] = None,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -74,6 +77,12 @@ class BugFixExpediterJob( AgenticJobBase ):
             session_id: WebSocket session for notifications
             extra_context: Optional user-provided context about the failure
             dry_run: Simulate execution without making changes
+            lead_model_override:   Optional per-invocation override of the BFE
+                                   lead model (e.g. "claude-sonnet-4-6" for E2E
+                                   --cheap runs). Applied after config.from_config
+                                   loads INI defaults. None = use INI value.
+            worker_model_override: Optional per-invocation override of the BFE
+                                   worker model. Same semantics as lead override.
             debug: Enable debug output
             verbose: Enable verbose output
         """
@@ -85,9 +94,11 @@ class BugFixExpediterJob( AgenticJobBase ):
             verbose    = verbose
         )
 
-        self.dead_job_id      = dead_job_id
-        self.extra_context    = extra_context
-        self.dry_run          = dry_run
+        self.dead_job_id           = dead_job_id
+        self.extra_context         = extra_context
+        self.dry_run               = dry_run
+        self.lead_model_override   = lead_model_override
+        self.worker_model_override = worker_model_override
 
         # Results (populated after execution)
         self.dead_job_context = None    # DeadJobContext
@@ -121,6 +132,16 @@ class BugFixExpediterJob( AgenticJobBase ):
 
         try:
             result = asyncio.run( self._execute() )
+
+            # Checkpoint-resume: _execute() returns __STALLED__ sentinel when
+            # a voice gate timed out and the orchestrator saved its state.
+            # (Session 9056c113 Phase E.2)
+            if result == "__STALLED__":
+                self.state                 = JobState.STALLED
+                self.completed_at          = cu.get_current_datetime_iso()
+                self.answer_conversational = "BFE stalled at voice gate. Resume when ready."
+                if self.debug: print( "[BugFixExpediterJob] Stalled — checkpoint saved" )
+                return self.answer_conversational
 
             # Check if cancellation was requested during execution
             if self._cancel_requested:
@@ -169,6 +190,8 @@ class BugFixExpediterJob( AgenticJobBase ):
         from cosa.agents.bug_fix_expediter import voice_io, cosa_interface
         from cosa.agents.bug_fix_expediter.dead_job_packager import package_dead_job
 
+        self._start_time = time.time()
+
         # Re-establish core voice_io binding (import-order race)
         voice_io.reconfigure()
 
@@ -213,6 +236,14 @@ class BugFixExpediterJob( AgenticJobBase ):
             config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
             config     = BugFixExpediterConfig.from_config( config_mgr, debug=self.debug )
 
+            # Per-invocation model overrides (e.g. E2E --cheap runs)
+            if self.lead_model_override:
+                if self.debug: print( f"[BFE] lead_model overridden: {config.lead_model} -> {self.lead_model_override}" )
+                config.lead_model = self.lead_model_override
+            if self.worker_model_override:
+                if self.debug: print( f"[BFE] worker_model overridden: {config.worker_model} -> {self.worker_model_override}" )
+                config.worker_model = self.worker_model_override
+
             orchestrator = BFEOrchestrator(
                 dead_job_context = self.dead_job_context,
                 extra_context    = self.extra_context,
@@ -227,11 +258,23 @@ class BugFixExpediterJob( AgenticJobBase ):
             # Store orchestrator ref for external cancellation (AgenticJobBase protocol)
             self._orchestrator = orchestrator
 
+            # Resume from checkpoint if this is a resumed BFE job (Session 9056c113 Phase E.2)
+            if hasattr( self, "_resume_checkpoint" ) and self._resume_checkpoint:
+                orchestrator.load_checkpoint( self._resume_checkpoint )
+                orchestrator.set_resume_phase( self._resume_checkpoint[ "phase_ordinal" ] )
+                print( f"[BFE] Resuming from phase ordinal {self._resume_checkpoint[ 'phase_ordinal' ]}" )
+
             self.diagnosis = await orchestrator.run_diagnosis()
+            orchestrator.diagnosis = self.diagnosis   # populate for save_checkpoint
             self.artifacts[ "diagnosis" ] = self.diagnosis.model_dump()
 
             # Phase 2: Propose (Lead agent generates fix proposals)
             proposed_fixes, selected_fix, plan_path = await orchestrator.run_proposal( self.diagnosis )
+
+            # Populate orchestrator state for save_checkpoint (Phase E.2)
+            orchestrator.proposed_fixes = proposed_fixes
+            orchestrator.selected_fix   = selected_fix
+            orchestrator.plan_path      = plan_path
 
             self.artifacts[ "proposed_fixes" ] = [ f.model_dump() for f in proposed_fixes ]
             self.artifacts[ "plan_path" ]      = plan_path
@@ -242,6 +285,7 @@ class BugFixExpediterJob( AgenticJobBase ):
             # Phase 3: Fix (Coder + Tester apply and validate)
             if selected_fix:
                 fix_result = await orchestrator.run_fix( self.diagnosis, selected_fix, plan_path )
+                orchestrator.fix_result = fix_result
                 self.artifacts[ "fix_result" ] = fix_result.model_dump()
 
                 # Phase 5: Git strategy (commit / branch / PR based on trust proxy)
@@ -249,10 +293,12 @@ class BugFixExpediterJob( AgenticJobBase ):
                     fix_result = await orchestrator.run_git_strategy(
                         fix_result, orchestrator.last_files_changed, plan_path
                     )
+                    orchestrator.fix_result = fix_result
                     self.artifacts[ "fix_result" ] = fix_result.model_dump()
             else:
                 from cosa.agents.bug_fix_expediter.state import FixResult
                 fix_result = FixResult( applied=False, success=False, details="No fix selected" )
+                orchestrator.fix_result = fix_result
 
             fix_summary = f"{len( proposed_fixes )} fix(es) proposed"
             if selected_fix:
@@ -280,16 +326,93 @@ class BugFixExpediterJob( AgenticJobBase ):
             elif fix_result.success and fix_result.applied:
                 resubmit_msg = " Resubmit skipped (no auto-fix config or queue unavailable)."
 
+            # ── Completion report (Phase 11 pattern: outcome-aware TTS + rich abstract) ──
+            n_proposed  = len( proposed_fixes )
+            fix_applied = fix_result.success and fix_result.applied
+            resubmit_ok = resubmit_id is not None
+            duration    = round( time.time() - self._start_time, 1 )
+            root_cause  = self.diagnosis.root_cause if self.diagnosis else ""
+
+            # Three-variant TTS (mirrors TFE Phase A pattern)
+            if fix_applied and resubmit_ok:
+                tts_msg = "Bug Fix Expediter complete. Fix applied and job resubmitted."
+            elif fix_applied:
+                tts_msg = "Bug Fix Expediter complete. Fix applied, no resubmit."
+            else:
+                tts_msg = (
+                    f"Bug Fix Expediter complete. "
+                    f"{n_proposed} fix{'es' if n_proposed != 1 else ''} proposed, "
+                    f"none applied successfully."
+                )
+
+            # Rich markdown abstract (UI-only, not spoken)
+            lines = [ "**BFE Activity Report**", "" ]
+            lines.append( f"**Dead job**: `{self.dead_job_id}`" )
+            lines.append( f"**Root cause**: {root_cause[:150]}" )
+            lines.append(
+                f"**Proposed**: {n_proposed} | **Fix applied**: {'yes' if fix_applied else 'no'}"
+            )
+            if plan_path:
+                lines.append( f"**Plan**: `{plan_path}`" )
+            if resubmit_id:
+                lines.append( f"**Resubmitted**: `{resubmit_id}`" )
+            if getattr( fix_result, "pr_url", None ):
+                lines.append( f"**PR**: {fix_result.pr_url}" )
+            lines.append( f"**Duration**: {duration}s" )
+            completion_abstract = "\n".join( lines )
+
+            try:
+                await voice_io.notify(
+                    tts_msg,
+                    priority   = "medium",
+                    abstract   = completion_abstract,
+                    job_id     = self.id_hash,
+                    queue_name = "run",
+                )
+            except Exception as notify_err:
+                print( f"[BugFixExpediterJob] completion notify failed: {notify_err}" )
+
+            # Conversational answer with real stats
             result = (
-                f"Bug Fix Expediter complete for '{self.dead_job_id}'. "
-                f"Root cause: {self.diagnosis.root_cause[ :150 ]}. "
-                f"{fix_summary}. "
+                f"BFE complete: {n_proposed} proposed, "
+                f"{'fix applied' if fix_applied else 'no fix applied'}. "
+                f"Root cause: {root_cause[:80]}. "
                 f"Plan: {plan_path}.{resubmit_msg}"
             )
 
             return result
 
         except Exception as e:
+            # Check for StalledException first (clean stall with checkpoint).
+            # Imported here so state.py changes don't force module reload.
+            from cosa.agents.bug_fix_expediter.state import StalledException
+            if isinstance( e, StalledException ):
+                # Persist checkpoint to artifacts for metadata_json serialization
+                self.artifacts[ "checkpoint" ] = e.checkpoint
+                if e.checkpoint.get( "artifacts", {} ).get( "plan_path" ):
+                    self.artifacts[ "plan_path" ] = e.checkpoint[ "artifacts" ][ "plan_path" ]
+
+                try:
+                    await voice_io.notify(
+                        f"BFE stalled at {e.phase} — resume when ready",
+                        priority   = "high",
+                        abstract   = (
+                            f"**BFE Stalled**\n\n"
+                            f"**Phase**: {e.phase}\n"
+                            f"**Reason**: {e.checkpoint.get( 'stall_reason', 'voice_gate_timeout' )}\n"
+                            f"**Dead job**: `{self.dead_job_id}`\n\n"
+                            f"Resume via UI 'Resume from Checkpoint' button or "
+                            f"`POST /api/jobs/{self.id_hash}/resume-from-checkpoint`"
+                        ),
+                        job_id     = self.id_hash,
+                        queue_name = "todo",
+                    )
+                except Exception as notify_err:
+                    print( f"[BugFixExpediterJob] stall notify failed: {notify_err}" )
+
+                return "__STALLED__"
+
+            # Original error handling
             await voice_io.notify(
                 f"Bug Fix Expediter error: {str( e )[ :100 ]}",
                 priority="urgent", job_id=self.id_hash, queue_name="run"

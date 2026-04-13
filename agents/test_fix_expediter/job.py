@@ -64,6 +64,8 @@ class TestFixExpediterJob( AgenticJobBase ):
         original_test_types: Optional[ list ] = None,
         original_pytest_args: Optional[ list ] = None,
         dry_run: bool = False,
+        lead_model_override:   Optional[ str ] = None,
+        worker_model_override: Optional[ str ] = None,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -88,6 +90,12 @@ class TestFixExpediterJob( AgenticJobBase ):
             original_test_types: Suites the original job ran (for Phase 6 rerun)
             original_pytest_args: Original pytest args (for Phase 6 rerun)
             dry_run: Simulate execution without making changes
+            lead_model_override:   Optional per-invocation override of the TFE
+                                   lead model (e.g. "claude-sonnet-4-6" for E2E
+                                   --cheap runs). Applied after config.from_config
+                                   loads INI defaults. None = use INI value.
+            worker_model_override: Optional per-invocation override of the TFE
+                                   worker model. Same semantics as lead override.
             debug: Enable debug output
             verbose: Enable verbose output
         """
@@ -104,6 +112,8 @@ class TestFixExpediterJob( AgenticJobBase ):
         self.original_test_types       = original_test_types or []
         self.original_pytest_args      = original_pytest_args or []
         self.dry_run                   = dry_run
+        self.lead_model_override       = lead_model_override
+        self.worker_model_override     = worker_model_override
 
         # Results (populated during execution)
         self.remediation_context = None    # TestRemediationContext
@@ -232,6 +242,14 @@ class TestFixExpediterJob( AgenticJobBase ):
         except Exception as e:
             if self.debug: print( f"[TestFixExpediterJob] from_config failed, using defaults: {e}" )
             config = TestFixExpediterConfig()
+
+        # Per-invocation model overrides (e.g. E2E --cheap runs)
+        if self.lead_model_override:
+            if self.debug: print( f"[TFE] lead_model overridden: {config.lead_model} -> {self.lead_model_override}" )
+            config.lead_model = self.lead_model_override
+        if self.worker_model_override:
+            if self.debug: print( f"[TFE] worker_model overridden: {config.worker_model} -> {self.worker_model_override}" )
+            config.worker_model = self.worker_model_override
 
         self._start_time = time.time()
 

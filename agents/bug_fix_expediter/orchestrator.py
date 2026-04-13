@@ -123,6 +123,19 @@ class BFEOrchestrator:
         self.verbose           = verbose
         self.current_phase     = BFEPhase.PACKAGING
 
+        # Checkpoint state (Session 9056c113 Phase E.2) — phase methods populate
+        # these as a side effect so save_checkpoint() can serialize mid-pipeline.
+        # Backward-compatible: existing phase methods still return tuples; these
+        # attributes are additional.
+        self.diagnosis         = None    # DiagnosisResult (set by run_diagnosis)
+        self.proposed_fixes    = []      # list[ProposedFix] (set by run_proposal)
+        self.selected_fix      = None    # ProposedFix (set by run_proposal)
+        self.fix_result        = None    # FixResult (set by run_fix / run_git_strategy)
+        self.plan_path         = None    # str (set by run_proposal)
+        self.branch_name       = None    # str (set by run_git_strategy)
+        self.commit_hashes     = []      # list[str]
+        self.pr_url            = None    # str
+
         # Cancellation + user interrupt support (SWE Team Approach D)
         self._stop_requested   = False
         self._user_messages    = queue.Queue()
@@ -145,6 +158,84 @@ class BFEOrchestrator:
             if self.debug: print( f"[BFEOrchestrator] Trust proxy import failed: {e} — defaulting to L1/commit_only" )
         except Exception as e:
             if self.debug: print( f"[BFEOrchestrator] Trust proxy init failed: {e} — defaulting to L1/commit_only" )
+
+    # =========================================================================
+    # Checkpoint-resume (Session 9056c113 Phase E.2)
+    # =========================================================================
+
+    def save_checkpoint( self ) -> dict:
+        """
+        Serialize current BFE pipeline state to a JSON-safe dict.
+
+        Mirrors TFE's save_checkpoint() pattern. BFE's phase methods must
+        populate self.diagnosis / self.proposed_fixes / etc. as a side effect
+        (see __init__ attributes) for this to capture mid-pipeline state.
+
+        Ensures:
+            - Returns dict matching CheckpointData schema
+            - Pydantic models converted to dicts via .model_dump()
+        """
+        from cosa.agents.bug_fix_expediter.state import BFE_PHASE_ORDINALS
+        from datetime import datetime
+
+        state_snapshot = {
+            "dead_job_id"      : self.dead_job_context.id_hash if self.dead_job_context else None,
+            "diagnosis"        : self.diagnosis.model_dump() if self.diagnosis else None,
+            "proposed_fixes"   : [ p.model_dump() for p in ( self.proposed_fixes or [] ) ],
+            "selected_fix"     : self.selected_fix.model_dump() if self.selected_fix else None,
+            "fix_result"       : self.fix_result.model_dump() if self.fix_result else None,
+            "plan_path"        : self.plan_path,
+            "branch_name"      : self.branch_name,
+            "commit_hashes"    : list( self.commit_hashes or [] ),
+            "pr_url"           : self.pr_url,
+        }
+
+        artifacts = {}
+        if self.plan_path: artifacts[ "plan_path" ] = self.plan_path
+
+        return {
+            "phase_ordinal"  : BFE_PHASE_ORDINALS.get( self.current_phase, -1 ),
+            "phase_name"     : self.current_phase.value,
+            "stall_reason"   : "voice_gate_timeout",
+            "stalled_at"     : datetime.now().isoformat(),
+            "state_snapshot" : state_snapshot,
+            "artifacts"      : artifacts,
+            "resume_count"   : 0,
+        }
+
+    def load_checkpoint( self, data: dict ) -> None:
+        """
+        Restore BFE pipeline state from a previously saved checkpoint.
+
+        Requires:
+            - data matches CheckpointData schema (from save_checkpoint)
+        """
+        from cosa.agents.bug_fix_expediter.state import (
+            DiagnosisResult, ProposedFix, FixResult, BFEPhase
+        )
+
+        snap = data[ "state_snapshot" ]
+
+        self.diagnosis      = DiagnosisResult( **snap[ "diagnosis" ] ) if snap.get( "diagnosis" ) else None
+        self.proposed_fixes = [ ProposedFix( **p ) for p in snap.get( "proposed_fixes", [] ) ]
+        self.selected_fix   = ProposedFix( **snap[ "selected_fix" ] ) if snap.get( "selected_fix" ) else None
+        self.fix_result     = FixResult( **snap[ "fix_result" ] ) if snap.get( "fix_result" ) else None
+        self.plan_path      = snap.get( "plan_path" )
+        self.branch_name    = snap.get( "branch_name" )
+        self.commit_hashes  = snap.get( "commit_hashes", [] )
+        self.pr_url         = snap.get( "pr_url" )
+        self.current_phase  = BFEPhase( data[ "phase_name" ] )
+
+    def set_resume_phase( self, phase_ordinal: int ) -> None:
+        """
+        Mark phases up to phase_ordinal as completed so phase methods can skip
+        work that has already been done on resume.
+
+        Requires:
+            - phase_ordinal >= 0
+            - load_checkpoint() has already been called
+        """
+        self._resume_from_ordinal = phase_ordinal
 
     # =========================================================================
     # Public API
@@ -251,7 +342,19 @@ class BFEOrchestrator:
 
         # --- Voice gate (natural break point) ---
         if not self._is_cancelled():
-            best_diagnosis = await self._voice_gate_diagnosis( best_diagnosis, voice_io, cosa_interface )
+            from cosa.agents.bug_fix_expediter.state import VoiceGateTimeoutError, StalledException
+            try:
+                best_diagnosis = await self._voice_gate_diagnosis( best_diagnosis, voice_io, cosa_interface )
+            except VoiceGateTimeoutError:
+                # User unavailable at diagnosis gate — save checkpoint + stall.
+                # (Session 9056c113 doc 16 Phase 1)
+                self.diagnosis = best_diagnosis   # populate for save_checkpoint
+                checkpoint = self.save_checkpoint()
+                raise StalledException(
+                    checkpoint = checkpoint,
+                    phase      = BFEPhase.DIAGNOSING.value,
+                    message    = "Voice gate timeout at diagnosis",
+                )
 
         # --- Completion notification ---
         abstract = self._build_diagnosis_abstract( best_diagnosis )
@@ -544,7 +647,21 @@ class BFEOrchestrator:
         # --- Voice gate (natural break point) ---
         selected_fix = None
         if not self._is_cancelled():
-            selected_fix = await self._voice_gate_proposal( fixes, voice_io, cosa_interface )
+            from cosa.agents.bug_fix_expediter.state import VoiceGateTimeoutError, StalledException
+            try:
+                selected_fix = await self._voice_gate_proposal( fixes, voice_io, cosa_interface )
+            except VoiceGateTimeoutError:
+                # User unavailable at proposal gate — save checkpoint + stall.
+                # Populate orchestrator state first so save_checkpoint captures it.
+                self.diagnosis      = diagnosis
+                self.proposed_fixes = fixes
+                self.plan_path      = plan_path
+                checkpoint = self.save_checkpoint()
+                raise StalledException(
+                    checkpoint = checkpoint,
+                    phase      = BFEPhase.PROPOSING.value,
+                    message    = "Voice gate timeout at proposal",
+                )
 
             # Re-write plan with selection if user chose a fix
             if selected_fix and plan_path:
@@ -768,6 +885,13 @@ class BFEOrchestrator:
                 job_id   = self.job_id,
             )
         except Exception as e:
+            # Propagate VoiceGateTimeoutError up to the caller (run_diagnosis)
+            # so it can save a checkpoint and raise StalledException. Other
+            # errors still fall through to auto-approve (existing behavior).
+            # Session 9056c113 doc 16 Phase 1.
+            from cosa.agents.bug_fix_expediter.state import VoiceGateTimeoutError
+            if isinstance( e, VoiceGateTimeoutError ):
+                raise
             logger.warning( f"Voice gate confirmation failed: {e} — auto-approving" )
             await self._emit_state( BFEPhase.WAITING_CONFIRMATION, BFEPhase.DIAGNOSING )
             return diagnosis
@@ -873,6 +997,12 @@ class BFEOrchestrator:
                     job_id   = self.job_id,
                 )
             except Exception as e:
+                # Propagate VoiceGateTimeoutError so the caller can stall with a
+                # checkpoint. Other errors fall through to auto-approve.
+                # Session 9056c113 doc 16 Phase 1.
+                from cosa.agents.bug_fix_expediter.state import VoiceGateTimeoutError
+                if isinstance( e, VoiceGateTimeoutError ):
+                    raise
                 logger.warning( f"Voice gate failed: {e} — auto-approving" )
                 await self._emit_state( BFEPhase.WAITING_CONFIRMATION, BFEPhase.PROPOSING )
                 return auto
@@ -913,6 +1043,10 @@ class BFEOrchestrator:
                         return fix
 
             except Exception as e:
+                # Propagate VoiceGateTimeoutError for checkpoint-resume.
+                from cosa.agents.bug_fix_expediter.state import VoiceGateTimeoutError
+                if isinstance( e, VoiceGateTimeoutError ):
+                    raise
                 logger.warning( f"Voice gate choices failed: {e}" )
 
         # User rejected (or timed out) — try feedback for retry

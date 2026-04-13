@@ -220,9 +220,26 @@ class AgentNotificationDispatcher:
             if response.exit_code == 0 and response.response_value:
                 return response.response_value.lower().strip().startswith( "yes" )
 
+            # exit_code == 2 is the MCP server's explicit "user-unavailable timeout"
+            # signal. Raise VoiceGateTimeoutError so checkpoint-resume can trigger
+            # a clean stall instead of silently falling back to the default.
+            # (Session 9056c113 Phase 1 — doc 16). Lazy import to avoid circular
+            # dependency (TFE state imports utils).
+            if response.exit_code == 2:
+                from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+                raise VoiceGateTimeoutError(
+                    phase   = "confirmation",
+                    message = f"ask_confirmation timeout after {timeout}s — MCP exit_code=2"
+                )
+
             return default == "yes"
 
         except Exception as e:
+            # VoiceGateTimeoutError must propagate up to the orchestrator gates;
+            # don't swallow it here.
+            from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+            if isinstance( e, VoiceGateTimeoutError ):
+                raise
             logger.warning( f"ask_confirmation failed: {e}" )
             return default == "yes"
 
@@ -316,9 +333,21 @@ class AgentNotificationDispatcher:
                 except json.JSONDecodeError:
                     return { "answers": { "response": response.response_value } }
 
+            # exit_code == 2 is the MCP server's explicit timeout signal.
+            # Raise VoiceGateTimeoutError for checkpoint-resume.
+            if response.exit_code == 2:
+                from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+                raise VoiceGateTimeoutError(
+                    phase   = "choices",
+                    message = f"present_choices timeout after {timeout}s — MCP exit_code=2"
+                )
+
             return { "answers": {} }
 
         except Exception as e:
+            from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+            if isinstance( e, VoiceGateTimeoutError ):
+                raise
             logger.warning( f"present_choices failed: {e}" )
             return { "answers": {} }
 

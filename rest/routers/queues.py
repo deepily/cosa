@@ -1478,3 +1478,101 @@ async def resume_stalled_job(
         "phase_name"       : resume_info.get( "phase_name" ),
         "resume_count"     : resume_info.get( "resume_count", 1 ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Smart TFE resume: dispatch free-form input (job ID or plan path) to resume
+# (Session 9056c113 continued — Phase D4b file-path resume)
+# ---------------------------------------------------------------------------
+
+from pydantic import BaseModel
+
+
+class TFEResumeFromRequest( BaseModel ):
+    """Request body for smart TFE resume-from endpoint.
+
+    The resume_from field accepts any of:
+    - TFE job ID: "tfe-7c25082a" or "tfe-7c25082a::user@example.com"
+    - Plan doc path: "io/swe-team/plans/.../c1-plan.md"
+    - Checkpoint JSON path (future): "io/checkpoints/.../checkpoint.json"
+    - Natural language description (Phase 2, not yet implemented)
+    """
+    resume_from : str
+
+
+@router.post(
+    "/test-fix-expediter/resume-from",
+    summary     = "Smart TFE resume — auto-detect job ID or plan path",
+    description = "Accepts free-form input (job ID, plan doc path, or description) "
+                  "and resolves to a stalled TFE job, then resumes from checkpoint.",
+)
+async def resume_tfe_smart(
+    request: TFEResumeFromRequest,
+    current_user = Depends( get_current_user ),
+    todo_queue   = Depends( get_todo_queue ),
+):
+    """
+    Smart resume: auto-detect input type and dispatch.
+
+    Requires:
+        - request.resume_from is a non-empty string
+        - current_user is authenticated
+
+    Ensures:
+        - 200 with status=resumed if auto-resolved to a single stalled job
+        - 200 with status=ambiguous + candidates if multiple matches (Phase 2)
+        - 404 if no match found
+    """
+    from cosa.agents.test_fix_expediter.resume_resolver import resolve_resume_target
+    from cosa.rest.agentic_job_factory import resume_job
+
+    user_email = current_user.get( "email" ) or current_user.get( "user_email" )
+    if not user_email:
+        raise HTTPException( status_code=400, detail="Authenticated user has no email" )
+
+    target = resolve_resume_target( request.resume_from, user_email )
+
+    if target.source_type == "not_found":
+        raise HTTPException( status_code=404, detail=target.diagnostic )
+
+    # Multi-match disambiguation (Phase 2 — LLM fuzzy matcher)
+    if target.job_id is None and target.candidates:
+        return {
+            "status"     : "ambiguous",
+            "candidates" : target.candidates,
+            "diagnostic" : target.diagnostic,
+        }
+
+    # Single match — delegate to existing resume_job() factory
+    job = resume_job( target.job_id, config_mgr=None )
+    if job is None:
+        raise HTTPException(
+            status_code = 404,
+            detail      = f"Job {target.job_id} resolved but cannot be resumed "
+                          f"(may have been already resumed or cleared)"
+        )
+
+    todo_queue.push( job )
+
+    resume_info = job._resume_checkpoint
+    print(
+        f"[API] POST /api/test-fix-expediter/resume-from - "
+        f"input: '{request.resume_from[:60]}', "
+        f"source_type: {target.source_type}, "
+        f"resolved: {target.job_id}, "
+        f"new job: {job.id_hash}, "
+        f"resume from phase {resume_info.get( 'phase_name', '?' )}"
+    )
+
+    return {
+        "status"           : "resumed",
+        "source_type"      : target.source_type,
+        "matched_path"     : target.matched_path,
+        "confidence"       : target.confidence,
+        "resumed_job_id"   : job.id_hash,
+        "original_job_id"  : target.job_id,
+        "resume_from_phase": resume_info.get( "phase_ordinal" ),
+        "phase_name"       : resume_info.get( "phase_name" ),
+        "resume_count"     : resume_info.get( "resume_count", 1 ),
+        "diagnostic"       : target.diagnostic,
+    }

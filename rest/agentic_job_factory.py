@@ -295,14 +295,16 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
 
     elif command == "agent router go to bug fix expediter":
         job = BugFixExpediterJob(
-            dead_job_id   = args_dict.get( "dead_job_id", "" ),
-            user_id       = user_id,
-            user_email    = user_email,
-            session_id    = session_id,
-            extra_context = args_dict.get( "extra_context", "" ),
-            dry_run       = _parse_boolean( args_dict.get( "dry_run" ) ),
-            debug         = debug,
-            verbose       = verbose
+            dead_job_id           = args_dict.get( "dead_job_id", "" ),
+            user_id               = user_id,
+            user_email            = user_email,
+            session_id            = session_id,
+            extra_context         = args_dict.get( "extra_context", "" ),
+            dry_run               = _parse_boolean( args_dict.get( "dry_run" ) ),
+            lead_model_override   = args_dict.get( "lead_model_override" )   or None,
+            worker_model_override = args_dict.get( "worker_model_override" ) or None,
+            debug                 = debug,
+            verbose               = verbose
         )
 
     elif command == "agent router go to test fix expediter":
@@ -323,6 +325,8 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             original_test_types       = test_types_arg,
             original_pytest_args      = pytest_args_arg,
             dry_run                   = _parse_boolean( args_dict.get( "dry_run" ) ),
+            lead_model_override       = args_dict.get( "lead_model_override" )   or None,
+            worker_model_override     = args_dict.get( "worker_model_override" ) or None,
             debug                     = debug,
             verbose                   = verbose,
         )

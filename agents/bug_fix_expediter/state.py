@@ -182,6 +182,40 @@ def create_initial_state( dead_job_id: str, extra_context: str = "" ) -> BFEStat
     )
 
 
+# ---------------------------------------------------------------------------
+# Checkpoint-resume infrastructure (Session 9056c113 Phase E.2)
+# ---------------------------------------------------------------------------
+
+BFE_PHASE_ORDINALS = {
+    BFEPhase.PACKAGING    : 0,
+    BFEPhase.DIAGNOSING   : 1,
+    BFEPhase.PROPOSING    : 2,
+    BFEPhase.FIXING       : 3,
+    BFEPhase.COMMITTING   : 4,
+    BFEPhase.RESUBMITTING : 5,
+    BFEPhase.RETRYING     : 6,
+}
+
+# Re-export shared exception types from TFE (defined in session 9056c113 Phase C).
+# These are agent-agnostic — the checkpoint-resume pattern uses identical semantics
+# across TFE and BFE, so we share the exception classes to keep the dispatch
+# machinery (resume_job factory, STALLED state transitions) uniform.
+#
+# Lazy module-level __getattr__ (PEP 562) avoids a circular import: TFE's state
+# imports BFE's DiagnosisResult/FixResult as a base, so a direct `from tfe.state
+# import ...` here would create a cycle at module-init time. Deferring the
+# import until first attribute access breaks the cycle.
+def __getattr__( name ):
+    if name in ( "VoiceGateTimeoutError", "StalledException", "CheckpointData" ):
+        from cosa.agents.test_fix_expediter.state import (
+            VoiceGateTimeoutError, StalledException, CheckpointData,
+        )
+        return { "VoiceGateTimeoutError": VoiceGateTimeoutError,
+                 "StalledException"    : StalledException,
+                 "CheckpointData"      : CheckpointData }[ name ]
+    raise AttributeError( f"module {__name__} has no attribute {name}" )
+
+
 def quick_smoke_test():
     """Quick smoke test for BFE state models."""
     import cosa.utils.util as cu

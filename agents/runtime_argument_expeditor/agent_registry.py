@@ -248,6 +248,36 @@ AGENTIC_AGENTS = {
         },
     },
 
+    "agent router go to test fix expediter resume" : {
+        # Voice-driven resume of a stalled Test Fix Expediter job.
+        # Session 9056c113 doc 16 Phase 2 — wires into existing REST endpoint
+        # POST /api/test-fix-expediter/resume-from via the resume_job() factory.
+        # The resume_from arg is resolved via special_handler "tfe_checkpoint_match"
+        # which fuzzy-matches user description against stalled/recent TFE jobs.
+        "job_prefix"         : "tfe",   # resumed job reuses TFE prefix
+        "cli_module"         : "cosa.agents.test_fix_expediter",
+        "job_class_path"     : "cosa.agents.test_fix_expediter.job.TestFixExpediterJob",
+        "display_name"       : "TFE Resume",
+        "required_user_args" : [ "resume_from" ],
+        "system_provided"    : [ "user_id", "user_email", "session_id" ],
+        "arg_mapping"        : {
+            "resume_from"       : "resume_from",
+            "job_id"            : "resume_from",
+            "plan_path"         : "resume_from",
+            "checkpoint"        : "resume_from",
+            "description"       : "resume_from",
+        },
+        "special_handlers"   : {
+            "resume_from" : "tfe_checkpoint_match",
+        },
+        "fallback_questions" : {
+            "resume_from" : "Which stalled TFE job would you like to resume? Describe it, paste a job ID (tfe-*), or paste a plan doc path.",
+        },
+        "fallback_defaults" : {
+            # No defaults — resume_from is a required arg with no safe fallback.
+        },
+    },
+
     "agent router go to test suite" : {
         "job_prefix"         : "ts",
         "cli_module"         : None,

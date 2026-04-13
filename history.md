@@ -1,5 +1,37 @@
 # COSA Development History
 
+> **📝 SESSION 9056c113 STAGED**: TFE checkpoint-resume + completion report + MCP timeout stall + voice-driven TFE resume (2026.04.12)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Phase A — TFE completion voice notification** (`agents/test_fix_expediter/job.py`): Outcome-aware three-variant TTS (success / partial / no-op) with rich markdown abstract mirroring Deep Research pattern; fires before terminal transition.
+>
+> **Phase B — STALLED lifecycle** (`agents/bug_fix_expediter/state.py`): New `JobState.STALLED` + `RESUMABLE_STATES` convenience set + `RUNNING↔STALLED` transitions. Consumed by TFE + BFE for checkpoint-resume.
+>
+> **Phase C — Checkpoint/stall plumbing** (`agents/bug_fix_expediter/orchestrator.py`, `agents/test_fix_expediter/job.py`): `VoiceGateTimeoutError` + `StalledException` + `CheckpointData` TypedDict + `TFE_PHASE_ORDINALS` + `save_checkpoint()`/`load_checkpoint()`/`set_resume_phase()` on TFE orchestrator; `__STALLED__` sentinel in `_execute()`/`do_all()`; voice gate timeout propagation through BFE's two internal gates.
+>
+> **Phase D — Resume dispatch** (`rest/routers/queues.py`, `rest/agentic_job_factory.py`, `rest/dead_queue_watchdog.py`, new `agents/test_fix_expediter/resume_resolver.py`): `get_checkpoint_for_job()` / `get_original_args_for_job()` queries + `resume_job()` factory wiring + dead-queue path awareness. `resume_resolver.py` provides `list_resume_candidates()` + `fuzzy_match_candidates()` for voice-driven resume lookup.
+>
+> **Phase 1 — MCP timeout detection → VoiceGateTimeoutError** (`agents/utils/agent_notification_dispatcher.py`): Both `ask_confirmation()` and `present_choices()` now raise `VoiceGateTimeoutError` on `NotificationResponse.exit_code == 2` (user-unavailable signal). Lazy import avoids circular dep. BFE `run_diagnosis` + `run_proposal` catch the exception, save checkpoint, raise `StalledException`.
+>
+> **Phase 2 — Voice-driven TFE resume** (`agents/runtime_argument_expeditor/agent_registry.py`, `agents/runtime_argument_expeditor/expeditor.py`): New `"agent router go to test fix expediter resume"` registry entry with `resume_from` required arg + `tfe_checkpoint_match` special handler + arg_mapping synonyms. New `_handle_tfe_checkpoint_match()` (~120 lines) in expeditor reuses `resume_resolver.list_resume_candidates` + `fuzzy_match_candidates`. Fast-path for literal job IDs / plan paths (skips LLM). Auto-select at confidence ≥ 0.9 for stalled jobs. Numeric + partial-string disambiguation fallback.
+>
+> **Supporting edits**:
+> - `agents/io_models/xml_models.py` — new XML shapes for checkpoint/resume commands
+> - `agents/podcast_generator/job.py` — completion-report pattern parity (skill v3.0 Phase 11)
+>
+> **Regression**: 535 unit tests passing, 0 failures across touched files (Lupin parent side).
+>
+> **Plan docs** (Lupin parent):
+> - `src/rnd/v0.1.6/2026.04.10-test-fix-expediter/14-checkpoint-resume-and-completion-report.md`
+> - `src/rnd/v0.1.6/2026.04.10-test-fix-expediter/16-final-mile-mcp-timeouts-voice-resume-e2e.md`
+>
+> **Files Modified (12)**: `agents/bug_fix_expediter/{job,orchestrator,state}.py`, `agents/io_models/xml_models.py`, `agents/podcast_generator/job.py`, `agents/runtime_argument_expeditor/{agent_registry,expeditor}.py`, `agents/test_fix_expediter/job.py`, `agents/utils/agent_notification_dispatcher.py`, `rest/agentic_job_factory.py`, `rest/dead_queue_watchdog.py`, `rest/routers/queues.py`
+> **Files Created (1)**: `agents/test_fix_expediter/resume_resolver.py`
+
+---
+
 > **✅ SESSION 248e740e COMMITTED**: TFE forensics capture — lifecycle states, persistence allowlist, dead-queue artifacts (2026.04.11)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >

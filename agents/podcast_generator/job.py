@@ -19,6 +19,7 @@ Example:
 """
 
 import asyncio
+import time
 from datetime import datetime
 from typing import Optional, List
 
@@ -198,6 +199,8 @@ class PodcastGeneratorJob( AgenticJobBase ):
         import cosa.utils.util as cu
         import os
 
+        self._start_time = time.time()
+
         # Re-establish core voice_io binding (import-order race: last configure() wins)
         voice_io.reconfigure()
 
@@ -288,9 +291,55 @@ class PodcastGeneratorJob( AgenticJobBase ):
             }
             self.artifacts[ "cost_summary" ] = self.cost_summary
 
-            # Return conversational answer
-            duration = script.estimated_duration_minutes
-            return f"Podcast complete! Generated {script.get_segment_count()} segments, ~{duration:.1f} minutes. Audio: {self.audio_path}"
+            # ── Completion report (Phase 11 pattern: outcome-aware TTS + rich abstract) ──
+            n_segments    = script.get_segment_count()
+            script_minutes = script.estimated_duration_minutes
+            elapsed_sec   = round( time.time() - self._start_time, 1 )
+            has_audio     = bool( self.audio_path )
+            languages     = getattr( self, "target_languages", [] ) or [ "en" ]
+            n_langs       = len( languages )
+
+            # Three-variant TTS
+            if has_audio and n_segments > 0:
+                tts_msg = (
+                    f"Podcast complete. {n_segments} segment{'s' if n_segments != 1 else ''} "
+                    f"rendered in {n_langs} language{'s' if n_langs != 1 else ''}."
+                )
+            elif n_segments > 0:
+                tts_msg = f"Podcast script complete. Audio rendering pending or failed."
+            else:
+                tts_msg = "Podcast generation complete with no segments produced."
+
+            # Rich markdown abstract
+            lines = [ "**Podcast Activity Report**", "" ]
+            lines.append( f"**Segments**: {n_segments} (~{script_minutes:.1f} min)" )
+            lines.append( f"**Languages**: {', '.join( languages )}" )
+            if self.script_path:
+                lines.append( f"**Script**: `{self.script_path}`" )
+            if self.audio_path:
+                lines.append( f"**Audio**: `{self.audio_path}`" )
+            if self.cost_summary:
+                total_cost = self.cost_summary.get( "total_cost_usd", 0.0 )
+                lines.append( f"**Cost**: ${total_cost:.4f}" )
+            lines.append( f"**Duration**: {elapsed_sec}s" )
+            completion_abstract = "\n".join( lines )
+
+            try:
+                await voice_io.notify(
+                    tts_msg,
+                    priority   = "medium",
+                    abstract   = completion_abstract,
+                    job_id     = self.id_hash,
+                    queue_name = "run",
+                )
+            except Exception as notify_err:
+                print( f"[PodcastGeneratorJob] completion notify failed: {notify_err}" )
+
+            # Conversational answer
+            return (
+                f"Podcast complete! Generated {n_segments} segment{'s' if n_segments != 1 else ''}, "
+                f"~{script_minutes:.1f} minutes. Audio: {self.audio_path}"
+            )
 
         finally:
             voice_io.clear_job_id()

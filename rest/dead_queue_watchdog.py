@@ -431,6 +431,18 @@ class DeadQueueWatchdog:
             bfe_args[ "dry_run" ] = True
             if self.debug: print( f"[Watchdog] Propagating dry_run=True to spawned BFE for {job_id}" )
 
+        # Propagate BFE model overrides from the failed job's original args.
+        # Set by E2E scripts via --cheap (Sonnet-only) and any other future
+        # cost-sensitive pathway. Keys are namespaced with "bfe_" to avoid
+        # colliding with other agents' model params.
+        original_args = getattr( failed_job, "original_args", {} ) or {}
+        if original_args.get( "bfe_lead_model_override" ):
+            bfe_args[ "lead_model_override" ] = original_args[ "bfe_lead_model_override" ]
+            if self.debug: print( f"[Watchdog] Propagating lead_model_override={bfe_args[ 'lead_model_override' ]} to spawned BFE" )
+        if original_args.get( "bfe_worker_model_override" ):
+            bfe_args[ "worker_model_override" ] = original_args[ "bfe_worker_model_override" ]
+            if self.debug: print( f"[Watchdog] Propagating worker_model_override={bfe_args[ 'worker_model_override' ]} to spawned BFE" )
+
         try:
             bfe_job = create_agentic_job(
                 command    = "agent router go to bug fix expediter",
