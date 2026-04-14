@@ -171,6 +171,14 @@ class D2Renderer( VisualRenderer ):
             - Returns False on any error (logged as warning)
         """
         try:
+            # Strip remote icon references — terrastruct.com CDN returns 403,
+            # causing D2 CLI to fail. Diagrams render fine without icons.
+            filtered_lines = [
+                line for line in d2_code.splitlines()
+                if "icon:" not in line or "icons.terrastruct.com" not in line
+            ]
+            d2_code = "\n".join( filtered_lines )
+
             loop   = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None,

@@ -348,6 +348,7 @@ async def get_queue(
                 "report_path"               : job.artifacts.get( 'report_path' ) if is_agentic_job else None,
                 "remediation_snapshot_path" : job.artifacts.get( 'remediation_snapshot_path' ) if is_agentic_job else None,
                 "yaml_path"                : job.artifacts.get( 'yaml_path' ) if is_agentic_job else None,
+                "pptx_path"                : job.artifacts.get( 'pptx_path' ) if is_agentic_job else None,
                 "abstract"        : job.artifacts.get( 'abstract' ) if is_agentic_job else None,
                 "cost_summary"    : job.cost_summary if is_agentic_job else None,
                 "started_at"      : job.started_at,

@@ -36,6 +36,7 @@ SUITE_SCRIPTS = {
     "unit"         : "src/tests/run-unit-tests.sh",
     "smoke"        : "src/tests/run-smoke-tests.sh",
     "smoke_direct" : "src/tests/run-smoke-direct.sh",
+    "pytest_direct": "src/tests/run-pytest-direct.sh",    # Arbitrary pytest file (doc 16 follow-up)
     "websocket"    : "src/scripts/run-websocket-smoke-tests.sh",
     "integration"  : "src/tests/run-integration-tests.sh",
     "e2e"          : "src/scripts/run-e2e-ui-tests.sh",
@@ -43,12 +44,18 @@ SUITE_SCRIPTS = {
     "presentation"   : "src/tests/run-presentation-regression.sh",
 }
 
+# Test types that accept a file path as the first positional pytest arg
+# (the shell script delegates to "$@" rather than running a fixed suite).
+# Frontend mirrors this in notifications.js FILE_DRIVEN_TEST_TYPES.
+FILE_DRIVEN_TEST_TYPES = frozenset( { "smoke_direct", "pytest_direct" } )
+
 # Per-suite max execution timeout (seconds). Process is killed if exceeded.
 # Values based on observed worst-case runtimes + 2x buffer. Tunable.
 SUITE_TIMEOUTS_SECONDS = {
     "unit"         : 180,    #  3 min (fast, ~915 tests, no server)
     "smoke"        : 600,    # 10 min (server-dependent, ~40 files)
     "smoke_direct" : 1200,   # 20 min (longest: Phase D live ~10 min)
+    "pytest_direct": 1200,   # 20 min (arbitrary pytest file — match smoke_direct budget)
     "websocket"    : 300,    #  5 min (~50 tests, server + WS)
     "integration"  : 1200,   # 20 min (~43 tests, ~5-10 min observed)
     "e2e"          : 2400,   # 40 min (~297 tests, ~17 min observed)
@@ -637,7 +644,11 @@ class TestSuiteJob( AgenticJobBase ):
                 stderr=subprocess.STDOUT,
                 cwd=project_root,
                 text=True,
-                env={ **os.environ, "LUPIN_ROOT": project_root }
+                env={
+                    **os.environ,
+                    "LUPIN_ROOT"      : project_root,
+                    "LUPIN_TEST_PORT" : os.environ.get( "PORT", "7999" ),
+                }
             )
 
             # Per-suite timeout (seconds)
@@ -706,6 +717,7 @@ class TestSuiteJob( AgenticJobBase ):
                 "unit"         : "/tmp/unit-latest.log",
                 "smoke"        : "/tmp/smoke-latest.log",
                 "smoke_direct" : "/tmp/smoke-direct-latest.log",
+                "pytest_direct": "/tmp/pytest-direct-latest.log",
                 "websocket"    : "/tmp/websocket-latest.log",
                 "integration"  : "/tmp/integration-latest.log",
                 "e2e"          : "/tmp/e2e-ui-latest.log",

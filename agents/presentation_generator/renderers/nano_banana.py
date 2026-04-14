@@ -35,7 +35,7 @@ class NanoBananaRenderer( VisualRenderer ):
         - Returns None on any failure (caller falls back to placeholder)
         - Cost tracked via gemini_client
     """
-    SUPPORTED_TYPES = [ "hero_image", "infographic", "title_background", "icon" ]
+    SUPPORTED_TYPES = [ "hero_image", "infographic", "title_background", "icon", "before_after", "icon_only" ]
 
     def __init__( self, gemini_client=None, debug: bool = False, verbose: bool = False ):
         """

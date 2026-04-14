@@ -649,7 +649,15 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
         default=False, return_type="boolean"
     )
 
+    lupin_env = os.environ.get( "LUPIN_ENV", "" ).lower()
+    if lupin_env in [ "test", "testing" ]:
+        env_label = "TEST"
+    else:
+        env_label = "DEVELOPMENT"
+
     return {
+        "env_label": env_label,
+
         # Convert minutes → milliseconds (for setInterval)
         "token_refresh_check_interval_ms": int( refresh_check_interval_mins * 60 * 1000 ),
 

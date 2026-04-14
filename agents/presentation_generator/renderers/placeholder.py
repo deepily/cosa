@@ -3,8 +3,12 @@
 Placeholder Renderer — Fallback for unsupported visual types.
 
 Emits visible TODO markers in the Marp Markdown so that unsupported
-visual types (screenshot, icon_only, before_after) are clearly marked
-for manual completion. Always succeeds — never returns None.
+visual types (screenshot) are clearly marked for manual completion.
+Always succeeds — never returns None.
+
+Note (Session 248e740e, 2026-04-13): before_after and icon_only were moved
+to NanoBananaRenderer (Imagen) since they can be adequately generated from
+text prompts. Only screenshot remains here as it requires actual screen capture.
 """
 
 from typing import Optional
@@ -23,7 +27,7 @@ class PlaceholderRenderer( VisualRenderer ):
         - Always returns a non-None string
         - Output is a Marp blockquote with bold type label
     """
-    SUPPORTED_TYPES = [ "screenshot", "icon_only", "before_after" ]
+    SUPPORTED_TYPES = [ "screenshot" ]
 
     async def render( self, visual_type: str, visual_description: str, **kwargs ) -> Optional[ str ]:
         """

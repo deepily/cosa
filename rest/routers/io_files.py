@@ -36,6 +36,7 @@ MEDIA_TYPES = {
     ".wav"  : "audio/wav",
     ".pdf"  : "application/pdf",
     ".json" : "application/json",
+    ".pptx" : "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }
 
 
@@ -45,7 +46,8 @@ MEDIA_TYPES = {
     description = "Serve files from the io/ directory with extension validation and traversal protection."
 )
 async def get_io_file(
-    path: str = Query( ..., description="Relative path within io/ directory" )
+    path: str = Query( ..., description="Relative path within io/ directory" ),
+    download: bool = Query( False, description="Force download with Content-Disposition: attachment" )
 ):
     """
     Serve files from the io/ directory with security validation.
@@ -120,6 +122,22 @@ async def get_io_file(
         )
 
     media_type = MEDIA_TYPES[ ext ]
+
+    # Force download: always return FileResponse with attachment Content-Disposition
+    if download:
+        try:
+            filename = os.path.basename( full_path )
+            return FileResponse(
+                path                 = full_path,
+                media_type           = media_type,
+                filename             = filename,
+                content_disposition_type = "attachment"
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code = 500,
+                detail      = f"Error serving file: {str( e )}"
+            )
 
     # For text files, use PlainTextResponse (better encoding handling)
     if ext in [ ".md", ".txt", ".json", ".yaml", ".yml" ]:

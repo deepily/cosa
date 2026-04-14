@@ -270,6 +270,10 @@ class PresentationOrchestratorAgent:
             await voice_io.notify( "Phase 8: Delivering final artifacts...", priority="low" )
             await self._deliver_async( presentation_model )
 
+            # Phase 8.5: PPTX Export
+            await voice_io.notify( "Phase 8.5: Exporting PowerPoint...", priority="low" )
+            await self._export_pptx_async( presentation_model )
+
             # Complete
             self.state = OrchestratorState.COMPLETED
             self.metrics[ "end_time" ] = cu.get_current_datetime_iso()
@@ -335,6 +339,10 @@ class PresentationOrchestratorAgent:
             self.state = OrchestratorState.DELIVERING
             await voice_io.notify( "Phase 8: Delivering final artifacts...", priority="low" )
             await self._deliver_async( presentation )
+
+            # Phase 8.5: PPTX Export
+            await voice_io.notify( "Phase 8.5: Exporting PowerPoint...", priority="low" )
+            await self._export_pptx_async( presentation )
 
             # Complete
             self.state = OrchestratorState.COMPLETED
@@ -1418,6 +1426,69 @@ class PresentationOrchestratorAgent:
             for name, info in artifacts_verified.items():
                 status = "OK" if info[ "exists" ] else "MISSING"
                 print( f"  {name}: {status} ({info[ 'size_bytes' ]:,} bytes)" )
+
+    async def _export_pptx_async( self, presentation: Optional[ PresentationModel ] ) -> None:
+        """
+        Phase 8.5: Export Marp Markdown to PowerPoint via Marp CLI.
+
+        Requires:
+            - presentation is a valid PresentationModel
+            - self._presentation_state[ "marp_path" ] is set by Phase 6
+            - self.config.pptx_export_enabled is True
+            - Marp CLI binary available in PATH
+
+        Ensures:
+            - PPTX file written alongside .md and .yaml
+            - self._presentation_state[ "pptx_path" ] set on success
+            - Non-fatal: MD + YAML still delivered if PPTX export fails
+        """
+        if not self.config.pptx_export_enabled:
+            if self.debug: print( "[Orchestrator] PPTX export disabled in config" )
+            return
+
+        if self.dry_run:
+            if self.debug: print( "[Orchestrator] PPTX export skipped (dry run)" )
+            return
+
+        marp_path = self._presentation_state.get( "marp_path" )
+        if not marp_path or not os.path.exists( marp_path ):
+            logger.warning( "Phase 8.5: No marp_path — skipping PPTX export" )
+            return
+
+        try:
+            user_id = self._presentation_state.get( "user_id", "unknown" )
+            pptx_path = self.config.get_output_path( user_id, presentation.title, file_type="pptx" )
+            marp_dir  = os.path.dirname( marp_path )
+
+            if self.debug: print( f"[Orchestrator] Phase 8.5: Exporting PPTX → {pptx_path}" )
+
+            proc = await asyncio.create_subprocess_exec(
+                "marp", "--pptx", "--allow-local-files", marp_path, "-o", pptx_path,
+                cwd    = marp_dir,
+                stdout = asyncio.subprocess.PIPE,
+                stderr = asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+
+            if proc.returncode != 0:
+                error_msg = stderr.decode( "utf-8", errors="replace" ).strip()
+                logger.warning( f"Phase 8.5: Marp CLI exited {proc.returncode}: {error_msg[ :200 ]}" )
+                await voice_io.notify( f"PPTX export failed: {error_msg[ :100 ]}", priority="medium" )
+                return
+
+            self._presentation_state[ "pptx_path" ] = pptx_path
+
+            file_size = os.path.getsize( pptx_path ) if os.path.exists( pptx_path ) else 0
+            if self.debug: print( f"[Orchestrator] PPTX written: {pptx_path} ({file_size:,} bytes)" )
+
+            await voice_io.notify( f"PPTX exported: {file_size // 1024}KB", priority="low" )
+
+        except FileNotFoundError:
+            logger.warning( "Phase 8.5: Marp CLI binary not found in PATH — skipping PPTX export" )
+            await voice_io.notify( "PPTX export skipped: Marp CLI not installed", priority="medium" )
+        except Exception as e:
+            logger.error( f"Phase 8.5 failed: {e}", exc_info=True )
+            await voice_io.notify( f"PPTX export failed: {str( e )[ :100 ]}", priority="medium" )
 
     # =========================================================================
     # Gate Stubs (to be implemented in Phases 3-4)

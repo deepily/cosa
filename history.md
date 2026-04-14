@@ -1,5 +1,33 @@
 # COSA Development History
 
+> **📝 SESSION 248e740e + 9a488d40 STAGED**: Presentation pipeline bugs + Marp PPTX export + pytest_direct suite type (2026.04.13)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 248e740e — 9 bug fixes + Marp PPTX export feature** (parent Lupin):
+> - **Bug 1 — env label** (`rest/routers/system.py`): `/api/config/client` now returns `env_label` (`"TEST"` vs `"DEVELOPMENT"`) derived from `LUPIN_ENV`; consumed by notifications header.
+> - **Bug 3 — Imagen 3.0 retired** (`agents/presentation_generator/gemini_client.py`, `config.py`): upgraded model from `imagen-3.0-generate-002` → `imagen-4.0-generate-001`.
+> - **Bug 4 — Rerender button missing from history cards** (`rest/job_persistence.py`): added `yaml_path` + `remediation_snapshot_path` to `rich_fields` so history cards see them.
+> - **Bug 6 — Imagen 4.0 safety filter** (`agents/presentation_generator/renderers/nano_banana.py`): `BLOCK_MEDIUM_AND_ABOVE` unsupported → `BLOCK_LOW_AND_ABOVE`.
+> - **Bug 8 — D2 icon CDN 403** (`agents/presentation_generator/renderers/d2_renderer.py`): strip `icon:` lines referencing terrastruct.com CDN before invoking d2 CLI.
+> - **Renderer rebalance** (`renderers/placeholder.py`, `prompts/image_gen.py`): moved `before_after` + `icon_only` visual types from PlaceholderRenderer → NanoBananaRenderer path; added style modifiers for both.
+> - **Feature — Marp PPTX export** (`agents/presentation_generator/orchestrator.py`, `job.py`, `config.py`): new Phase 8.5 calls `marp --pptx --allow-local-files` converting the Marp markdown to PPTX; emits `pptx_path` artifact when enabled via INI toggle.
+> - **PPTX pipeline plumbing** (`rest/routers/queues.py`, `rest/routers/io_files.py`, `rest/running_fifo_queue.py`): `pptx_path` propagated through `/api/get-queue` + `job_transition` WS payload; `/api/io/file` grows `.pptx` media-type + `download=true` query param for attachment-style response.
+>
+> **Session 9a488d40 — `pytest_direct` test-suite type** (parent Lupin):
+> - `agents/test_suite/job.py`: new `pytest_direct` entry in `SUITE_SCRIPTS` (→ `src/tests/run-pytest-direct.sh`); added to `FILE_DRIVEN_TEST_TYPES` frozenset (mirrors frontend); `SUITE_TIMEOUTS_SECONDS` = 1200s; `/tmp/pytest-direct-latest.log` wired into completion-log lookup. Subprocess env now propagates `LUPIN_TEST_PORT` (from `PORT` env var) so scheduled pytest files can target the right container.
+>
+> **Regression**: all presentation-generator unit tests pass (27 tests via parent Lupin `test_presentation_nano_banana_renderer.py` + neighbors).
+>
+> **Plan docs** (Lupin parent):
+> - `src/rnd/v0.1.6/2026.04.13-marp-cli-pptx-export-plan.md`
+> - `src/rnd/v0.1.6/2026.04.13-session-triage-and-option-c-docker-non-root.md`
+>
+> **Files Modified (14)**: `agents/presentation_generator/{config,gemini_client,job,orchestrator}.py`, `agents/presentation_generator/prompts/image_gen.py`, `agents/presentation_generator/renderers/{d2_renderer,nano_banana,placeholder}.py`, `agents/test_suite/job.py`, `rest/job_persistence.py`, `rest/routers/{io_files,queues,system}.py`, `rest/running_fifo_queue.py`
+
+---
+
 > **📝 SESSION 9056c113 STAGED**: TFE checkpoint-resume + completion report + MCP timeout stall + voice-driven TFE resume (2026.04.12)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >

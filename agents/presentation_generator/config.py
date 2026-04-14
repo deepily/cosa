@@ -54,6 +54,9 @@ class PresentationConfig:
     # Video generation (Veo)
     veo_model                : str   = "veo-2.0-generate-001"
 
+    # PPTX export (requires Marp CLI binary in PATH)
+    pptx_export_enabled      : bool  = True
+
     @classmethod
     def from_config( cls, config_mgr, debug=False ):
         """
@@ -86,6 +89,7 @@ class PresentationConfig:
             output_dir_template     = _get( "output dir template",     default="io/presentations/{user}" ),
             audience                = _get( "audience",                default="general" ),
             veo_model               = _get( "veo model",              default="veo-2.0-generate-001" ),
+            pptx_export_enabled     = _get( "pptx export enabled",    default=True, return_type="boolean" ),
         )
 
     def get_output_path( self, user_id, topic, file_type="yaml" ):

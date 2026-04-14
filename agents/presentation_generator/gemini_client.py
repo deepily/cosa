@@ -40,7 +40,7 @@ class GeminiImageClient:
         - Native async support (no executor wrapping)
     """
 
-    def __init__( self, model: str = "imagen-3.0-generate-002", aspect_ratio: str = "16:9",
+    def __init__( self, model: str = "imagen-4.0-generate-001", aspect_ratio: str = "16:9",
                   budget_limit: float = 1.00, video_model: str = "veo-2.0-generate-001",
                   video_budget_limit: float = 5.00, debug: bool = False ):
         """
@@ -129,7 +129,7 @@ class GeminiImageClient:
                 output_mime_type    = "image/png",
                 include_rai_reason  = True,
                 person_generation   = types.PersonGeneration.ALLOW_ADULT,
-                safety_filter_level = types.SafetyFilterLevel.BLOCK_MEDIUM_AND_ABOVE,
+                safety_filter_level = types.SafetyFilterLevel.BLOCK_LOW_AND_ABOVE,
             )
 
             response = await client.aio.models.generate_images(

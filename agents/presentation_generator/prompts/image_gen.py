@@ -26,6 +26,8 @@ IMAGE_STYLE_MODIFIERS = {
     "infographic"      : "flat design, vector style, clean labels, infographic layout, data visualization",
     "title_background" : "abstract, soft gradients, no text overlay, professional background, subtle texture",
     "icon"             : "flat icon, single color, minimal, centered, clean edges, simple shapes",
+    "before_after"     : "split-screen comparison, clean layout, labeled sections, professional diagram style",
+    "icon_only"        : "single large centered icon, minimal background, clean and simple, presentation slide",
 }
 
 DEFAULT_STYLE_MODIFIER = "professional, high quality, clean composition"

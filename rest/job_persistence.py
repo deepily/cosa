@@ -135,6 +135,9 @@ def _build_metadata_json( metadata ):
         "scheduled_at", "monopolize",
         "original_args",  # CJ Flow persistence: exact args a job was submitted with (for BFE resubmit)
         "checkpoint",     # Checkpoint-resume: serialized state for stalled jobs (Session 9056c113)
+        "yaml_path",                  # Presentation re-render from YAML
+        "pptx_path",                  # Presentation PowerPoint download
+        "remediation_snapshot_path",  # TFE/BFE remediation snapshot link
     ]
 
     result = {}

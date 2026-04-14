@@ -278,10 +278,12 @@ class PresentationGeneratorJob( AgenticJobBase ):
             state = agent._presentation_state
             self.yaml_path = state.get( "yaml_path" )
             self.marp_path = state.get( "marp_path" )
+            self.pptx_path = state.get( "pptx_path" )
 
             # Store artifacts
             self.artifacts[ "yaml_path" ]        = self.yaml_path
             self.artifacts[ "marp_path" ]        = self.marp_path
+            self.artifacts[ "pptx_path" ]        = self.pptx_path
             self.artifacts[ "presentation_id" ]  = agent.presentation_id
 
             # Build cost summary from API client
@@ -303,24 +305,29 @@ class PresentationGeneratorJob( AgenticJobBase ):
 
             yaml_link = self.yaml_path
             marp_link = self.marp_path
+            pptx_link = self.pptx_path
             if self.yaml_path and self.yaml_path.startswith( io_base ):
                 rel_path  = self.yaml_path.replace( io_base, "" )
                 yaml_link = f"[View YAML](/app/docs?path={urllib.parse.quote( rel_path )})"
             if self.marp_path and self.marp_path.startswith( io_base ):
                 rel_path  = self.marp_path.replace( io_base, "" )
                 marp_link = f"[View Presentation](/app/docs?path={urllib.parse.quote( rel_path )})"
+            if self.pptx_path and self.pptx_path.startswith( io_base ):
+                rel_path  = self.pptx_path.replace( io_base, "" )
+                pptx_link = f"[Download PPTX](/api/io/file?path={urllib.parse.quote( rel_path )}&download=true)"
 
             # Build abstract and report_path for queue metadata → UI job card
             total_slides = presentation.total_slides
             duration_min = config.target_duration_minutes
 
+            pptx_line = f"\n\n**PPTX**: {pptx_link}" if self.pptx_path else ""
             completion_abstract = f"""**Presentation Complete!**
 
 **Slides**: {total_slides} slides, ~{duration_min} minutes
 
 **YAML**: {yaml_link}
 
-**Marp**: {marp_link}
+**Marp**: {marp_link}{pptx_line}
 
 **Stats**: ${api_cost:.4f} | ID: {agent.presentation_id}"""
 
@@ -328,8 +335,10 @@ class PresentationGeneratorJob( AgenticJobBase ):
             # Store relative paths (strip io_base prefix) for /app/docs URL generation
             marp_rel = self.marp_path.replace( io_base, "" ) if self.marp_path and self.marp_path.startswith( io_base ) else self.marp_path
             yaml_rel = self.yaml_path.replace( io_base, "" ) if self.yaml_path and self.yaml_path.startswith( io_base ) else self.yaml_path
+            pptx_rel = self.pptx_path.replace( io_base, "" ) if self.pptx_path and self.pptx_path.startswith( io_base ) else self.pptx_path
             self.artifacts[ "report_path" ] = marp_rel
             self.artifacts[ "yaml_path" ]   = yaml_rel
+            self.artifacts[ "pptx_path" ]   = pptx_rel
 
             # Notify completion (with job_id and queue_name for job card routing)
             await voice_io.notify(
