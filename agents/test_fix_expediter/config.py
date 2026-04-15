@@ -8,6 +8,7 @@ from_config() classmethod. 12 keys defined in the approved plan doc
 See: src/rnd/v0.1.6/2026.04.10-test-fix-expediter/12-config-inventory.md
 """
 
+import os
 from dataclasses import dataclass, fields
 
 
@@ -138,6 +139,19 @@ class TestFixExpediterConfig:
             kwargs[ field_name ] = value
 
             if debug: print( f"  [TestFixExpediterConfig] {field_name} = {value} (from INI: {ini_key})" )
+
+        # Env-var override for feedback_timeout_seconds — used by
+        # test_live_stall_and_resume to force voice-gate timeout deterministically
+        # without requiring server restart or INI edit. Server reads env at
+        # orchestrator-init time, so set it BEFORE job submission, not after.
+        override = os.environ.get( "TFE_FEEDBACK_TIMEOUT_SECONDS_OVERRIDE" )
+        if override is not None:
+            try:
+                kwargs[ "feedback_timeout_seconds" ] = int( override )
+                if debug: print( f"  [TestFixExpediterConfig] feedback_timeout_seconds OVERRIDDEN to {override}s via TFE_FEEDBACK_TIMEOUT_SECONDS_OVERRIDE" )
+            except ValueError:
+                # Malformed env var — fall back to INI value
+                if debug: print( f"  [TestFixExpediterConfig] WARNING: TFE_FEEDBACK_TIMEOUT_SECONDS_OVERRIDE={override!r} is not an int; ignoring" )
 
         return cls( **kwargs )
 

@@ -1156,6 +1156,108 @@ class TodoFifoQueue( FifoQueue ):
         self._notify( msg, job=job )
         return msg
 
+    def push_job_agentic(
+        self,
+        routing_command : str,
+        args_dict       : Dict,
+        websocket_id    : str,
+        user_id         : str,
+        user_email      : str,
+        question        : Optional[ str ] = None,
+        scheduled_at    : Optional[ str ] = None,
+        monopolize      : bool = False,
+    ) -> Dict:
+        """
+        Submit an agentic job with explicit routing_command + args, bypassing
+        the runtime argument expeditor entirely.
+
+        Designed for unattended / service-to-service job submission (E2E test
+        harnesses, CLI tools, downstream agents). The caller supplies all
+        required args up-front; no interactive Q&A is triggered. If the agent
+        constructor rejects the args, the factory returns None and this method
+        returns an error result.
+
+        Contrast with `push_job` (the voice/UI /api/push path) which runs the
+        expeditor to fill arg gaps interactively.
+
+        Requires:
+            - routing_command matches one of the branches in create_agentic_job
+            - args_dict is a dict (may be empty; agent constructor validates)
+            - websocket_id, user_id, user_email are non-empty strings
+
+        Ensures:
+            - Returns dict with "message" (str) and "job_id" (str or None)
+            - On success: job is pushed to the todo queue and UI state transitions
+              are emitted (pending→todo) with the same flow as _handle_agentic_command
+            - On unknown command or construction failure: returns error message
+              with job_id=None and emits no state transitions
+        """
+        agent_entry = AGENTIC_AGENTS.get( routing_command, {} )
+        job_prefix  = agent_entry.get( "job_prefix", "aj" )
+
+        # Speculative card for UI consistency with /api/push flow
+        spec_id      = f"{job_prefix}-{uuid.uuid4().hex[ :8 ]}"
+        spec_id      = self.user_job_tracker.register_scoped_job( spec_id, user_id, websocket_id )
+        display_name = agent_entry.get( "display_name", routing_command.replace( "agent router go to ", "" ) )
+        display_text = question or routing_command
+
+        spec_metadata = {
+            'question_text' : display_text,
+            'agent_type'    : display_name,
+            'timestamp'     : du.get_current_time(),
+            'status'        : 'pending',
+            'expediting'    : False,
+            'user_email'    : user_email,
+        }
+        emit_job_state_transition(
+            self.websocket_mgr, spec_id, JobState.PENDING, JobState.QUEUED, user_id, spec_metadata
+        )
+
+        # Inject system args the factory relies on (mirrors expeditor behavior)
+        args_dict = dict( args_dict ) if args_dict else { }
+        args_dict.setdefault( "no_confirm", True )
+
+        try:
+            job = create_agentic_job(
+                command    = routing_command,
+                args_dict  = args_dict,
+                user_id    = user_id,
+                user_email = user_email,
+                session_id = websocket_id,
+                debug      = self.debug,
+                verbose    = self.verbose,
+            )
+        except Exception as e:
+            emit_job_state_transition( self.websocket_mgr, spec_id, JobState.QUEUED, JobState.FAILED, user_id )
+            self.user_job_tracker.remove_job( spec_id )
+            err = f"Agent construction failed: {type( e ).__name__}: {e}"
+            self._notify( err, target_user=user_email )
+            return { "message": err, "job_id": None }
+
+        if job is None:
+            emit_job_state_transition( self.websocket_mgr, spec_id, JobState.QUEUED, JobState.FAILED, user_id )
+            self.user_job_tracker.remove_job( spec_id )
+            msg = f"Unknown routing_command: {routing_command!r}"
+            self._notify( msg, target_user=user_email )
+            return { "message": msg, "job_id": None }
+
+        # Override the job's auto-generated id_hash with the speculative ID so
+        # the UI card that was already emitted matches the real job.
+        job.id_hash = spec_id
+
+        # Runtime scheduling attributes (CJ Flow timed execution + monopolize)
+        if scheduled_at: job.scheduled_at = scheduled_at
+        if monopolize:   job.monopolize   = True
+
+        # Ding for new job (same UX as voice path)
+        self.websocket_mgr.emit( 'notification_sound_update', { 'soundFile': '/static/gentle-gong.mp3' } )
+
+        self.push( job )
+
+        msg = f"New {job.JOB_TYPE} job submitted via /api/push-agentic (no expeditor)."
+        self._notify( msg, job=job )
+        return { "message": msg, "job_id": spec_id }
+
     def push( self, item: Any ) -> None:
         """
         Override parent's push to add producer-consumer coordination and emit pending→todo transition.

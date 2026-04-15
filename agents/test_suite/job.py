@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 import time
+import traceback as tb_mod
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Optional, List, Dict
@@ -49,11 +50,21 @@ SUITE_SCRIPTS = {
 # Frontend mirrors this in notifications.js FILE_DRIVEN_TEST_TYPES.
 FILE_DRIVEN_TEST_TYPES = frozenset( { "smoke_direct", "pytest_direct" } )
 
+# Suites whose runner is pytest (or pytest-compatible) and therefore accepts
+# --junit-xml. The websocket suite's backing script is a custom async
+# orchestrator (smoke_test_runner.py), NOT pytest, and will error at arg-parse
+# if --junit-xml is appended — so we must skip the injection for it. Other
+# non-pytest suites can be added here as the project grows.
+SUITES_SUPPORTING_JUNIT_XML = frozenset( {
+    "unit", "smoke", "smoke_direct", "pytest_direct",
+    "integration", "e2e", "all", "presentation",
+} )
+
 # Per-suite max execution timeout (seconds). Process is killed if exceeded.
 # Values based on observed worst-case runtimes + 2x buffer. Tunable.
 SUITE_TIMEOUTS_SECONDS = {
     "unit"         : 180,    #  3 min (fast, ~915 tests, no server)
-    "smoke"        : 600,    # 10 min (server-dependent, ~40 files)
+    "smoke"        : 1800,   # 30 min (server-dependent, ~40 files; observed 1036s on 2026-04-14, was 600s)
     "smoke_direct" : 1200,   # 20 min (longest: Phase D live ~10 min)
     "pytest_direct": 1200,   # 20 min (arbitrary pytest file — match smoke_direct budget)
     "websocket"    : 300,    #  5 min (~50 tests, server + WS)
@@ -63,6 +74,37 @@ SUITE_TIMEOUTS_SECONDS = {
     "presentation"   : 1800,   # 30 min (render-only + Sonnet; +Opus/R2P with flags)
 }
 SUITE_TIMEOUT_DEFAULT_SECONDS = 600  # 10 min fallback for unknown types
+
+# When the caller asks for "all", expand into these component suites and run
+# each as its own entry in self.suite_results. This preserves partial results
+# when one suite times out or crashes (pre-fix behavior was a single
+# monolithic "all" subprocess whose timeout vaporized every other suite's output).
+# Order matches src/tests/run-all-tests.sh's sequential pyramid.
+ALL_SUITE_COMPONENTS = [ "unit", "smoke", "websocket", "integration", "e2e" ]
+
+
+def _expand_all( test_types: List[ str ] ) -> List[ str ]:
+    """
+    Expand any "all" entry in `test_types` into ALL_SUITE_COMPONENTS, preserving
+    order and deduping. Non-"all" entries pass through unchanged.
+
+    Requires:
+        - test_types is a list of strings (possibly empty)
+
+    Ensures:
+        - returns a new list; never mutates the input
+        - "all" is replaced in place by ALL_SUITE_COMPONENTS
+        - duplicates (e.g. test_types=["all","unit"]) are removed, first wins
+    """
+    expanded = []
+    seen     = set()
+    for t in test_types:
+        candidates = ALL_SUITE_COMPONENTS if t == "all" else [ t ]
+        for c in candidates:
+            if c not in seen:
+                seen.add( c )
+                expanded.append( c )
+    return expanded
 
 class TestSuiteJob( AgenticJobBase ):
     """
@@ -94,6 +136,7 @@ class TestSuiteJob( AgenticJobBase ):
         pytest_args: Optional[ List[ str ] ] = None,
         dry_run: bool = False,
         auto_fix_on_failure: Optional[ bool ] = None,
+        env_vars: Optional[ Dict[ str, str ] ] = None,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -141,10 +184,35 @@ class TestSuiteJob( AgenticJobBase ):
         self.pytest_args         = pytest_args or []
         self.dry_run             = dry_run
         self.auto_fix_on_failure = auto_fix_on_failure
+        self.env_vars            = self._filter_env_vars( env_vars or {} )
 
         # Results (populated after execution)
         self.suite_results = {}
         self.cost_summary  = None  # Required by queues.py for unified job interface
+
+    # Env vars exposed to the pytest subprocess are prefix-filtered so arbitrary
+    # client-supplied vars can't leak into the runner. Extend the allowlist here
+    # when adding new test-scoped env contracts.
+    _ENV_VAR_ALLOWED_PREFIXES = ( "TFE_", "BFE_", "LUPIN_TEST_" )
+
+    @classmethod
+    def _filter_env_vars( cls, raw: Dict[ str, str ] ) -> Dict[ str, str ]:
+        """Drop keys that don't match the allowlist; coerce values to str."""
+        if not raw:
+            return {}
+        filtered = {}
+        dropped  = []
+        for k, v in raw.items():
+            if not isinstance( k, str ):
+                dropped.append( repr( k ) )
+                continue
+            if any( k.startswith( p ) for p in cls._ENV_VAR_ALLOWED_PREFIXES ):
+                filtered[ k ] = str( v )
+            else:
+                dropped.append( k )
+        if dropped:
+            print( f"[TestSuiteJob] WARNING: dropped env_vars outside allowlist {cls._ENV_VAR_ALLOWED_PREFIXES}: {dropped}" )
+        return filtered
 
     @classmethod
     def from_config( cls, config_mgr, user_id, user_email, session_id, debug=False ):
@@ -289,7 +357,15 @@ class TestSuiteJob( AgenticJobBase ):
                 queue_name="run"
             )
 
-            for suite_type in self.test_types:
+            # Expand "all" into component suites so each runs with its own
+            # timeout and its own suite_results entry. self.test_types stays
+            # unchanged so the report filename ("all-results.md") and the
+            # user-visible label in notifications/snapshots remain meaningful.
+            suites_to_run = _expand_all( self.test_types )
+            if self.debug and suites_to_run != list( self.test_types ):
+                print( f"[TestSuiteJob] Expanded {self.test_types} -> {suites_to_run}" )
+
+            for suite_type in suites_to_run:
                 if self._cancel_requested:
                     await voice_io.notify(
                         "Test suite run cancelled by user.",
@@ -627,9 +703,15 @@ class TestSuiteJob( AgenticJobBase ):
         if len( sanitized_args ) < len( self.pytest_args ):
             print( f"[TestSuiteJob] WARNING: Stripped --bg flag from pytest_args (harmful for subprocess-tracked runs)" )
 
-        # Inject --junit-xml for structured result parsing (no brittle regex)
-        junit_xml_path = f"/tmp/{suite_type}-junit-{datetime.now().strftime( '%Y%m%d-%H%M%S' )}.xml"
-        sanitized_args += [ f"--junit-xml={junit_xml_path}" ]
+        # Inject --junit-xml for structured result parsing (no brittle regex).
+        # Gated by SUITES_SUPPORTING_JUNIT_XML — non-pytest runners (e.g. the
+        # websocket async orchestrator) will error at arg-parse if this flag
+        # is appended, killing the subprocess before any tests run.
+        if suite_type in SUITES_SUPPORTING_JUNIT_XML:
+            junit_xml_path = f"/tmp/{suite_type}-junit-{datetime.now().strftime( '%Y%m%d-%H%M%S' )}.xml"
+            sanitized_args += [ f"--junit-xml={junit_xml_path}" ]
+        else:
+            junit_xml_path = None  # _parse_junit_xml(None) returns zero-counts without raising
 
         cmd = [ "bash", script_path ] + sanitized_args
 
@@ -646,8 +728,14 @@ class TestSuiteJob( AgenticJobBase ):
                 text=True,
                 env={
                     **os.environ,
-                    "LUPIN_ROOT"      : project_root,
-                    "LUPIN_TEST_PORT" : os.environ.get( "PORT", "7999" ),
+                    "LUPIN_ROOT"          : project_root,
+                    "LUPIN_TEST_PORT"     : os.environ.get( "PORT", "7999" ),
+                    # When the runner executes inside lupin-rest-test, the server
+                    # lives on internal port 7999 (host :8000 mapping is inaccessible
+                    # from within the container). Honor any caller-set value first.
+                    "LUPIN_TEST_BASE_URL" : os.environ.get( "LUPIN_TEST_BASE_URL", f"http://localhost:{os.environ.get( 'PORT', '7999' )}" ),
+                    # Caller-supplied env (allowlist-filtered in __init__) overrides defaults.
+                    **self.env_vars,
                 }
             )
 
@@ -686,15 +774,36 @@ class TestSuiteJob( AgenticJobBase ):
                         process.wait( timeout=10 )
                     except subprocess.TimeoutExpired:
                         process.kill()
+
+                    # Drain anything still buffered after terminate so the tail
+                    # captured in the synthetic failure reflects reality.
+                    try:
+                        remaining = process.stdout.read()
+                        if remaining:
+                            stdout_lines.append( remaining )
+                    except ( OSError, ValueError ):
+                        pass
+
+                    stdout_text = "".join( stdout_lines )
+                    log_path    = self._write_stdout_log( suite_type, stdout_text )
+                    tail_text   = "".join( stdout_lines[ -40: ] ).strip()
+
                     return {
-                        "passed"    : 0,
-                        "failed"    : 0,
-                        "skipped"   : 0,
-                        "errors"    : 1,
-                        "exit_code" : -2,
-                        "log_path"  : None,
-                        "duration"  : elapsed,
-                        "error"     : f"Timeout: {suite_type} exceeded {timeout_secs}s",
+                        "passed"          : 0,
+                        "failed"          : 0,
+                        "skipped"         : 0,
+                        "errors"          : 1,
+                        "exit_code"       : -2,
+                        "log_path"        : log_path,
+                        "duration"        : elapsed,
+                        "error"           : f"Timeout: {suite_type} exceeded {timeout_secs}s",
+                        "failure_details" : [ self._synth_failure_detail(
+                            suite_type     = suite_type,
+                            name           = "timeout",
+                            elapsed        = elapsed,
+                            message        = f"Subprocess killed after {timeout_secs}s budget (actual {elapsed:.1f}s)",
+                            traceback_text = tail_text,
+                        ) ],
                     }
 
                 # Read available output
@@ -713,25 +822,7 @@ class TestSuiteJob( AgenticJobBase ):
 
             # Write captured stdout to a log file (always, regardless of --bg mode)
             # This ensures crash output is always available for post-mortem diagnosis
-            log_symlinks = {
-                "unit"         : "/tmp/unit-latest.log",
-                "smoke"        : "/tmp/smoke-latest.log",
-                "smoke_direct" : "/tmp/smoke-direct-latest.log",
-                "pytest_direct": "/tmp/pytest-direct-latest.log",
-                "websocket"    : "/tmp/websocket-latest.log",
-                "integration"  : "/tmp/integration-latest.log",
-                "e2e"          : "/tmp/e2e-ui-latest.log",
-                "all"          : "/tmp/all-tests-latest.log",
-            }
-            symlink_path = log_symlinks.get( suite_type )
-            log_path     = None
-            if symlink_path and stdout:
-                import pathlib
-                actual_log = f"/tmp/{suite_type}-{datetime.now().strftime( '%Y%m%d-%H%M%S' )}.log"
-                pathlib.Path( actual_log ).write_text( stdout )
-                pathlib.Path( symlink_path ).unlink( missing_ok=True )
-                pathlib.Path( symlink_path ).symlink_to( actual_log )
-                log_path = actual_log
+            log_path = self._write_stdout_log( suite_type, stdout )
 
             # Parse structured junit-xml report (falls back to zeros if file missing)
             parsed = self._parse_junit_xml( junit_xml_path )
@@ -759,16 +850,88 @@ class TestSuiteJob( AgenticJobBase ):
 
         except Exception as e:
             duration = time.monotonic() - start_time
+            tb_text  = tb_mod.format_exc()
+
+            # Best-effort: persist whatever stdout we managed to capture before
+            # the exception so post-mortem is possible. stdout_lines may be
+            # undefined if Popen itself failed — guard accordingly.
+            try:
+                stdout_so_far = "".join( stdout_lines )
+            except NameError:
+                stdout_so_far = ""
+            log_path = self._write_stdout_log( suite_type, stdout_so_far )
+
             return {
-                "passed"    : 0,
-                "failed"    : 0,
-                "skipped"   : 0,
-                "errors"    : 0,
-                "exit_code" : 1,
-                "log_path"  : None,
-                "duration"  : duration,
-                "error"     : str( e ),
+                "passed"          : 0,
+                "failed"          : 0,
+                "skipped"         : 0,
+                "errors"          : 1,
+                "exit_code"       : 1,
+                "log_path"        : log_path,
+                "duration"        : duration,
+                "error"           : str( e ),
+                "failure_details" : [ self._synth_failure_detail(
+                    suite_type     = suite_type,
+                    name           = "exception",
+                    elapsed        = duration,
+                    message        = f"{type( e ).__name__}: {e}",
+                    traceback_text = tb_text,
+                ) ],
             }
+
+    # Map suite_type to canonical /tmp/<name>-latest.log symlink used across scripts
+    _LOG_SYMLINKS = {
+        "unit"         : "/tmp/unit-latest.log",
+        "smoke"        : "/tmp/smoke-latest.log",
+        "smoke_direct" : "/tmp/smoke-direct-latest.log",
+        "pytest_direct": "/tmp/pytest-direct-latest.log",
+        "websocket"    : "/tmp/websocket-latest.log",
+        "integration"  : "/tmp/integration-latest.log",
+        "e2e"          : "/tmp/e2e-ui-latest.log",
+        "all"          : "/tmp/all-tests-latest.log",
+    }
+
+    @classmethod
+    def _write_stdout_log( cls, suite_type: str, stdout_text: str ) -> Optional[ str ]:
+        """
+        Persist captured subprocess stdout to a timestamped file and refresh the
+        canonical /tmp/<suite>-latest.log symlink.
+
+        Requires:
+            - suite_type is a known SUITE_SCRIPTS key (unknown keys are a no-op)
+            - stdout_text is a (possibly empty) string
+
+        Ensures:
+            - returns the absolute path of the written log, or None if nothing
+              was written (unknown suite or empty text)
+            - updates /tmp/<suite>-latest.log symlink atomically (unlink+symlink)
+        """
+        symlink_path = cls._LOG_SYMLINKS.get( suite_type )
+        if not ( symlink_path and stdout_text ):
+            return None
+        import pathlib
+        actual_log = f"/tmp/{suite_type}-{datetime.now().strftime( '%Y%m%d-%H%M%S' )}.log"
+        pathlib.Path( actual_log ).write_text( stdout_text )
+        pathlib.Path( symlink_path ).unlink( missing_ok=True )
+        pathlib.Path( symlink_path ).symlink_to( actual_log )
+        return actual_log
+
+    @staticmethod
+    def _synth_failure_detail( suite_type: str, name: str, elapsed: float, message: str, traceback_text: str ) -> Dict:
+        """
+        Build a single failure_details entry for synthesized ERRORs (timeout,
+        caught exception, etc.) so the remediation snapshot's `failures` array
+        is never empty when `errors > 0`. Matches the shape produced by
+        _parse_junit_xml for real testcase <failure>/<error> elements.
+        """
+        return {
+            "classname" : f"TestSuiteJob.{suite_type}",
+            "name"      : name,
+            "time"      : f"{elapsed:.1f}",
+            "type"      : "ERROR",
+            "message"   : message,
+            "traceback" : traceback_text or "(no output captured)",
+        }
 
     @staticmethod
     def _parse_junit_xml( xml_path: str ) -> Dict:
@@ -797,6 +960,11 @@ class TestSuiteJob( AgenticJobBase ):
             "skipped" : 0,
             "errors"  : 0,
         }
+
+        # None path = suite is not pytest-backed (e.g. websocket). Skip parse,
+        # return zero-counts. Caller already captured stdout via _write_stdout_log.
+        if not xml_path:
+            return result
 
         try:
             # Debug: check raw file content before parsing

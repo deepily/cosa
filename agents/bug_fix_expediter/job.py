@@ -175,6 +175,17 @@ class BugFixExpediterJob( AgenticJobBase ):
             print( tb_str )
 
             self.answer_conversational = f"Bug fix failed: {str( e )}"
+
+            # Preserve the failure as a comprehensive final report so the user
+            # has a surface to investigate what blew up. Stash the traceback in
+            # artifacts so _write_final_report picks it up.
+            self.artifacts[ "failure_traceback" ] = tb_str
+            self.artifacts[ "failure_message" ]   = str( e )
+            self._write_final_report(
+                status       = "failed",
+                summary_line = self.answer_conversational,
+            )
+
             return self.answer_conversational
 
     async def _execute( self ) -> str:
@@ -217,6 +228,7 @@ class BugFixExpediterJob( AgenticJobBase ):
 
             if self.dead_job_context is None:
                 msg = f"Dead job not found: {self.dead_job_id}"
+                self._write_final_report( status="dead_job_not_found", summary_line=msg )
                 await voice_io.notify( msg, priority="high", job_id=self.id_hash, queue_name="run" )
                 return msg
 
@@ -380,6 +392,12 @@ class BugFixExpediterJob( AgenticJobBase ):
                 f"Plan: {plan_path}.{resubmit_msg}"
             )
 
+            # Write comprehensive final report before returning.
+            self._write_final_report(
+                status       = "completed" if fix_applied else "completed_no_fix",
+                summary_line = result,
+            )
+
             return result
 
         except Exception as e:
@@ -409,6 +427,11 @@ class BugFixExpediterJob( AgenticJobBase ):
                     )
                 except Exception as notify_err:
                     print( f"[BugFixExpediterJob] stall notify failed: {notify_err}" )
+
+                self._write_final_report(
+                    status       = "stalled",
+                    summary_line = f"BFE stalled at phase={e.phase}",
+                )
 
                 return "__STALLED__"
 
@@ -592,6 +615,7 @@ class BugFixExpediterJob( AgenticJobBase ):
 
             if self.dead_job_context is None:
                 msg = f"Dry run: dead job not found: {self.dead_job_id}"
+                self._write_final_report( status="dead_job_not_found_dry_run", summary_line=msg )
                 await voice_io.notify( msg, priority="high", job_id=self.id_hash, queue_name="run" )
                 return msg
 
@@ -660,10 +684,146 @@ class BugFixExpediterJob( AgenticJobBase ):
                 job_id=self.id_hash, queue_name="run"
             )
 
-            return f"Dry run complete. Bug fix simulation finished.{resubmit_msg}"
+            dry_run_result = f"Dry run complete. Bug fix simulation finished.{resubmit_msg}"
+            self._write_final_report( status="dry_run_completed", summary_line=dry_run_result )
+            return dry_run_result
 
         finally:
             voice_io.clear_job_id()
+
+    def _write_final_report( self, status: str, summary_line: str ) -> Optional[ str ]:
+        """
+        Write a comprehensive final-report markdown file for this BFE run and
+        store its path in `self.artifacts["report_path"]`.
+
+        Called at each terminal exit of the BFE pipeline (dry-run dead-job-not-
+        found, live dead-job-not-found, stall, happy path). Never blocks the
+        job on failure — returns None and logs a warning if writing fails.
+
+        The report captures everything the agent accumulated in-memory during
+        the run: dead_job_context, diagnosis, proposed_fixes, selected_fix,
+        fix_result, resubmitted_job_id, and checkpoint (if stalled).
+
+        Args:
+            status:       Terminal state ("completed", "stalled", "dead_job_not_found", etc.)
+            summary_line: One-line human summary (same text as answer_conversational)
+
+        Returns:
+            Optional path to the written report, or None on error.
+        """
+        try:
+            from cosa.agents.shared.report_writer import ReportWriter
+
+            duration    = self.get_execution_duration_seconds() if hasattr( self, "get_execution_duration_seconds" ) else None
+            duration_s  = f"{duration:.1f}s" if duration is not None else "n/a"
+            artifacts   = self.artifacts or {}
+            sections    = [ ]
+
+            sections.append( "## Summary\n" )
+            sections.append( f"- **Status**: {status}" )
+            sections.append( f"- **BFE job id**: `{self.id_hash}`" )
+            sections.append( f"- **Dead job id**: `{self.dead_job_id}`" )
+            sections.append( f"- **Dry run**: {self.dry_run}" )
+            sections.append( f"- **Duration**: {duration_s}" )
+            if artifacts.get( "resubmitted_job_id" ):
+                sections.append( f"- **Resubmitted as**: `{artifacts[ 'resubmitted_job_id' ]}`" )
+            sections.append( f"\n**Conversational answer**: {summary_line}\n" )
+
+            # Dead job context
+            if artifacts.get( "dead_job_context" ):
+                ctx = artifacts[ "dead_job_context" ]
+                sections.append( "\n## Dead job context\n" )
+                sections.append( f"- **Job type**: `{ctx.get( 'job_type', 'unknown' )}`" )
+                sections.append( f"- **Original question**: {ctx.get( 'question', 'n/a' )}" )
+                err = ctx.get( "error" )
+                if err:
+                    sections.append( "\n**Error**:\n```\n" + str( err )[ :2000 ] + "\n```" )
+                st = ctx.get( "stack_trace" )
+                if st:
+                    sections.append( "\n**Stack trace** (truncated):\n```\n" + str( st )[ :2000 ] + "\n```" )
+            else:
+                sections.append( "\n## Dead job context\n\n_not available — agent exited before package_dead_job succeeded_\n" )
+
+            # Diagnosis
+            diag = artifacts.get( "diagnosis" )
+            if diag:
+                sections.append( "\n## Diagnosis\n" )
+                sections.append( f"- **Root cause**: {diag.get( 'root_cause', 'n/a' )}" )
+                sections.append( f"- **Category**: {diag.get( 'error_category', 'n/a' )}" )
+                conf = diag.get( "confidence" )
+                if conf is not None:
+                    try:    sections.append( f"- **Confidence**: {float( conf ):.0%}" )
+                    except: sections.append( f"- **Confidence**: {conf}" )
+
+            # Proposed fixes
+            proposals = artifacts.get( "proposed_fixes" ) or []
+            if proposals:
+                sections.append( "\n## Proposed fixes\n" )
+                for i, p in enumerate( proposals, 1 ):
+                    sections.append( f"### {i}. {p.get( 'title', 'untitled' )}" )
+                    sections.append( f"- **Type**: {p.get( 'fix_type', 'n/a' )}" )
+                    sections.append( f"- **Risk**: {p.get( 'risk_level', 'n/a' )}" )
+                    sections.append( f"- **Effort**: {p.get( 'estimated_effort', 'n/a' )}" )
+                    desc = p.get( "description" )
+                    if desc:
+                        sections.append( f"\n{desc}\n" )
+
+            # Selected fix
+            sel = artifacts.get( "selected_fix" )
+            if sel:
+                sections.append( "\n## Selected fix\n" )
+                sections.append( f"- **Title**: {sel.get( 'title', 'n/a' )}" )
+                sections.append( f"- **Type**: {sel.get( 'fix_type', 'n/a' )}" )
+                reason = sel.get( "selection_reason" ) or sel.get( "reason" )
+                if reason:
+                    sections.append( f"- **Reason**: {reason}" )
+
+            # Fix result
+            fix_result = artifacts.get( "fix_result" )
+            if fix_result:
+                sections.append( "\n## Fix result\n" )
+                sections.append( f"- **Applied**: {fix_result.get( 'applied' )}" )
+                sections.append( f"- **Success**: {fix_result.get( 'success' )}" )
+                sections.append( f"- **Details**: {fix_result.get( 'details', 'n/a' )}" )
+
+            # Stall checkpoint
+            ckpt = artifacts.get( "checkpoint" )
+            if ckpt:
+                sections.append( "\n## Stall checkpoint\n" )
+                sections.append( f"- **Phase**: {ckpt.get( 'phase', 'n/a' )}" )
+                sections.append( f"- **Reason**: {ckpt.get( 'stall_reason', 'n/a' )}" )
+
+            # Failure (unhandled exception from do_all)
+            if artifacts.get( "failure_traceback" ):
+                sections.append( "\n## Failure\n" )
+                msg = artifacts.get( "failure_message" ) or "Unhandled exception"
+                sections.append( f"**Message**: {msg}\n" )
+                sections.append( "**Traceback**:\n```\n" + str( artifacts[ "failure_traceback" ] )[ :4000 ] + "\n```" )
+
+            # Appendix: linked artifacts
+            if artifacts.get( "plan_path" ):
+                sections.append( f"\n## Appendix\n\n- **Plan**: `{artifacts[ 'plan_path' ]}`" )
+
+            body_md = "\n".join( sections )
+
+            # Slug: prefer dead_job_id fragment + status
+            base_slug = ( self.dead_job_id or "bfe" ).split( "::" )[ 0 ]
+            slug      = f"{base_slug}-{status}"
+
+            writer = ReportWriter( user_email=self.user_email, debug=self.debug )
+            path = writer.write(
+                agent   = "bug_fix_expediter",
+                slug    = slug,
+                title   = f"Bug Fix Expediter Report — {self.dead_job_id}",
+                body_md = body_md,
+            )
+            self.artifacts[ "report_path" ] = path
+            if self.debug: print( f"[BugFixExpediterJob] Final report written: {path}" )
+            return path
+
+        except Exception as e:
+            print( f"[BugFixExpediterJob] Failed to write final report (non-fatal): {e}" )
+            return None
 
 
 def quick_smoke_test():

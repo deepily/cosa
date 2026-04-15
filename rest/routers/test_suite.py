@@ -10,7 +10,7 @@ This is the key integration point for:
 Generated on: 2026-03-31
 """
 
-from typing import Optional, List
+from typing import Dict, Optional, List
 
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
@@ -34,6 +34,10 @@ class TestSuiteSubmitRequest( BaseModel ):
     websocket_id        : Optional[ str ] = Field( None, description="WebSocket session ID for notifications" )
     scheduled_at        : Optional[ str ] = Field( None, description="ISO datetime for deferred execution (None = immediate)" )
     auto_fix_on_failure : Optional[ bool ] = Field( None, description="Per-run override for the TestSuiteCompletionWatchdog. None = use INI default ('test fix expediter auto fix enabled'), True = force-enable TFE auto-dispatch, False = force-disable TFE auto-dispatch for this run only." )
+    env_vars            : Optional[ Dict[ str, str ] ] = Field(
+        None,
+        description="Extra env vars to inject into the pytest subprocess. Filtered by prefix allowlist (TFE_, BFE_, LUPIN_TEST_) on the runner side. Example: {'TFE_RESUME_E2E_LIVE': '1'}"
+    )
 
 
 class TestSuiteSubmitResponse( BaseModel ):
@@ -124,6 +128,8 @@ async def submit_test_suite(
             args_dict[ "pytest_args" ] = request_body.pytest_args
         if request_body.auto_fix_on_failure is not None:
             args_dict[ "auto_fix_on_failure" ] = request_body.auto_fix_on_failure
+        if request_body.env_vars:
+            args_dict[ "env_vars" ] = request_body.env_vars
 
         job = create_agentic_job(
             command    = "agent router go to test suite",

@@ -199,6 +199,17 @@ class TestFixExpediterJob( AgenticJobBase ):
             print( tb_str )
 
             self.answer_conversational = f"TFE failed: {str( e )}"
+
+            # Preserve the failure as a comprehensive final report so the user
+            # has a surface to investigate what blew up. Stash the traceback in
+            # artifacts so _write_final_report picks it up.
+            self.artifacts[ "failure_traceback" ] = tb_str
+            self.artifacts[ "failure_message" ]   = str( e )
+            self._write_final_report(
+                status       = "failed",
+                summary_line = self.answer_conversational,
+            )
+
             return self.answer_conversational
 
     async def _execute( self ) -> str:
@@ -383,11 +394,13 @@ class TestFixExpediterJob( AgenticJobBase ):
                 print( f"[TestFixExpediterJob] completion notify failed: {notify_err}" )
 
             # Conversational answer
-            return (
+            result = (
                 f"TFE complete: {n_clusters} clusters, {n_proposed} proposed, "
                 f"{n_selected} selected, {n_fixed} fixed. {rerun_status}. "
                 f"Source: {self.source_test_suite_job_id}."
             )
+            self._write_final_report( status="completed", summary_line=result )
+            return result
 
         except StalledException as stall:
             # Checkpoint-resume: voice gate timed out, orchestrator saved state.
@@ -415,6 +428,10 @@ class TestFixExpediterJob( AgenticJobBase ):
             except Exception as notify_err:
                 print( f"[TestFixExpediterJob] stall notify failed: {notify_err}" )
 
+            self._write_final_report(
+                status       = "stalled",
+                summary_line = f"TFE stalled at phase={stall.phase}",
+            )
             return "__STALLED__"
 
         except Exception as e:
@@ -435,6 +452,110 @@ class TestFixExpediterJob( AgenticJobBase ):
                 # Never let the notify failure mask the original exception
                 print( f"[TestFixExpediterJob] voice_io.notify failed during error path: {notify_err}" )
             raise
+
+    def _write_final_report( self, status: str, summary_line: str ):
+        """
+        Write a comprehensive final-report markdown file for this TFE run and
+        store its path in `self.artifacts["report_path"]`.
+
+        Called at each terminal exit of the TFE pipeline (happy path, stall).
+        Never blocks the job on failure — returns None and logs a warning if
+        writing fails.
+
+        The report captures artifacts accumulated in-memory during the run:
+        source_test_suite_job_id, cluster_count, fix_count, validation_run_job_id,
+        plan_path, remediation_snapshot_path, and checkpoint (if stalled).
+        """
+        try:
+            from cosa.agents.shared.report_writer import ReportWriter
+
+            duration   = self.get_execution_duration_seconds() if hasattr( self, "get_execution_duration_seconds" ) else None
+            duration_s = f"{duration:.1f}s" if duration is not None else "n/a"
+            artifacts  = self.artifacts or {}
+            sections   = [ ]
+
+            sections.append( "## Summary\n" )
+            sections.append( f"- **Status**: {status}" )
+            sections.append( f"- **TFE job id**: `{self.id_hash}`" )
+            sections.append( f"- **Source test suite**: `{self.source_test_suite_job_id}`" )
+            sections.append( f"- **Duration**: {duration_s}" )
+            if artifacts.get( "cluster_count" ) is not None:
+                sections.append( f"- **Clusters**: {artifacts[ 'cluster_count' ]}" )
+            if artifacts.get( "fix_count" ) is not None:
+                sections.append( f"- **Fixes**: {artifacts[ 'fix_count' ]}" )
+            if artifacts.get( "validation_run_job_id" ):
+                sections.append( f"- **Validation rerun**: `{artifacts[ 'validation_run_job_id' ]}`" )
+            sections.append( f"\n**Conversational answer**: {summary_line}\n" )
+
+            # Cluster detail (orchestrator may expose it)
+            try:
+                clusters = getattr( self.orchestrator, "clusters", None ) if hasattr( self, "orchestrator" ) else None
+            except Exception:
+                clusters = None
+            if clusters:
+                sections.append( "\n## Clusters\n" )
+                for i, c in enumerate( clusters, 1 ):
+                    cid     = getattr( c, "cluster_id", getattr( c, "id", f"cluster-{i}" ) )
+                    count   = getattr( c, "failure_count", len( getattr( c, "failures", [] ) or [] ) )
+                    summary = getattr( c, "summary", "" ) or ""
+                    sections.append( f"### {i}. {cid} — {count} failure(s)" )
+                    if summary: sections.append( f"\n{summary}\n" )
+
+            # Proposals
+            try:
+                proposals = getattr( self.orchestrator, "proposed_fixes", None ) if hasattr( self, "orchestrator" ) else None
+            except Exception:
+                proposals = None
+            if proposals:
+                sections.append( "\n## Proposed fixes\n" )
+                for i, p in enumerate( proposals, 1 ):
+                    title = getattr( p, "title", None ) or ( p.get( "title" ) if isinstance( p, dict ) else f"proposal-{i}" )
+                    desc  = getattr( p, "description", None ) or ( p.get( "description" ) if isinstance( p, dict ) else "" )
+                    sections.append( f"### {i}. {title}" )
+                    if desc: sections.append( f"\n{desc}\n" )
+
+            # Stall checkpoint
+            ckpt = artifacts.get( "checkpoint" )
+            if ckpt:
+                sections.append( "\n## Stall checkpoint\n" )
+                sections.append( f"- **Phase**: {ckpt.get( 'phase', 'n/a' )}" )
+                sections.append( f"- **Reason**: {ckpt.get( 'stall_reason', 'n/a' )}" )
+
+            # Failure (unhandled exception from do_all)
+            if artifacts.get( "failure_traceback" ):
+                sections.append( "\n## Failure\n" )
+                msg = artifacts.get( "failure_message" ) or "Unhandled exception"
+                sections.append( f"**Message**: {msg}\n" )
+                sections.append( "**Traceback**:\n```\n" + str( artifacts[ "failure_traceback" ] )[ :4000 ] + "\n```" )
+
+            # Appendix
+            appendix = [ ]
+            if artifacts.get( "plan_path" ):
+                appendix.append( f"- **Plan**: `{artifacts[ 'plan_path' ]}`" )
+            if artifacts.get( "remediation_snapshot_path" ):
+                appendix.append( f"- **Remediation snapshot**: `{artifacts[ 'remediation_snapshot_path' ]}`" )
+            if appendix:
+                sections.append( "\n## Appendix\n" )
+                sections.extend( appendix )
+
+            body_md   = "\n".join( sections )
+            base_slug = ( self.source_test_suite_job_id or "tfe" ).split( "::" )[ 0 ]
+            slug      = f"{base_slug}-{status}"
+
+            writer = ReportWriter( user_email=self.user_email, debug=self.debug )
+            path = writer.write(
+                agent   = "test_fix_expediter",
+                slug    = slug,
+                title   = f"Test Fix Expediter Report — {self.source_test_suite_job_id}",
+                body_md = body_md,
+            )
+            self.artifacts[ "report_path" ] = path
+            if self.debug: print( f"[TestFixExpediterJob] Final report written: {path}" )
+            return path
+
+        except Exception as e:
+            print( f"[TestFixExpediterJob] Failed to write final report (non-fatal): {e}" )
+            return None
 
 
 def quick_smoke_test():

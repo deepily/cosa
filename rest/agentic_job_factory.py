@@ -289,6 +289,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             pytest_args         = pytest_args,
             dry_run             = _parse_boolean( args_dict.get( "dry_run" ) ),
             auto_fix_on_failure = _parse_optional_boolean( args_dict.get( "auto_fix_on_failure" ) ),
+            env_vars            = args_dict.get( "env_vars" ) or None,
             debug               = debug,
             verbose             = verbose
         )

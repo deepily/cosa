@@ -220,6 +220,112 @@ async def push(
         "result"       : result.get( "message", str( result ) ) if isinstance( result, dict ) else str( result )
     }
 
+
+@router.post(
+    "/push-agentic",
+    summary     = "Submit agentic job without the runtime argument expeditor",
+    description = "Unattended / service-to-service agentic job submission. Caller supplies routing_command + explicit args dict. No voice-path LORA parsing, no interactive Q&A. Flexible passthrough args support current and future agents."
+)
+async def push_agentic(
+    request      : Request,
+    current_user : dict = Depends( get_current_user ),
+    todo_queue         = Depends( get_todo_queue )
+):
+    """
+    Submit a fully-specified agentic job to the todo queue.
+
+    Request body (JSON):
+        routing_command (str, required): e.g. "agent router go to deep research".
+            Must be one of the commands supported by create_agentic_job.
+        websocket_id (str, required): session routing id (same format + validation as /api/push).
+        args (dict, optional): fully-specified agent args. Passthrough — agent constructor validates.
+        question (str, optional): display-only text for the UI history card.
+        scheduled_at (str, optional): ISO-8601 timestamp for delayed execution.
+        monopolize (bool, optional): request a monopolized execution slot.
+
+    Contrast with POST /api/push: this endpoint bypasses the runtime argument
+    expeditor entirely. If args are incomplete, the agent constructor fails
+    explicitly rather than silently waiting for an interactive reply that
+    unattended submitters cannot provide.
+
+    Auth: same as /api/push (JWT or API key via get_current_user).
+
+    Returns:
+        { status, routing_command, websocket_id, user_id, job_id, result }
+
+    Raises:
+        HTTPException 400 on invalid body / missing fields / unknown routing_command.
+    """
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException( status_code=400, detail=f"Invalid JSON in request body: {e}" )
+
+    if not isinstance( body, dict ):
+        raise HTTPException( status_code=400, detail="Request body must be a JSON object" )
+
+    routing_command = body.get( "routing_command" )
+    websocket_id    = body.get( "websocket_id" )
+    args_dict       = body.get( "args", { } ) or { }
+    question        = body.get( "question" )
+    scheduled_at    = body.get( "scheduled_at" )
+    monopolize      = bool( body.get( "monopolize", False ) )
+
+    # Validate required string fields
+    for field_name, field_value in (
+        ( "routing_command", routing_command ),
+        ( "websocket_id",    websocket_id ),
+    ):
+        if not field_value:
+            raise HTTPException( status_code=400, detail=f"Missing required field: {field_name}" )
+        if not isinstance( field_value, str ):
+            raise HTTPException( status_code=400, detail=f"Field {field_name!r} must be a string" )
+
+    routing_command = routing_command.strip()
+    websocket_id    = websocket_id.strip()
+    if not routing_command or not websocket_id:
+        raise HTTPException( status_code=400, detail="routing_command / websocket_id cannot be empty" )
+
+    if not isinstance( args_dict, dict ):
+        raise HTTPException( status_code=400, detail="Field 'args' must be a JSON object" )
+
+    user_id    = current_user[ "uid" ]
+    user_email = current_user[ "email" ]
+    print( f"[API] /api/push-agentic - command: {routing_command!r}, ws: {websocket_id}, user: {user_email}, args_keys: {list( args_dict.keys() )}" )
+
+    try:
+        result = await asyncio.to_thread(
+            todo_queue.push_job_agentic,
+            routing_command,
+            args_dict,
+            websocket_id,
+            user_id,
+            user_email,
+            question,
+            scheduled_at,
+            monopolize,
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException( status_code=500, detail=f"push-agentic failed: {e}" )
+
+    job_id = result.get( "job_id" ) if isinstance( result, dict ) else None
+    if job_id is None:
+        # Unknown command or construction failure bubbles up as a 400 so the
+        # caller can distinguish "submitted, await outcome" from "rejected".
+        raise HTTPException( status_code=400, detail=result.get( "message" ) if isinstance( result, dict ) else str( result ) )
+
+    return {
+        "status"          : "queued",
+        "routing_command" : routing_command,
+        "websocket_id"    : websocket_id,
+        "user_id"         : user_id,
+        "job_id"          : job_id,
+        "result"          : result.get( "message" ),
+    }
+
+
 @router.get(
     "/get-queue/{queue_name}",
     summary     = "Get queue contents",
