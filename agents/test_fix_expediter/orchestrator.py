@@ -1,17 +1,21 @@
 """
 TestFixExpediter Orchestrator — Phase 0 through Phase 6.
 
-Phase status as of session 1cfcdf73 (2026-04-10):
-    0. Cluster   — ✅ REAL (step 7): heuristic + cap-enforced refinement
-    1. Diagnose  — ✅ REAL (step 8): Opus lead agent via Claude Agent SDK
-    2. Propose   — STUB (step 9)
-    3. Fix       — STUB (step 10, delegates to shared FixExecutor)
-    5. Git       — STUB (step 11, shared GitStrategist.commit_and_pr_multi)
-    6. Rerun     — STUB (step 12, async resubmit with recursion guard)
+Phase status (audited 2026-04-15 — previous "STUB" labels were stale):
+    0. Cluster   — ✅ REAL: heuristic seed + cap-enforced LLM refinement
+    1. Diagnose  — ✅ REAL: Opus lead agent via Claude Agent SDK
+    2. Propose   — ✅ REAL: per-cluster proposal + aggregate voice gate
+    3. Fix       — ✅ REAL: delegates to shared FixExecutor
+    5. Git       — ✅ REAL: shared GitStrategist.commit_and_pr_multi (multi-commit, single PR)
+    6. Rerun     — ✅ REAL: async TestSuiteJob resubmit with recursion guard
 
 Design refs:
     - src/rnd/v0.1.6/2026.04.10-test-fix-expediter/03-phase0-clustering-plan.md
     - src/rnd/v0.1.6/2026.04.10-test-fix-expediter/04-phase1-diagnose-plan.md
+    - src/rnd/v0.1.6/2026.04.10-test-fix-expediter/05-phase2-propose-plan.md
+    - src/rnd/v0.1.6/2026.04.10-test-fix-expediter/06-phase3-fix-delegation-plan.md
+    - src/rnd/v0.1.6/2026.04.10-test-fix-expediter/07-phase5-multi-cluster-git-plan.md
+    - src/rnd/v0.1.6/2026.04.10-test-fix-expediter/08-phase6-rerun-validation-plan.md
     - src/rnd/v0.1.6/2026.04.10-test-fix-expediter/10-prompt-design.md
 """
 
@@ -24,6 +28,7 @@ import cosa.utils.util as cu
 from cosa.agents.test_fix_expediter.config import TestFixExpediterConfig
 from cosa.agents.test_fix_expediter.state import (
     TFEPhase,
+    TFE_PHASE_ORDINALS,
     TestRemediationContext,
     FailureCluster,
     TestDiagnosisResult,
@@ -130,6 +135,12 @@ class TFEOrchestrator:
 
         # Current phase (for observability)
         self.current_phase = TFEPhase.LOADING
+
+        # Resume state (set by set_resume_phase() after load_checkpoint()).
+        # When not None, phase methods whose ordinal <= this value return
+        # the rehydrated state from the checkpoint instead of re-running.
+        # See: TFE_PHASE_ORDINAL (below) + load_checkpoint / set_resume_phase.
+        self._resume_from_ordinal : Optional[ int ] = None
 
     # ───────────────────────────────────────────────────────────────
     # Cancellation + notification helpers
@@ -278,6 +289,14 @@ class TFEOrchestrator:
         Heuristic seed + cap-enforced refinement (pure Python). Real LLM
         refinement callback wiring lands in a later iteration.
         """
+        # Resume short-circuit: if checkpoint already carried us past this
+        # phase, return the rehydrated clusters without re-running heuristic
+        # + LLM refinement. See load_checkpoint / set_resume_phase.
+        if self._resume_from_ordinal is not None and self._resume_from_ordinal >= TFE_PHASE_ORDINALS[ TFEPhase.CLUSTERING ]:
+            if self.debug: print( f"[TFE] Phase 0 skipped via resume (ordinal={self._resume_from_ordinal})" )
+            self.current_phase = TFEPhase.CLUSTERING
+            return self.clusters
+
         from cosa.agents.test_fix_expediter.cluster import heuristic_seed, llm_refine
 
         self.current_phase = TFEPhase.CLUSTERING
@@ -314,6 +333,12 @@ class TFEOrchestrator:
             - Every cluster in self.clusters has a corresponding entry
             - Failed diagnoses get low-confidence fallback (not exceptions)
         """
+        # Resume short-circuit: skip re-diagnosis if checkpoint already has it.
+        if self._resume_from_ordinal is not None and self._resume_from_ordinal >= TFE_PHASE_ORDINALS[ TFEPhase.DIAGNOSING ]:
+            if self.debug: print( f"[TFE] Phase 1 skipped via resume (ordinal={self._resume_from_ordinal})" )
+            self.current_phase = TFEPhase.DIAGNOSING
+            return self.diagnoses
+
         self.current_phase = TFEPhase.DIAGNOSING
 
         if not self.clusters:
@@ -593,6 +618,32 @@ class TFEOrchestrator:
               at least one valid proposal exists (not in dry_run)
             - Populates self.proposed_fixes, self.selected_fixes, self.last_plan_path
         """
+        # Resume short-circuit: if the checkpoint captured proposed_fixes from
+        # a previous run (stall at voice gate is the common case), skip
+        # regenerating proposals and go straight to the voice gate.
+        if (
+            self._resume_from_ordinal is not None
+            and self._resume_from_ordinal >= TFE_PHASE_ORDINALS[ TFEPhase.PROPOSING ]
+            and self.proposed_fixes
+        ):
+            if self.debug: print( f"[TFE] Phase 2 propose-gen skipped via resume (ordinal={self._resume_from_ordinal}, {len( self.proposed_fixes )} proposals rehydrated)" )
+            self.current_phase = TFEPhase.PROPOSING
+            # Still run the voice gate — that's why we resumed.
+            if not self._is_cancelled():
+                try:
+                    self.selected_fixes = await self._proposal_voice_gate( self.proposed_fixes )
+                except VoiceGateTimeoutError:
+                    checkpoint = self.save_checkpoint()
+                    raise StalledException(
+                        checkpoint = checkpoint,
+                        phase      = TFEPhase.PROPOSING.value,
+                        message    = (
+                            f"Voice gate timeout at resumed Phase 2 — "
+                            f"{len( self.proposed_fixes )} proposals await review"
+                        ),
+                    )
+            return ( self.proposed_fixes, self.selected_fixes, self.last_plan_path )
+
         self.current_phase = TFEPhase.PROPOSING
 
         if not self.clusters or not self.diagnoses:

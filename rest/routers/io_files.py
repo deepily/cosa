@@ -91,6 +91,11 @@ async def get_io_file(
         decoded_path = decoded_path[ len( io_base_slash ): ]
     elif decoded_path.startswith( "/" ):
         decoded_path = decoded_path.lstrip( "/" )
+    # Strip relative "io/" prefix — reports commonly embed paths like
+    # "io/test-suite/foo.json", which would otherwise double to "io/io/..."
+    # after joining with io_base.
+    if decoded_path.startswith( "io/" ):
+        decoded_path = decoded_path[ 3: ]
 
     full_path = os.path.join( io_base, decoded_path )
 

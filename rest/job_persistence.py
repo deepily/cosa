@@ -272,6 +272,58 @@ def persist_job_completed_from_metadata( job_id, metadata ):
         print( f"[WARN] persist_job_completed_from_metadata failed for {job_id}: {e}" )
 
 
+def persist_job_stalled_from_metadata( job_id, metadata ):
+    """
+    UPDATE job_history row: status='stalled', completed_at, checkpoint in metadata_json.
+
+    Called on run->done transition when the job reached a valid stalled state
+    (voice gate timeout with checkpoint saved). The row stays resumable — the
+    UI badge (`notifications.js::isStalled`) + Resume button hinge on this
+    status, and the TFE resume resolver (`resume_resolver.py`) requires
+    status='stalled' before it will rehydrate a checkpoint.
+
+    Requires:
+        - job_id is a non-empty string
+        - metadata is a dict with checkpoint data (typically under "checkpoint" or "artifacts.checkpoint")
+
+    Ensures:
+        - Row updated with status='stalled', completion timestamp, duration
+        - metadata_json is merged (preserves original_args, adds checkpoint)
+        - Never raises — logs warning on failure
+    """
+    if not _is_persistence_enabled():
+        return
+
+    try:
+        now = datetime.now( timezone.utc )
+        values = {
+            "status"        : JobState.STALLED.value,
+            "completed_at"  : now,
+            "updated_at"    : now,
+        }
+
+        with get_db() as session:
+            row = session.execute(
+                select( JobHistory.started_at, JobHistory.metadata_json )
+                .where( JobHistory.id_hash == job_id )
+            ).one_or_none()
+
+            existing_metadata = ( row.metadata_json if row is not None else {} ) or {}
+            new_metadata      = _build_metadata_json( metadata )
+            values[ "metadata_json" ] = { **existing_metadata, **new_metadata }
+
+            if row is not None and row.started_at is not None:
+                values[ "duration_seconds" ] = ( now - row.started_at ).total_seconds()
+
+            session.execute(
+                update( JobHistory )
+                .where( JobHistory.id_hash == job_id )
+                .values( **values )
+            )
+    except Exception as e:
+        print( f"[WARN] persist_job_stalled_from_metadata failed for {job_id}: {e}" )
+
+
 def persist_job_failed_from_metadata( job_id, metadata ):
     """
     UPDATE job_history row: status='failed', error, completed_at.

@@ -237,7 +237,7 @@ class CheckpointData( TypedDict ):
     """
     phase_ordinal  : int     # Ordinal of last completed phase (0=loading, 1=clustering, ...)
     phase_name     : str     # Human-readable (e.g., "proposing")
-    stall_reason   : str     # "voice_gate_timeout", "rate_limit", "user_cancel"
+    stall_reason   : str     # "voice_gate_timeout" (no answer) | "user_pause" (deferred; resumable) | "user_cancel" (rejected; terminal) | "rate_limit" (infrastructure)
     stalled_at     : str     # ISO timestamp
     state_snapshot : dict    # Serialized TFEState (JSON-safe)
     artifacts      : dict    # Paths to durable artifacts created so far

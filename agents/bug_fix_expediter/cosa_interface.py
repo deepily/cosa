@@ -39,7 +39,7 @@ logger = logging.getLogger( __name__ )
 
 AGENT_TYPE = "bug.fix.expediter"
 
-_dispatcher = AgentNotificationDispatcher( agent_type=AGENT_TYPE )
+_dispatcher = AgentNotificationDispatcher( agent_type=AGENT_TYPE, default_priority="high" )
 
 
 def _get_sender_id( suffix: str = None ) -> str:
@@ -105,7 +105,8 @@ async def ask_confirmation(
     default: str = "no",
     timeout: int = 60,
     abstract: Optional[ str ] = None,
-    job_id: Optional[ str ] = None
+    job_id: Optional[ str ] = None,
+    priority: str = None
 ) -> bool:
     """
     Ask a yes/no question and return boolean result.
@@ -116,6 +117,7 @@ async def ask_confirmation(
         timeout: Seconds to wait for response
         abstract: Optional supplementary context
         job_id: Optional job ID for routing to job card
+        priority: "low"/"medium"/"high"/"urgent" (default: dispatcher default, which is "high" for SWE)
 
     Returns:
         bool: True if user said yes, False otherwise
@@ -123,14 +125,16 @@ async def ask_confirmation(
     _dispatcher.sender_id   = SENDER_ID
     _dispatcher.target_user = TARGET_USER
     return await _dispatcher.ask_confirmation(
-        question, default=default, timeout=timeout, abstract=abstract, job_id=job_id
+        question, default=default, timeout=timeout, abstract=abstract, job_id=job_id, priority=priority
     )
 
 
 async def get_feedback(
     prompt: str,
     timeout: int = 300,
-    job_id: Optional[ str ] = None
+    job_id: Optional[ str ] = None,
+    priority: str = None,
+    response_default: Optional[ str ] = None
 ) -> Optional[ str ]:
     """
     Get open-ended feedback from user via voice.
@@ -139,13 +143,18 @@ async def get_feedback(
         prompt: Text to speak to the user
         timeout: Maximum seconds to wait for response
         job_id: Optional job ID for routing to job card
+        priority: "low"/"medium"/"high"/"urgent" (default: dispatcher default, "high" for SWE)
+        response_default: Optional default returned when user is offline (else 503).
 
     Returns:
         str or None: User's transcribed voice response
     """
     _dispatcher.sender_id   = SENDER_ID
     _dispatcher.target_user = TARGET_USER
-    return await _dispatcher.get_feedback( prompt, timeout=timeout, job_id=job_id )
+    return await _dispatcher.get_feedback(
+        prompt, timeout=timeout, job_id=job_id, priority=priority,
+        response_default=response_default,
+    )
 
 
 async def present_choices(
@@ -153,7 +162,9 @@ async def present_choices(
     timeout: int = 120,
     title: Optional[ str ] = None,
     abstract: Optional[ str ] = None,
-    job_id: Optional[ str ] = None
+    job_id: Optional[ str ] = None,
+    priority: str = None,
+    response_default: Optional[ str ] = None
 ) -> dict:
     """
     Present multiple-choice questions and get user's selection.
@@ -164,6 +175,11 @@ async def present_choices(
         title: Optional title for the notification
         abstract: Optional supplementary context
         job_id: Optional job ID for routing to job card
+        priority: "low"/"medium"/"high"/"urgent" (default: dispatcher default, "high" for SWE)
+        response_default: Optional default (e.g. "{}") returned when user is offline;
+                          otherwise /api/notify returns 503. Clean-stall path for
+                          unattended runs — empty-answers normalization (Bug 7)
+                          then raises VoiceGateTimeoutError for the caller.
 
     Returns:
         dict: {"answers": {...}} with selections keyed by header
@@ -171,7 +187,8 @@ async def present_choices(
     _dispatcher.sender_id   = SENDER_ID
     _dispatcher.target_user = TARGET_USER
     return await _dispatcher.present_choices(
-        questions, timeout=timeout, title=title, abstract=abstract, job_id=job_id
+        questions, timeout=timeout, title=title, abstract=abstract, job_id=job_id,
+        priority=priority, response_default=response_default,
     )
 
 

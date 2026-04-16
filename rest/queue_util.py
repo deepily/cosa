@@ -96,6 +96,9 @@ def emit_job_state_transition(
                 persist_job_started_from_metadata( job_id, metadata )
             elif to_state == JobState.COMPLETED:
                 persist_job_completed_from_metadata( job_id, metadata )
+            elif to_state == JobState.STALLED:
+                from cosa.rest.job_persistence import persist_job_stalled_from_metadata
+                persist_job_stalled_from_metadata( job_id, metadata or {} )
             elif to_state in ( JobState.FAILED, JobState.CANCELLED, JobState.INTERRUPTED ):
                 persist_job_failed_from_metadata( job_id, metadata or {} )
         except Exception as e:

@@ -371,14 +371,14 @@ def resume_job( job_id_hash, config_mgr=None ):
         print( f"[agentic_job_factory] No original args found for {job_id_hash}" )
         return None
 
-    # Reconstruct via normal factory path
+    # Reconstruct via normal factory path. config_mgr is accepted as a parameter
+    # for forward-compat but create_agentic_job does not (yet) take it — drop here.
     job = create_agentic_job(
         command    = job_info[ "routing_command" ],
         args_dict  = job_info[ "original_args" ],
         user_id    = job_info[ "user_id" ],
         user_email = job_info[ "user_email" ],
         session_id = job_info[ "session_id" ],
-        config_mgr = config_mgr,
     )
 
     if job is None:

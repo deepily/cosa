@@ -42,6 +42,18 @@ from cosa.agents.utils.sender_id import build_sender_id
 logger = logging.getLogger( __name__ )
 
 
+def _prepend_operator_routing( abstract: Optional[ str ], original_target: str ) -> str:
+    """
+    Prefix an abstract with an 'Operator routing:' context line so the operator
+    answering a voice gate understands they're acting on behalf of a service
+    account. See Bug 10 (2026-04-15).
+    """
+    header = f"**Operator routing**: originally owned by `{original_target}`"
+    if not abstract:
+        return header
+    return f"{header}\n\n{abstract}"
+
+
 class AgentNotificationDispatcher:
     """
     Shared async notification dispatcher for COSA agents.
@@ -127,6 +139,54 @@ class AgentNotificationDispatcher:
             return build_sender_id( f"{self.agent_type}.{role}", suffix=suffix )
         return self.sender_id
 
+    def _resolve_routing( self, target_user: Optional[ str ] ) -> tuple:
+        """
+        Resolve the effective target_user for a blocking voice call.
+
+        When target_user is a configured service account AND an operator fallback
+        is configured, swap to the operator so TTS reaches a human. See Bug 10
+        (2026-04-15): service accounts have no WebSocket sessions, causing
+        /api/notify to 503 on blocking calls.
+
+        Reads two INI keys (cached on first call):
+            - voice gate operator email       : str   (blank disables rerouting)
+            - voice gate service accounts     : comma-separated list of emails
+
+        Args:
+            target_user: The user the caller originally intended to notify.
+
+        Returns:
+            tuple: ( effective_target, was_redirected, original_target )
+                   - effective_target is the email the request should hit
+                   - was_redirected is True iff a swap happened
+                   - original_target is the input target_user unchanged
+        """
+        if not target_user:
+            return ( target_user, False, target_user )
+
+        # Lazy config load — ConfigurationManager is a global singleton so we
+        # only actually parse the INI once per process.
+        try:
+            from cosa.config.configuration_manager import ConfigurationManager
+            cfg = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+            operator = cfg.get( "voice gate operator email", default=None, return_type="string" ) or ""
+            accounts_raw = cfg.get( "voice gate service accounts", default=None, return_type="string" ) or ""
+        except Exception as e:
+            # Never let a config read failure block notification dispatch.
+            logger.warning( f"_resolve_routing config read failed: {e}" )
+            return ( target_user, False, target_user )
+
+        operator = operator.strip()
+        if not operator:
+            return ( target_user, False, target_user )
+
+        service_set = { a.strip().lower() for a in accounts_raw.split( "," ) if a.strip() }
+        if target_user.lower() in service_set:
+            print( f"[NOTIFY] Operator routing: {target_user} (service account) → {operator}" )
+            return ( operator, True, target_user )
+
+        return ( target_user, False, target_user )
+
     # =========================================================================
     # Primary Interface Methods
     # =========================================================================
@@ -185,7 +245,8 @@ class AgentNotificationDispatcher:
         timeout: int = 60,
         abstract: Optional[ str ] = None,
         job_id: Optional[ str ] = None,
-        role: str = None
+        role: str = None,
+        priority: str = None
     ) -> bool:
         """
         Ask a yes/no question and return boolean result.
@@ -197,20 +258,24 @@ class AgentNotificationDispatcher:
             abstract: Optional supplementary context
             job_id: Optional job ID for routing
             role: Optional agent role (for role-aware dispatchers)
+            priority: "low"/"medium"/"high"/"urgent" (default: "high" for blocking calls)
 
         Returns:
             bool: True if user said yes, False otherwise
         """
         try:
+            effective_target, was_redirected, original_target = self._resolve_routing( self.target_user )
+            if was_redirected:
+                abstract = _prepend_operator_routing( abstract, original_target )
             request = NotificationRequest(
                 message           = question,
                 response_type     = ResponseType.YES_NO,
                 notification_type = NotificationType.CUSTOM,
-                priority          = NotificationPriority( self.default_priority ),
+                priority          = NotificationPriority( priority or self.default_priority or "high" ),
                 timeout_seconds   = timeout,
                 response_default  = default,
                 sender_id         = self._resolve_sender_id( role ),
-                target_user       = self.target_user,
+                target_user       = effective_target,
                 abstract          = abstract,
                 job_id            = job_id,
             )
@@ -248,7 +313,9 @@ class AgentNotificationDispatcher:
         prompt: str,
         timeout: int = 300,
         job_id: Optional[ str ] = None,
-        role: str = None
+        role: str = None,
+        priority: str = None,
+        response_default: Optional[ str ] = None
     ) -> Optional[ str ]:
         """
         Get open-ended feedback from user via voice.
@@ -258,19 +325,25 @@ class AgentNotificationDispatcher:
             timeout: Maximum seconds to wait
             job_id: Optional job ID for routing to job cards
             role: Optional agent role (for role-aware dispatchers)
+            priority: "low"/"medium"/"high"/"urgent" (default: "high" for blocking calls)
+            response_default: If set AND user is offline, /api/notify returns 200
+                              with default rather than 503. Leave None to preserve
+                              the 503-for-offline behavior (caller handles stall).
 
         Returns:
             str or None: User's transcribed voice response
         """
         try:
+            effective_target, was_redirected, _original_target = self._resolve_routing( self.target_user )
             request = NotificationRequest(
                 message           = prompt,
                 response_type     = ResponseType.OPEN_ENDED,
                 notification_type = NotificationType.CUSTOM,
-                priority          = NotificationPriority( self.default_priority ),
+                priority          = NotificationPriority( priority or self.default_priority or "high" ),
                 timeout_seconds   = timeout,
+                response_default  = response_default,
                 sender_id         = self._resolve_sender_id( role ),
-                target_user       = self.target_user,
+                target_user       = effective_target,
                 job_id            = job_id,
             )
 
@@ -292,7 +365,9 @@ class AgentNotificationDispatcher:
         title: Optional[ str ] = None,
         abstract: Optional[ str ] = None,
         job_id: Optional[ str ] = None,
-        role: str = None
+        role: str = None,
+        priority: str = None,
+        response_default: Optional[ str ] = None
     ) -> dict:
         """
         Present multiple-choice questions and get user's selection.
@@ -304,22 +379,33 @@ class AgentNotificationDispatcher:
             abstract: Optional supplementary context
             job_id: Optional job ID for routing to job cards
             role: Optional agent role (for role-aware dispatchers)
+            priority: "low"/"medium"/"high"/"urgent" (default: "high" for blocking calls)
+            response_default: If set AND user is offline, /api/notify returns 200
+                              with this default rather than 503. Pass literal "{}"
+                              (empty JSON) for the clean-stall path — dispatcher
+                              interprets empty answers as timeout via Bug 7
+                              normalization → VoiceGateTimeoutError.
 
         Returns:
             dict: {"answers": {...}} with selections keyed by header
         """
         try:
+            effective_target, was_redirected, original_target = self._resolve_routing( self.target_user )
+            if was_redirected:
+                abstract = _prepend_operator_routing( abstract, original_target )
+
             message = format_questions_for_tts( questions )
 
             request = NotificationRequest(
                 message           = message,
                 response_type     = ResponseType.MULTIPLE_CHOICE,
                 notification_type = NotificationType.CUSTOM,
-                priority          = NotificationPriority( self.default_priority ),
+                priority          = NotificationPriority( priority or self.default_priority or "high" ),
                 timeout_seconds   = timeout,
+                response_default  = response_default,
                 response_options  = convert_questions_for_api( questions ),
                 sender_id         = self._resolve_sender_id( role ),
-                target_user       = self.target_user,
+                target_user       = effective_target,
                 abstract          = abstract,
                 title             = title,
                 job_id            = job_id,
@@ -329,9 +415,28 @@ class AgentNotificationDispatcher:
 
             if response.exit_code == 0 and response.response_value:
                 try:
-                    return json.loads( response.response_value )
+                    parsed = json.loads( response.response_value )
                 except json.JSONDecodeError:
                     return { "answers": { "response": response.response_value } }
+
+                # Defensive normalization (Session 2026-04-15): treat an empty
+                # answers payload as a no-answer timeout, not an explicit empty
+                # selection. Users never click "submit with nothing selected";
+                # an empty dict means the MCP returned exit_code=0 before the
+                # human interacted (observed with 3s timeout regression). This
+                # keeps VoiceGateTimeoutError as the single signal for "no
+                # answer" so checkpoint-resume fires reliably.
+                answers = parsed.get( "answers", {} ) if isinstance( parsed, dict ) else {}
+                if not answers or all( not v for v in answers.values() ):
+                    from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+                    raise VoiceGateTimeoutError(
+                        phase   = "choices",
+                        message = (
+                            f"present_choices returned empty answers after {timeout}s — "
+                            f"treating as no-response timeout"
+                        )
+                    )
+                return parsed
 
             # exit_code == 2 is the MCP server's explicit timeout signal.
             # Raise VoiceGateTimeoutError for checkpoint-resume.
@@ -342,7 +447,14 @@ class AgentNotificationDispatcher:
                     message = f"present_choices timeout after {timeout}s — MCP exit_code=2"
                 )
 
-            return { "answers": {} }
+            # Catch-all (no response value at all): also treat as timeout so
+            # checkpoint-resume applies instead of silently falling through
+            # to an empty-selection completion.
+            from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+            raise VoiceGateTimeoutError(
+                phase   = "choices",
+                message = f"present_choices returned no response after {timeout}s"
+            )
 
         except Exception as e:
             from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError

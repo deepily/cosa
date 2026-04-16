@@ -352,6 +352,60 @@ class RunningFifoQueue( FifoQueue ):
             du.print_banner( f"AgenticJob [{running_job.id_hash}] complete!", prepend_nl=True, end="\n" )
             job_timer.print( "Done!", use_millis=True )
 
+            # Stalled terminal (Bug 11, 2026-04-15): voice gate timed out and
+            # orchestrator saved a checkpoint. Route to Done with status=stalled
+            # so the UI badge + Resume button activate. Do NOT invoke the
+            # dead-queue/auto-repair watchdog — the checkpoint IS the repair
+            # path and BFE would just swallow the checkpoint on its own DB lookup.
+            if running_job.state == JobState.STALLED:
+                job_id  = running_job.id_hash
+                user_id = running_job.user_id
+                completed_at = du.get_current_datetime_iso()
+                started_at   = running_job.started_at
+
+                duration_seconds = None
+                if started_at:
+                    try:
+                        start = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
+                        end   = datetime.fromisoformat( completed_at )
+                        duration_seconds = ( end - start ).total_seconds()
+                    except Exception:
+                        pass
+
+                metadata = {
+                    'response_text'   : running_job.answer_conversational,
+                    'abstract'        : running_job.artifacts.get( 'abstract' ),
+                    'report_link'     : running_job.artifacts.get( 'report_path' ),
+                    'checkpoint'      : running_job.artifacts.get( 'checkpoint' ),
+                    'plan_path'       : running_job.artifacts.get( 'plan_path' ),
+                    'question_text'   : running_job.last_question_asked,
+                    'agent_type'      : running_job.job_type,
+                    'timestamp'       : running_job.created_date,
+                    'status'          : JobState.STALLED.value,
+                    'has_interactions': bool( running_job.session_id ),
+                    'is_cache_hit'    : False,
+                    'user_email'      : running_job.user_email,
+                    'started_at'      : started_at,
+                    'completed_at'    : completed_at,
+                    'duration_seconds': duration_seconds,
+                }
+                emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.STALLED, user_id, metadata )
+
+                self.pop()  # Auto-emits 'run_update'
+                self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
+
+                try:
+                    self.io_tbl.insert_io_row(
+                        input_type   = running_job.routing_command,
+                        input        = running_job.last_question_asked,
+                        output_raw   = str( running_job.artifacts ),
+                        output_final = running_job.answer_conversational
+                    )
+                except Exception as io_e:
+                    if self.debug: print( f"[AGENTIC] I/O table write skipped (stalled): {io_e}" )
+
+                return running_job
+
             if running_job.code_ran_to_completion() and running_job.formatter_ran_to_completion():
                 # Success path
                 # TTS Migration (Session 97): Use notification service instead of _emit_speech
