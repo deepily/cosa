@@ -1170,6 +1170,78 @@ async def delete_queue_job(
     }
 
 
+@router.delete(
+    "/queue/{queue_name}/all",
+    summary     = "Delete all jobs from a queue",
+    description = "Bulk remove all jobs from todo, run, done, or dead queue. "
+                  "Admins clear the entire queue; regular users delete only their own jobs."
+)
+async def delete_all_queue_jobs(
+    queue_name: str,
+    current_user: dict = Depends( get_current_user ),
+    running_queue      = Depends( get_running_queue ),
+    done_queue         = Depends( get_done_queue ),
+    dead_queue         = Depends( get_dead_queue ),
+    todo_queue         = Depends( get_todo_queue ),
+):
+    """
+    Bulk delete all jobs from an in-memory queue.
+
+    For running jobs, signals cancellation on each before removal.
+    Admins get a full queue.clear(); regular users get per-job deletion
+    scoped to their own user_id (same auth model as single-job delete).
+
+    Requires:
+        - queue_name is one of: 'todo', 'run', 'done', 'dead'
+        - current_user is authenticated
+
+    Ensures:
+        - All matching jobs removed from queue
+        - Running jobs receive cancel signal before removal
+        - Returns { status, queue_name, items_deleted, timestamp }
+
+    Raises:
+        - HTTPException 400: Invalid queue name
+    """
+    user_id = current_user[ "uid" ]
+
+    queue_map = {
+        "todo" : todo_queue,
+        "run"  : running_queue,
+        "done" : done_queue,
+        "dead" : dead_queue
+    }
+    if queue_name not in queue_map:
+        raise HTTPException( status_code=400, detail=f"Invalid queue name: {queue_name}. Must be 'todo', 'run', 'done', or 'dead'." )
+
+    queue = queue_map[ queue_name ]
+
+    print( f"[API] DELETE /api/queue/{queue_name}/all - user: {user_id}, admin: {is_admin( current_user )}" )
+
+    if is_admin( current_user ):
+        count = queue.size()
+        queue.clear()
+        items_deleted = count
+    else:
+        jobs = queue.get_jobs_for_user( user_id )
+        items_deleted = 0
+        for job in jobs:
+            if queue_name == "run" and isinstance( job, AgenticJobBase ):
+                job.request_cancel()
+            deleted = queue.delete_by_id_hash( job.id_hash )
+            if deleted:
+                items_deleted += 1
+
+    print( f"[API] Deleted {items_deleted} jobs from {queue_name} queue by user {user_id}" )
+
+    return {
+        "status"        : "deleted",
+        "queue_name"    : queue_name,
+        "items_deleted" : items_deleted,
+        "timestamp"     : cu.get_current_datetime_iso()
+    }
+
+
 # ===========================================================================
 # Job History (CJ Flow Persistence)
 # ===========================================================================
@@ -1305,6 +1377,57 @@ async def delete_job_history_endpoint(
         raise HTTPException( status_code=500, detail="Failed to delete job from history" )
 
     return { "status": "deleted", "job_id": job_id }
+
+
+@router.delete(
+    "/job-history/all",
+    summary     = "Bulk delete job history",
+    description = "Delete all job history records matching the given time window. "
+                  "Admins delete across all users; regular users delete only their own records."
+)
+async def delete_all_job_history(
+    current_user: dict    = Depends( get_current_user ),
+    days: Optional[str]   = Query( None, description="Time window: 1, 7, 14, 30, or 'all'. Defaults to 'all'." )
+):
+    """
+    Bulk delete job history from PostgreSQL.
+
+    Requires:
+        - Authenticated user (Bearer token)
+        - days is None, 'all', or a numeric string matching 1/7/14/30
+
+    Ensures:
+        - Deletes all matching history rows for the user (or all users if admin)
+        - Returns { status, items_deleted, days_filter, timestamp }
+
+    Raises:
+        - HTTPException 400: Invalid days parameter
+    """
+    from cosa.rest.job_persistence import delete_job_history_bulk
+
+    user_id = None if is_admin( current_user ) else current_user[ "uid" ]
+
+    days_int = None
+    days_label = "all"
+    if days and days != "all":
+        try:
+            days_int   = int( days )
+            days_label = str( days_int )
+        except ValueError:
+            raise HTTPException( status_code=400, detail=f"Invalid days parameter: {days}. Use a number or 'all'." )
+
+    print( f"[API] DELETE /api/job-history/all - user: {current_user['uid']}, days: {days_label}" )
+
+    items_deleted = delete_job_history_bulk( user_id=user_id, days=days_int )
+
+    print( f"[API] Deleted {items_deleted} history records (days={days_label}) for user {current_user['uid']}" )
+
+    return {
+        "status"        : "deleted",
+        "items_deleted" : items_deleted,
+        "days_filter"   : days_label,
+        "timestamp"     : cu.get_current_datetime_iso()
+    }
 
 
 @router.post(

@@ -134,6 +134,7 @@ class FixExecutor:
         verify_fix_fn: Callable,
         debug: bool = False,
         verbose: bool = False,
+        worktree_cwd: Optional[ str ] = None,
     ):
         self.config              = config
         self.fix_context         = fix_context
@@ -147,6 +148,13 @@ class FixExecutor:
         self._verify_fix         = verify_fix_fn
         self.debug               = debug
         self.verbose             = verbose
+
+        # Bug 9 (2026-04-16): isolation cwd for Phase 3 SDK delegations.
+        # When set, the orchestrator's _delegate_to_coder / _verify_fix
+        # callbacks must use this path as cwd when constructing the SDK
+        # ClaudeAgentOptions. Value is resolved by WorktreeContext at the
+        # orchestrator layer. None = live working tree (pre-Bug-9 behavior).
+        self.worktree_cwd = worktree_cwd
 
         # Populated after execute_fix
         self.last_coder_output   = ""

@@ -712,6 +712,42 @@ def delete_job_history( id_hash ):
         return False
 
 
+def delete_job_history_bulk( user_id=None, days=None ):
+    """
+    Bulk delete job history rows matching user and/or time-window filter.
+
+    Requires:
+        - user_id is None (admin — delete any user's rows) or a non-empty string
+        - days is None (all time) or a positive integer
+
+    Ensures:
+        - Deletes all matching rows in a single SQL DELETE
+        - Returns the count of deleted rows
+        - Never raises — returns 0 on failure
+    """
+    try:
+        with get_db() as session:
+            filters = []
+            if user_id:
+                filters.append( JobHistory.user_id == user_id )
+            if days is not None:
+                cutoff = datetime.now( timezone.utc ) - timedelta( days=days )
+                filters.append( JobHistory.created_at >= cutoff )
+
+            stmt = JobHistory.__table__.delete()
+            if filters:
+                from sqlalchemy import and_
+                stmt = stmt.where( and_( *filters ) )
+
+            result = session.execute( stmt )
+            session.commit()
+            return result.rowcount
+
+    except Exception as e:
+        print( f"[WARN] delete_job_history_bulk failed: {e}" )
+        return 0
+
+
 # ---------------------------------------------------------------------------
 # Smoke test
 # ---------------------------------------------------------------------------

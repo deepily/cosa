@@ -80,6 +80,12 @@ class User( Base ):
         server_default="true",
         index=True
     )
+    is_protected: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false"
+    )
 
     # User Metadata
     roles: Mapped[dict] = mapped_column(

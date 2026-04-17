@@ -19,8 +19,10 @@ Design refs:
     - src/rnd/v0.1.6/2026.04.10-test-fix-expediter/10-prompt-design.md
 """
 
+import asyncio
 import json
 import logging
+from contextlib import asynccontextmanager
 from typing import Optional
 
 import cosa.utils.util as cu
@@ -141,6 +143,12 @@ class TFEOrchestrator:
         # the rehydrated state from the checkpoint instead of re-running.
         # See: TFE_PHASE_ORDINAL (below) + load_checkpoint / set_resume_phase.
         self._resume_from_ordinal : Optional[ int ] = None
+
+        # Bug 9 (2026-04-16): worktree isolation state. Populated inside
+        # `worktree_scope()` context manager during Phase 3 + Phase 5; used
+        # by `_build_tfe_coder_options`, `_build_tfe_tester_options`, and
+        # Phase 5 git ops to route into an isolated sandbox.
+        self._worktree_cwd : Optional[ str ] = None
 
     # ───────────────────────────────────────────────────────────────
     # Cancellation + notification helpers
@@ -1261,6 +1269,7 @@ class TFEOrchestrator:
                 verify_fix_fn         = self._verify_fix,
                 debug                 = self.debug,
                 verbose               = self.verbose,
+                worktree_cwd          = self._worktree_cwd,
             )
 
             try:
@@ -1474,13 +1483,72 @@ class TFEOrchestrator:
             logger.error( f"Verification failed: {e}" )
             return ( False, f"Verification error: {e}" )
 
+    # ───────────────────────────────────────────────────────────────
+    # Worktree isolation (Bug 9, 2026-04-16)
+    # ───────────────────────────────────────────────────────────────
+
+    @asynccontextmanager
+    async def worktree_scope( self ):
+        """
+        Enter worktree isolation for Phase 3 + Phase 5 (FixExecutor + GitStrategist).
+
+        Caller pattern (from job.py):
+            async with orchestrator.worktree_scope():
+                await orchestrator.run_phase3_fix()
+                await orchestrator.run_phase5_git()
+
+        When `cosa worktree enabled` is true, a dedicated worktree is created
+        under `<sandbox_root>/<job_id>`. `_build_tfe_coder_options`,
+        `_build_tfe_tester_options`, and Phase 5 git ops automatically route
+        through `self._worktree_cwd`.
+
+        When disabled, the context is a no-op and emits a warning if the
+        current working tree has uncommitted changes (safety guard).
+        """
+        from cosa.agents.shared.worktree_context import WorktreeContext
+        async with WorktreeContext( job_id=self.job_id, debug=self.debug ) as wt:
+            if wt.enabled:
+                self._worktree_cwd = wt.path
+                if self.debug: print( f"[TFEOrchestrator] Worktree isolation active: {wt.path}" )
+            else:
+                self._worktree_cwd = None
+                await self._warn_on_uncommitted_changes_if_any()
+            try:
+                yield wt
+            finally:
+                self._worktree_cwd = None
+
+    async def _warn_on_uncommitted_changes_if_any( self ) -> None:
+        """
+        Safety guard (Bug 9): when worktree isolation is disabled AND the
+        current working tree has uncommitted changes, log a visible warning.
+        Non-blocking — the user opted into that mode.
+        """
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "status", "--porcelain",
+                stdout = asyncio.subprocess.PIPE,
+                stderr = asyncio.subprocess.PIPE,
+                cwd    = cu.get_project_root(),
+            )
+            stdout_bytes, _ = await asyncio.wait_for( proc.communicate(), timeout=5 )
+            if stdout_bytes.strip():
+                logger.warning(
+                    "[TFEOrchestrator] ⚠️  Worktree isolation is DISABLED and "
+                    "the current working tree has uncommitted changes. TFE "
+                    "Phase 3/5 will mutate this tree and may contaminate your "
+                    "PR. Consider `cosa worktree enabled=true` or committing/stashing."
+                )
+        except Exception as e:
+            if self.debug: print( f"[TFEOrchestrator] uncommitted-changes check failed: {e}" )
+
     def _build_tfe_coder_options( self, guard, cosa_interface_module ):
         """Build ClaudeAgentOptions for the TFE Coder agent."""
         return ClaudeAgentOptions(
             model           = self.config.worker_model,
             system_prompt   = TFE_CODER_SYSTEM_PROMPT,
             tools           = [ "Read", "Edit", "Bash" ],
-            cwd             = cu.get_project_root(),
+            cwd             = self._worktree_cwd or cu.get_project_root(),
             permission_mode = "acceptEdits",
             can_use_tool    = build_can_use_tool( cosa_interface_module, guard, "tfe-coder" ),
             max_turns       = self.config.max_fix_attempts * 10,
@@ -1493,7 +1561,7 @@ class TFEOrchestrator:
             model           = self.config.worker_model,
             system_prompt   = TFE_TESTER_SYSTEM_PROMPT,
             tools           = [ "Read", "Edit", "Bash" ],
-            cwd             = cu.get_project_root(),
+            cwd             = self._worktree_cwd or cu.get_project_root(),
             permission_mode = "acceptEdits",
             can_use_tool    = build_can_use_tool( cosa_interface_module, guard, "tfe-tester" ),
             max_turns       = 10,
@@ -1606,7 +1674,8 @@ class TFEOrchestrator:
             )
             return { "git_strategy": None, "branch_name": None, "commit_hashes": [], "pr_url": None, "error": str( e ) }
 
-        git_ops    = GitOps( cwd=cu.get_project_root(), debug=self.debug )
+        # Bug 9 (2026-04-16): route through worktree when isolation active.
+        git_ops    = GitOps( cwd=( self._worktree_cwd or cu.get_project_root() ), debug=self.debug )
         strategist = GitStrategist( debug=self.debug, verbose=self.verbose )
 
         # TFE doesn't wire a trust proxy yet; rely on L1 fallback unless the

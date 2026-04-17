@@ -581,6 +581,15 @@ def admin_delete_user(
         target_email = target_user["email"]
         target_roles = target_user.get( "roles", [] )
 
+        # Protected-account guard: seed companions can never be deleted
+        with get_db() as session:
+            from cosa.rest.postgres_models import User as UserModel
+            _tgt = session.query( UserModel ).filter(
+                UserModel.id == uuid.UUID( target_user_id )
+            ).first()
+            if _tgt and _tgt.is_protected:
+                return False, f"Cannot delete system-protected account '{target_email}'"
+
         # Sole-admin guard: if target has admin role, check admin count
         if "admin" in target_roles:
             with get_db() as session:

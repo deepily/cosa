@@ -1,5 +1,46 @@
 # COSA Development History
 
+> **📝 SESSION 79ef7dfd STAGED**: Bug 9 worktree isolation + Bug 12/13 voice-gate stall + CJ Flow Delete All + protected-accounts guard (2026.04.16)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> Batches four separate Lupin-parent sessions' CoSA-side work that was left uncommitted on the submodule. Parent Lupin commits already landed; this is the matching CoSA-side commit.
+>
+> **Bug 9 — Worktree isolation for TFE/BFE Phase 3 + Phase 5** (Session eb50bd56, 2026.04.16):
+> - NEW `agents/shared/worktree_context.py` — async context manager that creates `<sandbox>/<job_id>` via `git worktree add <base_ref>`. Gated by `[cosa_worktree] enabled` INI key (default `false` pre-flip, `true` post-flip).
+> - `agents/shared/fix_executor.py` — accepts `worktree_cwd: Optional[str]` constructor arg for Phase 3 SDK delegation audit.
+> - `agents/bug_fix_expediter/orchestrator.py` + `agents/test_fix_expediter/orchestrator.py` — new `worktree_scope()` async context manager + `_warn_on_uncommitted_changes_if_any()` safety guard. `_build_coder_options` / `_build_tester_options` / Phase 5 `run_git_strategy` use `self._worktree_cwd or cu.get_project_root()` for cwd routing.
+> - `agents/bug_fix_expediter/job.py` + `agents/test_fix_expediter/job.py` — wrap Phase 3 + Phase 5 in `async with orchestrator.worktree_scope()`; Phase 6 runs outside the scope (REST-API-only, no git mutation).
+>
+> **Bug 12 — MCP 503 → VoiceGateTimeoutError** (Session 2026-04-16):
+> - `agents/utils/agent_notification_dispatcher.py` — `ask_confirmation()` and `get_feedback()` now raise `VoiceGateTimeoutError` on ANY non-0 exit code (HTTP 503 "User is offline", connection errors, not just `exit_code==2`). Prevents silent default-application when the operator is offline.
+>
+> **Bug 13 — Pre-MCP ValidationError → VoiceGateTimeoutError** (Session 2026-04-16):
+> - `agents/utils/agent_notification_dispatcher.py` — `ask_confirmation()` / `get_feedback()` / `present_choices()` outer `except` now converts `pydantic.ValidationError` + `ConnectionError` into `VoiceGateTimeoutError`. Pre-MCP failures (e.g. `abstract > 5000 chars` before the 5000-char cap was removed on the Lupin side) no longer masquerade as "user selected nothing" — orchestrator stalls with a checkpoint instead.
+>
+> **CJ Flow — Delete All for 5 queue panes** (Session eb50bd56, 2026.04.16):
+> - `rest/routers/queues.py` — new `DELETE /api/queue/{queue_name}/all` (admins clear whole queue; regular users delete only their own jobs; running-job cancel signal before removal) + new `DELETE /api/job-history/all?days=N` (respects time-window filter; admin vs owner scoping).
+> - `rest/job_persistence.py` — new `delete_job_history_bulk( user_id=None, days=None )` helper: single SQL DELETE with optional user + time-window filters; returns rowcount; never raises.
+>
+> **Protected-accounts guard** (seed-companion migration support):
+> - `rest/postgres_models.py` — new `User.is_protected: bool` column (`nullable=False, default=False, server_default="false"`).
+> - `rest/admin_service.py` — `admin_delete_user()` short-circuits with `"Cannot delete system-protected account '{email}'"` when `is_protected=True`, before the sole-admin guard runs.
+>
+> **Plan docs** (Lupin parent side):
+> - `src/rnd/v0.1.6/2026.04.16-bug-9-worktree-isolation.md`
+> - `src/rnd/v0.1.6/2026.04.16-bug-12-mcp-503-to-voice-gate-timeout.md`
+> - `src/rnd/v0.1.6/2026.04.16-cj-flow-delete-all-buttons.md`
+>
+> **Files Modified (10) + Created (1)**:
+> - Modified: `agents/bug_fix_expediter/{job,orchestrator}.py`, `agents/test_fix_expediter/{job,orchestrator}.py`, `agents/shared/fix_executor.py`, `agents/utils/agent_notification_dispatcher.py`, `rest/{admin_service,job_persistence,postgres_models}.py`, `rest/routers/queues.py`
+> - Created: `agents/shared/worktree_context.py`
+> - Diff stats: +428 / −21 across 10 modified files, 1 new file
+>
+> **Validation**: Lupin parent history confirms live end-to-end validation via `tfe-3436c5b8` (Bug 12 + 13 stalled cleanly), `tfe-152111fe` (Bug 10 op-routing + Bug 11 STALLED terminal), and CJ Flow Delete All buttons exercised against the dev UI.
+>
+> ---
+
 > **📝 SESSION 248e740e + 9a488d40 STAGED**: Presentation pipeline bugs + Marp PPTX export + pytest_direct suite type (2026.04.13)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >

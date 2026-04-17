@@ -310,8 +310,13 @@ class TestFixExpediterJob( AgenticJobBase ):
             if self.orchestrator.last_plan_path:
                 self.artifacts[ "plan_path" ] = self.orchestrator.last_plan_path
 
-            fix_results = await self.orchestrator.run_phase3_fix()
-            _git_result = await self.orchestrator.run_phase5_git()
+            # Phase 3 + 5: wrap in worktree_scope so isolation (when enabled)
+            # spans both FixExecutor and GitStrategist (Bug 9, 2026-04-16).
+            # Phase 6 runs OUTSIDE the scope — it just queues a new TestSuiteJob
+            # via the REST API and doesn't touch git/file state.
+            async with self.orchestrator.worktree_scope():
+                fix_results = await self.orchestrator.run_phase3_fix()
+                _git_result = await self.orchestrator.run_phase5_git()
             validation_run_job_id = await self.orchestrator.run_phase6_validation()
 
             # Populate artifacts for UI

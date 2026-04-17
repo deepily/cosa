@@ -12,11 +12,13 @@ Example:
     fix_result = await orchestrator.run_fix( diagnosis, selected, plan_path )
 """
 
+import asyncio
 import json
 import logging
 import queue
 import threading
 import uuid
+from contextlib import asynccontextmanager
 from typing import Optional, Callable
 
 import cosa.utils.util as cu
@@ -147,6 +149,12 @@ class BFEOrchestrator:
         # Phase 5: Trust proxy + last-files tracking
         self.last_files_changed: list = []
         self.proxy = None
+
+        # Bug 9 (2026-04-16): worktree isolation state. Populated inside
+        # `worktree_scope()` context manager during Phase 3+5; used by
+        # `_build_coder_options`, `_build_tester_options`, and `run_git_strategy`
+        # to route git / SDK operations into an isolated sandbox.
+        self._worktree_cwd: Optional[ str ] = None
         try:
             from cosa.agents.swe_team.proxy.engineering_strategy import EngineeringStrategy
             self.proxy = EngineeringStrategy(
@@ -1153,6 +1161,7 @@ class BFEOrchestrator:
             verify_fix_fn         = self._verify_fix,
             debug                 = self.debug,
             verbose               = self.verbose,
+            worktree_cwd          = self._worktree_cwd,
         )
 
         fix_result, files_changed = await executor.execute_fix(
@@ -1227,8 +1236,10 @@ class BFEOrchestrator:
         await self._emit_state( BFEPhase.FIXING, BFEPhase.COMMITTING )
         await self._notify( voice_io, "Committing changes to git...", priority="medium" )
 
-        # Delegate to shared GitStrategist (Session 1cfcdf73 extraction)
-        git_ops       = GitOps( cwd=cu.get_project_root(), debug=self.debug )
+        # Delegate to shared GitStrategist (Session 1cfcdf73 extraction).
+        # Bug 9 (2026-04-16): route git ops through worktree when isolation
+        # is active — see worktree_scope() context manager.
+        git_ops       = GitOps( cwd=( self._worktree_cwd or cu.get_project_root() ), debug=self.debug )
         strategist    = GitStrategist( debug=self.debug, verbose=self.verbose )
         trust_level   = GitStrategist.resolve_trust_level( self.proxy )
 
@@ -1438,6 +1449,72 @@ class BFEOrchestrator:
             logger.error( f"Verification failed: {e}" )
             return ( False, f"Verification error: {e}" )
 
+    # -------------------------------------------------------------------------
+    # Worktree isolation (Bug 9, 2026-04-16)
+    # -------------------------------------------------------------------------
+
+    @asynccontextmanager
+    async def worktree_scope( self ):
+        """
+        Enter worktree isolation for Phase 3 + Phase 5 (run_fix + run_git_strategy).
+
+        Caller pattern (from job.py):
+            async with orchestrator.worktree_scope():
+                fix_result = await orchestrator.run_fix( ... )
+                if fix_result.success and orchestrator.last_files_changed:
+                    fix_result = await orchestrator.run_git_strategy( ... )
+
+        When `cosa worktree enabled` is true, a dedicated worktree is created
+        under `<sandbox_root>/<job_id>`. `_build_coder_options`,
+        `_build_tester_options`, and `run_git_strategy` automatically route
+        through `self._worktree_cwd`.
+
+        When disabled, the context is a no-op and emits a warning if the
+        current working tree has uncommitted changes (safety guard).
+
+        Ensures:
+            - self._worktree_cwd is None on entry and exit (no leaked state)
+            - Cleanup runs even if the caller raises
+        """
+        from cosa.agents.shared.worktree_context import WorktreeContext
+        async with WorktreeContext( job_id=self.job_id, debug=self.debug ) as wt:
+            if wt.enabled:
+                self._worktree_cwd = wt.path
+                if self.debug: print( f"[BFEOrchestrator] Worktree isolation active: {wt.path}" )
+            else:
+                self._worktree_cwd = None
+                await self._warn_on_uncommitted_changes_if_any()
+            try:
+                yield wt
+            finally:
+                self._worktree_cwd = None
+
+    async def _warn_on_uncommitted_changes_if_any( self ) -> None:
+        """
+        Safety guard (Bug 9): when worktree isolation is disabled AND the
+        current working tree has uncommitted changes, log a visible warning.
+
+        Does NOT block execution — the user opted into this mode by leaving
+        `cosa worktree enabled=false`. Purely a heads-up.
+        """
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "status", "--porcelain",
+                stdout = asyncio.subprocess.PIPE,
+                stderr = asyncio.subprocess.PIPE,
+                cwd    = cu.get_project_root(),
+            )
+            stdout_bytes, _ = await asyncio.wait_for( proc.communicate(), timeout=5 )
+            if stdout_bytes.strip():
+                logger.warning(
+                    "[BFEOrchestrator] ⚠️  Worktree isolation is DISABLED and "
+                    "the current working tree has uncommitted changes. TFE/BFE "
+                    "fixes will mutate this tree and may contaminate your PR. "
+                    "Consider `cosa worktree enabled=true` or committing/stashing."
+                )
+        except Exception as e:
+            if self.debug: print( f"[BFEOrchestrator] uncommitted-changes check failed: {e}" )
+
     def _build_coder_options( self, guard, cosa_interface ):
         """
         Build ClaudeAgentOptions for the Coder agent.
@@ -1453,7 +1530,7 @@ class BFEOrchestrator:
             model           = self.config.worker_model,
             system_prompt   = CODER_SYSTEM_PROMPT,
             tools           = [ "Read", "Edit", "Bash" ],
-            cwd             = cu.get_project_root(),
+            cwd             = self._worktree_cwd or cu.get_project_root(),
             permission_mode = "acceptEdits",
             can_use_tool    = build_can_use_tool( cosa_interface, guard, "code-fixer" ),
             max_turns       = self.config.max_fix_attempts * 10,
@@ -1475,7 +1552,7 @@ class BFEOrchestrator:
             model           = self.config.worker_model,
             system_prompt   = TESTER_SYSTEM_PROMPT,
             tools           = [ "Read", "Edit", "Bash" ],
-            cwd             = cu.get_project_root(),
+            cwd             = self._worktree_cwd or cu.get_project_root(),
             permission_mode = "acceptEdits",
             can_use_tool    = build_can_use_tool( cosa_interface, guard, "tester" ),
             max_turns       = 10,

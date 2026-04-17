@@ -297,7 +297,20 @@ class AgentNotificationDispatcher:
                     message = f"ask_confirmation timeout after {timeout}s — MCP exit_code=2"
                 )
 
-            return default == "yes"
+            # Bug 12 (2026-04-16): any other non-0 exit code (HTTP 503 "User is
+            # offline", connection errors, etc.) is a "no answer received"
+            # condition for the orchestrator — NOT an explicit user decline.
+            # Raise so checkpoint-resume fires instead of silently applying
+            # the default. Mirrors present_choices catch-all (line ~453).
+            from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+            raise VoiceGateTimeoutError(
+                phase   = "confirmation",
+                message = (
+                    f"ask_confirmation received no answer "
+                    f"(exit_code={response.exit_code}, status={response.status}) "
+                    f"after {timeout}s"
+                )
+            )
 
         except Exception as e:
             # VoiceGateTimeoutError must propagate up to the orchestrator gates;
@@ -305,6 +318,17 @@ class AgentNotificationDispatcher:
             from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
             if isinstance( e, VoiceGateTimeoutError ):
                 raise
+            # Bug 13 (2026-04-16): Pydantic ValidationError fires BEFORE the MCP
+            # call (e.g. abstract > 5000 chars). Pre-MCP failures also mean
+            # "voice gate could not fire" — raise VoiceGateTimeoutError so the
+            # orchestrator stalls with a checkpoint instead of silently
+            # applying the default. Matches Bug 12 stall philosophy.
+            from pydantic import ValidationError
+            if isinstance( e, ( ValidationError, ConnectionError ) ):
+                raise VoiceGateTimeoutError(
+                    phase   = "confirmation",
+                    message = f"ask_confirmation pre-MCP failure ({type( e ).__name__}): {str( e )[:200]}"
+                )
             logger.warning( f"ask_confirmation failed: {e}" )
             return default == "yes"
 
@@ -352,9 +376,44 @@ class AgentNotificationDispatcher:
             if response.exit_code == 0:
                 return response.response_value
 
-            return None
+            # exit_code == 2 is the MCP server's explicit "user-unavailable
+            # timeout" signal. Raise VoiceGateTimeoutError so checkpoint-resume
+            # can trigger a clean stall instead of silently returning None.
+            if response.exit_code == 2:
+                from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+                raise VoiceGateTimeoutError(
+                    phase   = "feedback",
+                    message = f"get_feedback timeout after {timeout}s — MCP exit_code=2"
+                )
+
+            # Bug 12 (2026-04-16): any other non-0 exit code (HTTP 503 "User is
+            # offline", connection errors, etc.) is a "no answer received"
+            # condition for the orchestrator. Raise so checkpoint-resume fires
+            # instead of silently returning None. Mirrors present_choices
+            # catch-all and ask_confirmation Bug 12 fix.
+            from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+            raise VoiceGateTimeoutError(
+                phase   = "feedback",
+                message = (
+                    f"get_feedback received no answer "
+                    f"(exit_code={response.exit_code}, status={response.status}) "
+                    f"after {timeout}s"
+                )
+            )
 
         except Exception as e:
+            # VoiceGateTimeoutError must propagate up to the orchestrator gates;
+            # don't swallow it here.
+            from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+            if isinstance( e, VoiceGateTimeoutError ):
+                raise
+            # Bug 13 (2026-04-16): Pre-MCP ValidationError → stall, not silent default.
+            from pydantic import ValidationError
+            if isinstance( e, ( ValidationError, ConnectionError ) ):
+                raise VoiceGateTimeoutError(
+                    phase   = "feedback",
+                    message = f"get_feedback pre-MCP failure ({type( e ).__name__}): {str( e )[:200]}"
+                )
             logger.warning( f"get_feedback failed: {e}" )
             return None
 
@@ -460,6 +519,19 @@ class AgentNotificationDispatcher:
             from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
             if isinstance( e, VoiceGateTimeoutError ):
                 raise
+            # Bug 13 (2026-04-16): Pydantic ValidationError (e.g. abstract > 5000
+            # chars on large TFE proposal lists) fires BEFORE the MCP call, so the
+            # voice gate never reaches the user. Swallowing to empty-answers
+            # masquerades as "user selected nothing" and the job wrongly finalizes
+            # `status=completed` (observed in tfe-e4c73d5c on 2026-04-16). Treat
+            # pre-MCP failures as "voice gate unreachable" and raise
+            # VoiceGateTimeoutError so the orchestrator stalls with a checkpoint.
+            from pydantic import ValidationError
+            if isinstance( e, ( ValidationError, ConnectionError ) ):
+                raise VoiceGateTimeoutError(
+                    phase   = "choices",
+                    message = f"present_choices pre-MCP failure ({type( e ).__name__}): {str( e )[:200]}"
+                )
             logger.warning( f"present_choices failed: {e}" )
             return { "answers": {} }
 
