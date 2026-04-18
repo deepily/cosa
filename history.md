@@ -1,5 +1,50 @@
 # COSA Development History
 
+> **📝 SESSION 44581b8c STAGED**: Bug 14 watchdog factory routing + Bug 15 SDK streaming-mode workaround + 500-char response cap removal (2026.04.17)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> Lands the CoSA-side fixes from Lupin parent Session 44581b8c, which walked the TFE Resume path end-to-end. Three production bugs root-caused and patched; 42/42 unit tests green (36 watchdog + 6 new wrap helper). Parent Lupin commits already staged — this is the matching CoSA-side commit.
+>
+> **Bug 14 — Auto-dispatched TFE unresumable** (`rest/test_suite_completion_watchdog.py`):
+> - **Symptom**: TFE jobs auto-dispatched by the watchdog persisted with empty `routing_command` and no `metadata_json.original_args`, making them unresumable from the UI Resume button (factory-required fields missing).
+> - **Root cause**: `_dispatch_tfe()` constructed `TestFixExpediterJob` directly via its class constructor, bypassing `create_agentic_job()` — the single source of truth for routing-command + original-args bookkeeping. The voice-expediter path used the factory; the watchdog path didn't.
+> - **Fix**: Replace direct construction with `create_agentic_job( command="agent router go to test fix expediter", args_dict=... )`. Args dict carries `remediation_snapshot_path`, `source_test_suite_job_id`, `original_test_types`, `dry_run=False`. Returns None defensively if factory rejects (logged).
+> - **Validated**: 36/36 watchdog unit tests green. DB-patched stalled `tfe-3436c5b8` row in `lupin_db_test.job_history` (pre-patch snapshot at `/tmp/tfe-3436c5b8-pre-patch.json` for rollback).
+>
+> **Bug 15 — `claude-agent-sdk ≥ 0.1.36` rejects str prompt with `can_use_tool`** (NEW `agents/swe_team/hooks.py::wrap_prompt_for_streaming` + 7 call sites in 3 orchestrators):
+> - **Symptom**: Every Phase 1/3 SDK delegation in TFE/BFE/SWE-team raised `ValueError( "can_use_tool callback requires streaming mode. Please provide prompt as an AsyncIterable instead of a string." )` → 0 diagnoses, 0 fixes applied.
+> - **Root cause**: Python SDK ≥ 0.1.36 hard-validates: when `options.can_use_tool` is set, prompt must be an AsyncIterable (not a string). TypeScript SDK has no such restriction. Upstream issue [#18735](https://github.com/anthropics/claude-code/issues/18735) is unresolved.
+> - **Fix**: New helper `wrap_prompt_for_streaming( prompt, session_id=None )` — async generator yielding exactly one SDK-format message dict (`type=user`, `message={role: user, content: prompt}`, `parent_tool_use_id=None`, `session_id=<uuid4>`). Matches the SDK's internal `query()` shape. 7 call sites swapped: 3 in `swe_team/orchestrator.py` (delegation, verification, redelegation), 2 in `bug_fix_expediter/orchestrator.py` (Phase 1 diagnose, Phase 3 verify), 2 in `test_fix_expediter/orchestrator.py` (mirror). Each call site has inline `# Bug 15 WORKAROUND` comment + upstream URL.
+> - **Helper exported** from `agents/swe_team/__init__.py` so all consumers import via the public package surface.
+> - **Removal note**: When upstream fixes the str-path, grep for `wrap_prompt_for_streaming` to find every revert site.
+> - **Validated**: 6 new unit tests in `src/tests/unit/test_wrap_prompt_for_streaming.py` (Lupin parent) + 36/36 Bug 14 regression = **42/42 passed**.
+>
+> **500-char response_value cap removal** (`rest/routers/notifications.py`):
+> - **Symptom**: Voice-gate replies with the 11-proposal abstract were rejected with HTTP 400 "Response too long (maximum 500 characters)" before reaching the orchestrator.
+> - **Fix**: Removed the 7-line length-validation block (lines 845-851 in pre-fix tree). XSS sanitization (regex strip of `<[^>]+>`) and post-strip empty-check preserved.
+> - **Trade-off accepted**: Length-DoS protection delegated to upstream HTTP body limits + downstream consumers; rationale captured in Lupin parent TODO.md (open backlog item to optionally re-introduce a higher ceiling like 10k if review prefers).
+>
+> **Postmortems filed** (Lupin parent side):
+> - `src/rnd/v0.1.6/2026.04.17-bug-14-auto-dispatched-tfe-lacks-routing-command.md`
+> - `src/rnd/v0.1.6/2026.04.17-bug-15-claude-agent-sdk-streaming-mode-workaround.md`
+> - `src/rnd/v0.1.6/2026.04.17-bug-9a-container-missing-git-for-worktree.md` (Bug 9a was Lupin-side `docker-compose.yml` only — no CoSA changes)
+>
+> **Files Modified (7)**:
+> - `agents/swe_team/hooks.py` (+40, helper added)
+> - `agents/swe_team/__init__.py` (+2, helper exported)
+> - `agents/swe_team/orchestrator.py` (+15 / −3, 3 SDK call sites)
+> - `agents/bug_fix_expediter/orchestrator.py` (+12 / −2, 2 SDK call sites + import)
+> - `agents/test_fix_expediter/orchestrator.py` (+12 / −2, 2 SDK call sites + import)
+> - `rest/routers/notifications.py` (−7, length cap removal)
+> - `rest/test_suite_completion_watchdog.py` (+30 / −18, factory routing)
+> - **Diff stats**: +109 / −36 across 7 files
+>
+> **Validation**: All 7 files `py_compile` clean. Lupin parent unit suite **42/42 green** (6 wrap helper + 36 watchdog regression). End-to-end Resume path validated through Bugs X1/X2/14/9a/15/showToast/500-char-cap; Phase 3 FixExecutor observation deferred to next session (requires container bounce after these CoSA changes land + live re-Resume on `tfe-72adc928`).
+>
+> ---
+
 > **📝 SESSION 79ef7dfd STAGED**: Bug 9 worktree isolation + Bug 12/13 voice-gate stall + CJ Flow Delete All + protected-accounts guard (2026.04.16)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >

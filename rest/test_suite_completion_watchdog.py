@@ -229,14 +229,6 @@ class TestSuiteCompletionWatchdog:
             )
             return None
 
-        try:
-            from cosa.agents.test_fix_expediter.job import TestFixExpediterJob
-        except ImportError as e:
-            logger.error(
-                f"[TestSuiteCompletionWatchdog] cannot import TestFixExpediterJob: {e}"
-            )
-            return None
-
         snapshot_path = completed_job.artifacts.get(
             "remediation_snapshot_path", ""
         )
@@ -250,21 +242,39 @@ class TestSuiteCompletionWatchdog:
         user_email = getattr( completed_job, "user_email", "" )
         session_id = getattr( completed_job, "session_id", "" )
 
+        # Route through create_agentic_job() so routing_command + original_args are set
+        # on the constructed job for Resume capability (Bug 14 fix). The factory is the
+        # single source of truth for TFE construction; matches the voice-expediter path.
         try:
-            tfe_job = TestFixExpediterJob(
-                remediation_snapshot_path = snapshot_path,
-                source_test_suite_job_id  = getattr( completed_job, "id_hash", "unknown" ),
-                user_id                   = user_id,
-                user_email                = user_email,
-                session_id                = session_id,
-                original_test_types       = snapshot.get( "suites_run", [] ),
-                dry_run                   = False,
-                debug                     = self.debug,
-                verbose                   = self.verbose,
+            from cosa.rest.agentic_job_factory import create_agentic_job
+
+            args_dict = {
+                "remediation_snapshot_path" : snapshot_path,
+                "source_test_suite_job_id"  : getattr( completed_job, "id_hash", "unknown" ),
+                "original_test_types"       : snapshot.get( "suites_run", [] ),
+                "dry_run"                   : False,
+            }
+
+            tfe_job = create_agentic_job(
+                command    = "agent router go to test fix expediter",
+                args_dict  = args_dict,
+                user_id    = user_id,
+                user_email = user_email,
+                session_id = session_id,
+                debug      = self.debug,
+                verbose    = self.verbose,
             )
+
+            if tfe_job is None:
+                logger.error(
+                    "[TestSuiteCompletionWatchdog] create_agentic_job returned None for TFE dispatch "
+                    f"(source job {getattr( completed_job, 'id_hash', 'unknown' )})"
+                )
+                return None
+
         except Exception as e:
             logger.error(
-                f"[TestSuiteCompletionWatchdog] TFE construction failed: {e}"
+                f"[TestSuiteCompletionWatchdog] TFE construction via factory failed: {e}"
             )
             return None
 

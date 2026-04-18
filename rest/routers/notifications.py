@@ -845,13 +845,6 @@ async def submit_notification_response(
             import re
             response_value = re.sub( r'<[^>]+>', '', response_value )
 
-            # Length validation
-            if len( response_value ) > 500:
-                raise HTTPException(
-                    status_code = 400,
-                    detail      = "Response too long (maximum 500 characters)"
-                )
-
             # Empty check (after stripping whitespace)
             if len( response_value.strip() ) == 0:
                 raise HTTPException(

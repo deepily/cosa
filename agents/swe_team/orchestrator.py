@@ -42,7 +42,7 @@ from .agent_definitions import (
 )
 from .test_runner import run_pytest, TestRunResult
 from .mock_clients import MockAgentSDKSession
-from .hooks import build_can_use_tool, post_tool_hook, notification_hook
+from .hooks import build_can_use_tool, post_tool_hook, notification_hook, wrap_prompt_for_streaming
 from .state_files import FeatureList, ProgressLog
 
 # SDK imports — graceful fallback
@@ -1311,7 +1311,11 @@ Complete this task. When done, summarize what you did and list all files changed
             self.current_state = OrchestratorState.CODING
             await self._emit_state( prev_state, self.current_state, { "task_index": task_index } )
 
-            async for message in sdk_query( prompt=delegation_prompt, options=options ):
+            # Bug 15 WORKAROUND: claude-agent-sdk ≥ 0.1.36 rejects str prompt when
+            # can_use_tool is set on options. Upstream (unresolved as of 2026-04-17):
+            # https://github.com/anthropics/claude-code/issues/18735 — remove the
+            # wrap_prompt_for_streaming() call once upstream lands the fix.
+            async for message in sdk_query( prompt=wrap_prompt_for_streaming( delegation_prompt ), options=options ):
                 self.guard.check_timeout()
 
                 if isinstance( message, AssistantMessage ):
@@ -1439,7 +1443,11 @@ IMPORTANT:
             # Progress group ID for in-place DOM updates of tester SDK stream messages
             tester_group_id = f"pg-{uuid.uuid4().hex[ :8 ]}"
 
-            async for message in sdk_query( prompt=verification_prompt, options=options ):
+            # Bug 15 WORKAROUND: claude-agent-sdk ≥ 0.1.36 rejects str prompt when
+            # can_use_tool is set on options. Upstream (unresolved as of 2026-04-17):
+            # https://github.com/anthropics/claude-code/issues/18735 — remove the
+            # wrap_prompt_for_streaming() call once upstream lands the fix.
+            async for message in sdk_query( prompt=wrap_prompt_for_streaming( verification_prompt ), options=options ):
                 self.guard.check_timeout()
 
                 if isinstance( message, AssistantMessage ):
@@ -1591,7 +1599,11 @@ INSTRUCTIONS:
             self.current_state = OrchestratorState.CODING
             await self._emit_state( prev_state, self.current_state, { "task_index": task_index, "iteration": iteration } )
 
-            async for message in sdk_query( prompt=redelegation_prompt, options=options ):
+            # Bug 15 WORKAROUND: claude-agent-sdk ≥ 0.1.36 rejects str prompt when
+            # can_use_tool is set on options. Upstream (unresolved as of 2026-04-17):
+            # https://github.com/anthropics/claude-code/issues/18735 — remove the
+            # wrap_prompt_for_streaming() call once upstream lands the fix.
+            async for message in sdk_query( prompt=wrap_prompt_for_streaming( redelegation_prompt ), options=options ):
                 self.guard.check_timeout()
 
                 if isinstance( message, AssistantMessage ):

@@ -57,7 +57,7 @@ from cosa.agents.test_fix_expediter.prompts.fix import (
 # SWE Team safety primitives (shared with BFE)
 try:
     from cosa.agents.swe_team.safety_limits import SafetyGuard, SafetyLimitError
-    from cosa.agents.swe_team.hooks import build_can_use_tool, post_tool_hook
+    from cosa.agents.swe_team.hooks import build_can_use_tool, post_tool_hook, wrap_prompt_for_streaming
     from cosa.agents.swe_team.test_runner import run_pytest
     SAFETY_AVAILABLE = True
 except ImportError:
@@ -1353,7 +1353,11 @@ class TFEOrchestrator:
             collected_text = []
             files_changed  = []
 
-            async for message in sdk_query( prompt=prompt, options=options ):
+            # Bug 15 WORKAROUND: claude-agent-sdk ≥ 0.1.36 rejects str prompt when
+            # can_use_tool is set on options. Upstream (unresolved as of 2026-04-17):
+            # https://github.com/anthropics/claude-code/issues/18735 — remove the
+            # wrap_prompt_for_streaming() call once upstream lands the fix.
+            async for message in sdk_query( prompt=wrap_prompt_for_streaming( prompt ), options=options ):
                 guard.check_timeout()
 
                 if self._is_cancelled():
@@ -1429,7 +1433,11 @@ class TFEOrchestrator:
             collected_text = []
             test_files     = []
 
-            async for message in sdk_query( prompt=prompt, options=options ):
+            # Bug 15 WORKAROUND: claude-agent-sdk ≥ 0.1.36 rejects str prompt when
+            # can_use_tool is set on options. Upstream (unresolved as of 2026-04-17):
+            # https://github.com/anthropics/claude-code/issues/18735 — remove the
+            # wrap_prompt_for_streaming() call once upstream lands the fix.
+            async for message in sdk_query( prompt=wrap_prompt_for_streaming( prompt ), options=options ):
                 guard.check_timeout()
 
                 if isinstance( message, AssistantMessage ):
