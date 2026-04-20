@@ -111,6 +111,7 @@ TEST_PROFILES = {
         "target_duration_minutes"  : "15",
         "theme"                    : "default",
         "dead_job_id"              : "dr-mock1234::user1",
+        "resume_from"              : "tfe-mock1234::user1",
         "extra_context"            : "none",
         "pytest_args"              : "none",
         "test_types"               : "integration,e2e",
