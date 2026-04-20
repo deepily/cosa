@@ -948,6 +948,7 @@ class TodoFifoQueue( FifoQueue ):
         "agent router go to swe team"                  : "SWE Team (multi-agent engineering team)",
         "agent router go to bug fix expediter"         : "Bug Fix Expediter (diagnose and fix a failed job)",
         "agent router go to test suite"                : "TestRunner (run integration and E2E test suites)",
+        "agent router go to test fix expediter resume" : "Test Fix Expediter Resume (resume a stalled TFE job)",
     }
 
     def _confirm_agentic_routing( self, command, args, user_id, user_email, original_question ):
