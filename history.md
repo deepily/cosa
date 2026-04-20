@@ -1,5 +1,60 @@
 # COSA Development History
 
+> **📝 SESSION 7c8b0ce2 STAGED**: Session be57a252 + d8831785 CoSA bundle — TFE Option A tier budgets + Worktree Artifacts + Coder tool-use breadcrumbs + Coder prompt audit + TFE-to-CC engine variant scaffold (2026.04.20)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> Lands the CoSA-side work from Lupin parent Sessions **be57a252** (2026-04-18 through 04-19 post-game) and **d8831785** (2026-04-20 TFE-to-CC harness + live test). Three distinct bodies of work bundled because they co-habited the working tree; parent Lupin commits `6c9fe77`, `68f0423`, `74ef141`, `aa7848f`, `4b531fd`, `ad55c29` already landed — this is the matching CoSA-side commit series. Today's session has documentation-only scope on the CoSA submodule (no new code beyond the previously staged edits); it exists purely to capture the uncommitted work under a dedicated session-end entry per the parent-`.claude-session.md` manifest convention.
+>
+> **Body 1 — Session be57a252: TFE Option A auto-tiered Coder turn budget** (`agents/test_fix_expediter/config.py`, `orchestrator.py`):
+> - **Problem**: `tfe-8b2eaeda` produced 11/11 `error_max_turns` with the flat `max_fix_attempts * 10 = 20` budget. Visual-baseline fixes (4+ files) need headroom; single-line test-value flips do not.
+> - **Fix**: Three new INI keys — `test fix expediter coder budget {small,medium,large} turns = 30/50/80` — materialized as fields on `TestFixExpediterConfig`. Orchestrator derives tier per proposal via `_derive_budget_tier( proposed, cluster=... )`: small (1 file + `test_patch`/`config_change`), large (≥4 files), medium (default). `_build_tfe_coder_options` reads `self._current_budget_tier` (set by Phase 3 loop before each `executor.execute_fix(...)` — single-writer safe under sequential Phase 3 execution).
+> - **2026-04-19 fix**: Tier derivation now falls back to `cluster.affected_files_guess` length when `proposed.changes` is empty (TFE proposals routinely leave `changes` empty, which was causing every proposal to fall to `medium` regardless of real scope).
+> - **Applying-fix notification** now appends `[budget=<tier>]` so operator sees the chosen budget in-flight.
+>
+> **Body 1 — Session be57a252: Coder tool-use breadcrumbs** (`agents/test_fix_expediter/orchestrator.py::_summarize_tool_use`, mirrored `agents/bug_fix_expediter/orchestrator.py`):
+> - **Problem**: Operator note — prior `Coder: {block.name}` breadcrumbs produced long runs of identical-looking `Coder: Bash` lines with no context, "almost meaningless."
+> - **Fix**: Static helper converts `Bash`→`Bash: <first line of command>`, `Read`/`Edit`/`Write`→`<name>: <trailing 100 chars of file_path>`, `Grep`/`Glob`→`<name>: <pattern>`. Cap at 100 chars per segment. Both TFE and BFE orchestrators use the same shape.
+>
+> **Body 1 — Session be57a252: Completion-abstract Worktree Artifacts section** (`agents/test_fix_expediter/{orchestrator,job}.py`, `agents/bug_fix_expediter/{orchestrator,job}.py`):
+> - **Problem**: Operator had no way to find the preserved worktree + commits after Phase 5 exit when `cosa worktree auto cleanup = false`.
+> - **Fix**: New pure helpers `render_worktree_artifacts_abstract()` on both TFE (method, reads instance state) and BFE (static method, takes `job_id`/`fix_result`/`fix_applied`) orchestrators. Emit a Markdown block in the completion abstract with: worktree path, per-cluster ✓/✗ outcome + affected-files count (TFE), Phase 5 branch/commit-count/PR URL, and two `git -C <path> …` inspection commands. `job.py` wires in both agents via `.extend( … )` of the returned line list. Pure helpers → unit-testable in isolation against staged orchestrator state (tests live in Lupin parent at `src/tests/unit/test_worktree_artifacts_abstract.py`).
+>
+> **Body 2 — Session be57a252 Phase 2: Coder prompt audit** (`agents/test_fix_expediter/prompts/fix.py::CODER_SYSTEM_PROMPT`):
+> - **Problem**: `tfe-a1c6e15a` post-game: 0/11 fixed over 63 min at ~$6.50 / 13 SDK calls; `num_turns` distribution showed Coder exhausting budget caps (most runs at 31/51/78). C6's Coder wrote a valid 3-line fix in 31 turns — clear evidence of exploration waste before committing to the Edit.
+> - **Phase 1 design doc**: Lupin parent `src/rnd/v0.1.6/2026.04.19-coder-prompt-audit.md` (committed in Lupin as `aa7848f`) identified 5 exploration-inviting phrases in the old prompt and proposed 5 efficiency rules.
+> - **Phase 2 implementation (this commit)**: rewrote `CODER_SYSTEM_PROMPT` into two sections — **Efficiency rules** (commit to Edit within 3 calls after Read; read targeted file paths only, no broad Grep; one py_compile per file, optional for single-line test-value changes; do NOT run pytest — Tester verifies; stop on unclear proposals rather than speculate) + **Behavior rules** (don't modify test files for `code_patch`, no destructive commands, summarize at end). Hypothesized savings: ~10-30 turns per Coder run, ~$4 saved per TFE run, higher fix-landing rate.
+>
+> **Body 3 — Session d8831785: NEW `agents/tfe_to_cc/` engine variant scaffold** (5 files, 807 lines):
+> - **Context**: Claude Code (CC) engine as a peer to the SDK-based TFE path for Phases 1 and 3. Design doc 19 + Phase 1 execution log 20 + Phase 3 execution log 21 live in Lupin parent under `src/rnd/v0.1.6/2026.04.10-test-fix-expediter/`. Phase 3 live test result: **CC + Task subagents landed 4/11 fixes in 8 min**, vs **0/11 for three consecutive SDK runs at 63/120/180 min**.
+> - **Selection mechanism** (future): runtime INI flags `test fix expediter phase 1 engine = sdk | claude_code` and `test fix expediter phase 3 engine = sdk | claude_code`. Both SDK and CC paths are maintained side-by-side; no existing SDK code changed here.
+> - **Files**:
+>     - `agents/tfe_to_cc/__init__.py` (10 lines — package marker + design-doc pointer)
+>     - `agents/tfe_to_cc/prompts/__init__.py` (1 line)
+>     - `agents/tfe_to_cc/prompts/bundle_phase1.py` (163 lines — `build_diagnosis_bundle_prompt(clusters, failure_context=None)`: single self-contained markdown prompt instructing CC to diagnose root causes per cluster and emit a fenced `tfe-diagnosis` JSON block)
+>     - `agents/tfe_to_cc/prompts/bundle_phase3.py` (245 lines — Phase 3 apply-fixes bundle prompt)
+>     - `agents/tfe_to_cc/prompts/output_contract.py` (388 lines — fenced JSON output schemas + parsers for both phases)
+>
+> **Body 3 — Session d8831785: 1-line partial TFE-proposal landing** (`agents/runtime_argument_expeditor/agent_registry.py`):
+> - `quick_smoke_test()` assertion `len( AGENTIC_AGENTS ) == 9 → == 10`. Retires 1 of the 3 `== 9` sites flagged in the TFE `ts-79829a75` proposal series. Remaining 2 sites (in Lupin-parent unit tests) unaffected here.
+>
+> **Antecedent CoSA commits** (already landed on the branch before this session): `c35a2d9` (C4: resume_from added to all_agents profile in `config.py`) and `2502b4c` (C2: PRODUCT_NAMES entry for TFE Resume agent). Both were individual TFE-proposal landings from the `ts-79829a75` post-game that were picked out of the live-test worktree.
+>
+> **Files Modified (7) + Created (5)**:
+> - Modified: `agents/bug_fix_expediter/{job,orchestrator}.py`, `agents/test_fix_expediter/{config,job,orchestrator}.py`, `agents/test_fix_expediter/prompts/fix.py`, `agents/runtime_argument_expeditor/agent_registry.py`
+> - Created: `agents/tfe_to_cc/__init__.py`, `agents/tfe_to_cc/prompts/{__init__,bundle_phase1,bundle_phase3,output_contract}.py`
+> - Diff stats (modified only): +237 / −13 across 7 files; new directory adds 807 lines across 5 files
+>
+> **Validation**: All modified files `py_compile` clean (planned post-commit verification). Lupin-parent unit tests for Bodies 1+2 (budget_tier, coder_tool_summary, worktree_artifacts_abstract, config_integration_tfe_option_a, bundle_phase1, bundle_phase3, output_contract, result_parser) land in separate Lupin commits — outcome captured in Lupin `history.md` Session be57a252 + d8831785 entries.
+>
+> **Commits landed this session**:
+> - `34c7513` — Session be57a252 code bundle (7 modified files, +237/−13)
+> - `6d8ded3` — Session d8831785 new `tfe_to_cc/` scaffold (5 new files, +807)
+> - Session-end docs (this entry + `.claude-session.md`) committed separately.
+>
+> ---
+
 > **📝 SESSION 44581b8c STAGED**: Bug 14 watchdog factory routing + Bug 15 SDK streaming-mode workaround + 500-char response cap removal (2026.04.17)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >
