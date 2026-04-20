@@ -385,6 +385,15 @@ class TestFixExpediterJob( AgenticJobBase ):
                         f"- **{cid}**: {diag.root_cause[ :120 ]} ({conf}, {diag.error_category})"
                     )
 
+            # Worktree artifacts — surfaces what Phase 3/5 produced so the
+            # operator can actually find the worktree + commits when
+            # cosa_worktree.auto_cleanup=false preserves the sandbox.
+            # Delegated to TFEOrchestrator.render_worktree_artifacts_abstract
+            # so the logic is unit-testable in isolation.
+            lines.extend(
+                self.orchestrator.render_worktree_artifacts_abstract( self.id_hash )
+            )
+
             completion_abstract = "\n".join( lines )
 
             try:

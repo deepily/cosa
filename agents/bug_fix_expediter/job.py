@@ -373,6 +373,18 @@ class BugFixExpediterJob( AgenticJobBase ):
             if getattr( fix_result, "pr_url", None ):
                 lines.append( f"**PR**: {fix_result.pr_url}" )
             lines.append( f"**Duration**: {duration}s" )
+
+            # Worktree artifacts — delegated to pure static helper on the
+            # orchestrator class for unit-test isolation. Called via the
+            # class (not self.orchestrator) because BFE uses a local-variable
+            # orchestrator, not an instance attribute.
+            from cosa.agents.bug_fix_expediter.orchestrator import BFEOrchestrator
+            lines.extend(
+                BFEOrchestrator.render_worktree_artifacts_abstract(
+                    self.id_hash, fix_result, fix_applied
+                )
+            )
+
             completion_abstract = "\n".join( lines )
 
             try:

@@ -150,6 +150,12 @@ class TFEOrchestrator:
         # Phase 5 git ops to route into an isolated sandbox.
         self._worktree_cwd : Optional[ str ] = None
 
+        # Option A (2026-04-18): per-fix Coder turn-budget tier. Set by the
+        # Phase 3 loop before each `executor.execute_fix(...)` call; read by
+        # `_build_tfe_coder_options` to pick max_turns from config. Sequential
+        # Phase 3 execution makes this single-writer safe.
+        self._current_budget_tier : str = "medium"
+
     # ───────────────────────────────────────────────────────────────
     # Cancellation + notification helpers
     # ───────────────────────────────────────────────────────────────
@@ -1237,8 +1243,16 @@ class TFEOrchestrator:
                 )
                 continue
 
+            # Option A (2026-04-18): auto-derive Coder turn budget per proposal.
+            # _build_tfe_coder_options reads self._current_budget_tier to pick
+            # max_turns from config. Pass cluster so derivation can fall back
+            # to cluster.affected_files_guess when proposed.changes is empty
+            # (2026-04-19 fix — TFE proposals routinely leave changes empty).
+            self._current_budget_tier = self._derive_budget_tier( proposed, cluster=cluster )
+
             await self._notify(
-                f"Applying fix {i}/{n} for {proposed.cluster_id}: {proposed.title}",
+                f"Applying fix {i}/{n} for {proposed.cluster_id}: {proposed.title} "
+                f"[budget={self._current_budget_tier}]",
                 priority="low",
             )
 
@@ -1374,7 +1388,8 @@ class TFEOrchestrator:
                                     files_changed.append( file_path )
                                 await post_tool_hook( block.name, block.input, guard )
                             await self._notify(
-                                f"Coder: {block.name}", priority="low",
+                                f"Coder: {self._summarize_tool_use( block )}",
+                                priority="low",
                             )
                 elif isinstance( message, TextBlock ):
                     collected_text.append( message.text )
@@ -1550,8 +1565,120 @@ class TFEOrchestrator:
         except Exception as e:
             if self.debug: print( f"[TFEOrchestrator] uncommitted-changes check failed: {e}" )
 
+    def render_worktree_artifacts_abstract( self, job_id: str ) -> list:
+        """
+        Render the 'Worktree Artifacts' section of the TFE completion abstract.
+
+        Pure helper (no side effects) — exposed as a method so unit tests can
+        stage orchestrator state directly and assert the output. Returns an
+        empty list when there are no selected fixes (nothing to report).
+
+        Fields read (all may be missing on early/partial runs):
+            - self.selected_fixes : list of TFEProposedFix with cluster_id
+            - self.fix_results : list of FixResult parallel to selected_fixes
+            - self.files_changed_by_cluster : dict[cluster_id → list[str]]
+            - self.branch_name, self.commit_hashes, self.pr_url : Phase 5 outputs
+        """
+        if not self.selected_fixes:
+            return []
+        lines = [ "", "**Worktree Artifacts**" ]
+        worktree_path = f"{cu.get_project_root()}/.claude/worktrees/{job_id}"
+        lines.append( f"**Path**: `{worktree_path}`" )
+
+        results   = self.fix_results or []
+        files_map = self.files_changed_by_cluster or {}
+        for proposed, result in zip( self.selected_fixes, results ):
+            cid    = proposed.cluster_id
+            mark   = "✓" if result.success else "✗"
+            nfiles = len( files_map.get( cid, [] ) )
+            files_suffix = f" · files={nfiles}" if nfiles else ""
+            lines.append( f"- **{cid}** {mark} {proposed.title[ :80 ]}{files_suffix}" )
+
+        branch = getattr( self, "branch_name", None )
+        hashes = getattr( self, "commit_hashes", [] ) or []
+        pr_url = getattr( self, "pr_url", None )
+        if branch or hashes or pr_url:
+            lines.append( "" )
+            if branch:
+                lines.append( f"**Branch**: `{branch}`" )
+            if hashes:
+                lines.append( f"**Commits**: {len( hashes )}" )
+                for h in hashes[ :10 ]:
+                    lines.append( f"- `{h[ :8 ]}`" )
+            if pr_url:
+                lines.append( f"**PR**: {pr_url}" )
+
+        lines.append( "" )
+        lines.append( "**Inspect**:" )
+        lines.append( f"- `git -C {worktree_path} log --oneline`" )
+        lines.append( f"- `git -C {worktree_path} diff --stat origin/main`" )
+        return lines
+
+    @staticmethod
+    def _summarize_tool_use( block ) -> str:
+        """
+        Compact single-line summary of a ToolUseBlock for progress notifications.
+
+        Replaces the old bare `Coder: {block.name}` breadcrumbs (which produced
+        long runs of identical-looking 'Coder: Bash' entries with no context)
+        with a tool-specific digest that surfaces the key argument. Truncated
+        to 100 chars to keep notification text tight.
+
+        Filed 2026-04-18 (Session be57a252) after operator noted the prior
+        format was "almost meaningless without more context."
+        """
+        name = block.name
+        inp  = block.input or {}
+        if name == "Bash":
+            cmd = inp.get( "command", "" ) or ""
+            first_line = cmd.splitlines()[ 0 ] if cmd else ""
+            return f"Bash: {first_line[ :100 ]}" if first_line else "Bash"
+        if name in ( "Read", "Edit", "Write" ):
+            fp = inp.get( "file_path", "" ) or ""
+            return f"{name}: {fp[ -100: ]}" if fp else name
+        if name in ( "Grep", "Glob" ):
+            pat = inp.get( "pattern", "" ) or ""
+            return f"{name}: {pat[ :100 ]}" if pat else name
+        return name
+
+    @staticmethod
+    def _derive_budget_tier( proposed, cluster=None ) -> str:
+        """
+        Auto-derive Coder turn-budget tier (Option A, 2026-04-18).
+
+        Tiers:
+            - small  : single-file test_patch or config_change — trivial flips
+            - large  : 4+ affected files — visual baselines, broad refactors
+            - medium : everything else — single-file code_patch, 2-3 file anythings, retries
+
+        File-count source (2026-04-19 fix after tfe-a1c6e15a post-game):
+            1. `proposed.changes` list length (preferred — what the proposer explicitly enumerated)
+            2. `cluster.affected_files_guess` length (fallback — TFE proposals often
+               leave `changes` empty, so every proposal would otherwise fall to `medium`)
+            3. 0 if neither source populated
+
+        Defensive fallback: if no file info is discoverable, returns "medium".
+        """
+        n_files = len( proposed.changes ) if proposed.changes else 0
+        if n_files == 0 and cluster is not None:
+            n_files = len( getattr( cluster, "affected_files_guess", [] ) or [] )
+        ft = proposed.fix_type
+        if n_files == 1 and ft in ( "test_patch", "config_change" ):
+            return "small"
+        if n_files >= 4:
+            return "large"
+        return "medium"
+
     def _build_tfe_coder_options( self, guard, cosa_interface_module ):
         """Build ClaudeAgentOptions for the TFE Coder agent."""
+        budget_by_tier = {
+            "small"  : self.config.coder_budget_small_turns,
+            "medium" : self.config.coder_budget_medium_turns,
+            "large"  : self.config.coder_budget_large_turns,
+        }
+        max_turns = budget_by_tier.get(
+            self._current_budget_tier, self.config.coder_budget_medium_turns
+        )
         return ClaudeAgentOptions(
             model           = self.config.worker_model,
             system_prompt   = TFE_CODER_SYSTEM_PROMPT,
@@ -1559,7 +1686,7 @@ class TFEOrchestrator:
             cwd             = self._worktree_cwd or cu.get_project_root(),
             permission_mode = "acceptEdits",
             can_use_tool    = build_can_use_tool( cosa_interface_module, guard, "tfe-coder" ),
-            max_turns       = self.config.max_fix_attempts * 10,
+            max_turns       = max_turns,
             max_budget_usd  = self.config.budget_usd,
         )
 

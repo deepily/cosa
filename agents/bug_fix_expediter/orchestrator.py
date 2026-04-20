@@ -1358,7 +1358,9 @@ class BFEOrchestrator:
                                     files_changed.append( file_path )
                                 await post_tool_hook( block.name, block.input, guard )
                             await self._notify(
-                                voice_io, f"Coder: {block.name}", priority="low",
+                                voice_io,
+                                f"Coder: {self._summarize_tool_use( block )}",
+                                priority="low",
                             )
                 elif isinstance( message, TextBlock ):
                     collected_text.append( message.text )
@@ -1544,6 +1546,63 @@ class BFEOrchestrator:
             max_turns       = self.config.max_fix_attempts * 10,
             max_budget_usd  = self.config.budget_usd,
         )
+
+    @staticmethod
+    def render_worktree_artifacts_abstract( job_id: str, fix_result, fix_applied: bool ) -> list:
+        """
+        Render the 'Worktree Artifacts' section of the BFE completion abstract.
+
+        Pure static helper so unit tests can drive it directly. Returns an
+        empty list when no fix was applied AND no commit was made (nothing
+        to report).
+
+        BFE is single-fix (vs. TFE's multi-cluster), so this reads a single
+        FixResult rather than parallel lists.
+        """
+        if not ( fix_applied or getattr( fix_result, "commit_hash", None ) ):
+            return []
+        lines = [ "", "**Worktree Artifacts**" ]
+        worktree_path = f"{cu.get_project_root()}/.claude/worktrees/{job_id}"
+        lines.append( f"**Path**: `{worktree_path}`" )
+        strategy = getattr( fix_result, "git_strategy", None )
+        if strategy:
+            lines.append( f"**Strategy**: {strategy}" )
+        branch = getattr( fix_result, "branch_name", None )
+        if branch:
+            lines.append( f"**Branch**: `{branch}`" )
+        commit_hash = getattr( fix_result, "commit_hash", None )
+        if commit_hash:
+            lines.append( f"**Commit**: `{commit_hash[ :8 ]}`" )
+        lines.append( "" )
+        lines.append( "**Inspect**:" )
+        lines.append( f"- `git -C {worktree_path} log --oneline`" )
+        lines.append( f"- `git -C {worktree_path} diff --stat origin/main`" )
+        return lines
+
+    @staticmethod
+    def _summarize_tool_use( block ) -> str:
+        """
+        Compact single-line summary of a ToolUseBlock for progress notifications.
+
+        Replaces the old bare `Coder: {block.name}` breadcrumbs with a
+        tool-specific digest that surfaces the key argument. Parity with TFE's
+        `TFEOrchestrator._summarize_tool_use`. Truncated to 100 chars.
+
+        Filed 2026-04-18 (Session be57a252).
+        """
+        name = block.name
+        inp  = block.input or {}
+        if name == "Bash":
+            cmd = inp.get( "command", "" ) or ""
+            first_line = cmd.splitlines()[ 0 ] if cmd else ""
+            return f"Bash: {first_line[ :100 ]}" if first_line else "Bash"
+        if name in ( "Read", "Edit", "Write" ):
+            fp = inp.get( "file_path", "" ) or ""
+            return f"{name}: {fp[ -100: ]}" if fp else name
+        if name in ( "Grep", "Glob" ):
+            pat = inp.get( "pattern", "" ) or ""
+            return f"{name}: {pat[ :100 ]}" if pat else name
+        return name
 
     def _build_tester_options( self, guard, cosa_interface ):
         """

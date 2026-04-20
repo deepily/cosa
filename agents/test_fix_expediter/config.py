@@ -49,6 +49,15 @@ class TestFixExpediterConfig:
     # === Fix limits ===
     max_fix_attempts              : int   = 2
 
+    # === Phase 3 Coder turn budget (Option A — auto-tiered, 2026-04-18) ===
+    # Orchestrator picks tier per proposal (small/medium/large) based on
+    # fix_type + affected-files count; max_turns for the Coder sdk_query is
+    # drawn from the matching field here. Replaces the old formula
+    # `max_fix_attempts * 10` that hit every proposal with a flat 20.
+    coder_budget_small_turns      : int   = 30
+    coder_budget_medium_turns     : int   = 50
+    coder_budget_large_turns      : int   = 80
+
     # === Budget + time ===
     cost_cap_usd                  : float = 15.00
     wall_clock_timeout_secs       : int   = 2400
@@ -108,6 +117,9 @@ class TestFixExpediterConfig:
             "max_diagnosis_iterations"    : "test fix expediter max diagnosis iterations",
             "min_diagnosis_confidence"    : "test fix expediter min diagnosis confidence",
             "max_fix_attempts"            : "test fix expediter max fix attempts",
+            "coder_budget_small_turns"    : "test fix expediter coder budget small turns",
+            "coder_budget_medium_turns"   : "test fix expediter coder budget medium turns",
+            "coder_budget_large_turns"    : "test fix expediter coder budget large turns",
             "cost_cap_usd"                : "test fix expediter cost cap usd",
             "wall_clock_timeout_secs"     : "test fix expediter wall clock timeout secs",
             "trust_mode"                  : "test fix expediter trust mode",
