@@ -10,10 +10,12 @@ Generated on: 2025-01-24
 
 import asyncio
 
-from fastapi import APIRouter, Query, HTTPException, Depends, Request
+from fastapi import APIRouter, Query, HTTPException, Depends, Request, Body
 from fastapi.responses import JSONResponse
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Literal
+
+from pydantic import BaseModel
 
 import cosa.utils.util as cu
 
@@ -1056,6 +1058,82 @@ async def cancel_job(
 
 
 @router.delete(
+    "/queue/{queue_name}/all",
+    summary     = "Delete all jobs from a queue",
+    description = "Bulk remove all jobs from todo, run, done, or dead queue. "
+                  "Admins clear the entire queue; regular users delete only their own jobs."
+)
+async def delete_all_queue_jobs(
+    queue_name: str,
+    current_user: dict = Depends( get_current_user ),
+    running_queue      = Depends( get_running_queue ),
+    done_queue         = Depends( get_done_queue ),
+    dead_queue         = Depends( get_dead_queue ),
+    todo_queue         = Depends( get_todo_queue ),
+):
+    """
+    Bulk delete all jobs from an in-memory queue.
+
+    For running jobs, signals cancellation on each before removal.
+    Admins get a full queue.clear(); regular users get per-job deletion
+    scoped to their own user_id (same auth model as single-job delete).
+
+    Route-order note: this literal-path handler is declared BEFORE the
+    parameterized `/queue/{queue_name}/{job_id}` sibling so FastAPI matches
+    `/queue/done/all` here rather than binding `job_id="all"` and returning 404.
+
+    Requires:
+        - queue_name is one of: 'todo', 'run', 'done', 'dead'
+        - current_user is authenticated
+
+    Ensures:
+        - All matching jobs removed from queue
+        - Running jobs receive cancel signal before removal
+        - Returns { status, queue_name, items_deleted, timestamp }
+
+    Raises:
+        - HTTPException 400: Invalid queue name
+    """
+    user_id = current_user[ "uid" ]
+
+    queue_map = {
+        "todo" : todo_queue,
+        "run"  : running_queue,
+        "done" : done_queue,
+        "dead" : dead_queue
+    }
+    if queue_name not in queue_map:
+        raise HTTPException( status_code=400, detail=f"Invalid queue name: {queue_name}. Must be 'todo', 'run', 'done', or 'dead'." )
+
+    queue = queue_map[ queue_name ]
+
+    print( f"[API] DELETE /api/queue/{queue_name}/all - user: {user_id}, admin: {is_admin( current_user )}" )
+
+    if is_admin( current_user ):
+        count = queue.size()
+        queue.clear()
+        items_deleted = count
+    else:
+        jobs = queue.get_jobs_for_user( user_id )
+        items_deleted = 0
+        for job in jobs:
+            if queue_name == "run" and isinstance( job, AgenticJobBase ):
+                job.request_cancel()
+            deleted = queue.delete_by_id_hash( job.id_hash )
+            if deleted:
+                items_deleted += 1
+
+    print( f"[API] Deleted {items_deleted} jobs from {queue_name} queue by user {user_id}" )
+
+    return {
+        "status"        : "deleted",
+        "queue_name"    : queue_name,
+        "items_deleted" : items_deleted,
+        "timestamp"     : cu.get_current_datetime_iso()
+    }
+
+
+@router.delete(
     "/queue/{queue_name}/{job_id}",
     summary     = "Remove job from queue",
     description = "Forcefully remove a job from todo, run, done, or dead queue."
@@ -1170,78 +1248,6 @@ async def delete_queue_job(
     }
 
 
-@router.delete(
-    "/queue/{queue_name}/all",
-    summary     = "Delete all jobs from a queue",
-    description = "Bulk remove all jobs from todo, run, done, or dead queue. "
-                  "Admins clear the entire queue; regular users delete only their own jobs."
-)
-async def delete_all_queue_jobs(
-    queue_name: str,
-    current_user: dict = Depends( get_current_user ),
-    running_queue      = Depends( get_running_queue ),
-    done_queue         = Depends( get_done_queue ),
-    dead_queue         = Depends( get_dead_queue ),
-    todo_queue         = Depends( get_todo_queue ),
-):
-    """
-    Bulk delete all jobs from an in-memory queue.
-
-    For running jobs, signals cancellation on each before removal.
-    Admins get a full queue.clear(); regular users get per-job deletion
-    scoped to their own user_id (same auth model as single-job delete).
-
-    Requires:
-        - queue_name is one of: 'todo', 'run', 'done', 'dead'
-        - current_user is authenticated
-
-    Ensures:
-        - All matching jobs removed from queue
-        - Running jobs receive cancel signal before removal
-        - Returns { status, queue_name, items_deleted, timestamp }
-
-    Raises:
-        - HTTPException 400: Invalid queue name
-    """
-    user_id = current_user[ "uid" ]
-
-    queue_map = {
-        "todo" : todo_queue,
-        "run"  : running_queue,
-        "done" : done_queue,
-        "dead" : dead_queue
-    }
-    if queue_name not in queue_map:
-        raise HTTPException( status_code=400, detail=f"Invalid queue name: {queue_name}. Must be 'todo', 'run', 'done', or 'dead'." )
-
-    queue = queue_map[ queue_name ]
-
-    print( f"[API] DELETE /api/queue/{queue_name}/all - user: {user_id}, admin: {is_admin( current_user )}" )
-
-    if is_admin( current_user ):
-        count = queue.size()
-        queue.clear()
-        items_deleted = count
-    else:
-        jobs = queue.get_jobs_for_user( user_id )
-        items_deleted = 0
-        for job in jobs:
-            if queue_name == "run" and isinstance( job, AgenticJobBase ):
-                job.request_cancel()
-            deleted = queue.delete_by_id_hash( job.id_hash )
-            if deleted:
-                items_deleted += 1
-
-    print( f"[API] Deleted {items_deleted} jobs from {queue_name} queue by user {user_id}" )
-
-    return {
-        "status"        : "deleted",
-        "queue_name"    : queue_name,
-        "items_deleted" : items_deleted,
-        "timestamp"     : cu.get_current_datetime_iso()
-    }
-
-
 # ===========================================================================
 # Job History (CJ Flow Persistence)
 # ===========================================================================
@@ -1339,6 +1345,61 @@ async def get_job_history_detail(
 
 
 @router.delete(
+    "/job-history/all",
+    summary     = "Bulk delete job history",
+    description = "Delete all job history records matching the given time window. "
+                  "Admins delete across all users; regular users delete only their own records."
+)
+async def delete_all_job_history(
+    current_user: dict    = Depends( get_current_user ),
+    days: Optional[str]   = Query( None, description="Time window: 1, 7, 14, 30, or 'all'. Defaults to 'all'." )
+):
+    """
+    Bulk delete job history from PostgreSQL.
+
+    Route-order note: this literal-path handler is declared BEFORE the
+    parameterized `/job-history/{job_id}` sibling so FastAPI matches
+    `/job-history/all` here rather than binding `job_id="all"` and returning 404.
+
+    Requires:
+        - Authenticated user (Bearer token)
+        - days is None, 'all', or a numeric string matching 1/7/14/30
+
+    Ensures:
+        - Deletes all matching history rows for the user (or all users if admin)
+        - Returns { status, items_deleted, days_filter, timestamp }
+
+    Raises:
+        - HTTPException 400: Invalid days parameter
+    """
+    from cosa.rest.job_persistence import delete_job_history_bulk
+
+    user_id = None if is_admin( current_user ) else current_user[ "uid" ]
+
+    days_int = None
+    days_label = "all"
+    if days and days != "all":
+        try:
+            days_int   = int( days )
+            days_label = str( days_int )
+        except ValueError:
+            raise HTTPException( status_code=400, detail=f"Invalid days parameter: {days}. Use a number or 'all'." )
+
+    print( f"[API] DELETE /api/job-history/all - user: {current_user['uid']}, days: {days_label}" )
+
+    items_deleted = delete_job_history_bulk( user_id=user_id, days=days_int )
+
+    print( f"[API] Deleted {items_deleted} history records (days={days_label}) for user {current_user['uid']}" )
+
+    return {
+        "status"        : "deleted",
+        "items_deleted" : items_deleted,
+        "days_filter"   : days_label,
+        "timestamp"     : cu.get_current_datetime_iso()
+    }
+
+
+@router.delete(
     "/job-history/{job_id}",
     summary     = "Delete job from history",
     description = "Hard delete a job history record. Admin or job owner only."
@@ -1377,57 +1438,6 @@ async def delete_job_history_endpoint(
         raise HTTPException( status_code=500, detail="Failed to delete job from history" )
 
     return { "status": "deleted", "job_id": job_id }
-
-
-@router.delete(
-    "/job-history/all",
-    summary     = "Bulk delete job history",
-    description = "Delete all job history records matching the given time window. "
-                  "Admins delete across all users; regular users delete only their own records."
-)
-async def delete_all_job_history(
-    current_user: dict    = Depends( get_current_user ),
-    days: Optional[str]   = Query( None, description="Time window: 1, 7, 14, 30, or 'all'. Defaults to 'all'." )
-):
-    """
-    Bulk delete job history from PostgreSQL.
-
-    Requires:
-        - Authenticated user (Bearer token)
-        - days is None, 'all', or a numeric string matching 1/7/14/30
-
-    Ensures:
-        - Deletes all matching history rows for the user (or all users if admin)
-        - Returns { status, items_deleted, days_filter, timestamp }
-
-    Raises:
-        - HTTPException 400: Invalid days parameter
-    """
-    from cosa.rest.job_persistence import delete_job_history_bulk
-
-    user_id = None if is_admin( current_user ) else current_user[ "uid" ]
-
-    days_int = None
-    days_label = "all"
-    if days and days != "all":
-        try:
-            days_int   = int( days )
-            days_label = str( days_int )
-        except ValueError:
-            raise HTTPException( status_code=400, detail=f"Invalid days parameter: {days}. Use a number or 'all'." )
-
-    print( f"[API] DELETE /api/job-history/all - user: {current_user['uid']}, days: {days_label}" )
-
-    items_deleted = delete_job_history_bulk( user_id=user_id, days=days_int )
-
-    print( f"[API] Deleted {items_deleted} history records (days={days_label}) for user {current_user['uid']}" )
-
-    return {
-        "status"        : "deleted",
-        "items_deleted" : items_deleted,
-        "days_filter"   : days_label,
-        "timestamp"     : cu.get_current_datetime_iso()
-    }
 
 
 @router.post(
@@ -1659,14 +1669,29 @@ async def resume_job(
 # (Session 9056c113)
 # ---------------------------------------------------------------------------
 
+class ResumeFromCheckpointRequest( BaseModel ):
+    """Optional per-resume model + thinking-effort overrides.
+
+    All fields optional. Old clients may POST with no body — `request` is then
+    an empty model and no overrides apply. New clients may POST:
+    ``{"lead_model_override": "claude-opus-4-7", "thinking_effort": "xhigh"}``
+    to steer a specific resume without touching INI defaults.
+    """
+    lead_model_override   : Optional[ str ] = None
+    worker_model_override : Optional[ str ] = None
+    thinking_effort       : Optional[ Literal[ "low", "medium", "high", "xhigh", "max" ] ] = None
+
+
 @router.post(
     "/jobs/{id_hash}/resume-from-checkpoint",
     summary     = "Resume a stalled job from its saved checkpoint",
     description = "Reconstructs a stalled (voice-gate-timeout) job from its "
-                  "checkpoint in job_history, pushes to todo queue.",
+                  "checkpoint in job_history, pushes to todo queue. Optional "
+                  "body may specify per-resume model + thinking-effort overrides.",
 )
 async def resume_stalled_job(
-    id_hash: str,
+    id_hash      : str,
+    request      : ResumeFromCheckpointRequest = Body( default_factory=ResumeFromCheckpointRequest ),
     current_user = Depends( get_current_user ),
     todo_queue   = Depends( get_todo_queue ),
 ):
@@ -1683,7 +1708,8 @@ async def resume_stalled_job(
     """
     from cosa.rest.agentic_job_factory import resume_job
 
-    job = resume_job( id_hash, config_mgr=None )
+    overrides = request.model_dump( exclude_none=True ) if request else {}
+    job = resume_job( id_hash, config_mgr=None, args_overrides=overrides or None )
     if job is None:
         raise HTTPException(
             status_code = 404,
@@ -1698,6 +1724,7 @@ async def resume_stalled_job(
         f"[API] POST /api/jobs/{id_hash}/resume-from-checkpoint - "
         f"new job: {job.id_hash}, "
         f"resume from phase {resume_info.get( 'phase_name', '?' )}"
+        + ( f", overrides: {overrides}" if overrides else "" )
     )
 
     return {
@@ -1715,8 +1742,6 @@ async def resume_stalled_job(
 # (Session 9056c113 continued — Phase D4b file-path resume)
 # ---------------------------------------------------------------------------
 
-from pydantic import BaseModel
-
 
 class TFEResumeFromRequest( BaseModel ):
     """Request body for smart TFE resume-from endpoint.
@@ -1726,8 +1751,15 @@ class TFEResumeFromRequest( BaseModel ):
     - Plan doc path: "io/swe-team/plans/.../c1-plan.md"
     - Checkpoint JSON path (future): "io/checkpoints/.../checkpoint.json"
     - Natural language description (Phase 2, not yet implemented)
+
+    Optional overrides (all default None, SDK/INI default applies):
+    - lead_model_override / worker_model_override: per-resume model swap
+    - thinking_effort: extended-thinking level for this resume
     """
-    resume_from : str
+    resume_from           : str
+    lead_model_override   : Optional[ str ] = None
+    worker_model_override : Optional[ str ] = None
+    thinking_effort       : Optional[ Literal[ "low", "medium", "high", "xhigh", "max" ] ] = None
 
 
 @router.post(
@@ -1774,7 +1806,13 @@ async def resume_tfe_smart(
         }
 
     # Single match — delegate to existing resume_job() factory
-    job = resume_job( target.job_id, config_mgr=None )
+    overrides = {
+        "lead_model_override"   : request.lead_model_override,
+        "worker_model_override" : request.worker_model_override,
+        "thinking_effort"       : request.thinking_effort,
+    }
+    overrides = { k: v for k, v in overrides.items() if v is not None }
+    job = resume_job( target.job_id, config_mgr=None, args_overrides=overrides or None )
     if job is None:
         raise HTTPException(
             status_code = 404,

@@ -6,6 +6,7 @@ with from_config() classmethod.
 """
 
 from dataclasses import dataclass, fields
+from typing import Optional
 
 
 @dataclass
@@ -24,6 +25,12 @@ class BugFixExpediterConfig:
     # === Model Selection ===
     lead_model                : str   = "claude-opus-4-6"
     worker_model              : str   = "claude-sonnet-4-6"
+
+    # === Extended thinking ===
+    # Per-invocation override (via job param or API request body). None = SDK default.
+    # Accepts: "low" | "medium" | "high" | "xhigh" | "max" | None.
+    # Forwarded to ClaudeAgentOptions.effort in the orchestrator.
+    thinking_effort           : Optional[ str ] = None
 
     # === Execution Limits ===
     max_diagnosis_iterations  : int   = 3

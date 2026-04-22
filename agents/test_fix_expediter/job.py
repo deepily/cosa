@@ -66,6 +66,7 @@ class TestFixExpediterJob( AgenticJobBase ):
         dry_run: bool = False,
         lead_model_override:   Optional[ str ] = None,
         worker_model_override: Optional[ str ] = None,
+        thinking_effort:       Optional[ str ] = None,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -96,6 +97,10 @@ class TestFixExpediterJob( AgenticJobBase ):
                                    loads INI defaults. None = use INI value.
             worker_model_override: Optional per-invocation override of the TFE
                                    worker model. Same semantics as lead override.
+            thinking_effort:       Optional extended-thinking effort level
+                                   ("low" | "medium" | "high" | "xhigh" | "max").
+                                   Forwarded to ClaudeAgentOptions.effort in the
+                                   orchestrator. None = SDK default.
             debug: Enable debug output
             verbose: Enable verbose output
         """
@@ -114,6 +119,7 @@ class TestFixExpediterJob( AgenticJobBase ):
         self.dry_run                   = dry_run
         self.lead_model_override       = lead_model_override
         self.worker_model_override     = worker_model_override
+        self.thinking_effort           = thinking_effort
 
         # Results (populated during execution)
         self.remediation_context = None    # TestRemediationContext
@@ -261,6 +267,9 @@ class TestFixExpediterJob( AgenticJobBase ):
         if self.worker_model_override:
             if self.debug: print( f"[TFE] worker_model overridden: {config.worker_model} -> {self.worker_model_override}" )
             config.worker_model = self.worker_model_override
+        if self.thinking_effort:
+            if self.debug: print( f"[TFE] thinking_effort set: {self.thinking_effort}" )
+            config.thinking_effort = self.thinking_effort
 
         self._start_time = time.time()
 
@@ -393,6 +402,33 @@ class TestFixExpediterJob( AgenticJobBase ):
             lines.extend(
                 self.orchestrator.render_worktree_artifacts_abstract( self.id_hash )
             )
+
+            # Failed-fix diagnostics — last_stderr tails retained by FixExecutor's
+            # auto-reject path. Capped at top-5 failures to keep the notification
+            # abstract under ~8KB; remaining failures pointed to the worktree log.
+            failed_pairs = [
+                ( p, r ) for p, r in zip(
+                    self.orchestrator.selected_fixes, self.orchestrator.fix_results
+                )
+                if not r.success and r.last_stderr
+            ]
+            if failed_pairs:
+                lines.append( "" )
+                lines.append( "**Failed fix diagnostics:**" )
+                shown = failed_pairs[ :5 ]
+                for proposed, result in shown:
+                    lines.append( "" )
+                    lines.append(
+                        f"✗ **{proposed.title}** — {result.attempts} attempt(s)"
+                    )
+                    lines.append( "```" )
+                    lines.append( result.last_stderr )
+                    lines.append( "```" )
+                if len( failed_pairs ) > 5:
+                    lines.append( "" )
+                    lines.append(
+                        f"(+{len( failed_pairs ) - 5} more failed — see worktree logs)"
+                    )
 
             completion_abstract = "\n".join( lines )
 

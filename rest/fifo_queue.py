@@ -566,7 +566,8 @@ class FifoQueue:
         job: Any = None,
         priority: str = "high",
         notification_type: str = "task",
-        target_user: str = None
+        target_user: str = None,
+        abstract: str = None
     ) -> None:
         """
         Send notification via notification service (replaces _emit_speech).
@@ -574,6 +575,13 @@ class FifoQueue:
         Queue notifications default to:
         - priority="high" → message is spoken via TTS
         - suppress_ding=True → no notification sound (conversational flow)
+
+        Abstract auto-promotion:
+        - When a job is provided and `abstract` is not explicitly passed, the
+          method reads `job.artifacts["abstract"]` (if present) and forwards
+          it on the AsyncNotificationRequest. This surfaces rich completion
+          context on the primary task-card the UI shows, not just on the
+          secondary progress row the job emits explicitly.
 
         Requires:
             - msg is a non-empty string
@@ -583,6 +591,8 @@ class FifoQueue:
             - Notification is sent to target user
             - If job_id available, routes to job card in UI
             - Message is spoken (high priority) without ding
+            - If job.artifacts["abstract"] exists and no explicit abstract
+              was passed, it rides along on the notification
             - Handles exceptions gracefully
 
         Args:
@@ -591,6 +601,7 @@ class FifoQueue:
             priority: Notification priority ('urgent', 'high', 'medium', 'low')
             notification_type: Type of notification ('task', 'progress', 'alert', 'custom')
             target_user: Email address for TTS routing (uses job.user_email if not provided)
+            abstract: Explicit abstract override. When None, auto-reads from job.artifacts["abstract"].
 
         Raises:
             - None (exceptions handled internally)
@@ -608,6 +619,15 @@ class FifoQueue:
                 print( "[NOTIFY] Warning: No user_email and no LUPIN_DEV_EMAIL — notification skipped" )
                 return
 
+        # Auto-promote job.artifacts["abstract"] when no explicit override given.
+        # `getattr` is used because `FifoQueue._notify` serves both AgenticJobBase
+        # (has .artifacts) and AgentBase/SolutionSnapshot (may not) — this is the
+        # system boundary per the "fix at source, normalize at boundaries" rule.
+        resolved_abstract = abstract
+        if resolved_abstract is None and job is not None:
+            artifacts = getattr( job, "artifacts", None ) or {}
+            resolved_abstract = artifacts.get( "abstract" )
+
         try:
             request = AsyncNotificationRequest(
                 message           = msg,
@@ -616,7 +636,8 @@ class FifoQueue:
                 suppress_ding     = True,  # Queue notifications = TTS only, no ding
                 target_user       = resolved_email,
                 job_id            = self._get_notification_job_id( job ),
-                sender_id         = f"queue.{self.queue_name or 'unknown'}@lupin.deepily.ai"
+                sender_id         = f"queue.{self.queue_name or 'unknown'}@lupin.deepily.ai",
+                abstract          = resolved_abstract
             )
             notify_user_async( request )
 

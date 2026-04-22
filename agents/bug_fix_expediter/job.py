@@ -54,6 +54,7 @@ class BugFixExpediterJob( AgenticJobBase ):
         dry_run: bool = False,
         lead_model_override:   Optional[ str ] = None,
         worker_model_override: Optional[ str ] = None,
+        thinking_effort:       Optional[ str ] = None,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -83,6 +84,10 @@ class BugFixExpediterJob( AgenticJobBase ):
                                    loads INI defaults. None = use INI value.
             worker_model_override: Optional per-invocation override of the BFE
                                    worker model. Same semantics as lead override.
+            thinking_effort:       Optional extended-thinking effort level
+                                   ("low" | "medium" | "high" | "xhigh" | "max").
+                                   Forwarded to ClaudeAgentOptions.effort in the
+                                   orchestrator. None = SDK default.
             debug: Enable debug output
             verbose: Enable verbose output
         """
@@ -99,6 +104,7 @@ class BugFixExpediterJob( AgenticJobBase ):
         self.dry_run               = dry_run
         self.lead_model_override   = lead_model_override
         self.worker_model_override = worker_model_override
+        self.thinking_effort       = thinking_effort
 
         # Results (populated after execution)
         self.dead_job_context = None    # DeadJobContext
@@ -255,6 +261,9 @@ class BugFixExpediterJob( AgenticJobBase ):
             if self.worker_model_override:
                 if self.debug: print( f"[BFE] worker_model overridden: {config.worker_model} -> {self.worker_model_override}" )
                 config.worker_model = self.worker_model_override
+            if self.thinking_effort:
+                if self.debug: print( f"[BFE] thinking_effort set: {self.thinking_effort}" )
+                config.thinking_effort = self.thinking_effort
 
             orchestrator = BFEOrchestrator(
                 dead_job_context = self.dead_job_context,
@@ -373,6 +382,18 @@ class BugFixExpediterJob( AgenticJobBase ):
             if getattr( fix_result, "pr_url", None ):
                 lines.append( f"**PR**: {fix_result.pr_url}" )
             lines.append( f"**Duration**: {duration}s" )
+
+            # Failed-fix diagnostics — last_stderr retained by shared FixExecutor's
+            # auto-reject path. Mirrors TFE's end-of-run report parity so BFE
+            # triage doesn't require digging through worktree logs.
+            if not fix_applied and fix_result.last_stderr and fix_result.attempts > 0:
+                lines.append( "" )
+                lines.append(
+                    f"**Failed fix diagnostics** ({fix_result.attempts} attempt(s)):"
+                )
+                lines.append( "```" )
+                lines.append( fix_result.last_stderr )
+                lines.append( "```" )
 
             # Worktree artifacts — delegated to pure static helper on the
             # orchestrator class for unit-test isolation. Called via the

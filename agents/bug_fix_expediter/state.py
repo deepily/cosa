@@ -111,6 +111,9 @@ class FixResult( BaseModel ):
     success        : bool
     details        : str            = ""
     retry_eligible : bool           = False
+    # Verification-loop diagnostics (populated when tester verification runs)
+    attempts       : int                 = 0
+    last_stderr    : Optional[ str ]     = None   # tail of last tester_output when verification fails
     # Phase 5 additions (populated after run_git_strategy)
     git_strategy       : Optional[ str ] = None   # "commit_only" | "branch_and_pr" | "branch_only" | None
     commit_hash        : Optional[ str ] = None

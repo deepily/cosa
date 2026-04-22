@@ -470,6 +470,7 @@ class BFEOrchestrator:
             permission_mode = "plan",
             max_turns       = self.config.max_diagnosis_iterations * 10,
             max_budget_usd  = self.config.budget_usd,
+            effort          = self.config.thinking_effort,
         )
 
     # =========================================================================
@@ -716,6 +717,7 @@ class BFEOrchestrator:
             permission_mode = "plan",
             max_turns       = 20,
             max_budget_usd  = self.config.budget_usd,
+            effort          = self.config.thinking_effort,
         )
 
     def _parse_proposal_result( self, raw_response: str ) -> list:
@@ -1545,6 +1547,7 @@ class BFEOrchestrator:
             can_use_tool    = build_can_use_tool( cosa_interface, guard, "code-fixer" ),
             max_turns       = self.config.max_fix_attempts * 10,
             max_budget_usd  = self.config.budget_usd,
+            effort          = self.config.thinking_effort,
         )
 
     @staticmethod
@@ -1624,6 +1627,7 @@ class BFEOrchestrator:
             can_use_tool    = build_can_use_tool( cosa_interface, guard, "tester" ),
             max_turns       = 10,
             max_budget_usd  = self.config.budget_usd,
+            effort          = self.config.thinking_effort,
         )
 
     # =========================================================================

@@ -10,6 +10,7 @@ See: src/rnd/v0.1.6/2026.04.10-test-fix-expediter/12-config-inventory.md
 
 import os
 from dataclasses import dataclass, fields
+from typing import Optional
 
 
 @dataclass
@@ -31,6 +32,12 @@ class TestFixExpediterConfig:
     # === Model Selection ===
     lead_model                    : str   = "claude-opus-4-6"
     worker_model                  : str   = "claude-sonnet-4-6"
+
+    # === Extended thinking ===
+    # Per-invocation override (via job param or API request body). None = SDK default.
+    # Accepts: "low" | "medium" | "high" | "xhigh" | "max" | None.
+    # Forwarded to ClaudeAgentOptions.effort in the orchestrator.
+    thinking_effort               : Optional[ str ] = None
 
     # === Feature Flag / Watchdog ===
     # Default flipped to True in Session 1cfcdf73 (2026-04-10) — TFE auto-dispatch

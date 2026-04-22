@@ -530,6 +530,7 @@ class TFEOrchestrator:
             permission_mode = "plan",
             max_turns       = self.config.max_diagnosis_iterations * 10,
             max_budget_usd  = self.config.budget_usd,
+            effort          = self.config.thinking_effort,
         )
 
     # ───────────────────────────────────────────────────────────────
@@ -807,6 +808,7 @@ class TFEOrchestrator:
             permission_mode = "plan",
             max_turns       = 20,
             max_budget_usd  = self.config.budget_usd,
+            effort          = self.config.thinking_effort,
         )
 
     def _parse_proposal_result(
@@ -1688,6 +1690,7 @@ class TFEOrchestrator:
             can_use_tool    = build_can_use_tool( cosa_interface_module, guard, "tfe-coder" ),
             max_turns       = max_turns,
             max_budget_usd  = self.config.budget_usd,
+            effort          = self.config.thinking_effort,
         )
 
     def _build_tfe_tester_options( self, guard, cosa_interface_module ):
@@ -1701,6 +1704,7 @@ class TFEOrchestrator:
             can_use_tool    = build_can_use_tool( cosa_interface_module, guard, "tfe-tester" ),
             max_turns       = 10,
             max_budget_usd  = self.config.budget_usd,
+            effort          = self.config.thinking_effort,
         )
 
     # ───────────────────────────────────────────────────────────────

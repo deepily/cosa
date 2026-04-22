@@ -64,11 +64,11 @@ SUITES_SUPPORTING_JUNIT_XML = frozenset( {
 # Values based on observed worst-case runtimes + 2x buffer. Tunable.
 SUITE_TIMEOUTS_SECONDS = {
     "unit"         : 180,    #  3 min (fast, ~915 tests, no server)
-    "smoke"        : 1800,   # 30 min (server-dependent, ~40 files; observed 1036s on 2026-04-14, was 600s)
+    "smoke"        : 3600,   # 60 min (bumped from 1800s on 2026-04-21: observed 2456s on ts-f55d172d — 160 tests + container_preflight adds overhead; ~1.46x margin over observed)
     "smoke_direct" : 1200,   # 20 min (longest: Phase D live ~10 min)
     "pytest_direct": 1200,   # 20 min (arbitrary pytest file — match smoke_direct budget)
     "websocket"    : 300,    #  5 min (~50 tests, server + WS)
-    "integration"  : 1200,   # 20 min (~43 tests, ~5-10 min observed)
+    "integration"  : 2000,   # 33 min (bumped from 1200s on 2026-04-21: observed 1392s when SWE-team dry-run tests ran — ~1.44x margin)
     "e2e"          : 2400,   # 40 min (~297 tests, ~17 min observed)
     "all"            : 3600,   # 60 min (sequential pyramid, ~25-35 min observed)
     "presentation"   : 1800,   # 30 min (render-only + Sonnet; +Opus/R2P with flags)

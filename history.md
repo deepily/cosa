@@ -1,5 +1,69 @@
 # COSA Development History
 
+> **📝 SESSION 957df6a5 STAGED**: Session 9934d315 + b802e633 CoSA bundle — TFE/BFE telemetry demotion + stderr parity + `/queue/all` route reorder + thinking_effort plumbing + `resume_job()` args override + FifoQueue abstract auto-promotion + suite timeout bumps (2026.04.21)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> Lands the CoSA-side submodule work accumulated from Lupin-parent Sessions **9934d315** (2026-04-21 afternoon/evening — TFE telemetry demotion + stop.py rebaseline + BFE stderr parity) and **b802e633** (2026-04-21 bug-fix-mode — DELETE `/queue/all` 404 + job-id chip refinement). Parent Lupin commits `f533c08` (Part 1 + Part 2 checkpoint) and `82243e4` / `0f67635` (bug-fix-mode fixes) already landed; this is the matching CoSA-side commit, plus three new product features developed in the same working-tree checkpoint that were not explicitly called out in the Lupin history.
+>
+> **Body 1 — Session 9934d315: TFE/BFE telemetry demotion + stderr parity** (`agents/shared/fix_executor.py`, `agents/bug_fix_expediter/{state,job}.py`, `agents/test_fix_expediter/job.py`):
+> - **Problem**: Overnight `tfe-10b2963e` ran 17 fixes, all failed verification, and triggered 3 blocking operator-intervention prompts ("Fix Verification Failed after 2 attempt(s)") because `FixExecutor` escalated via `present_choices()` after `max_fix_attempts`. Operator had to interrupt sleep to dismiss gates that had no actionable decision.
+> - **Fix — fire-and-forget telemetry**: Replaced blocking `present_choices()` after `max_fix_attempts` with a fire-and-forget `notify(priority="low")` + automatic `FixResult(applied=False, success=False, details="Auto-rejected after {iteration} verification attempt(s)")`. Removes the "Accept without tests / Reject" dialog entirely — the orchestrator treats exhausted verification as an auto-reject, with the diagnostics surfaced asynchronously.
+> - **Fix — stderr preservation**: New `_tail_lines( text, max_lines=12, max_chars=2000 )` helper distills tester_output (potentially tens of KB of pytest output) into a triage-sized tail. `FixResult` grows `attempts: int = 0` and `last_stderr: Optional[str] = None` fields (pydantic BaseModel). End-of-run completion abstracts on both BFE (`job.py`, single-fix work unit — no cap) and TFE (`job.py`, multi-cluster — capped at top-5 failures with pointer to worktree log for the rest) render a "**Failed fix diagnostics**" block so triage no longer requires digging through worktree logs.
+> - **Success-path attempts tracking**: Successful `FixResult` emissions also carry `attempts=iteration` so downstream consumers can see how many verification loops a passing fix needed.
+>
+> **Body 2 — Session b802e633: DELETE `/api/queue/{name}/all` route-shadowing fix** (`rest/routers/queues.py`):
+> - **Problem**: Test server logged `DELETE /api/queue/done/all → 404 Not Found`. Investigation confirmed the parameterized `/queue/{queue_name}/{job_id}` route was declared BEFORE the literal `/queue/{queue_name}/all` — FastAPI bound `job_id="all"`, failed the jobid lookup, and raised 404. Same latent shadowing defect existed on the `/job-history/all` vs `/job-history/{job_id}` pair (not yet user-reported but broken).
+> - **Fix**: Reordered both pairs so the literal `/all` route is declared ABOVE its `/{id}` sibling. Added docstring route-order notes to both bulk handlers (so future edits don't accidentally swap them back). 282-line churn is mostly the move itself (the handler bodies are unchanged).
+> - **Verification** (done on Lupin side, mirrored here): new `src/tests/integration/test_queue_delete_all.py` (6 lock-in cases), route-table introspection confirms literal `/all` precedes `/{job_id}` for both pairs. Standalone HTTP probe against `:7999` dev: 8/8 regression assertions pass.
+>
+> **Body 3 — NEW: Extended-thinking `effort` plumbing for BFE + TFE** (`agents/{bug_fix,test_fix}_expediter/{config,orchestrator,job}.py`, `rest/agentic_job_factory.py`):
+> - **Context**: The SDK `ClaudeAgentOptions.effort` parameter ("low" | "medium" | "high" | "xhigh" | "max") controls extended-thinking budget. Previously the only way to set it was to edit the global SDK default — no per-invocation override, no way to match effort to proposal complexity (e.g. Sonnet+high for normal proposals; Opus+max only for complex root-cause diagnosis).
+> - **Fix**: New `thinking_effort: Optional[str] = None` field on both `BugFixExpediterConfig` and `TestFixExpediterConfig` dataclasses. Both orchestrators forward `effort=self.config.thinking_effort` to every `ClaudeAgentOptions(...)` construction (BFE: 4 call sites — diagnose, proposal, fix, verify; TFE: matching set). Both Job classes accept `thinking_effort` in their constructor, self-assign, and apply as an override to `config.thinking_effort` at `_execute_run()` start (mirrors the existing `lead_model_override` / `worker_model_override` pattern).
+> - **Factory plumbing**: `create_agentic_job()` now reads `args_dict.get("thinking_effort") or None` and forwards to both BFE + TFE Job constructors. Exposes the new knob to any caller that uses the factory path (API request bodies, Resume UI, voice-expediter dispatches).
+> - **Default semantics**: `None` = SDK default (unchanged behavior); any string value flows end-to-end through Factory → Job → Config → Orchestrator → `ClaudeAgentOptions`.
+>
+> **Body 4 — NEW: `resume_job()` args override merge** (`rest/agentic_job_factory.py`):
+> - **Context**: The Resume UI lets operators override model/effort per-resume (e.g. "retry this stalled TFE with Sonnet instead of Opus"). Previously Resume had to pass the entire `original_args` dict verbatim, so any override had to clobber every unrelated key too.
+> - **Fix**: `resume_job( job_id_hash, config_mgr=None, args_overrides=None )` — optional dict of keys to merge into `original_args`. **Override semantics**: `None` values are *skipped* (preserve original), any non-`None` value *replaces* the corresponding key. Callers can now pass a sparse model dump (e.g. `{"thinking_effort": "high", "lead_model_override": None, ...}`) without wiping other original_args entries.
+> - **Design by Contract** documented in docstring: `Requires: args_overrides is None or a dict of keys to merge into original_args`; `Ensures: Overrides with value None are ignored; any non-None override replaces the corresponding key`.
+>
+> **Body 5 — NEW: FifoQueue `abstract` auto-promotion** (`rest/fifo_queue.py`):
+> - **Context**: Agentic jobs set `job.artifacts["abstract"]` to carry rich completion context (worktree paths, failed-fix diagnostics, Phase 5 branch/commit/PR links, etc.). But `FifoQueue._notify()` historically emitted only `msg` + `target_user` + priority — the abstract was reaching only the secondary progress row the job explicitly emitted, never the primary task-card.
+> - **Fix**: `_notify()` gains an `abstract: str = None` parameter. Resolution logic: if caller passes an explicit `abstract`, it wins; otherwise, if `job is not None`, the method reads `job.artifacts["abstract"]` via `getattr(..., "artifacts", None) or {}`. The `getattr` defensive read is intentional here (documented in inline comment as a **system-boundary** per the "fix at source, normalize at boundaries" rule): `FifoQueue._notify()` serves both `AgenticJobBase` (has `.artifacts`) and `AgentBase` / `SolutionSnapshot` (may not). Auto-promotion now surfaces the rich completion context on the primary task card with zero caller changes.
+> - **Design by Contract** additions: docstring Ensures clause adds "*If `job.artifacts["abstract"]` exists and no explicit abstract was passed, it rides along on the notification*"; Args section documents auto-read semantics.
+>
+> **Body 6 — Test suite timeout bumps** (`agents/test_suite/job.py::SUITE_TIMEOUTS_SECONDS`, Session 9934d315 Phase A straggler):
+> - **Smoke**: 1800s (30 min) → 3600s (60 min). Observed 2456s on `ts-f55d172d` when 160 smoke tests + container_preflight overhead ran together; 1.46× margin at the new cap.
+> - **Integration**: 1200s (20 min) → 2000s (33 min). Observed 1392s when SWE-team dry-run tests joined the integration run; 1.44× margin at the new cap.
+> - Tunable values in comments updated with observation dates and the underlying driver (not just "tunable" — the *reason* the prior cap failed is now documented inline).
+>
+> **Antecedent CoSA commits** (already landed on the branch before this session): `60c8829` (Session 7c8b0ce2 session-end), `6d8ded3` (new `tfe_to_cc/` engine variant scaffold), `34c7513` (TFE Option A tier budgets + Worktree Artifacts + Coder prompt audit), `c35a2d9` (C4: `resume_from` added to `all_agents` profile), `2502b4c` (C2: `PRODUCT_NAMES` entry for TFE Resume agent). All were landed under the preceding CoSA session `7c8b0ce2`.
+>
+> **Files Modified (12)**:
+> - `agents/shared/fix_executor.py` — `_tail_lines()` helper + blocking-to-fire-and-forget demotion after `max_fix_attempts`.
+> - `agents/bug_fix_expediter/state.py` — `FixResult.{attempts, last_stderr}`.
+> - `agents/bug_fix_expediter/job.py` — `thinking_effort` constructor arg + self-assign + override wiring; Failed-fix-diagnostics abstract section.
+> - `agents/bug_fix_expediter/orchestrator.py` — `effort=self.config.thinking_effort` forwarded to 4 `ClaudeAgentOptions` call sites.
+> - `agents/bug_fix_expediter/config.py` — `thinking_effort: Optional[str] = None`.
+> - `agents/test_fix_expediter/job.py` — `thinking_effort` constructor arg + self-assign + override wiring; Failed-fix-diagnostics abstract section (top-5 capped).
+> - `agents/test_fix_expediter/orchestrator.py` — `effort=self.config.thinking_effort` forwarded to matching call sites.
+> - `agents/test_fix_expediter/config.py` — `thinking_effort: Optional[str] = None`.
+> - `agents/test_suite/job.py` — smoke + integration timeout bumps with observation-driven justifications.
+> - `rest/agentic_job_factory.py` — `thinking_effort` plumbed through `create_agentic_job()` for both BFE + TFE; `resume_job()` gains `args_overrides` merge with None-skipping semantics.
+> - `rest/fifo_queue.py` — `_notify()` gains `abstract` param + `job.artifacts["abstract"]` auto-promotion via boundary-level `getattr`.
+> - `rest/routers/queues.py` — `/queue/{name}/all` + `/job-history/all` literal routes reordered above their `/{id}` siblings; docstring route-order notes.
+>
+> **Diff stats**: +327 / −166 across 12 files.
+>
+> **Validation**: All 12 modified files `py_compile` clean (planned post-commit verification). Lupin-parent unit/integration tests referenced in this session's Lupin `history.md` entries (unit 3549 green, WS 50/50, integration 226 passed / 6 pre-existing env+fixture failures, E2E full 355 passed / 2 separate-root-cause failures) provide the wider verification surface for Bodies 1+2; Bodies 3-6 have no dedicated unit tests yet and are held to compile-only verification + live exercise on `:7999` dev.
+>
+> **Commit landed this session**:
+> - `<TBD>` — 12 files, +327/−166 (to be filled post-commit).
+>
+> ---
+
 > **📝 SESSION 7c8b0ce2 STAGED**: Session be57a252 + d8831785 CoSA bundle — TFE Option A tier budgets + Worktree Artifacts + Coder tool-use breadcrumbs + Coder prompt audit + TFE-to-CC engine variant scaffold (2026.04.20)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >

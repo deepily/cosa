@@ -44,6 +44,32 @@ from cosa.agents.swe_team.safety_limits import SafetyGuard, SafetyLimitError
 logger = logging.getLogger( __name__ )
 
 
+def _tail_lines( text: Optional[ str ], max_lines: int = 12, max_chars: int = 2000 ) -> str:
+    """
+    Return the last `max_lines` of `text`, bounded by `max_chars`.
+
+    Used to distill tester_output (potentially tens of KB of pytest output) into
+    a triage-sized tail that fits in a notification abstract + the end-of-run
+    report abstract. Preserves the FAILED line + traceback tail, which is the
+    signal humans actually read.
+
+    Requires:
+        - max_lines > 0
+        - max_chars > 0
+
+    Ensures:
+        - Returns "" if text is None or empty
+        - Returns at most max_lines lines and max_chars characters
+        - Preserves the tail of the input, not the head
+    """
+    if not text: return ""
+    lines = text.splitlines()
+    tail = "\n".join( lines[ -max_lines: ] )
+    if len( tail ) > max_chars:
+        tail = "…\n" + tail[ -max_chars: ]
+    return tail
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Polymorphic prompt registry
 # ─────────────────────────────────────────────────────────────────────────
@@ -256,6 +282,7 @@ class FixExecutor:
                             applied=True, success=True,
                             details=f"Fix verified on iteration {iteration}",
                             retry_eligible=True,
+                            attempts=iteration,
                         )
                         break
 
@@ -263,48 +290,28 @@ class FixExecutor:
                     if iteration >= self.config.max_fix_attempts:
                         guard.record_failure( "verification failed after max iterations" )
 
-                        # Escalate to user
+                        # Auto-reject + fire-and-forget telemetry (no operator gate).
+                        # Last tester_output is retained on FixResult so the end-of-run
+                        # report can surface it without a worktree dig.
+                        stderr_tail = _tail_lines( tester_output, max_lines=12, max_chars=2000 )
                         await self._notify(
                             self._voice_io,
-                            "Fix verification exhausted — escalating.",
-                            priority="high",
+                            f"Fix Verification Failed: '{selected_fix.title}' auto-rejected after {iteration} attempt(s)",
+                            priority="low",
+                            abstract=(
+                                f"**Fix**: {selected_fix.title}\n"
+                                f"**Attempts**: {iteration}\n"
+                                f"**Disposition**: auto-rejected (no operator gate)\n"
+                                f"**Last failure** (last 12 lines):\n```\n{stderr_tail}\n```"
+                            ),
                         )
 
-                        try:
-                            escalation = await self._cosa_interface.present_choices(
-                                questions=[ {
-                                    "question"    : f"Fix '{selected_fix.title}' failed verification after {iteration} attempt(s). What next?",
-                                    "header"      : "Fix Escalation",
-                                    "multiSelect" : False,
-                                    "options"     : [
-                                        { "label": "Accept without tests", "description": "Keep the code changes, skip test validation" },
-                                        { "label": "Reject fix", "description": "Discard all changes from this fix attempt" },
-                                    ],
-                                } ],
-                                timeout  = self.config.feedback_timeout_seconds,
-                                title    = "Fix Verification Failed",
-                                abstract = f"**Fix**: {selected_fix.title}\n**Attempts**: {iteration}\n**Last failure**:\n{tester_output[ :500 ]}",
-                                job_id   = self.job_id,
-                            )
-
-                            choice = escalation.get( "answers", {} ).get( "Fix Escalation", "" )
-                            if choice == "Accept without tests":
-                                fix_result = FixResult(
-                                    applied=True, success=False,
-                                    details=f"Accepted without tests after {iteration} attempt(s)",
-                                    retry_eligible=True,
-                                )
-                            else:
-                                fix_result = FixResult(
-                                    applied=False, success=False,
-                                    details=f"Rejected by user after {iteration} verification attempt(s)",
-                                )
-                        except Exception as e:
-                            logger.warning( f"Escalation failed: {e}" )
-                            fix_result = FixResult(
-                                applied=False, success=False,
-                                details=f"Escalation failed: {e}",
-                            )
+                        fix_result = FixResult(
+                            applied=False, success=False,
+                            details=f"Auto-rejected after {iteration} verification attempt(s)",
+                            attempts=iteration,
+                            last_stderr=stderr_tail,
+                        )
 
                         break
 

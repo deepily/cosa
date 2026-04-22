@@ -304,6 +304,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             dry_run               = _parse_boolean( args_dict.get( "dry_run" ) ),
             lead_model_override   = args_dict.get( "lead_model_override" )   or None,
             worker_model_override = args_dict.get( "worker_model_override" ) or None,
+            thinking_effort       = args_dict.get( "thinking_effort" )       or None,
             debug                 = debug,
             verbose               = verbose
         )
@@ -328,6 +329,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
             dry_run                   = _parse_boolean( args_dict.get( "dry_run" ) ),
             lead_model_override       = args_dict.get( "lead_model_override" )   or None,
             worker_model_override     = args_dict.get( "worker_model_override" ) or None,
+            thinking_effort           = args_dict.get( "thinking_effort" )       or None,
             debug                     = debug,
             verbose                   = verbose,
         )
@@ -344,7 +346,7 @@ def create_agentic_job( command, args_dict, user_id, user_email, session_id, deb
     return job
 
 
-def resume_job( job_id_hash, config_mgr=None ):
+def resume_job( job_id_hash, config_mgr=None, args_overrides=None ):
     """
     Reconstruct a stalled job from its checkpoint and original args.
 
@@ -354,10 +356,13 @@ def resume_job( job_id_hash, config_mgr=None ):
 
     Requires:
         - job_id_hash references a stalled job with checkpoint data in DB
+        - args_overrides is None or a dict of keys to merge into original_args
 
     Ensures:
         - Returns a fully constructed job with _resume_checkpoint attached
         - Returns None if job cannot be resumed (not found, not stalled, etc.)
+        - Overrides with value None are ignored (preserve original_args entry);
+          any non-None override replaces the corresponding key
     """
     from cosa.rest.job_persistence import get_checkpoint_for_job, get_original_args_for_job
 
@@ -371,11 +376,19 @@ def resume_job( job_id_hash, config_mgr=None ):
         print( f"[agentic_job_factory] No original args found for {job_id_hash}" )
         return None
 
+    # Merge args_overrides into original_args (None values skipped so the caller
+    # can pass a model dump without clobbering existing keys).
+    merged_args = dict( job_info[ "original_args" ] )
+    if args_overrides:
+        for k, v in args_overrides.items():
+            if v is not None:
+                merged_args[ k ] = v
+
     # Reconstruct via normal factory path. config_mgr is accepted as a parameter
     # for forward-compat but create_agentic_job does not (yet) take it — drop here.
     job = create_agentic_job(
         command    = job_info[ "routing_command" ],
-        args_dict  = job_info[ "original_args" ],
+        args_dict  = merged_args,
         user_id    = job_info[ "user_id" ],
         user_email = job_info[ "user_email" ],
         session_id = job_info[ "session_id" ],
