@@ -239,32 +239,8 @@ class NotificationFifoQueue( FifoQueue ):
         self.queue_list.append( notification )
         self.queue_dict[ notification.id_hash ] = notification
         self.push_counter += 1
-        
-        # Emit enhanced notification_queue_update
-        if self.websocket_mgr and self.emit_enabled:
-            event_data = {
-                'queue_name': 'notification',
-                'value': self.size(),
-                'notification': notification.to_dict()
-            }
-            
-            if notification.user_id:
-                # Targeted notification - send only to specific user
-                self.websocket_mgr.emit_to_user_sync( notification.user_id, 'notification_queue_update', event_data )
-                if self.debug:
-                    print( f"[NOTIFY-QUEUE] Emitted notification to user: {notification.user_id}" )
-            else:
-                # Broadcast notification - send to all connected clients
-                self.websocket_mgr.emit( 'notification_queue_update', event_data )
-                if self.debug:
-                    print( f"[NOTIFY-QUEUE] Broadcast notification to all users" )
 
-            # Cross-user delivery: CC listeners authenticate as a service account
-            # (different user_id), so emit_to_user_sync won't reach them.
-            # Target the listener session directly by its deterministic session ID.
-            if notification.job_id:
-                listener_sid = f"cc-listener-{notification.job_id}"
-                self.websocket_mgr.emit_to_session_sync( listener_sid, 'notification_queue_update', event_data )
+        self._emit_notification_added( notification )
 
         if self.debug:
             print( f"[NOTIFY-QUEUE] Pushed notification {notification.id_hash} with enhanced WebSocket emission" )
@@ -339,30 +315,8 @@ class NotificationFifoQueue( FifoQueue ):
             self.queue_list.insert( insert_idx, notification )
             self.queue_dict[ notification.id_hash ] = notification
             self.push_counter += 1
-            
-            # Emit enhanced notification_queue_update (same as push method)
-            if self.websocket_mgr and self.emit_enabled:
-                event_data = {
-                    'queue_name': 'notification',
-                    'value': self.size(),
-                    'notification': notification.to_dict()
-                }
-                
-                if notification.user_id:
-                    # Targeted notification - send only to specific user
-                    self.websocket_mgr.emit_to_user_sync( notification.user_id, 'notification_queue_update', event_data )
-                    if self.debug:
-                        print( f"[NOTIFY-QUEUE] Emitted priority notification to user: {notification.user_id}" )
-                else:
-                    # Broadcast notification - send to all connected clients
-                    self.websocket_mgr.emit( 'notification_queue_update', event_data )
-                    if self.debug:
-                        print( f"[NOTIFY-QUEUE] Broadcast priority notification to all users" )
 
-                # Cross-user delivery: CC listeners authenticate as a service account
-                if notification.job_id:
-                    listener_sid = f"cc-listener-{notification.job_id}"
-                    self.websocket_mgr.emit_to_session_sync( listener_sid, 'notification_queue_update', event_data )
+            self._emit_notification_added( notification )
         else:
             # Normal priority goes to end (use our overridden push method)
             self.push( notification )
@@ -410,9 +364,94 @@ class NotificationFifoQueue( FifoQueue ):
         
         if self.debug:
             print( f"Marked notification {notification_id} as played (count: {notification.play_count})" )
-        
+
         return True
-    
+
+    def _emit_notification_added( self, notification: NotificationItem ) -> None:
+        """
+        Emit a `notification_queue_update` WebSocket event for a newly-added notification.
+
+        Shared by `push()` (normal priority path) and `push_notification()` (urgent/high
+        priority path) so the emission contract is defined in exactly one place.
+
+        Fans out to the target user (if `notification.user_id` is set) or broadcasts to
+        all connected clients, plus a deterministic per-job CC-listener session hand-off
+        so service-account listener processes also receive the payload.
+
+        Requires:
+            - notification is a fully-populated NotificationItem
+            - self.websocket_mgr may be None (silent no-op in that case)
+            - self.emit_enabled controls whether emission actually fires
+
+        Ensures:
+            - When `user_id` is set: calls `emit_to_user_sync` targeting that user
+            - When `user_id` is None: calls `emit` to broadcast to all clients
+            - When `job_id` is set: additionally calls `emit_to_session_sync` to
+              the deterministic `cc-listener-{job_id}` session so service-account
+              CC listeners (which authenticate under a different user_id) receive it
+            - event_data carries queue_name, value=size, and the full notification dict
+            - Silent no-op when websocket_mgr is None or emit_enabled is False
+
+        Raises:
+            - None
+        """
+        if not ( self.websocket_mgr and self.emit_enabled ):
+            return
+
+        event_data = {
+            "queue_name"   : "notification",
+            "value"        : self.size(),
+            "notification" : notification.to_dict()
+        }
+
+        if notification.user_id:
+            # Targeted notification - send only to specific user
+            self.websocket_mgr.emit_to_user_sync( notification.user_id, "notification_queue_update", event_data )
+            if self.debug: print( f"[NOTIFY-QUEUE] Emitted notification to user: {notification.user_id}" )
+        else:
+            # Broadcast notification - send to all connected clients
+            self.websocket_mgr.emit( "notification_queue_update", event_data )
+            if self.debug: print( f"[NOTIFY-QUEUE] Broadcast notification to all users" )
+
+        # Cross-user delivery: CC listeners authenticate as a service account
+        # (different user_id), so emit_to_user_sync won't reach them. Target the
+        # listener session directly by its deterministic session ID.
+        if notification.job_id:
+            listener_sid = f"cc-listener-{notification.job_id}"
+            self.websocket_mgr.emit_to_session_sync( listener_sid, "notification_queue_update", event_data )
+
+    def _emit_queue_update( self ) -> None:
+        """
+        Emit a WebSocket notification_queue_update event reflecting current queue state.
+
+        Used by state-mutating operations that do NOT add a new notification
+        (e.g., mark_played) so connected clients can resync unread-count tracking
+        without re-fetching the full inbox.
+
+        Requires:
+            - self.websocket_mgr may be None (silent no-op in that case)
+            - self.emit_enabled controls whether emission actually fires
+
+        Ensures:
+            - Broadcasts notification_queue_update with queue_name="notification",
+              value=total size, and unplayed_count
+            - Silent no-op when websocket_mgr is None or emit_enabled is False
+
+        Raises:
+            - None
+        """
+        if not ( self.websocket_mgr and self.emit_enabled ):
+            return
+
+        unplayed_count = sum( 1 for item in self.queue_list if not getattr( item, "played", False ) )
+        event_data     = {
+            "queue_name"     : "notification",
+            "value"          : self.size(),
+            "unplayed_count" : unplayed_count
+        }
+        self.websocket_mgr.emit( "notification_queue_update", event_data )
+        if self.debug: print( f"[NOTIFY-QUEUE] _emit_queue_update size={self.size()} unplayed={unplayed_count}" )
+
     def get_next_unplayed( self, user_id: Optional[str] = None ) -> Optional[NotificationItem]:
         """
         Get the next notification that hasn't been played yet.

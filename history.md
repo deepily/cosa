@@ -1,5 +1,44 @@
 # COSA Development History
 
+> **📝 SESSION 114be500 STAGED**: Session 9b840935 CoSA bundle — `NotificationFifoQueue._emit_queue_update()` method + `_emit_notification_added()` DRY refactor + 5-test regression suite (2026.04.22)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> Lands the CoSA-side submodule work from Lupin-parent Session **9b840935** (2026-04-22 bug-fix-mode — cross-repo notification bugs reported by the Lupin-mobile session). Parent Lupin commits `cd4e5e6` (main fix, 6 files, +279/−8) and `2fb829c` (hash-pin follow-up, 3 files, +6/−6) already landed; this is the matching CoSA-side commit covering two of the session's three fixes (Fix 1 + Fix 3 — Fix 2 was Lupin-only `notifications.js` wiring).
+>
+> **Body 1 — Fix 1: `NotificationFifoQueue._emit_queue_update()` method** (`rest/notification_fifo_queue.py`):
+> - **Problem**: `POST /api/notifications/{id}/played` 500'd because `mark_played()` at `notification_fifo_queue.py:409` called `self._emit_queue_update()`, but that method was never defined on `NotificationFifoQueue` or its parent `FifoQueue`. Parent's auto-emission had been refactored away at some earlier date and the emission logic was inlined into subclass `push()` overrides; `mark_played` was not updated to match. Three `patch.object(queue, '_emit_queue_update')` calls in `tests/unit/rest/test_fifo_queue.py:446-458` masked the defect during unit testing. Mobile client (Lupin-mobile session) silently swallowed the 500, causing diverged unread-count state on the server.
+> - **Fix**: Added `_emit_queue_update()` method on `NotificationFifoQueue` (broadcasts `notification_queue_update` event with `{queue_name="notification", value=size, unplayed_count}`). Silent no-op when `websocket_mgr=None` or `emit_enabled=False`. Broadcast-not-per-user because `mark_played` only has the notification id; badge recomputation is cheap.
+>
+> **Body 2 — Fix 3: DRY refactor — extract `_emit_notification_added()` helper** (`rest/notification_fifo_queue.py`):
+> - **Problem**: Investigation surfaced ~22 lines of duplicated emission block across `push()` (lines 244-267) and `push_notification()` high/urgent branch (lines 343-365). Identical `event_data` construction + `emit_to_user_sync` / `emit` / `emit_to_session_sync` fan-out in each, differing only in debug-print strings ("notification" vs "priority notification"). Risk analysis during planning confirmed BOTH blocks are LIVE code on mutually exclusive priority paths (normal → `push`; high/urgent → inline in `push_notification`) — not dead code. Neither could be removed without breaking its path.
+> - **Fix**: Extracted new private method `_emit_notification_added(notification)` (sibling to `_emit_queue_update`, different payload — includes the full `notification.to_dict()` for newly-added items). Replaced both call sites with `self._emit_notification_added(notification)`. Unified debug-print strings (dropped the "priority" qualifier). Net diff: ~44 lines of duplication collapsed to ~22 lines of shared helper + 2 call-site lines.
+>
+> **Body 3 — NEW: 5-test regression suite** (`tests/unit/rest/test_notification_fifo_queue.py`):
+> - Lock-in tests for the Fix 1 regression. Cover the canonical `_emit_queue_update` contract: event name, payload shape (queue_name + value + unplayed_count), silent no-op on missing websocket_mgr / disabled emission, and behavior with mocked WebSocketManager.
+>
+> **Files Modified (1) + Created (1)**:
+> - `rest/notification_fifo_queue.py` — new `_emit_queue_update()` method (Fix 1) + new `_emit_notification_added()` helper with both call sites swapped to use it (Fix 3).
+> - `tests/unit/rest/test_notification_fifo_queue.py` (new) — 5 regression tests for Fix 1.
+>
+> **Validation** (per Lupin `history.md` Session 9b840935):
+> - CoSA unit: 5/5 PASS (new suite)
+> - CoSA module smoke test: PASS (priority insertion + mark_played both verified)
+> - Lupin-side Notification unit tests: 27/27 PASS
+> - Lupin-side integration regression: 3/3 PASS (new `TestMarkPlayedEndpoint` in Lupin's `test_notifications_integration.py`)
+> - Live probe on Lupin `:7999` confirmed `/played` endpoint reachable (clean 404 on bogus id, not 500)
+> - User manually confirmed Chrome end-to-end path after browser restart cleared stale-keepalive sockets
+>
+> **Pre-existing CoSA unit test regressions (NOT fixed this session, filed as follow-up)**:
+> - `tests/unit/rest/test_fifo_queue.py::TestFifoQueue::test_websocket_emission` (1 test) — expects `_emit_queue_update` on parent `FifoQueue`; parent was refactored to not have it. Cosmetic test-drift, not a runtime issue.
+> - `tests/unit/rest/test_notifications_router.py::TestNotificationsRouter::*` (8 tests) — expect config key `"app_timezone"` (underscore); code at `rest/routers/notifications.py:112` uses `"app timezone"` (space). Cosmetic test-drift.
+>
+> **Commit landed this session**:
+> - `<TBD>` — 2 files modified/created + history.md (to be filled post-commit).
+>
+> ---
+
 > **📝 SESSION 957df6a5 STAGED**: Session 9934d315 + b802e633 CoSA bundle — TFE/BFE telemetry demotion + stderr parity + `/queue/all` route reorder + thinking_effort plumbing + `resume_job()` args override + FifoQueue abstract auto-promotion + suite timeout bumps (2026.04.21)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >
