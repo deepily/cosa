@@ -35,7 +35,7 @@
 > - `tests/unit/rest/test_notifications_router.py::TestNotificationsRouter::*` (8 tests) — expect config key `"app_timezone"` (underscore); code at `rest/routers/notifications.py:112` uses `"app timezone"` (space). Cosmetic test-drift.
 >
 > **Commit landed this session**:
-> - `<TBD>` — 2 files modified/created + history.md (to be filled post-commit).
+> - `5c804cd` — 3 files, +272/−52. Pushed to `origin/wip-v0.1.6-2026.03.12-tracking-lupin-work`.
 >
 > ---
 
