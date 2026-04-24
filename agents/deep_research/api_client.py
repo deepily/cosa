@@ -287,11 +287,24 @@ class ResearchAPIClient:
         Returns:
             APIResponse: Structured response with content and search results
         """
-        # Rate limit check BEFORE making web search calls
+        # Rate limit check BEFORE making web search calls.
+        # Phase 3 (v0.1.7 CJ Flow async multi-lane): route through ApiResourceManager
+        # singleton rather than the api_client's own _rate_limiter instance. ARM
+        # wraps WebSearchRateLimiter internally — runtime behaviour is identical,
+        # but provider state is observable via /api/queue/pool-status and any
+        # future per-provider contention logic applies uniformly across callers.
+        # Falls back to the local _rate_limiter if ARM is not initialised (e.g.,
+        # unit tests or pre-startup contexts) — matches legacy behaviour exactly.
         if use_web_search:
-            delay = await self._rate_limiter.wait_if_needed()
-            if self.debug and delay > 0:
-                print( f"[ResearchAPIClient] Rate limiter applied {delay:.1f}s delay before subquery {subquery_index}" )
+            try:
+                from cosa.utils.api_resource_manager import get_arm
+                await get_arm().acquire( provider="anthropic_web_search" )
+            except RuntimeError:
+                # ARM not initialised (unit tests / pre-startup) — fall back to
+                # local limiter for unchanged behaviour.
+                delay = await self._rate_limiter.wait_if_needed()
+                if self.debug and delay > 0:
+                    print( f"[ResearchAPIClient] (ARM uninit, local) Rate limiter applied {delay:.1f}s delay before subquery {subquery_index}" )
 
         # Make the API call
         response = await self._call_api(
@@ -306,12 +319,21 @@ class ResearchAPIClient:
             temperature       = temperature,
         )
 
-        # Record actual token usage for rate limiter (input tokens include search results)
+        # Record actual token usage for rate limiter (input tokens include search results).
+        # Phase 3: route through ApiResourceManager to match the acquire() path.
+        # Fall back to local limiter if ARM is not initialised.
         if use_web_search:
-            self._rate_limiter.record_usage(
-                tokens    = response.input_tokens,
-                call_type = "web_search"
-            )
+            try:
+                from cosa.utils.api_resource_manager import get_arm
+                get_arm().record_call(
+                    provider = "anthropic_web_search",
+                    tokens   = response.input_tokens,
+                )
+            except RuntimeError:
+                self._rate_limiter.record_usage(
+                    tokens    = response.input_tokens,
+                    call_type = "web_search"
+                )
 
         return response
 

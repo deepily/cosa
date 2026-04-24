@@ -329,6 +329,31 @@ async def push_agentic(
 
 
 @router.get(
+    "/queue/pool-status",
+    summary     = "CJ Flow agentic-pool state",
+    description = "Returns inflight/pending counts and max workers for the agentic ThreadPoolExecutor. Phase 2 (v0.1.7 CJ Flow async multi-lane)."
+)
+async def get_pool_status(
+    current_user: dict = Depends( get_current_user ),
+    running_queue = Depends( get_running_queue )
+):
+    """
+    Return CJ Flow agentic-pool state.
+
+    Requires:
+        - Authenticated user (Depends(get_current_user))
+        - running_queue initialized at server startup
+
+    Ensures:
+        - Returns dict with keys inflight_agentic_jobs, max_agentic_workers, pending_in_pool
+        - Phase 2 semantics: inflight = submitted-but-not-done (running + pending);
+          pending = queued inside pool's internal queue, not yet picked up by a worker;
+          UI "running" count = inflight - pending
+    """
+    return running_queue.get_pool_status()
+
+
+@router.get(
     "/get-queue/{queue_name}",
     summary     = "Get queue contents",
     description = "Retrieve jobs from a named queue (todo/run/done/dead) with role-based user filtering."

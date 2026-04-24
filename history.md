@@ -1,5 +1,65 @@
 # COSA Development History
 
+### 2026.04.24 - Session 70323998 | CoSA-side wrap of Lupin sessions 52a71953 (sender_id fix) + 616112aa (v0.1.7 CJ Flow async pool)
+
+**Context**: Session-end commit bundle for the CoSA-side work from two Lupin-parent sessions on 2026-04-24, on branch `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Both bodies of work were verified parent-side; this session lands the CoSA submodule pieces under two clearly-scoped commits per `feedback_lupin_only_never_cosa.md` cross-repo separation.
+
+**Body 1 — cosa-voice MCP nested-repo detection fix** (Lupin parent commit: `f549b20`, session `52a71953`)
+
+User noticed that the cosa-voice MCP server, when launched from inside `/lupin/src/cosa/` or `/lupin/src/lupin-mobile/` (both nested git submodules), reported `project = "lupin"` via `get_session_info()`, collapsing all three repo identities to a single sender_id. Two sub-bugs, one root taxonomy issue: hyphenated project names weren't supported end-to-end. CoSA holds the server-side fix (Bug #1); the Lupin parent holds the client-side regex fix (Bug #2).
+
+- **`agents/utils/sender_id.py`** — replaced `detect_project()`'s substring matching with a git-repo-boundary walk-up: `for candidate in [cwd, *cwd.parents]: if (candidate / ".git").exists(): return candidate.name.lower()`. Handles `.git` as both directory (normal repo) and file (worktree/submodule gitlink) via `.exists()`. Added `_PROJECT_ALIASES = {"planning-is-prompting": "plan"}` to preserve the legacy short-name mapping. Extended `quick_smoke_test()` with `tempfile.TemporaryDirectory` + mocked-`os.getcwd` cases for all 5 scenarios (lupin root, nested cosa, nested lupin-mobile, nested lupin-plugin-firefox, no-git basename fallback).
+- **`utils/notification_utils.py`** — extended `KNOWN_PROJECTS` map to include `"/lupin-mobile" : "lupin-mobile"` and `"/lupin-plugin-firefox" : "lupin-plugin-firefox"` so `is_known_project()` returns True for the new nested repos and `_PROJECT_SOURCE` reports `"known"` instead of `"basename"`. Extended `quick_smoke_test()` `is_known_project` assertions to cover both new keys.
+
+**Body 2 — v0.1.7 CJ Flow Async Multi-Lane (Phases 1-3 + Phase 2 fix)** (Lupin parent commits: `fe932ba` Phase 1, `9adfc26` Phase 2, `9eb764b` Phase 2 fix, `2379233` Phase 3, session `616112aa`)
+
+CoSA-side implementation of the v0.1.7 async pool milestone — converts agentic-job processing from inline-on-consumer to a `ThreadPoolExecutor`-backed pool, adds rate-limit centralization, and adds a daemon ghost-job sweeper for callback-failure recovery.
+
+- **`rest/fifo_queue.py` (Phase 1)** — added `import threading`, `self._lock = threading.RLock()` in `__init__`, wrapped **14 methods** with `with self._lock:`: `push, pop, pop_next_eligible, earliest_scheduled_at, head, get_by_id_hash, delete_by_id_hash, is_empty, size, has_changed, clear, get_jobs_for_user, get_jobs_excluding_user, get_all_jobs`. Re-entrant lock supports nested calls (e.g. `pop()` invoked from inside another locked method).
+- **`utils/api_resource_manager.py` (Phase 1, NEW ~315 LOC)** — module-level singleton pattern (`init_arm`/`get_arm`/`reset_arm` helpers). `ApiResourceManager` class with async `acquire(provider)` and sync `record_call(provider, tokens=0, latency_ms=0.0)`. `get_status()` returns verbatim-passthrough of `WebSearchRateLimiter.get_status()` under `anthropic_web_search` key. Lazy-imports `WebSearchRateLimiter` inside methods to avoid `utils → agents` import cycle. Inline `quick_smoke_test()` validates all paths.
+- **`rest/running_fifo_queue.py` (Phase 2 + Phase 2 fix + Phase 3)** —
+  - **Phase 2**: `ThreadPoolExecutor` agentic pool sized by `cj flow max concurrent agentic jobs` INI key (Baseline=1, Development=3). `_submit_agentic_job(job)` puts the job's `do_all()` on the pool and immediately registers an `_on_agentic_complete` callback; `_agentic_futures` dict (RLock-protected) tracks live submissions. Consumer thread returns immediately for `AgenticJobBase`, no longer blocking the queue. Inline fast-lane preserved for `AgentBase`/`SolutionSnapshot`.
+  - **Phase 2 fix**: `_process_job(job)` at line ~166 changed from `running_job = self.head()` to `running_job = job` — pre-Phase-2 the two were coincidentally equal (serial agentic processing always drained the run queue before next push), but Phase 2's pool can hold multiple in-flight jobs, making `self.head()` return the OLDEST (not the just-pushed) job. This caused Bug 2A (phantom job in run queue) + Bug 2B (3× duplicate done-queue entries) on the 2026-04-24 Live API probe. One-line fix; regression test in parent.
+  - **Phase 3**: `_ghost_job_sweeper_thread` daemon (`name="GhostJobSweeper"`) runs `_ghost_job_sweep_loop()` every `cj flow ghost job sweep interval seconds` (default 30s). Sweep snapshots `_agentic_futures` under lock, iterates without lock, per-entry `Future.done()` check + `get_by_id_hash(id_hash) is None` second-safeguard, dead-letters via `_transition_to_dead`. `shutdown_pool()` stops sweeper FIRST (before pool drain) with 5s join timeout. `get_pool_status()` extended to merge `get_arm().get_status()` under `api_resource_manager` key with graceful `{"state": "uninitialised"}` marker when ARM not set up.
+- **`agents/deep_research/api_client.py` (Phase 3)** — the 2 web-search rate-limiter call sites in `call_subagent()` (`wait_if_needed` ~line 292 + `record_usage` ~line 311) now route through `get_arm().acquire("anthropic_web_search")` and `get_arm().record_call(provider="anthropic_web_search", tokens=...)`. Fallback to the local `_rate_limiter` preserved when `get_arm()` raises `RuntimeError` (ARM not initialised — e.g., unit tests, pre-startup).
+- **`rest/routers/queues.py` (Phase 2)** — added `GET /api/queue/pool-status` endpoint (JWT-protected) returning `running_queue.get_pool_status()` — `{inflight_agentic_jobs, max_agentic_workers, pending_in_pool, api_resource_manager: {...}}`.
+
+#### Verification (parent-side, replicated here)
+| Layer | Result |
+|---|---|
+| py_compile (all 7 .py files) | ✅ all OK (this session) |
+| Lupin unit regression (post Phase 1+2+2fix+3) | ✅ **3600 pass / 1 xfail / 0 fail** in 147.53s (Phase 0 baseline 3549 + Phase 1 15 + Phase 2 18 + Phase 2 fix 1 + Phase 3 10 + in-session fixes 7) |
+| Agentic pool unit tests (parent) | ✅ 26/26 (18 Phase 2 + 1 Phase 2 fix regression + 7 Phase 3 ghost-sweeper) |
+| ARM unit tests (parent) | ✅ 12/12 (9 Phase 1 + 3 Phase 3 DR migration) |
+| Live API probe on `:7999` 2026-04-24 16:08 | ✅ 7/7 — `max_workers=3` confirmed (Phase 1 dev overlay), `inflight=2` mid-run (Phase 2 pool concurrent), math 14.5s while DRs running (Phase 2 consumer unblocked), both DRs completed, final `inflight=0`, `api_resource_manager` payload present |
+| `:8000` Phase 2 gate (`ts-ff11fb27`) | ✅ +7 newly-passing `test_swe_team_pipeline` tests; 1 pre-existing integration fail (env-agnostic dispatcher path) + 12 pre-existing visual baselines (both addressed in evening scheduled runs) |
+| Lupin sender_id unit tests (parent) | ✅ 23/23 (rewrite + 7 new tests for nested-repo cases) |
+| Live MCP module-load from 4 cwds | ✅ all banners report correct `Project: <name> (known)` + correct `Sender:` |
+| User-confirmed live MCP from `/src/lupin-mobile/` | ✅ `Project: lupin-mobile`, `Sender: claude.code@lupin-mobile.deepily.ai#0d54c763` |
+
+#### Cross-repo separation
+Per `CLAUDE.md` and memory `feedback_verify_repo_before_commit.md`: this CoSA-context session ONLY commits files inside `src/cosa/`. The Lupin-parent commits (`f549b20`, `fe932ba`, `9adfc26`, `9eb764b`, `2379233`, `d35a330`) are owned by the parent context and not amended here. CoSA history mirrors the Lupin entries per CoSA `CLAUDE.md` cross-repo duplication mandate.
+
+#### Files in this commit bundle (CoSA only)
+
+**Commit A — cosa-voice nested-repo fix**:
+- `agents/utils/sender_id.py`
+- `utils/notification_utils.py`
+
+**Commit B — v0.1.7 CJ Flow async multi-lane (Phases 1-3 + Phase 2 fix)**:
+- `rest/fifo_queue.py`
+- `utils/api_resource_manager.py` (NEW)
+- `rest/running_fifo_queue.py`
+- `agents/deep_research/api_client.py`
+- `rest/routers/queues.py`
+- `history.md`
+- `.claude-session.md`
+
+**Commit A**: [pending]
+**Commit B**: [pending]
+
+---
+
 > **📝 SESSION 114be500 STAGED**: Session 9b840935 CoSA bundle — `NotificationFifoQueue._emit_queue_update()` method + `_emit_notification_added()` DRY refactor + 5-test regression suite (2026.04.22)
 > **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 >

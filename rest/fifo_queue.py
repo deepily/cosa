@@ -2,6 +2,7 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import Any, Optional
 import re
+import threading
 from cosa.rest.queue_extensions import user_job_tracker
 from cosa.rest.queue_protocol import is_queueable_job
 from cosa.rest.job_state import JobState
@@ -62,7 +63,13 @@ class FifoQueue:
         
         # User job tracking singleton for user-based routing
         self.user_job_tracker = user_job_tracker
-        
+
+        # Phase 1 (CJ Flow async multi-lane): RLock guards queue_list / queue_dict
+        # against concurrent mutation from the dispatcher thread and pool callback
+        # threads. Re-entrant because several methods self-call (pop → is_empty,
+        # delete_by_id_hash → size). A plain Lock would deadlock on these.
+        self._lock           = threading.RLock()
+
     def pop_blocking_object( self ) -> Optional[Any]:
         """
         Remove and return the blocking object.
@@ -152,9 +159,10 @@ class FifoQueue:
         if not is_queueable_job( item ):
             raise TypeError( f"Job must implement QueueableJob protocol, got {type( item ).__name__}" )
 
-        self.queue_list.append( item )
-        self.queue_dict[ item.id_hash ] = item
-        self.push_counter += 1
+        with self._lock:
+            self.queue_list.append( item )
+            self.queue_dict[ item.id_hash ] = item
+            self.push_counter += 1
     
     def get_push_counter( self ) -> int:
         """
@@ -186,12 +194,13 @@ class FifoQueue:
         Raises:
             - None
         """
-        if not self.is_empty():
-            # Remove from ID_hash first
-            del self.queue_dict[ self.queue_list[ 0 ].id_hash ]
-            result = self.queue_list.pop( 0 )
-            return result
-    
+        with self._lock:
+            if not self.is_empty():
+                # Remove from ID_hash first
+                del self.queue_dict[ self.queue_list[ 0 ].id_hash ]
+                result = self.queue_list.pop( 0 )
+                return result
+
     def pop_next_eligible( self, now=None ) -> Optional[Any]:
         """
         Remove and return the first eligible job from the queue.
@@ -213,38 +222,39 @@ class FifoQueue:
         if now is None:
             now = datetime.now()
 
-        for i, job in enumerate( self.queue_list ):
-            # Check paused flag (backward compat with legacy jobs)
-            if job.state == JobState.PAUSED:
-                continue
+        with self._lock:
+            for i, job in enumerate( self.queue_list ):
+                # Check paused flag (backward compat with legacy jobs)
+                if job.state == JobState.PAUSED:
+                    continue
 
-            # Check scheduled_at (None = immediate = always eligible)
-            scheduled_at = getattr( job, 'scheduled_at', None )
-            if scheduled_at is not None:
-                try:
-                    scheduled_dt = datetime.fromisoformat( scheduled_at )
-                    # Normalize timezone for comparison:
-                    # JS sends UTC ISO strings ("...Z") → timezone-aware datetime.
-                    # datetime.now() is naive (local time). Comparing aware vs naive
-                    # raises TypeError (caught below, treating job as immediate — wrong).
-                    # Fix: make both naive-local for apples-to-apples comparison.
-                    if scheduled_dt.tzinfo is not None:
-                        scheduled_dt = scheduled_dt.astimezone().replace( tzinfo=None )
-                    if scheduled_dt > now:
-                        continue  # Not yet eligible
-                except ( ValueError, TypeError ):
-                    pass  # Unparseable → treat as immediate
+                # Check scheduled_at (None = immediate = always eligible)
+                scheduled_at = getattr( job, 'scheduled_at', None )
+                if scheduled_at is not None:
+                    try:
+                        scheduled_dt = datetime.fromisoformat( scheduled_at )
+                        # Normalize timezone for comparison:
+                        # JS sends UTC ISO strings ("...Z") → timezone-aware datetime.
+                        # datetime.now() is naive (local time). Comparing aware vs naive
+                        # raises TypeError (caught below, treating job as immediate — wrong).
+                        # Fix: make both naive-local for apples-to-apples comparison.
+                        if scheduled_dt.tzinfo is not None:
+                            scheduled_dt = scheduled_dt.astimezone().replace( tzinfo=None )
+                        if scheduled_dt > now:
+                            continue  # Not yet eligible
+                    except ( ValueError, TypeError ):
+                        pass  # Unparseable → treat as immediate
 
-            # This job is eligible — remove and return it
-            if job.id_hash not in self.queue_dict:
-                print( f"[QUEUE] Warning: stale job in queue_list, removing: {job.id_hash}" )
+                # This job is eligible — remove and return it
+                if job.id_hash not in self.queue_dict:
+                    print( f"[QUEUE] Warning: stale job in queue_list, removing: {job.id_hash}" )
+                    self.queue_list.pop( i )
+                    continue
+                del self.queue_dict[ job.id_hash ]
                 self.queue_list.pop( i )
-                continue
-            del self.queue_dict[ job.id_hash ]
-            self.queue_list.pop( i )
-            return job
+                return job
 
-        return None  # No eligible jobs found
+            return None  # No eligible jobs found
 
     def earliest_scheduled_at( self ):
         """
@@ -265,20 +275,21 @@ class FifoQueue:
             - None
         """
         earliest = None
-        for job in self.queue_list:
-            if job.state == JobState.PAUSED:
-                continue
-            scheduled_at = getattr( job, 'scheduled_at', None )
-            if scheduled_at is not None:
-                try:
-                    scheduled_dt = datetime.fromisoformat( scheduled_at )
-                    # Normalize to naive-local (same as datetime.now() in consumer)
-                    if scheduled_dt.tzinfo is not None:
-                        scheduled_dt = scheduled_dt.astimezone().replace( tzinfo=None )
-                    if earliest is None or scheduled_dt < earliest:
-                        earliest = scheduled_dt
-                except ( ValueError, TypeError ):
-                    pass  # Unparseable → skip
+        with self._lock:
+            for job in self.queue_list:
+                if job.state == JobState.PAUSED:
+                    continue
+                scheduled_at = getattr( job, 'scheduled_at', None )
+                if scheduled_at is not None:
+                    try:
+                        scheduled_dt = datetime.fromisoformat( scheduled_at )
+                        # Normalize to naive-local (same as datetime.now() in consumer)
+                        if scheduled_dt.tzinfo is not None:
+                            scheduled_dt = scheduled_dt.astimezone().replace( tzinfo=None )
+                        if earliest is None or scheduled_dt < earliest:
+                            earliest = scheduled_dt
+                    except ( ValueError, TypeError ):
+                        pass  # Unparseable → skip
         return earliest
 
     def head( self ) -> Optional[Any]:
@@ -292,15 +303,16 @@ class FifoQueue:
             - Returns first item if queue not empty
             - Queue remains unchanged
             - Returns None if queue is empty
-            
+
         Raises:
             - None
         """
-        if not self.is_empty():
-            return self.queue_list[ 0 ]
-        else:
-            return None
-    
+        with self._lock:
+            if not self.is_empty():
+                return self.queue_list[ 0 ]
+            else:
+                return None
+
     def get_by_id_hash( self, id_hash: str ) -> Any:
         """
         Get an item by its ID hash.
@@ -314,8 +326,8 @@ class FifoQueue:
         Raises:
             - KeyError if id_hash not found
         """
-        
-        return self.queue_dict[ id_hash ]
+        with self._lock:
+            return self.queue_dict[ id_hash ]
     
     def delete_by_id_hash( self, id_hash: str ) -> bool:
         """
@@ -333,27 +345,28 @@ class FifoQueue:
         Returns:
             - bool: True if item was found and deleted, False if not found
         """
-        try:
-            # Check if item exists before attempting deletion
-            if id_hash not in self.queue_dict:
-                print( f"ERROR: Could not delete by id_hash - item {id_hash} not found" )
+        with self._lock:
+            try:
+                # Check if item exists before attempting deletion
+                if id_hash not in self.queue_dict:
+                    print( f"ERROR: Could not delete by id_hash - item {id_hash} not found" )
+                    return False
+
+                size_before = self.size()
+                del self.queue_dict[ id_hash ]
+                self.queue_list = list( self.queue_dict.values() )
+                size_after = self.size()
+
+                if size_after < size_before:
+                    print( f"Deleted {size_before - size_after} items from queue" )
+                    return True
+                else:
+                    print( "ERROR: Could not delete by id_hash - size didn't change" )
+                    return False
+
+            except Exception as e:
+                print( f"ERROR: Exception during delete_by_id_hash: {e}" )
                 return False
-            
-            size_before = self.size()
-            del self.queue_dict[ id_hash ]
-            self.queue_list = list( self.queue_dict.values() )
-            size_after = self.size()
-            
-            if size_after < size_before:
-                print( f"Deleted {size_before - size_after} items from queue" )
-                return True
-            else:
-                print( "ERROR: Could not delete by id_hash - size didn't change" )
-                return False
-                
-        except Exception as e:
-            print( f"ERROR: Exception during delete_by_id_hash: {e}" )
-            return False
         
     def is_empty( self ) -> bool:
         """
@@ -369,8 +382,9 @@ class FifoQueue:
         Raises:
             - None
         """
-        return len( self.queue_list ) == 0
-    
+        with self._lock:
+            return len( self.queue_list ) == 0
+
     def size( self ) -> int:
         """
         Get the number of items in the queue.
@@ -384,8 +398,9 @@ class FifoQueue:
         Raises:
             - None
         """
-        return len( self.queue_list )
-    
+        with self._lock:
+            return len( self.queue_list )
+
     def has_changed( self ) -> bool:
         """
         Check if the queue size has changed since last check.
@@ -401,11 +416,12 @@ class FifoQueue:
         Raises:
             - None
         """
-        if self.size() != self.last_queue_size:
-            self.last_queue_size = self.size()
-            return True
-        else:
-            return False
+        with self._lock:
+            if self.size() != self.last_queue_size:
+                self.last_queue_size = self.size()
+                return True
+            else:
+                return False
     
     def clear( self ) -> None:
         """
@@ -423,11 +439,12 @@ class FifoQueue:
         Raises:
             - None
         """
-        self.queue_list.clear()
-        self.queue_dict.clear()
-        self.push_counter = 0
-        self._blocking_object = None
-        self._accepting_jobs = True
+        with self._lock:
+            self.queue_list.clear()
+            self.queue_dict.clear()
+            self.push_counter = 0
+            self._blocking_object = None
+            self._accepting_jobs = True
     
     def get_jobs_for_user( self, user_id: str ) -> list[Any]:
         """
@@ -459,10 +476,11 @@ class FifoQueue:
         user_job_ids = self.user_job_tracker.get_jobs_for_user( user_id )
 
         # Filter queue_list to only include jobs matching user's job IDs
-        filtered_jobs = [
-            job for job in self.queue_list
-            if hasattr( job, 'id_hash' ) and job.id_hash in user_job_ids
-        ]
+        with self._lock:
+            filtered_jobs = [
+                job for job in self.queue_list
+                if hasattr( job, 'id_hash' ) and job.id_hash in user_job_ids
+            ]
 
         return filtered_jobs
 
@@ -496,10 +514,11 @@ class FifoQueue:
         user_job_ids = self.user_job_tracker.get_jobs_for_user( user_id )
 
         # Filter queue_list to EXCLUDE jobs matching user's job IDs
-        filtered_jobs = [
-            job for job in self.queue_list
-            if not hasattr( job, 'id_hash' ) or job.id_hash not in user_job_ids
-        ]
+        with self._lock:
+            filtered_jobs = [
+                job for job in self.queue_list
+                if not hasattr( job, 'id_hash' ) or job.id_hash not in user_job_ids
+            ]
 
         return filtered_jobs
 
@@ -525,7 +544,8 @@ class FifoQueue:
         Raises:
             - None
         """
-        return self.queue_list.copy()
+        with self._lock:
+            return self.queue_list.copy()
 
     # ========================================================================
     # NOTIFICATION SERVICE METHODS (Session 97 - TTS Migration)
