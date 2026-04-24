@@ -55,8 +55,8 @@ Per `CLAUDE.md` and memory `feedback_verify_repo_before_commit.md`: this CoSA-co
 - `history.md`
 - `.claude-session.md`
 
-**Commit A**: [pending]
-**Commit B**: [pending]
+**Commit A**: 658d333 (2 files, +75/−31)
+**Commit B**: 07237a6 (7 files, +1173/−130)
 
 ---
 
