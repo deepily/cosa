@@ -16,6 +16,8 @@ KNOWN_PROJECTS = {
     "/cosa"                  : "cosa",
     "/planning-is-prompting" : "plan",
     "/lupin"                 : "lupin",
+    "/lupin-mobile"          : "lupin-mobile",
+    "/lupin-plugin-firefox"  : "lupin-plugin-firefox",
 }
 
 
@@ -388,6 +390,8 @@ def quick_smoke_test():
         assert is_known_project( "lupin" ) is True
         assert is_known_project( "cosa" ) is True
         assert is_known_project( "plan" ) is True
+        assert is_known_project( "lupin-mobile" ) is True
+        assert is_known_project( "lupin-plugin-firefox" ) is True
         print( "✓ Known projects return True" )
 
         # Test 12: is_known_project (unknown projects)
@@ -403,6 +407,8 @@ def quick_smoke_test():
         assert KNOWN_PROJECTS[ "/lupin" ] == "lupin"
         assert KNOWN_PROJECTS[ "/cosa" ] == "cosa"
         assert KNOWN_PROJECTS[ "/planning-is-prompting" ] == "plan"
+        assert KNOWN_PROJECTS[ "/lupin-mobile" ] == "lupin-mobile"
+        assert KNOWN_PROJECTS[ "/lupin-plugin-firefox" ] == "lupin-plugin-firefox"
         print( "✓ KNOWN_PROJECTS has correct mappings" )
 
         print( "\n✓ Notification utils smoke test completed successfully" )
