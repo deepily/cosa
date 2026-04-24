@@ -22,8 +22,10 @@ import time
 from datetime import datetime
 from typing import Optional
 
+import cosa.utils.util as cu
 from cosa.agents.agentic_job_base import AgenticJobBase
 from cosa.agents.deep_research.cost_tracker import SessionSummary
+from cosa.rest.job_state import JobState
 
 
 class DeepResearchJob( AgenticJobBase ):
@@ -56,6 +58,7 @@ class DeepResearchJob( AgenticJobBase ):
         lead_model: Optional[ str ] = None,
         no_confirm: bool = True,  # Default to auto-approve in queue mode
         dry_run: bool = False,
+        force_failure_mode: Optional[ str ] = None,
         audience: Optional[ str ] = None,
         audience_context: Optional[ str ] = None,
         debug: bool = False,
@@ -97,13 +100,14 @@ class DeepResearchJob( AgenticJobBase ):
         )
 
         # Research parameters
-        self.query            = query
-        self.budget           = budget
-        self.lead_model       = lead_model
-        self.no_confirm       = no_confirm
-        self.dry_run          = dry_run
-        self.audience         = audience
-        self.audience_context = audience_context
+        self.query              = query
+        self.budget             = budget
+        self.lead_model         = lead_model
+        self.no_confirm         = no_confirm
+        self.dry_run            = dry_run
+        self.force_failure_mode = force_failure_mode
+        self.audience           = audience
+        self.audience_context   = audience_context
 
         # Results (populated after execution)
         self.report_path  = None
@@ -137,24 +141,24 @@ class DeepResearchJob( AgenticJobBase ):
         if self.debug:
             print( f"[DeepResearchJob] Starting do_all() for: {self.query[ :50 ]}..." )
 
-        self.status     = "running"
-        self.started_at = datetime.now().isoformat()
+        self.state      = JobState.RUNNING
+        self.started_at = cu.get_current_datetime_iso()
 
         try:
             result = asyncio.run( self._execute() )
 
             # Check if cancellation was requested during execution
             if self._cancel_requested:
-                self.status                = "cancelled"
-                self.completed_at          = datetime.now().isoformat()
+                self.state                 = JobState.CANCELLED
+                self.completed_at          = cu.get_current_datetime_iso()
                 self.error                 = "Cancelled by user request"
                 self.answer_conversational = result or "Research was cancelled by the user."
                 if self.debug:
                     print( f"[DeepResearchJob] Cancelled by user request" )
                 return self.answer_conversational
 
-            self.status       = "completed"
-            self.completed_at = datetime.now().isoformat()
+            self.state        = JobState.COMPLETED
+            self.completed_at = cu.get_current_datetime_iso()
             self.result       = result
             self.answer_conversational = result
 
@@ -168,8 +172,8 @@ class DeepResearchJob( AgenticJobBase ):
             import traceback
             tb_str = traceback.format_exc()
 
-            self.status       = "failed"
-            self.completed_at = datetime.now().isoformat()
+            self.state        = JobState.FAILED
+            self.completed_at = cu.get_current_datetime_iso()
             self.error        = f"{e}\n\n{tb_str}"
 
             print( f"[DeepResearchJob] Failed: {e}" )
@@ -257,25 +261,16 @@ class DeepResearchJob( AgenticJobBase ):
                 queue_name="run"
             )
 
-            # Create research configuration
-            config = ResearchConfig(
-                lead_model     = self.lead_model if self.lead_model else config_mgr.get(
-                    "deep research lead model",
-                    default="claude-opus-4-20250514"
-                ),
-                subagent_model = config_mgr.get(
-                    "deep research subagent model",
-                    default="claude-sonnet-4-20250514"
-                ),
-            )
+            # Create research configuration from INI
+            config = ResearchConfig.from_config( config_mgr, debug=self.debug )
 
-            # Target audience configuration (job arg overrides config file)
-            config.audience = self.audience or config_mgr.get(
-                "deep research audience",
-                default="academic"
-            )
-            audience_context_from_config = config_mgr.get( "deep research audience context", default="" )
-            config.audience_context = self.audience_context or audience_context_from_config or None
+            # Job args override INI values
+            if self.lead_model:
+                config.lead_model = self.lead_model
+            if self.audience:
+                config.audience = self.audience
+            if self.audience_context:
+                config.audience_context = self.audience_context
 
             # Create cost tracker
             cost_tracker = CostTracker(
@@ -330,8 +325,10 @@ class DeepResearchJob( AgenticJobBase ):
             self.artifacts[ "report_path" ] = self.report_path
             self.artifacts[ "abstract" ]    = self.abstract
 
-            # Get cost summary
+            # Get cost summary and store in artifacts for persistence
             self.cost_summary = cost_tracker.get_summary()
+            from dataclasses import asdict
+            self.artifacts[ "cost_summary" ] = asdict( self.cost_summary )
 
             # Format completion message (SessionSummary is a dataclass)
             duration = self.cost_summary.duration_seconds
@@ -442,6 +439,13 @@ class DeepResearchJob( AgenticJobBase ):
             total_input_tokens  = 0,
             total_output_tokens = 0,
         )
+        from dataclasses import asdict
+        self.artifacts[ "cost_summary" ] = asdict( self.cost_summary )
+
+        # Phase 6 repair loop hook: deliberately fail the dry-run to exercise
+        # the dead-queue watchdog + BFE auto-fix pipeline.
+        if self.force_failure_mode:
+            await self._raise_forced_failure( voice_io )
 
         completion_abstract = f"""**🧪 Dry Run Complete!**
 
@@ -510,7 +514,7 @@ def quick_smoke_test():
         assert job.query == "test query for smoke test"
         assert job.budget == 1.00
         assert job.user_email == "test@test.com"
-        assert job.status == "pending"
+        assert job.state == JobState.PENDING
         print( "✓ All attributes set correctly" )
 
         # Test 7: Check JOB_TYPE and JOB_PREFIX

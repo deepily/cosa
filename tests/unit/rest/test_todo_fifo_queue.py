@@ -348,8 +348,8 @@ class TestTodoFifoQueue( unittest.TestCase ):
         """
         # Test with config manager
         self.mock_config_mgr.get.side_effect = lambda key, default=False, return_type="boolean": {
-            "auto_debug": True,
-            "inject_bugs": False
+            "debug auto": True,
+            "debug inject bugs": False
         }.get( key, default )
 
         queue = TodoFifoQueue(
@@ -365,8 +365,8 @@ class TestTodoFifoQueue( unittest.TestCase ):
 
         # Verify config calls
         expected_calls = [
-            call( "auto_debug", default=False, return_type="boolean" ),
-            call( "inject_bugs", default=False, return_type="boolean" )
+            call( "debug auto", default=False, return_type="boolean" ),
+            call( "debug inject bugs", default=False, return_type="boolean" )
         ]
         self.mock_config_mgr.get.assert_has_calls( expected_calls, any_order=True )
 

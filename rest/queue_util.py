@@ -8,12 +8,22 @@ inherently owned by any single queue class.
 from datetime import datetime
 from typing import Any, Optional
 
+import cosa.utils.util as du
+from cosa.rest.job_state import JobState, assert_valid_transition, STATE_TO_UI_CONTAINER
+from cosa.rest.job_persistence import (
+    is_agentic_job_type,
+    persist_job_created_from_metadata,
+    persist_job_started_from_metadata,
+    persist_job_completed_from_metadata,
+    persist_job_failed_from_metadata
+)
+
 
 def emit_job_state_transition(
     websocket_mgr: Any,
     job_id: str,
-    from_queue: str,
-    to_queue: str,
+    from_state: str,
+    to_state: str,
     user_id: str = None,
     metadata: dict = None
 ) -> None:
@@ -23,45 +33,76 @@ def emit_job_state_transition(
     Requires:
         - websocket_mgr is not None (or function returns early)
         - job_id is a non-empty string
-        - from_queue and to_queue are valid queue names (pending, todo, run, done, dead)
+        - from_state and to_state are valid JobState values
 
     Ensures:
-        - Emits 'job_state_transition' event to WebSocket
+        - Validates transition against JobState transition matrix
+        - Emits 'job_state_transition' event to WebSocket with from_state/to_state keys
         - Targets specific user if user_id provided
         - Falls back to broadcast if no user_id
-        - Handles exceptions gracefully
+        - Persists state transition to PostgreSQL for agentic job types (fire-and-forget)
+        - Handles exceptions gracefully (both WS and persistence failures are logged, never raised)
 
     Args:
         websocket_mgr: WebSocket manager instance with emit() and emit_to_user_sync() methods
         job_id: Unique identifier for the job
-        from_queue: Source queue name (pending, todo, run, done, dead)
-        to_queue: Target queue name (pending, todo, run, done, dead)
+        from_state: Source state (JobState value string or enum)
+        to_state: Target state (JobState value string or enum)
         user_id: Optional user ID for targeted emission
         metadata: Optional dict with completion data (response_text, abstract, report_link, cost_summary, error)
 
     Raises:
-        - None (exceptions handled internally)
+        - ValueError if the state transition is invalid (from assert_valid_transition)
     """
-    if not websocket_mgr:
-        return
+    # Validate the transition is legal
+    assert_valid_transition( from_state, to_state )
 
-    data = {
-        'job_id'     : job_id,
-        'from_queue' : from_queue,
-        'to_queue'   : to_queue,
-        'timestamp'  : datetime.now().isoformat()
-    }
+    # Normalize to JobState enum for consistent handling
+    from_state = JobState( from_state )
+    to_state   = JobState( to_state )
 
-    if metadata:
-        data[ 'metadata' ] = metadata
+    # --- WebSocket emission ---
+    if websocket_mgr:
+        data = {
+            'job_id'     : job_id,
+            'from_state' : from_state.value,
+            'to_state'   : to_state.value,
+            'timestamp'  : du.get_current_datetime_iso()
+        }
 
-    try:
-        if user_id:
-            websocket_mgr.emit_to_user_sync( user_id, 'job_state_transition', data )
-        else:
-            websocket_mgr.emit( 'job_state_transition', data )
-    except Exception as e:
-        print( f"[ERROR] emit_job_state_transition failed: {e}" )
+        if metadata:
+            data[ 'metadata' ] = metadata
+
+        try:
+            if user_id:
+                # Canonical dual-emit (owner + watching admins, deduplicated).
+                # See WebSocketManager.emit_to_user_and_admins_sync for the
+                # rationale — Session 248e740e fix moved the dual-call burden
+                # off individual call sites and into one named method.
+                websocket_mgr.emit_to_user_and_admins_sync( user_id, 'job_state_transition', data )
+            else:
+                websocket_mgr.emit( 'job_state_transition', data )
+        except Exception as e:
+            print( f"[ERROR] emit_job_state_transition failed: {e}" )
+
+    # --- CJ Flow Persistence (fire-and-forget) ---
+    # Only persist agentic job types; sync agents are cached in LanceDB
+    agent_type = metadata.get( "agent_type" ) if metadata else None
+    if is_agentic_job_type( agent_type ):
+        try:
+            if from_state == JobState.PENDING and to_state == JobState.QUEUED:
+                persist_job_created_from_metadata( job_id, user_id, metadata )
+            elif from_state == JobState.QUEUED and to_state == JobState.RUNNING:
+                persist_job_started_from_metadata( job_id, metadata )
+            elif to_state == JobState.COMPLETED:
+                persist_job_completed_from_metadata( job_id, metadata )
+            elif to_state == JobState.STALLED:
+                from cosa.rest.job_persistence import persist_job_stalled_from_metadata
+                persist_job_stalled_from_metadata( job_id, metadata or {} )
+            elif to_state in ( JobState.FAILED, JobState.CANCELLED, JobState.INTERRUPTED ):
+                persist_job_failed_from_metadata( job_id, metadata or {} )
+        except Exception as e:
+            print( f"[WARN] CJ Flow persistence failed for {job_id}: {e}" )
 
 
 def quick_smoke_test():
@@ -100,17 +141,17 @@ def quick_smoke_test():
         mock_ws = MockWebSocketMgr()
 
         # Test broadcast emission
-        emit_job_state_transition( mock_ws, "job-456", "pending", "todo" )
+        emit_job_state_transition( mock_ws, "job-456", "pending", "queued" )
         assert len( mock_ws.emitted_events ) == 1, "Expected 1 broadcast event"
         event_name, data = mock_ws.emitted_events[ 0 ]
         assert event_name == "job_state_transition", f"Expected 'job_state_transition', got '{event_name}'"
         assert data[ "job_id" ] == "job-456", f"Expected job_id 'job-456', got '{data[ 'job_id' ]}'"
-        assert data[ "from_queue" ] == "pending", f"Expected from_queue 'pending', got '{data[ 'from_queue' ]}'"
-        assert data[ "to_queue" ] == "todo", f"Expected to_queue 'todo', got '{data[ 'to_queue' ]}'"
+        assert data[ "from_state" ] == "pending", f"Expected from_state 'pending', got '{data[ 'from_state' ]}'"
+        assert data[ "to_state" ] == "queued", f"Expected to_state 'queued', got '{data[ 'to_state' ]}'"
         print( "✓ Broadcast emission working" )
 
         # Test user-targeted emission
-        emit_job_state_transition( mock_ws, "job-789", "run", "done", user_id="user-123" )
+        emit_job_state_transition( mock_ws, "job-789", "running", "completed", user_id="user-123" )
         assert len( mock_ws.user_events ) == 1, "Expected 1 user-targeted event"
         user_id, event_name, data = mock_ws.user_events[ 0 ]
         assert user_id == "user-123", f"Expected user_id 'user-123', got '{user_id}'"
@@ -124,7 +165,7 @@ def quick_smoke_test():
             'question_text' : 'What is 2+2?',
             'agent_type'    : 'MathAgent'
         }
-        emit_job_state_transition( mock_ws2, "job-999", "run", "done", metadata=metadata )
+        emit_job_state_transition( mock_ws2, "job-999", "running", "completed", metadata=metadata )
         assert len( mock_ws2.emitted_events ) == 1, "Expected 1 event with metadata"
         _, data = mock_ws2.emitted_events[ 0 ]
         assert "metadata" in data, "Expected metadata in event data"

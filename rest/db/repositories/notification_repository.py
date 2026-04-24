@@ -642,7 +642,8 @@ class NotificationRepository( BaseRepository[Notification] ):
     def get_sender_last_activities_visible(
         self,
         recipient_id: uuid.UUID,
-        include_hidden: bool = False
+        include_hidden: bool = False,
+        exclude_job_ids: Optional[List[str]] = None
     ) -> List[Dict]:
         """
         Get last activity timestamp per sender for a recipient (excluding hidden).
@@ -650,10 +651,13 @@ class NotificationRepository( BaseRepository[Notification] ):
         Requires:
             - recipient_id: Valid user UUID
             - include_hidden: Whether to include hidden notifications in counts
+            - exclude_job_ids: Optional list of job IDs to exclude (for "not mine" filtering)
 
         Ensures:
             - Returns list of {sender_id, last_activity, notification_count, new_count}
             - Excludes senders with all notifications hidden (unless include_hidden)
+            - When exclude_job_ids provided, excludes notifications matching those job IDs
+              AND notifications with NULL job_id (system/direct notifications are "mine")
             - Ordered by last_activity descending (most recent first)
 
         Returns:
@@ -676,6 +680,13 @@ class NotificationRepository( BaseRepository[Notification] ):
 
         if not include_hidden:
             query = query.filter( Notification.is_hidden == False )
+
+        # "Not mine" filter: exclude user's own job notifications AND system notifications (NULL job_id)
+        if exclude_job_ids is not None:
+            query = query.filter(
+                Notification.job_id.isnot( None ),
+                ~Notification.job_id.in_( exclude_job_ids ) if exclude_job_ids else True
+            )
 
         results = query.group_by(
             Notification.sender_id
@@ -726,7 +737,8 @@ class NotificationRepository( BaseRepository[Notification] ):
         self,
         user_email: str,
         recipient_id: uuid.UUID,
-        hours: Optional[int] = None
+        hours: Optional[int] = None,
+        exclude_job_ids: Optional[List[str]] = None
     ) -> int:
         """
         Delete all notifications for a user within the time window.
@@ -735,9 +747,12 @@ class NotificationRepository( BaseRepository[Notification] ):
             - user_email: User's email address (for logging)
             - recipient_id: Valid user UUID
             - hours: Optional filter - only delete notifications within N hours (None = all)
+            - exclude_job_ids: Optional list of job IDs to scope deletion to "not mine"
+              When provided, only deletes notifications whose job_id is NOT in this list
+              AND whose job_id is NOT NULL (system notifications are "mine", not deleted)
 
         Ensures:
-            - All notifications matching recipient_id and time filter are permanently deleted
+            - All notifications matching filters are permanently deleted
             - Returns count of deleted notifications
 
         Returns:
@@ -765,6 +780,13 @@ class NotificationRepository( BaseRepository[Notification] ):
             cutoff = datetime.now( timezone.utc ) - timedelta( hours=hours )
             query = query.filter( Notification.created_at >= cutoff )
 
+        # "Not mine" filter: only delete notifications NOT from user's own jobs
+        if exclude_job_ids is not None:
+            query = query.filter(
+                Notification.job_id.isnot( None ),
+                ~Notification.job_id.in_( exclude_job_ids ) if exclude_job_ids else True
+            )
+
         # Count before deletion (for logging)
         count_before = query.count()
 
@@ -773,7 +795,8 @@ class NotificationRepository( BaseRepository[Notification] ):
 
         self.session.flush()
 
-        print( f"[NOTIFY] Bulk deleted {deleted} notifications for {user_email} (hours filter: {hours})" )
+        filter_label = " (not-mine filter active)" if exclude_job_ids is not None else ""
+        print( f"[NOTIFY] Bulk deleted {deleted} notifications for {user_email} (hours filter: {hours}){filter_label}" )
 
         return deleted
 

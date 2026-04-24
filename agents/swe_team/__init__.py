@@ -104,6 +104,7 @@ from .hooks import (
     pre_tool_hook,
     post_tool_hook,
     build_can_use_tool,
+    wrap_prompt_for_streaming,
 )
 
 from .state_files import (
@@ -180,6 +181,7 @@ __all__ = [
     "pre_tool_hook",
     "post_tool_hook",
     "build_can_use_tool",
+    "wrap_prompt_for_streaming",
 
     # Test Runner (Phase 3)
     "TestRunResult",

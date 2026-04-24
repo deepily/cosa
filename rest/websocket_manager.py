@@ -2,6 +2,7 @@ from fastapi import WebSocket
 from datetime import datetime
 from typing import Dict, Optional, List
 import asyncio
+import cosa.utils.util as du
 from cosa.config.configuration_manager import ConfigurationManager
 
 
@@ -57,13 +58,15 @@ class WebSocketManager:
         self.user_sessions: Dict[str, list] = {}
         # Cache user_id → email for debug logging (populated on connect, cleared on last disconnect)
         self.user_to_email: Dict[str, str] = {}
+        # Track which sessions belong to admin users (for targeted admin broadcasts)
+        self.session_is_admin: Dict[str, bool] = {}
         # Store reference to main event loop for thread-safe operations
         self.main_loop: Optional[asyncio.AbstractEventLoop] = None
         # Session management configuration
         self.config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
         self.single_session_per_user = self.config_mgr.get( "websocket enforce single session per user", default=False, return_type="boolean" )
         self.session_timestamps: Dict[str, datetime] = {}  # Track when sessions connected
-        self.debug = self.config_mgr.get( "app_debug", default=False, return_type="boolean" )
+        self.debug = self.config_mgr.get( "app debug", default=False, return_type="boolean" )
 
         # Event subscription system
         self.session_subscriptions: Dict[str, List[str]] = {}  # Map session_id to list of subscribed events
@@ -99,7 +102,7 @@ class WebSocketManager:
         self.main_loop = loop
         print( "[WS] Event loop reference stored for thread-safe operations" )
     
-    def connect( self, websocket: WebSocket, session_id: str, user_id: str = None, subscribed_events: List[str] = None, email: str = None ):
+    def connect( self, websocket: WebSocket, session_id: str, user_id: str = None, subscribed_events: List[str] = None, email: str = None, roles: list = None ):
         """
         Add a new WebSocket connection with optional user association.
         
@@ -152,9 +155,13 @@ class WebSocketManager:
             self.session_to_user[session_id] = user_id
             if user_id not in self.user_sessions:
                 self.user_sessions[user_id] = []
-            self.user_sessions[user_id].append(session_id)
+            if session_id not in self.user_sessions[user_id]:
+                self.user_sessions[user_id].append( session_id )
             if email:
                 self.user_to_email[ user_id ] = email
+
+        # Track admin status for targeted admin broadcasts
+        self.session_is_admin[ session_id ] = bool( roles and "admin" in roles )
 
         # Store event subscriptions
         session_type = "listener" if session_id.startswith( "cc-listener-" ) else "browser"
@@ -167,7 +174,9 @@ class WebSocketManager:
             # Default: subscribe to all events
             self.session_subscriptions[session_id] = ["*"]
             print( f"[WS] Session {session_id} ({session_type}) subscribed to: all events (*)" )
-    
+
+        print( f"[WS] STATE after connect: {len( self.active_connections )} active, {len( self.user_sessions )} users: {list( self.user_sessions.keys() )[ :3 ]}" )
+
     def disconnect( self, session_id: str ):
         """
         Remove a WebSocket connection and clean up all associated data.
@@ -193,6 +202,17 @@ class WebSocketManager:
         print( f"[WS] Disconnecting {session_type} session {session_id} for user {user_id_tag}{email_suffix}" )
 
         if session_id in self.active_connections:
+            # Explicitly close the WebSocket so the browser receives a close frame
+            # and can trigger onclose → scheduleReconnect (prevents phantom connections)
+            ws = self.active_connections[session_id]
+            try:
+                if self.main_loop and self.main_loop.is_running():
+                    asyncio.run_coroutine_threadsafe(
+                        ws.close( code=1000, reason="Server disconnect" ),
+                        self.main_loop
+                    )
+            except Exception as e:
+                print( f"[WS] Error closing WebSocket for {session_id}: {e}" )
             del self.active_connections[session_id]
 
         # Clean up session timestamp
@@ -202,6 +222,9 @@ class WebSocketManager:
         # Clean up event subscriptions
         if session_id in self.session_subscriptions:
             del self.session_subscriptions[session_id]
+
+        # Clean up admin tracking
+        self.session_is_admin.pop( session_id, None )
 
         # Clean up user association
         if session_id in self.session_to_user:
@@ -213,7 +236,9 @@ class WebSocketManager:
                 if not self.user_sessions[user_id]:
                     del self.user_sessions[user_id]
                     self.user_to_email.pop( user_id, None )
-    
+
+        print( f"[WS] STATE after disconnect: {len( self.active_connections )} active, {len( self.user_sessions )} users: {list( self.user_sessions.keys() )[ :3 ]}" )
+
     def register_session_user( self, session_id: str, user_id: str ):
         """
         Register a session-to-user association without a WebSocket connection.
@@ -269,7 +294,7 @@ class WebSocketManager:
         # Build message in format expected by queue.js
         message = {
             "type": event,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": du.get_current_datetime_iso(),
             **data
         }
         
@@ -343,7 +368,7 @@ class WebSocketManager:
             
         message = {
             "type": event,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": du.get_current_datetime_iso(),
             **data
         }
         
@@ -417,23 +442,37 @@ class WebSocketManager:
     def emit_to_user_sync( self, user_id: str, event: str, data: dict ):
         """
         Thread-safe synchronous wrapper for emit_to_user.
-        
+
         This method is called by COSA queues which expect synchronous emit.
         Uses asyncio.run_coroutine_threadsafe to safely schedule the coroutine
         on the main event loop from any thread.
-        
+
+        WARNING — broadcast scope:
+            This method delivers ONLY to the named user's sessions. It is the
+            right primitive for events that should remain private to that user
+            (notification queue updates, response payloads — anything that
+            another admin should NOT see). For queue or job state events that
+            admins watching the system-wide view should also see — job_created,
+            job_removed, job_paused, job_resumed, job_state_transition — use
+            `emit_to_user_and_admins_sync` instead. The Session 248e740e bug
+            (admin browser stuck with 14 stale mock job cards from an E2E test
+            run) was caused by emitting `job_removed` only via this method,
+            which reached the test user's zero browser sessions and never told
+            the admin browser to remove the cards. The canonical dual-emit
+            method removes that discipline burden.
+
         Requires:
             - user_id is a non-empty string
             - event is a non-empty string event name
             - data is a dictionary containing event data
             - self.main_loop is set and running
-            
+
         Ensures:
             - Schedules async emission to user on main event loop
             - Does not block calling thread
             - Prints error messages if event loop unavailable
             - Prints confirmation when successfully scheduled
-            
+
         Raises:
             - None (errors logged but not raised)
         """
@@ -457,7 +496,131 @@ class WebSocketManager:
             print( f"[WS] Scheduled emission of {event} to user {user_id}{email_suffix}" )
         except Exception as e:
             print( f"[ERROR] Failed to schedule emission to user {user_id}: {e}" )
-    
+
+    def emit_to_session_sync( self, session_id: str, event: str, data: dict ):
+        """
+        Thread-safe synchronous wrapper for emit_to_session.
+
+        Used for cross-user delivery to CC listener sessions that authenticate
+        as a service account (different user_id than the target human user).
+
+        Requires:
+            - session_id is a non-empty string
+            - event is a non-empty string event name
+            - data is a dictionary containing event data
+            - self.main_loop is set and running
+
+        Ensures:
+            - Returns immediately if session not in active_connections (no-op)
+            - Schedules async emission to session on main event loop
+            - Does not block calling thread
+
+        Raises:
+            - None (errors logged but not raised)
+        """
+        if session_id not in self.active_connections:
+            return
+
+        if not self.main_loop:
+            print( f"[ERROR] No event loop reference - cannot emit {event} to session {session_id}" )
+            return
+
+        if not self.main_loop.is_running():
+            print( f"[ERROR] Event loop not running - cannot emit {event} to session {session_id}" )
+            return
+
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self.emit_to_session( session_id, event, data ),
+                self.main_loop
+            )
+            print( f"[WS] Scheduled emission of {event} to session {session_id}" )
+        except Exception as e:
+            print( f"[ERROR] Failed to schedule emission to session {session_id}: {e}" )
+
+    def emit_to_admins_sync( self, event: str, data: dict, exclude_user_id: str = None ):
+        """
+        Emit event to all connected admin sessions, optionally excluding one user.
+
+        Requires:
+            - event is a non-empty string event name
+            - data is a dictionary containing event data
+            - self.main_loop is set and running
+
+        Ensures:
+            - Sends event to all sessions where session_is_admin is True
+            - Skips sessions belonging to exclude_user_id (to avoid double delivery)
+            - Thread-safe via asyncio.run_coroutine_threadsafe
+            - Does not block calling thread
+
+        Raises:
+            - None (errors logged but not raised)
+        """
+        if not self.main_loop or not self.main_loop.is_running():
+            return
+
+        # Collect admin user_ids (deduplicated), excluding the specified user
+        admin_user_ids = set()
+        for session_id, is_admin in self.session_is_admin.items():
+            if not is_admin:
+                continue
+            user_id = self.session_to_user.get( session_id )
+            if user_id and user_id != exclude_user_id:
+                admin_user_ids.add( user_id )
+
+        for admin_uid in admin_user_ids:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self.emit_to_user( admin_uid, event, data ),
+                    self.main_loop
+                )
+                email_tag    = self.user_to_email.get( admin_uid, "" )
+                email_suffix = f" ({email_tag})" if email_tag else ""
+                if self.debug: print( f"[WS] Admin broadcast: {event} → {admin_uid}{email_suffix}" )
+            except Exception as e:
+                print( f"[ERROR] Failed to schedule admin emission to {admin_uid}: {e}" )
+
+    def emit_to_user_and_admins_sync( self, user_id: str, event: str, data: dict ):
+        """
+        Canonical dual-emit for queue and job state events.
+
+        Delivers the event to the owning user AND every admin session watching
+        the global queue, deduplicating so the owner is never sent the event
+        twice (when the owner happens to also be an admin).
+
+        This is the right method to call for ANY event that signals a queue or
+        job mutation that admins watching the system-wide view should see:
+        job created, job removed, job paused, job resumed, job state
+        transitions, etc. Use this instead of calling emit_to_user_sync followed
+        by emit_to_admins_sync separately — that pattern was the source of the
+        Session 248e740e bug where pause/resume/delete events stranded cards in
+        admin browsers because callers forgot the second call.
+
+        Use emit_to_user_sync directly only for events that admins should NOT
+        see (private notifications, response payloads). Use emit() only for
+        truly system-wide events (notification sounds, time updates).
+
+        Requires:
+            - user_id is the owning user UUID (non-empty string)
+            - event is a non-empty string event name
+            - data is a JSON-serializable dict
+            - self.main_loop is set and running (matches the underlying primitives)
+
+        Ensures:
+            - Owner receives the event via emit_to_user_sync
+            - All admin sessions where session_is_admin is True receive the
+              event, deduplicated, with the owner's user_id excluded to prevent
+              double delivery when the owner is also an admin
+            - Both underlying calls are thread-safe via run_coroutine_threadsafe
+            - Errors in either call are logged but never raised
+            - No-op if main_loop is missing or stopped (matches existing primitives)
+
+        Raises:
+            - None (errors logged by underlying methods but not raised)
+        """
+        self.emit_to_user_sync( user_id, event, data )
+        self.emit_to_admins_sync( event, data, exclude_user_id=user_id )
+
     def is_user_connected( self, user_id: str ) -> bool:
         """
         Check if a specific user has any active WebSocket connections.
@@ -527,12 +690,13 @@ class WebSocketManager:
 
         message = {
             "type": event,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": du.get_current_datetime_iso(),
             **data
         }
 
         sent_count = 0
         disconnected = []
+        orphaned     = []
 
         sessions = list( self.user_sessions[ user_id ] )
         for session_id in sessions:
@@ -551,10 +715,15 @@ class WebSocketManager:
                 else:
                     if self.debug: print( f"[WS] emit_to_user: session {session_id} not subscribed to {event}" )
             else:
-                if self.debug: print( f"[WS] emit_to_user: session {session_id} not in active_connections" )
+                print( f"[WS] emit_to_user: session {session_id} not in active_connections (orphaned, cleaning up)" )
+                orphaned.append( session_id )
 
         # Clean up disconnected sessions
         for session_id in disconnected:
+            self.disconnect( session_id )
+
+        # Clean up orphaned sessions (in user_sessions but not in active_connections)
+        for session_id in orphaned:
             self.disconnect( session_id )
 
         if sent_count == 0:
@@ -716,7 +885,7 @@ class WebSocketManager:
                 # Attempt to send a ping message
                 await websocket.send_json( {
                     "type": "sys_ping",
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": du.get_current_datetime_iso()
                 } )
             except:
                 # Connection is dead, mark for removal

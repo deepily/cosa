@@ -349,7 +349,7 @@ class MathAgentUnitTests:
             config_values_terse = {
                 "prompt template for agent router go to math": "/templates/math_template.txt",
                 "llm spec key for agent router go to math": "math_llm_spec",
-                "formatter_prompt_for_math_terse": True
+                "formatter prompt for math terse": True
             }
             
             mock_context = self._create_math_agent_mock_context( config_values_terse )
@@ -371,7 +371,7 @@ class MathAgentUnitTests:
             config_values_full = {
                 "prompt template for agent router go to math": "/templates/math_template.txt",
                 "llm spec key for agent router go to math": "math_llm_spec",
-                "formatter_prompt_for_math_terse": False
+                "formatter prompt for math terse": False
             }
             
             mock_context2 = self._create_math_agent_mock_context( config_values_full )

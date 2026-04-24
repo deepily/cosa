@@ -17,7 +17,7 @@ class CalendaringAgent( AgentBase ):
         Initialize calendaring agent with events data.
         
         Requires:
-            - df_path_key 'path_to_events_df_wo_root' exists in config
+            - df_path_key 'path to events df wo root' exists in config
             - Events CSV file contains 'event_type' column
             - Calendar routing command exists in config
             
@@ -31,7 +31,7 @@ class CalendaringAgent( AgentBase ):
             - KeyError if required config keys missing
         """
         
-        super().__init__( df_path_key="path_to_events_df_wo_root", question=question, question_gist=question_gist, last_question_asked=last_question_asked, routing_command=routing_command, push_counter=push_counter, user_id=user_id, user_email=user_email, session_id=session_id, debug=debug, verbose=verbose, auto_debug=auto_debug, inject_bugs=inject_bugs )
+        super().__init__( df_path_key="path to events df wo root", question=question, question_gist=question_gist, last_question_asked=last_question_asked, routing_command=routing_command, push_counter=push_counter, user_id=user_id, user_email=user_email, session_id=session_id, debug=debug, verbose=verbose, auto_debug=auto_debug, inject_bugs=inject_bugs )
 
         self.prompt = self._get_prompt()
         

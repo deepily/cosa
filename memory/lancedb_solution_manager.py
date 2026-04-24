@@ -46,7 +46,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
 
         Requires:
             - config["table_name"] contains target table name
-            - config["storage_backend"] is "local" or "gcs" (defaults to "local")
+            - config["storage backend"] is "local" or "gcs" (defaults to "local")
             - If backend=local: config["db_path"] must exist or be creatable
             - If backend=gcs: config["gcs_uri"] must be valid gs:// URI
 
@@ -74,7 +74,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
             raise KeyError( f"LanceDBSolutionManager requires {missing_keys} in configuration" )
 
         # Store backend type and table name
-        self.storage_backend = config.get( "storage_backend", "local" )
+        self.storage_backend = config.get( "storage backend", "local" )
         self.table_name = config["table_name"]
 
         # Resolve database path based on backend (local filesystem or GCS)
@@ -144,7 +144,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         Resolve database path based on storage backend configuration.
 
         Requires:
-            - config["storage_backend"] is "local" or "gcs"
+            - config["storage backend"] is "local" or "gcs"
             - If backend=gcs: config["gcs_uri"] must be valid GCS URI
             - If backend=local: config["db_path"] must exist or be creatable
 
@@ -163,7 +163,7 @@ class LanceDBSolutionManager( SolutionSnapshotManagerInterface ):
         Raises:
             ValueError: If backend unknown, required keys missing, or validation fails
         """
-        backend = config.get( "storage_backend", "local" )
+        backend = config.get( "storage backend", "local" )
 
         if backend == "gcs":
             # GCS backend - use cloud storage URI

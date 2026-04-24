@@ -57,7 +57,11 @@ def _format_duration( ms: int ) -> str:
         return f"{ms / 3600000:.1f} hours"
 
 
-@router.get( "/time-saved" )
+@router.get(
+    "/time-saved",
+    summary     = "Get user time-saved stats",
+    description = "Return per-user aggregate stats on time saved by cached solution replays."
+)
 async def get_time_saved_stats(
     current_user: dict = Depends( get_current_user ),
     days: int = 30
@@ -131,7 +135,11 @@ async def get_time_saved_stats(
     return user_stats
 
 
-@router.get( "/time-saved/global" )
+@router.get(
+    "/time-saved/global",
+    summary     = "Get global time-saved stats",
+    description = "Return global time-saved leaderboard across all users with top replayed solutions."
+)
 async def get_global_time_saved_stats(
     current_user: dict = Depends( get_current_user )
 ):

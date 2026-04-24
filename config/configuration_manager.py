@@ -50,9 +50,9 @@ def singleton( cls: type ) -> Callable[..., Any]:
         if cls not in instances:
             # print( "Instantiating ConfigurationManager() singleton...", end="\n\n" )
             instances[ cls ] = cls( *args, **kwargs )
-        else:
-            if instances[ cls ].get( "app_debug", default=False, return_type="boolean" ):
-                print( "Reusing ConfigurationManager() singleton..." )
+        # else:
+        #     if instances[ cls ].get( "app debug", default=False, return_type="boolean" ):
+        #         print( "Reusing ConfigurationManager() singleton..." )
             
         return instances[ cls ]
     
@@ -733,7 +733,7 @@ class ConfigurationManager():
         for key in keys:
 
             # inserts blank line between different stems
-            stem = key.split( "_" )[ 0 ]
+            stem = key.split()[ 0 ]
             if stem != last_stem: print()
             last_stem = stem
 

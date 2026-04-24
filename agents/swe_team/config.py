@@ -9,7 +9,7 @@ Design decisions:
 - Configurable limits to prevent runaway execution
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Literal, Optional
 
 
@@ -28,8 +28,8 @@ class SweTeamConfig:
     """
 
     # === Model Selection ===
-    lead_model   : str = "claude-opus-4-20250514"
-    worker_model : str = "claude-sonnet-4-20250514"
+    lead_model   : str = "claude-opus-4-6"
+    worker_model : str = "claude-sonnet-4-6"
 
     # === Execution Limits ===
     max_iterations_per_task   : int = 10
@@ -58,6 +58,73 @@ class SweTeamConfig:
     enabled  : bool = False
     dry_run  : bool = False
 
+    @classmethod
+    def from_config( cls, config_mgr, debug=False ):
+        """
+        Create a SweTeamConfig from ConfigurationManager INI values.
+
+        Reads each field from ConfigManager with "swe team" prefix,
+        falling back to the dataclass default for missing keys.
+
+        Requires:
+            - config_mgr is a valid ConfigurationManager instance
+
+        Ensures:
+            - Returns a fully populated SweTeamConfig
+            - Missing INI keys fall back to dataclass defaults
+            - Type coercion handles str, int, bool, float
+
+        Args:
+            config_mgr: ConfigurationManager instance
+            debug: Enable debug output
+
+        Returns:
+            SweTeamConfig: Configured instance
+        """
+        key_map = {
+            "lead_model"                : "swe team lead model",
+            "worker_model"              : "swe team worker model",
+            "max_iterations_per_task"   : "swe team max iterations per task",
+            "max_tokens_per_session"    : "swe team max tokens per session",
+            "wall_clock_timeout_secs"   : "swe team wall clock timeout seconds",
+            "max_consecutive_failures"  : "swe team max consecutive failures",
+            "max_file_changes_per_task" : "swe team max file changes per task",
+            "require_test_pass"         : "swe team require test pass",
+            "budget_usd"                : "swe team budget usd",
+            "feedback_timeout_seconds"  : "swe team feedback timeout seconds",
+            "narrate_progress"          : "swe team narrate progress",
+            "enable_checkins"           : "swe team enable checkins",
+            "checkin_timeout"           : "swe team checkin timeout",
+            "enable_user_messages"      : "swe team enable user messages",
+            "trust_mode"                : "swe team trust mode",
+            "enabled"                   : "swe team enabled",
+        }
+
+        kwargs    = {}
+        dc_fields = { f.name: f for f in fields( cls ) }
+
+        for field_name, ini_key in key_map.items():
+            dc_field = dc_fields[ field_name ]
+            default  = dc_field.default
+
+            field_type = dc_field.type
+            if field_type == "bool" or field_type is bool:
+                return_type = "boolean"
+            elif field_type == "int" or field_type is int:
+                return_type = "int"
+            elif field_type == "float" or field_type is float:
+                return_type = "float"
+            else:
+                return_type = "string"
+
+            value = config_mgr.get( ini_key, default=default, return_type=return_type )
+            kwargs[ field_name ] = value
+
+            if debug:
+                print( f"  [SweTeamConfig] {field_name} = {value} (from INI: {ini_key})" )
+
+        return cls( **kwargs )
+
 
 def quick_smoke_test():
     """Quick smoke test for SweTeamConfig."""
@@ -69,8 +136,8 @@ def quick_smoke_test():
         # Test 1: Default instantiation
         print( "Testing default config..." )
         config = SweTeamConfig()
-        assert config.lead_model == "claude-opus-4-20250514"
-        assert config.worker_model == "claude-sonnet-4-20250514"
+        assert config.lead_model == "claude-opus-4-6"
+        assert config.worker_model == "claude-sonnet-4-6"
         assert config.enabled is False
         print( "✓ Default config created" )
 

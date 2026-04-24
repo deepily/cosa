@@ -264,7 +264,15 @@ class RuntimeArgumentExpeditor:
             for arg_name in special:
                 handler = special_handlers[ arg_name ]
                 if handler == "fuzzy_file_match":
-                    value = self._handle_fuzzy_file_match( user_email )
+                    value = self._handle_fuzzy_file_match( user_email, agent_entry.get( "display_name" ) )
+                    # Auto-detect YAML → set render_only flag
+                    if value and value.lower().endswith( ( ".yaml", ".yml" ) ):
+                        final_args[ "render_only" ] = "true"
+                        if self.debug: print( f"[Expeditor] YAML detected → render_only=true" )
+                elif handler == "tfe_checkpoint_match":
+                    # Session 9056c113 doc 16 Phase 2 — voice-driven TFE resume.
+                    # Fuzzy-match user description against stalled/recent TFE jobs.
+                    value = self._handle_tfe_checkpoint_match( user_email )
                 else:
                     value = self._ask_for_arg( arg_name, f"Please provide the '{arg_name}' argument.", user_email, abstract=request_abstract )
                 if value is None:
@@ -330,6 +338,13 @@ class RuntimeArgumentExpeditor:
                     summary_lines.append( f"- **{k}**: {v}" )
 
             agent_name = agent_entry.get( "display_name", agent_entry[ "cli_module" ].split( "." )[ -1 ].replace( "_", " " ) )
+
+            # Runtime scheduling section (universal, not agent-specific)
+            summary_lines.append( "" )
+            summary_lines.append( "---" )
+            summary_lines.append( "**Scheduling**" )
+            summary_lines.append( f"- **run_at**: { args_dict.get( 'scheduled_at', 'immediately' ) }" )
+            summary_lines.append( f"- **exclusive_mode**: { 'yes' if args_dict.get( 'monopolize' ) else 'no' }" )
 
             abstract = f"**{agent_name} Job Summary**\n\n" + "\n".join( summary_lines )
             message  = f"Here's what I have for your {agent_name} job. Does this look right?"
@@ -421,6 +436,10 @@ class RuntimeArgumentExpeditor:
             fallback_keys = ", ".join( agent_entry.get( "fallback_questions", {} ).keys() )
             if fallback_keys:
                 arg_names_str = arg_names_str + ", " + fallback_keys if arg_names_str else fallback_keys
+
+            # Runtime scheduling args (universal across all agents)
+            runtime_arg_names = "scheduled_at, monopolize"
+            arg_names_str = arg_names_str + ", " + runtime_arg_names if arg_names_str else runtime_arg_names
 
             prompt = template_processed.format(
                 user_response = user_response,
@@ -826,12 +845,13 @@ class RuntimeArgumentExpeditor:
 
         return answers
 
-    def _handle_fuzzy_file_match( self, user_email ):
+    def _handle_fuzzy_file_match( self, user_email, agent_display_name=None ):
         """
         Use fuzzy file matching to find a document by user description.
 
         Searches the user's deep research directory AND additional directories
-        from the 'podcast generator source search paths' config key.
+        from the agent-specific source search paths config key, falling back
+        to 'podcast generator source search paths'.
 
         Requires:
             - user_email is a valid email
@@ -855,16 +875,33 @@ class RuntimeArgumentExpeditor:
         # Build docs_map: { relative_path → abs_path } from all search dirs
         docs_map = {}
 
+        # Supported file extensions for source documents and YAML intermediates
+        source_extensions = ( ".md", ".yaml", ".yml", ".txt" )
+
         # Source 1: Deep research directory
         research_dir = project_root + f"/io/deep-research/{user_email}"
         if os.path.exists( research_dir ):
             for f in os.listdir( research_dir ):
-                if f.endswith( ".md" ):
+                if f.endswith( source_extensions ):
                     rel_path = f"io/deep-research/{user_email}/{f}"
                     docs_map[ rel_path ] = f"{research_dir}/{f}"
 
-        # Source 2: Additional search paths from config
-        search_paths_raw = config_mgr.get( "podcast generator source search paths", default="/src" )
+        # Source 1b: Presentations directory (YAML intermediates for re-render)
+        presentations_dir = project_root + f"/io/presentations/{user_email}"
+        if os.path.exists( presentations_dir ):
+            for f in os.listdir( presentations_dir ):
+                if f.endswith( ( ".yaml", ".yml" ) ):
+                    rel_path = f"io/presentations/{user_email}/{f}"
+                    docs_map[ rel_path ] = f"{presentations_dir}/{f}"
+
+        # Source 2: Additional search paths from config (agent-specific key, fallback to podcast)
+        search_paths_raw = None
+        if agent_display_name:
+            agent_key = f"{agent_display_name.lower()} source search paths"
+            search_paths_raw = config_mgr.get( agent_key, default=None )
+            if self.debug and search_paths_raw: print( f"[Expeditor] Using agent-specific search paths: {agent_key}" )
+        if search_paths_raw is None:
+            search_paths_raw = config_mgr.get( "podcast generator source search paths", default="/src" )
         search_dirs = [ d.strip() for d in search_paths_raw.split( "," ) if d.strip() ]
 
         for search_dir in search_dirs:
@@ -874,14 +911,14 @@ class RuntimeArgumentExpeditor:
                 continue
             for root, _dirs, files in os.walk( abs_search_dir ):
                 for f in files:
-                    if f.endswith( ".md" ):
+                    if f.endswith( source_extensions ):
                         abs_path = os.path.join( root, f )
                         rel_path = os.path.relpath( abs_path, project_root )
                         if rel_path not in docs_map:
                             docs_map[ rel_path ] = abs_path
 
         if not docs_map:
-            if self.debug: print( f"[Expeditor] No markdown files found in any search directory" )
+            if self.debug: print( f"[Expeditor] No source files found in any search directory" )
             return self._ask_for_arg(
                 "research",
                 "No documents found. Please provide the path to a document.",
@@ -977,6 +1014,114 @@ class RuntimeArgumentExpeditor:
             return self._ask_for_arg(
                 "research",
                 "Matching failed. Please provide the exact filename or path.",
+                user_email
+            )
+
+    def _handle_tfe_checkpoint_match( self, user_email, user_description=None ):
+        """
+        Fuzzy-match a user's natural-language description of a stalled TFE job
+        to a resume target (job ID or plan doc path).
+
+        Session 9056c113 doc 16 Phase 2. Reuses resume_resolver infrastructure
+        (list_resume_candidates + fuzzy_match_candidates) from doc 15 Phase 2.
+
+        Requires:
+            - user_email is a valid email address (scopes candidate pool)
+
+        Ensures:
+            - Returns resolved job_id (or plan path) for the REST endpoint
+            - Returns None if user cancels or no candidates exist
+            - Never raises — errors fall through to _ask_for_arg fallback
+
+        Args:
+            user_email: User's email for candidate scoping
+            user_description: Optional pre-captured description (else prompts via TTS)
+
+        Returns:
+            str or None: Resolved identifier for resume-from dispatch
+        """
+        try:
+            from cosa.agents.test_fix_expediter.resume_resolver import (
+                list_resume_candidates, fuzzy_match_candidates,
+            )
+
+            candidates = list_resume_candidates( user_email )
+            if not candidates:
+                if self.debug: print( "[Expeditor] No TFE candidates found" )
+                return self._ask_for_arg(
+                    "resume_from",
+                    "No stalled TFE jobs or recent plans found. Please provide a job ID (tfe-*) or paste a plan doc path.",
+                    user_email
+                )
+
+            if not user_description:
+                user_description = self._ask_for_arg(
+                    "resume_from",
+                    f"Which TFE job would you like to resume? I found {len( candidates )} candidate(s). Describe the one you want.",
+                    user_email
+                )
+                if not user_description:
+                    return None
+
+            # Fast-path: if the description LOOKS like a job ID or plan path,
+            # return it directly without invoking the LLM.
+            s = user_description.strip()
+            if s.startswith( "tfe-" ) or s.endswith( "-plan.md" ) or "/plans/" in s:
+                if self.debug: print( f"[Expeditor] Fast-path match: {s[:60]}" )
+                return s
+
+            # LLM fuzzy match against candidate index
+            matches = fuzzy_match_candidates( user_description, candidates, debug=self.debug )
+
+            # Auto-accept if top match has high confidence AND is resumable (stalled)
+            if matches and matches[ 0 ][ "confidence" ] >= 0.9 and matches[ 0 ].get( "status" ) == "stalled":
+                if self.debug: print( f"[Expeditor] Auto-selected top match: {matches[ 0 ][ 'job_id' ]}" )
+                return matches[ 0 ][ "job_id" ]
+
+            if not matches:
+                if self.debug: print( "[Expeditor] No fuzzy matches — asking user" )
+                return self._ask_for_arg(
+                    "resume_from",
+                    "Couldn't match your description to any stalled TFE job. Please provide a job ID or paste a plan path.",
+                    user_email
+                )
+
+            # Multiple or low-confidence matches — ask user to disambiguate
+            top_matches = matches[ :3 ]
+            options_str = ", ".join(
+                f"{i + 1}. {m[ 'job_id' ][ -8: ]} ({m.get( 'summary', '?' )[ :40 ]})"
+                for i, m in enumerate( top_matches )
+            )
+            pick = self._ask_for_arg(
+                "resume_from",
+                f"Found {len( matches )} possible match(es). Say the number or the job ID: {options_str}",
+                user_email
+            )
+            if not pick:
+                return None
+
+            # Numeric pick
+            try:
+                idx = int( pick.strip() ) - 1
+                if 0 <= idx < len( top_matches ):
+                    return top_matches[ idx ][ "job_id" ]
+            except ValueError:
+                pass
+
+            # Partial ID match fallback
+            pick_lower = pick.lower().strip()
+            for m in top_matches:
+                if pick_lower in m[ "job_id" ].lower():
+                    return m[ "job_id" ]
+
+            # Last resort — top match
+            return top_matches[ 0 ][ "job_id" ]
+
+        except Exception as e:
+            if self.debug: print( f"[Expeditor] TFE checkpoint match error: {e}" )
+            return self._ask_for_arg(
+                "resume_from",
+                "TFE resume matching failed. Please provide an exact job ID or plan path.",
                 user_email
             )
 

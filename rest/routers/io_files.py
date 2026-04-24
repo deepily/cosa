@@ -30,16 +30,24 @@ router = APIRouter( tags=[ "io-files" ] )
 MEDIA_TYPES = {
     ".md"   : "text/markdown; charset=utf-8",
     ".txt"  : "text/plain; charset=utf-8",
+    ".yaml" : "text/yaml; charset=utf-8",
+    ".yml"  : "text/yaml; charset=utf-8",
     ".mp3"  : "audio/mpeg",
     ".wav"  : "audio/wav",
     ".pdf"  : "application/pdf",
     ".json" : "application/json",
+    ".pptx" : "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }
 
 
-@router.get( "/api/io/file" )
+@router.get(
+    "/api/io/file",
+    summary     = "Serve IO file",
+    description = "Serve files from the io/ directory with extension validation and traversal protection."
+)
 async def get_io_file(
-    path: str = Query( ..., description="Relative path within io/ directory" )
+    path: str = Query( ..., description="Relative path within io/ directory" ),
+    download: bool = Query( False, description="Force download with Content-Disposition: attachment" )
 ):
     """
     Serve files from the io/ directory with security validation.
@@ -77,10 +85,17 @@ async def get_io_file(
     project_root = cu.get_project_root()
     io_base = project_root + "/io"
 
-    # Build full path - treat as relative to io/
-    if decoded_path.startswith( "/" ):
-        # Remove leading slash for relative path handling
+    # Strip absolute io_base prefix if present (legacy artifact paths from older jobs)
+    io_base_slash = io_base + "/"
+    if decoded_path.startswith( io_base_slash ):
+        decoded_path = decoded_path[ len( io_base_slash ): ]
+    elif decoded_path.startswith( "/" ):
         decoded_path = decoded_path.lstrip( "/" )
+    # Strip relative "io/" prefix — reports commonly embed paths like
+    # "io/test-suite/foo.json", which would otherwise double to "io/io/..."
+    # after joining with io_base.
+    if decoded_path.startswith( "io/" ):
+        decoded_path = decoded_path[ 3: ]
 
     full_path = os.path.join( io_base, decoded_path )
 
@@ -113,8 +128,24 @@ async def get_io_file(
 
     media_type = MEDIA_TYPES[ ext ]
 
+    # Force download: always return FileResponse with attachment Content-Disposition
+    if download:
+        try:
+            filename = os.path.basename( full_path )
+            return FileResponse(
+                path                 = full_path,
+                media_type           = media_type,
+                filename             = filename,
+                content_disposition_type = "attachment"
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code = 500,
+                detail      = f"Error serving file: {str( e )}"
+            )
+
     # For text files, use PlainTextResponse (better encoding handling)
-    if ext in [ ".md", ".txt", ".json" ]:
+    if ext in [ ".md", ".txt", ".json", ".yaml", ".yml" ]:
         try:
             with open( full_path, "r", encoding="utf-8" ) as f:
                 content = f.read()
@@ -145,7 +176,11 @@ async def get_io_file(
             )
 
 
-@router.get( "/api/io/health" )
+@router.get(
+    "/api/io/health",
+    summary     = "IO files health check",
+    description = "Report io/ directory status and file counts in research and podcast subdirectories."
+)
 async def io_files_health():
     """
     Health check for io files endpoint.

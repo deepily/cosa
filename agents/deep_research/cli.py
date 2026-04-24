@@ -86,14 +86,14 @@ Examples:
         "--lead-model",
         type=str,
         default=None,
-        help="Model for lead agent (default: claude-opus-4-20250514)"
+        help="Model for lead agent (default: claude-opus-4-6)"
     )
 
     parser.add_argument(
         "--subagent-model",
         type=str,
         default=None,
-        help="Model for subagents (default: claude-sonnet-4-20250514)"
+        help="Model for subagents (default: claude-sonnet-4-6)"
     )
 
     parser.add_argument(
@@ -862,7 +862,7 @@ def save_report_with_frontmatter(
         "file_path"        : file_path,
         "session_id"       : session_id,
         "user_email"       : user_email,
-        "storage_backend"  : storage_backend,
+        "storage backend"  : storage_backend,
         "generated"        : datetime.now().isoformat() + "Z",
         "duration_seconds" : round( duration_seconds, 1 ),
         "cost_usd"         : round( cost_usd, 4 ),
@@ -907,7 +907,7 @@ def save_report_with_frontmatter(
 
             # Update frontmatter to reflect fallback
             frontmatter[ "file_path" ] = fallback_path
-            frontmatter[ "storage_backend" ] = "local_fallback"
+            frontmatter[ "storage backend" ] = "local_fallback"
             frontmatter[ "gcs_error" ] = str( e )
 
             yaml_content = yaml.dump(
@@ -1020,22 +1020,18 @@ def main():
     if not args.dry_run and not check_prerequisites():
         sys.exit( 1 )
 
-    # Build configuration
-    config = ResearchConfig()
+    # Build configuration from INI (CLI args override)
+    config = ResearchConfig.from_config( config_mgr, debug=args.debug )
     if args.lead_model:
         config.lead_model = args.lead_model
     if args.subagent_model:
         config.subagent_model = args.subagent_model
     if args.max_subagents:
         config.max_subagents_complex = args.max_subagents
-
-    # Target audience configuration (CLI overrides config file)
-    config.audience = args.audience or config_mgr.get(
-        "deep research audience",
-        default="academic"
-    )
-    audience_context_from_config = config_mgr.get( "deep research audience context", default="" )
-    config.audience_context = args.audience_context or audience_context_from_config or None
+    if args.audience:
+        config.audience = args.audience
+    if args.audience_context:
+        config.audience_context = args.audience_context
 
     # Create cost tracker with simplified session_id
     session_id = f"cli-{uuid.uuid4().hex[:8]}"
@@ -1180,7 +1176,7 @@ def main():
                     else:
                         relative_path = file_path  # Fallback to full path
                     encoded_path = urllib.parse.quote( relative_path, safe="" )
-                    view_url = f"http://localhost:7999/api/deep-research/report?path={encoded_path}"
+                    view_url = f"/app/docs?path=deep-research/{encoded_path}"
                     links_section = f"""🔗 **View Report**: [Open in Browser]({view_url})"""
 
                 # Build markdown for notification abstract field

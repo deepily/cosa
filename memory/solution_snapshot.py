@@ -18,6 +18,7 @@ import numpy as np
 from cosa.memory.embedding_manager import EmbeddingManager
 from cosa.memory.embedding_provider import get_embedding_provider
 from cosa.memory.normalizer import Normalizer
+from cosa.rest.job_state import JobState
 
 class SolutionSnapshot( RunnableCode ):
     """
@@ -232,6 +233,7 @@ class SolutionSnapshot( RunnableCode ):
         self.answer_conversational = answer_conversational
         self.error                 = error
         self.routing_command       = routing_command
+        self.original_args         = None  # CJ Flow persistence field — snapshots replay prior runs, no args needed
         self.agent_class_name      = agent_class_name  # e.g., "MathAgent", "CalendarAgent", etc.
         self.user_id               = user_id
         self.user_email            = user_email  # Email for TTS notification routing
@@ -250,9 +252,13 @@ class SolutionSnapshot( RunnableCode ):
         self.answer_is_correct     = answer_is_correct
 
         # QueueableJob protocol compliance - status tracking attributes
-        self.status                = "pending"
+        self.state                 = JobState.PENDING
         self.started_at            = ""
         self.completed_at          = ""
+
+        # Scheduling attributes (CJ Flow) — snapshots are always immediate, never monopolize/pause
+        self.scheduled_at          = None
+        self.monopolize            = False
 
         # Is there is no synonymous questions to be found then just recycle the current question
         # Handle corrupted data: ensure synonymous_questions is a valid dict/OrderedDict

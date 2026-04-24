@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     BigInteger,
     Text,
@@ -78,6 +79,12 @@ class User( Base ):
         default=True,
         server_default="true",
         index=True
+    )
+    is_protected: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false"
     )
 
     # User Metadata
@@ -1042,6 +1049,130 @@ class PredictionLog( Base ):
         return f"<PredictionLog(id={self.id}, type='{self.response_type}', category='{self.category}', match={self.accuracy_match})>"
 
 
+# ============================================================================
+# CJ Flow Persistence Models
+# ============================================================================
+
+class JobHistory( Base ):
+    """
+    Job history model for CJ Flow persistence.
+
+    Tracks the lifecycle of AgenticJobBase jobs (deep_research, podcast,
+    claude_code, swe_team, research_to_podcast) through state transitions.
+
+    Requires:
+        - id_hash: Scoped job identifier ("{hash}::{user_id}" string from CJ Flow)
+        - job_type: Agentic job type identifier
+        - user_id: User identifier (VARCHAR, not UUID — matches CJ Flow string-based user IDs)
+
+    Ensures:
+        - id_hash is VARCHAR(255) primary key (unique among models — not UUID)
+        - status tracks job lifecycle: pending, running, completed, failed, interrupted
+        - metadata_json stores rich output: response_text, abstract, report_link, cost_summary, artifacts
+        - created_at and updated_at default to current timestamp
+        - No foreign key relationships (user_id is a CJ Flow string, not a users.id UUID)
+    """
+    __tablename__ = "job_history"
+
+    # Primary Key — scoped "{hash}::{user_id}" string from CJ Flow
+    id_hash: Mapped[str] = mapped_column(
+        String( 255 ),
+        primary_key=True
+    )
+
+    # Job classification
+    job_type: Mapped[str] = mapped_column(
+        String( 100 ),
+        nullable=False,
+        index=True
+    )
+
+    # User context (VARCHAR, not UUID FK — matches CJ Flow string-based user IDs)
+    user_id: Mapped[str] = mapped_column(
+        String( 255 ),
+        nullable=False,
+        index=True
+    )
+    user_email: Mapped[Optional[str]] = mapped_column(
+        String( 255 ),
+        nullable=True
+    )
+    session_id: Mapped[Optional[str]] = mapped_column(
+        String( 255 ),
+        nullable=True
+    )
+    routing_command: Mapped[Optional[str]] = mapped_column(
+        String( 255 ),
+        nullable=True
+    )
+
+    # Job state
+    status: Mapped[str] = mapped_column(
+        String( 50 ),
+        nullable=False,
+        default="pending",
+        server_default="pending",
+        index=True
+    )
+    question_text: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True
+    )
+    error: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True
+    )
+    is_cache_hit: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default="false"
+    )
+    duration_seconds: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True
+    )
+
+    # Rich metadata (response_text, abstract, report_link, cost_summary, artifacts)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True
+    )
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime( timezone=True ),
+        nullable=False,
+        default=func.now(),
+        server_default=func.now()
+    )
+    started_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime( timezone=True ),
+        nullable=True
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime( timezone=True ),
+        nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime( timezone=True ),
+        nullable=False,
+        default=func.now(),
+        server_default=func.now()
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index( 'idx_job_history_user_id', 'user_id' ),
+        Index( 'idx_job_history_status', 'status' ),
+        Index( 'idx_job_history_job_type', 'job_type' ),
+        Index( 'idx_job_history_created_at', 'created_at' ),
+        Index( 'idx_job_history_user_status', 'user_id', 'status' ),
+    )
+
+    def __repr__( self ) -> str:
+        return f"<JobHistory(id_hash='{self.id_hash[:20]}...', job_type='{self.job_type}', status='{self.status}')>"
+
+
 def quick_smoke_test():
     """
     Quick smoke test for postgres_models module - validates PostgreSQL ORM model definitions.
@@ -1061,7 +1192,7 @@ def quick_smoke_test():
         print( "Testing model class definitions..." )
         models = [User, RefreshToken, ApiKey, EmailVerificationToken,
                   PasswordResetToken, FailedLoginAttempt, Notification, AuthAuditLog,
-                  ProxyDecision, TrustState, PredictionLog]
+                  ProxyDecision, TrustState, PredictionLog, JobHistory]
         for model in models:
             assert hasattr( model, '__tablename__' ), f"{model.__name__} missing __tablename__"
         print( f"✓ All {len( models )} models defined: {', '.join( [m.__name__ for m in models] )}" )
@@ -1072,7 +1203,7 @@ def quick_smoke_test():
         table_names = list( Base.metadata.tables.keys() )
         expected_tables = ['users', 'refresh_tokens', 'api_keys', 'email_verification_tokens',
                           'password_reset_tokens', 'failed_login_attempts', 'notifications', 'auth_audit_log',
-                          'proxy_decisions', 'trust_states', 'prediction_log']
+                          'proxy_decisions', 'trust_states', 'prediction_log', 'job_history']
         assert set( table_names ) == set( expected_tables ), f"Table mismatch: {table_names}"
         print( f"✓ Base metadata contains {len( table_names )} tables" )
 

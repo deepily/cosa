@@ -65,9 +65,9 @@ class TestAgent( AgentBase ):
             push_counter=0,
             debug=debug,
             verbose=verbose,
-            auto_debug=kwargs.get('auto_debug', False),
-            inject_bugs=kwargs.get('inject_bugs', False),
-            **{k: v for k, v in kwargs.items() if k not in ['auto_debug', 'inject_bugs']}
+            auto_debug=kwargs.get('debug auto', False),
+            inject_bugs=kwargs.get('debug inject bugs', False),
+            **{k: v for k, v in kwargs.items() if k not in ['debug auto', 'debug inject bugs']}
         )
         
         # Set up minimal agent-specific configuration
@@ -197,7 +197,7 @@ class AgentBaseUnitTests:
                 
                 # Configure the mock configuration manager
                 mock_config = self.mock_mgr.config_manager_mock( {
-                    "app_debug": False,
+                    "app debug": False,
                     "agent_timeout": 30,
                     "prompt template for test routing": "/templates/test_template.txt",
                     "llm spec key for test routing": "test_llm_spec"
@@ -312,7 +312,7 @@ class AgentBaseUnitTests:
                  patch( 'cosa.agents.agent_base.du.get_project_root' ) as mock_get_root:
                 # Test with comprehensive configuration
                 config_values = {
-                    "app_debug": True,
+                    "app debug": True,
                     "agent_timeout": 60,
                     "agent_verbose": True,
                     "test_agent_enabled": True,
@@ -333,7 +333,7 @@ class AgentBaseUnitTests:
                 assert agent.config_mgr == mock_config, "Should be using mocked configuration"
                 
                 # Test configuration value access
-                debug_value = agent.config_mgr.get( "app_debug", return_type="boolean" )
+                debug_value = agent.config_mgr.get( "app debug", return_type="boolean" )
                 assert debug_value == True, f"Configuration debug value should be True, got {debug_value}"
                 
                 timeout_value = agent.config_mgr.get( "agent_timeout", return_type="int" )

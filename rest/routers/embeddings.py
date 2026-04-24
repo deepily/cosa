@@ -58,7 +58,12 @@ class EmbedInfoResponse( BaseModel ):
 # Endpoints
 # ============================================================================
 
-@router.post( "/generate", response_model=EmbedResponse )
+@router.post(
+    "/generate",
+    response_model = EmbedResponse,
+    summary        = "Generate embedding",
+    description    = "Generate an embedding vector for a single text string using the GPU model."
+)
 async def generate_embedding(
     request             : EmbedRequest,
     authenticated_user_id : Annotated[ str, Depends( require_api_key_or_jwt ) ] = None
@@ -77,7 +82,12 @@ async def generate_embedding(
     )
 
 
-@router.post( "/batch", response_model=EmbedBatchResponse )
+@router.post(
+    "/batch",
+    response_model = EmbedBatchResponse,
+    summary        = "Batch generate embeddings",
+    description    = "Generate embedding vectors for multiple texts in a single call."
+)
 async def generate_embeddings_batch(
     request             : EmbedBatchRequest,
     authenticated_user_id : Annotated[ str, Depends( require_api_key_or_jwt ) ] = None
@@ -100,7 +110,12 @@ async def generate_embeddings_batch(
     )
 
 
-@router.get( "/info", response_model=EmbedInfoResponse )
+@router.get(
+    "/info",
+    response_model = EmbedInfoResponse,
+    summary        = "Get embedding info",
+    description    = "Return provider name, dimensions, and readiness status of the embedding model."
+)
 async def get_info(
     authenticated_user_id : Annotated[ str, Depends( require_api_key_or_jwt ) ] = None
 ):

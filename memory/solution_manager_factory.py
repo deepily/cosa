@@ -208,7 +208,7 @@ class SolutionSnapshotManagerFactory:
         Expected Config Keys:
             - "solution snapshots manager type": "file_based" or "lancedb"
             - "solution snapshots file based path": Path for file-based storage (file_based only)
-            - "storage_backend": "local" or "gcs" (lancedb only, defaults to "local")
+            - "storage backend": "local" or "gcs" (lancedb only, defaults to "local")
             - "solution snapshots lancedb path": Local DB path (lancedb with backend=local)
             - "solution snapshots lancedb gcs uri": GCS URI (lancedb with backend=gcs)
             - "solution snapshots lancedb table": Table name (lancedb only)
@@ -238,10 +238,10 @@ class SolutionSnapshotManagerFactory:
                 
         elif manager_type == ManagerType.LANCEDB:
             # Read storage backend configuration
-            storage_backend = config_mgr.get( "storage_backend", default="development" )
+            storage_backend = config_mgr.get( "storage backend", default="development" )
 
             config = {
-                "storage_backend": storage_backend,
+                "storage backend": storage_backend,
                 "table_name": config_mgr.get( "solution snapshots lancedb table" ),
                 "nprobes": config_mgr.get( "solution snapshots lancedb nprobes", default=20, return_type="int" ),
                 "enable_performance_monitoring": config_mgr.get(

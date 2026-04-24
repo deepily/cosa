@@ -362,7 +362,7 @@ class PodcastOrchestratorAgent:
                 io_base = cu.get_project_root() + "/io/"
                 if script_path and script_path.startswith( io_base ):
                     rel_path    = script_path.replace( io_base, "" )
-                    script_link = f"[View Full Script](/api/io/file?path={urllib.parse.quote( rel_path )})"
+                    script_link = f"[View Full Script](/app/docs?path={urllib.parse.quote( rel_path )})"
                 else:
                     script_link = f"`{script_path}`"
 
@@ -487,7 +487,7 @@ class PodcastOrchestratorAgent:
                 io_base = cu.get_project_root() + "/io/"
                 if translated_path.startswith( io_base ):
                     rel_path = translated_path.replace( io_base, "" )
-                    translated_link = f"[View {lang_name} Script](/api/io/file?path={urllib.parse.quote( rel_path )})"
+                    translated_link = f"[View {lang_name} Script](/app/docs?path={urllib.parse.quote( rel_path )})"
                 else:
                     translated_link = f"`{translated_path}`"
 
@@ -685,7 +685,7 @@ class PodcastOrchestratorAgent:
             research_link = self.research_doc_path
             if self.research_doc_path and self.research_doc_path.startswith( io_base ):
                 rel_path      = self.research_doc_path.replace( io_base, "" )
-                research_link = f"[View Research](/api/io/file?path={urllib.parse.quote( rel_path )})"
+                research_link = f"[View Research](/app/docs?path={urllib.parse.quote( rel_path )})"
 
             # Build links for each language's outputs
             output_lines = []
@@ -697,14 +697,14 @@ class PodcastOrchestratorAgent:
                 # Script link
                 if lang_script and lang_script.startswith( io_base ):
                     rel_path    = lang_script.replace( io_base, "" )
-                    script_link = f"[{lang_name} Script](/api/io/file?path={urllib.parse.quote( rel_path )})"
+                    script_link = f"[{lang_name} Script](/app/docs?path={urllib.parse.quote( rel_path )})"
                 else:
                     script_link = f"`{lang_script}`"
 
                 # Audio link
                 if lang_audio and lang_audio.startswith( io_base ):
                     rel_path   = lang_audio.replace( io_base, "" )
-                    audio_link = f"[{lang_name} MP3](/api/io/file?path={urllib.parse.quote( rel_path )})"
+                    audio_link = f"[{lang_name} MP3](/app/audio?path={urllib.parse.quote( rel_path )})"
                 else:
                     audio_link = f"`{lang_audio}`"
 
@@ -798,7 +798,7 @@ class PodcastOrchestratorAgent:
 
                 if display_path and display_path.startswith( io_base ):
                     rel_path    = display_path.replace( io_base, "" )
-                    script_link = f"[View Full Script](/api/io/file?path={urllib.parse.quote( rel_path )})"
+                    script_link = f"[View Full Script](/app/docs?path={urllib.parse.quote( rel_path )})"
                 else:
                     script_link = f"`{display_path}`"
 
@@ -883,7 +883,7 @@ class PodcastOrchestratorAgent:
             script_link = script_path
             if script_path and script_path.startswith( io_base ):
                 rel_path    = script_path.replace( io_base, "" )
-                script_link = f"[View Script](/api/io/file?path={urllib.parse.quote( rel_path )})"
+                script_link = f"[View Script](/app/docs?path={urllib.parse.quote( rel_path )})"
 
             await voice_io.notify(
                 f"Script editing complete!",
@@ -1021,16 +1021,16 @@ class PodcastOrchestratorAgent:
 
             if script_path and script_path.startswith( io_base ):
                 rel_path    = script_path.replace( io_base, "" )
-                script_link = f"[View Script](/api/io/file?path={urllib.parse.quote( rel_path )})"
+                script_link = f"[View Script](/app/docs?path={urllib.parse.quote( rel_path )})"
             if audio_path and audio_path.startswith( io_base ):
                 rel_path   = audio_path.replace( io_base, "" )
-                audio_link = f"[Download MP3](/api/io/file?path={urllib.parse.quote( rel_path )})"
+                audio_link = f"[Download MP3](/app/audio?path={urllib.parse.quote( rel_path )})"
             # Only create research link if it's a valid path (not "edit-mode" or other placeholder)
             if ( self.research_doc_path
                  and self.research_doc_path != "edit-mode"
                  and self.research_doc_path.startswith( io_base ) ):
                 rel_path      = self.research_doc_path.replace( io_base, "" )
-                research_link = f"[View Research](/api/io/file?path={urllib.parse.quote( rel_path )})"
+                research_link = f"[View Research](/app/docs?path={urllib.parse.quote( rel_path )})"
 
             # Calculate audio cost from TTS character usage (language-specific key)
             tts_results = self._podcast_state.get( "tts_results_en", [] )

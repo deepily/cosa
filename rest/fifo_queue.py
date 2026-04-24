@@ -1,8 +1,10 @@
 from collections import OrderedDict
+from datetime import datetime
 from typing import Any, Optional
 import re
 from cosa.rest.queue_extensions import user_job_tracker
 from cosa.rest.queue_protocol import is_queueable_job
+from cosa.rest.job_state import JobState
 
 # Notification service imports for TTS migration (Session 97)
 from lupin_cli.notifications.notify_user_async import notify_user_async
@@ -190,6 +192,95 @@ class FifoQueue:
             result = self.queue_list.pop( 0 )
             return result
     
+    def pop_next_eligible( self, now=None ) -> Optional[Any]:
+        """
+        Remove and return the first eligible job from the queue.
+
+        A job is eligible if: not paused AND (scheduled_at is None OR scheduled_at <= now).
+        Non-eligible jobs remain in their original queue positions.
+
+        Requires:
+            - now is a datetime or None (defaults to datetime.now())
+
+        Ensures:
+            - Returns first eligible job (removed from both queue_list and queue_dict)
+            - Returns None if no eligible jobs exist
+            - Non-eligible jobs stay in the queue unchanged
+
+        Raises:
+            - None
+        """
+        if now is None:
+            now = datetime.now()
+
+        for i, job in enumerate( self.queue_list ):
+            # Check paused flag (backward compat with legacy jobs)
+            if job.state == JobState.PAUSED:
+                continue
+
+            # Check scheduled_at (None = immediate = always eligible)
+            scheduled_at = getattr( job, 'scheduled_at', None )
+            if scheduled_at is not None:
+                try:
+                    scheduled_dt = datetime.fromisoformat( scheduled_at )
+                    # Normalize timezone for comparison:
+                    # JS sends UTC ISO strings ("...Z") → timezone-aware datetime.
+                    # datetime.now() is naive (local time). Comparing aware vs naive
+                    # raises TypeError (caught below, treating job as immediate — wrong).
+                    # Fix: make both naive-local for apples-to-apples comparison.
+                    if scheduled_dt.tzinfo is not None:
+                        scheduled_dt = scheduled_dt.astimezone().replace( tzinfo=None )
+                    if scheduled_dt > now:
+                        continue  # Not yet eligible
+                except ( ValueError, TypeError ):
+                    pass  # Unparseable → treat as immediate
+
+            # This job is eligible — remove and return it
+            if job.id_hash not in self.queue_dict:
+                print( f"[QUEUE] Warning: stale job in queue_list, removing: {job.id_hash}" )
+                self.queue_list.pop( i )
+                continue
+            del self.queue_dict[ job.id_hash ]
+            self.queue_list.pop( i )
+            return job
+
+        return None  # No eligible jobs found
+
+    def earliest_scheduled_at( self ):
+        """
+        Return the earliest scheduled_at datetime among non-paused queued jobs, or None.
+
+        Used by the consumer thread to calculate how long to sleep before the
+        next timed job becomes eligible. Paused jobs are ignored — they should
+        not affect the consumer's wake-up timer.
+
+        Requires:
+            - None
+
+        Ensures:
+            - Returns datetime of the earliest non-paused scheduled job
+            - Returns None if all jobs are immediate, paused, or queue is empty
+
+        Raises:
+            - None
+        """
+        earliest = None
+        for job in self.queue_list:
+            if job.state == JobState.PAUSED:
+                continue
+            scheduled_at = getattr( job, 'scheduled_at', None )
+            if scheduled_at is not None:
+                try:
+                    scheduled_dt = datetime.fromisoformat( scheduled_at )
+                    # Normalize to naive-local (same as datetime.now() in consumer)
+                    if scheduled_dt.tzinfo is not None:
+                        scheduled_dt = scheduled_dt.astimezone().replace( tzinfo=None )
+                    if earliest is None or scheduled_dt < earliest:
+                        earliest = scheduled_dt
+                except ( ValueError, TypeError ):
+                    pass  # Unparseable → skip
+        return earliest
+
     def head( self ) -> Optional[Any]:
         """
         Get the first item without removing it.
@@ -375,6 +466,43 @@ class FifoQueue:
 
         return filtered_jobs
 
+    def get_jobs_excluding_user( self, user_id: str ) -> list[Any]:
+        """
+        Get raw job objects for all users EXCEPT the specified user (NO authorization, NO formatting).
+
+        Inverse of get_jobs_for_user(). Pure data access method - performs NO authorization checks.
+        Authorization should be handled by calling code.
+
+        Requires:
+            - user_id is a valid user identifier string
+            - UserJobTracker singleton is initialized
+
+        Ensures:
+            - Returns list of job objects NOT matching user's job IDs
+            - Returns empty list if all jobs belong to the user
+            - Returns raw job objects (NOT HTML formatted)
+            - NO authorization checks performed
+
+        Args:
+            user_id: The user identifier whose jobs should be excluded
+
+        Returns:
+            list[Any]: List of job objects NOT belonging to the user
+
+        Raises:
+            - None (returns empty list if all jobs belong to user)
+        """
+        # Get job IDs associated with this user (to exclude)
+        user_job_ids = self.user_job_tracker.get_jobs_for_user( user_id )
+
+        # Filter queue_list to EXCLUDE jobs matching user's job IDs
+        filtered_jobs = [
+            job for job in self.queue_list
+            if not hasattr( job, 'id_hash' ) or job.id_hash not in user_job_ids
+        ]
+
+        return filtered_jobs
+
     def get_all_jobs( self ) -> list[Any]:
         """
         Get ALL raw job objects (NO authorization, NO formatting).
@@ -438,7 +566,8 @@ class FifoQueue:
         job: Any = None,
         priority: str = "high",
         notification_type: str = "task",
-        target_user: str = None
+        target_user: str = None,
+        abstract: str = None
     ) -> None:
         """
         Send notification via notification service (replaces _emit_speech).
@@ -446,6 +575,13 @@ class FifoQueue:
         Queue notifications default to:
         - priority="high" → message is spoken via TTS
         - suppress_ding=True → no notification sound (conversational flow)
+
+        Abstract auto-promotion:
+        - When a job is provided and `abstract` is not explicitly passed, the
+          method reads `job.artifacts["abstract"]` (if present) and forwards
+          it on the AsyncNotificationRequest. This surfaces rich completion
+          context on the primary task-card the UI shows, not just on the
+          secondary progress row the job emits explicitly.
 
         Requires:
             - msg is a non-empty string
@@ -455,6 +591,8 @@ class FifoQueue:
             - Notification is sent to target user
             - If job_id available, routes to job card in UI
             - Message is spoken (high priority) without ding
+            - If job.artifacts["abstract"] exists and no explicit abstract
+              was passed, it rides along on the notification
             - Handles exceptions gracefully
 
         Args:
@@ -463,6 +601,7 @@ class FifoQueue:
             priority: Notification priority ('urgent', 'high', 'medium', 'low')
             notification_type: Type of notification ('task', 'progress', 'alert', 'custom')
             target_user: Email address for TTS routing (uses job.user_email if not provided)
+            abstract: Explicit abstract override. When None, auto-reads from job.artifacts["abstract"].
 
         Raises:
             - None (exceptions handled internally)
@@ -472,9 +611,22 @@ class FifoQueue:
         if not resolved_email and job and job.user_email:
             resolved_email = job.user_email
         if not resolved_email:
-            # Fallback to default email
-            resolved_email = "ricardo.felipe.ruiz@gmail.com"
-            print( f"[NOTIFY] Warning: No user_email found, using fallback: {resolved_email}" )
+            import os
+            resolved_email = os.environ.get( "LUPIN_DEV_EMAIL", "" )
+            if resolved_email:
+                print( f"[NOTIFY] Warning: No user_email found, using LUPIN_DEV_EMAIL fallback: {resolved_email}" )
+            else:
+                print( "[NOTIFY] Warning: No user_email and no LUPIN_DEV_EMAIL — notification skipped" )
+                return
+
+        # Auto-promote job.artifacts["abstract"] when no explicit override given.
+        # `getattr` is used because `FifoQueue._notify` serves both AgenticJobBase
+        # (has .artifacts) and AgentBase/SolutionSnapshot (may not) — this is the
+        # system boundary per the "fix at source, normalize at boundaries" rule.
+        resolved_abstract = abstract
+        if resolved_abstract is None and job is not None:
+            artifacts = getattr( job, "artifacts", None ) or {}
+            resolved_abstract = artifacts.get( "abstract" )
 
         try:
             request = AsyncNotificationRequest(
@@ -484,7 +636,8 @@ class FifoQueue:
                 suppress_ding     = True,  # Queue notifications = TTS only, no ding
                 target_user       = resolved_email,
                 job_id            = self._get_notification_job_id( job ),
-                sender_id         = f"queue.{self.queue_name or 'unknown'}@lupin.deepily.ai"
+                sender_id         = f"queue.{self.queue_name or 'unknown'}@lupin.deepily.ai",
+                abstract          = resolved_abstract
             )
             notify_user_async( request )
 
@@ -586,7 +739,7 @@ def quick_smoke_test():
                     self.is_cache_hit         = False
                     self.started_at           = None
                     self.completed_at         = None
-                    self.status               = "pending"
+                    self.state                = "pending"
                     self.error                = None
 
                 def do_all( self ):
@@ -760,7 +913,7 @@ def quick_smoke_test():
                     self.is_cache_hit         = False
                     self.started_at           = None
                     self.completed_at         = None
-                    self.status               = "pending"
+                    self.state                = "pending"
                     self.error                = None
 
                 def do_all( self ):

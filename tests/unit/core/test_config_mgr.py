@@ -90,7 +90,7 @@ class ConfigurationManagerUnitTests:
                     assert hasattr( mock_config, 'get' ), "ConfigurationManager should have get method"
                     
                     # Test basic get operation
-                    value = mock_config.get( "app_debug", default=False, return_type="boolean" )
+                    value = mock_config.get( "app debug", default=False, return_type="boolean" )
                     assert isinstance( value, bool ), f"Boolean conversion failed, got {type( value )}"
                     
                     # Test string get operation
@@ -122,7 +122,7 @@ class ConfigurationManagerUnitTests:
             # Test scenario 1: Valid configuration file
             valid_config = {
                 "DEFAULT": {
-                    "app_debug": "false",
+                    "app debug": "false",
                     "agent_timeout": "30",
                     "openai_api_key": "test_key_12345"
                 },
@@ -136,7 +136,7 @@ class ConfigurationManagerUnitTests:
                 "lupin-app.ini": self._dict_to_ini_content( valid_config )
             } ):
                 with self.mock_mgr.config_manager_mock( {
-                    "app_debug": False,
+                    "app debug": False,
                     "agent_timeout": 30,
                     "openai_api_key": "test_key_12345",
                     "math_enabled": True,
@@ -144,7 +144,7 @@ class ConfigurationManagerUnitTests:
                 } ) as mock_config:
                     
                     # Test boolean conversion
-                    debug_value = mock_config.get( "app_debug", return_type="boolean" )
+                    debug_value = mock_config.get( "app debug", return_type="boolean" )
                     assert debug_value == False, f"Boolean conversion failed: {debug_value}"
                     
                     # Test integer conversion
@@ -189,7 +189,7 @@ class ConfigurationManagerUnitTests:
         try:
             # Setup config with base values
             base_config = {
-                "app_debug": False,
+                "app debug": False,
                 "agent_timeout": 30,
                 "api_endpoint": "https://api.example.com"
             }
@@ -203,13 +203,13 @@ class ConfigurationManagerUnitTests:
             
             with self.utils.temp_environment( env_overrides ):
                 with self.mock_mgr.config_manager_mock( {
-                    "app_debug": True,   # Should be overridden by env var
+                    "app debug": True,   # Should be overridden by env var
                     "agent_timeout": 60, # Should be overridden by env var
                     "api_endpoint": "https://override.example.com"  # Should be overridden
                 } ) as mock_config:
                     
                     # Test boolean override
-                    debug_value = mock_config.get( "app_debug", return_type="boolean" )
+                    debug_value = mock_config.get( "app debug", return_type="boolean" )
                     assert debug_value == True, f"Environment boolean override failed: {debug_value}"
                     
                     # Test integer override

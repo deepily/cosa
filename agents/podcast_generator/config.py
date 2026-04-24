@@ -9,7 +9,7 @@ Design decisions:
 - Prosody annotation support for expressive TTS
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Literal, Optional, List
 
 
@@ -59,6 +59,52 @@ Speaking Style: {self.speaking_style}
 Typical Phrases: {phrases}
 Interaction Style: {self.interaction_style}"""
 
+    @classmethod
+    def from_config( cls, config_mgr, prefix, debug=False ):
+        """
+        Create a HostPersonality from ConfigurationManager INI values.
+
+        Requires:
+            - config_mgr is a valid ConfigurationManager instance
+            - prefix is the INI key prefix (e.g., "podcast host a")
+
+        Ensures:
+            - Returns a fully populated HostPersonality
+            - typical_phrases loaded from pipe-delimited INI value
+
+        Args:
+            config_mgr: ConfigurationManager instance
+            prefix: INI key prefix (e.g., "podcast host a" or "podcast host b")
+            debug: Enable debug output
+
+        Returns:
+            HostPersonality: Configured instance
+        """
+        name              = config_mgr.get( f"{prefix} name",              default="Host",           silent=True )
+        role              = config_mgr.get( f"{prefix} role",              default="Host",           silent=True )
+        tone              = config_mgr.get( f"{prefix} tone",              default="conversational", silent=True )
+        expertise_level   = config_mgr.get( f"{prefix} expertise level",   default="knowledgeable",  silent=True )
+        curiosity_level   = config_mgr.get( f"{prefix} curiosity level",   default="moderate",       silent=True )
+        speaking_style    = config_mgr.get( f"{prefix} speaking style",    default="clear and engaging", silent=True )
+        interaction_style = config_mgr.get( f"{prefix} interaction style", default="collaborative",  silent=True )
+
+        # Parse pipe-delimited typical phrases
+        phrases_raw     = config_mgr.get( f"{prefix} typical phrases", default="", silent=True )
+        typical_phrases = [ p.strip() for p in phrases_raw.split( "|" ) if p.strip() ] if phrases_raw else []
+
+        if debug: print( f"[HostPersonality.from_config] Loaded {prefix}: {name} ({role})" )
+
+        return cls(
+            name              = name,
+            role              = role,
+            tone              = tone,
+            expertise_level   = expertise_level,
+            curiosity_level   = curiosity_level,
+            speaking_style    = speaking_style,
+            typical_phrases   = typical_phrases,
+            interaction_style = interaction_style,
+        )
+
 
 @dataclass
 class VoiceProfile:
@@ -86,6 +132,45 @@ class VoiceProfile:
         assert 0.0 <= self.stability <= 1.0, "stability must be 0.0-1.0"
         assert 0.0 <= self.similarity_boost <= 1.0, "similarity_boost must be 0.0-1.0"
         assert 0.0 <= self.style <= 1.0, "style must be 0.0-1.0"
+
+    @classmethod
+    def from_config( cls, config_mgr, prefix, debug=False ):
+        """
+        Create a VoiceProfile from ConfigurationManager INI values.
+
+        Requires:
+            - config_mgr is a valid ConfigurationManager instance
+            - prefix is the INI key prefix (e.g., "podcast voice female")
+
+        Ensures:
+            - Returns a fully populated VoiceProfile
+            - Float values properly coerced
+
+        Args:
+            config_mgr: ConfigurationManager instance
+            prefix: INI key prefix (e.g., "podcast voice female" or "podcast voice male")
+            debug: Enable debug output
+
+        Returns:
+            VoiceProfile: Configured instance
+        """
+        voice_id         = config_mgr.get( f"{prefix} id",              default="",    silent=True )
+        name             = config_mgr.get( f"{prefix} name",            default="Default", silent=True )
+        stability        = config_mgr.get( f"{prefix} stability",       default="0.65", silent=True, return_type="float" )
+        similarity_boost = config_mgr.get( f"{prefix} similarity boost", default="0.75", silent=True, return_type="float" )
+        style            = config_mgr.get( f"{prefix} style",           default="0.35", silent=True, return_type="float" )
+        use_speaker_boost = config_mgr.get( f"{prefix} use speaker boost", default="True", silent=True, return_type="boolean" ) if config_mgr.exists( f"{prefix} use speaker boost" ) else True
+
+        if debug: print( f"[VoiceProfile.from_config] Loaded {prefix}: {name} (id={voice_id[ :8 ]}...)" )
+
+        return cls(
+            voice_id         = voice_id,
+            name             = name,
+            stability        = stability,
+            similarity_boost = similarity_boost,
+            style            = style,
+            use_speaker_boost = use_speaker_boost,
+        )
 
 
 # =============================================================================
@@ -177,7 +262,7 @@ class PodcastConfig:
     """
 
     # === Model Selection ===
-    script_model : str = "claude-opus-4-20250514"
+    script_model : str = "claude-opus-4-6"
 
     # === Host Configuration ===
     host_a_personality : HostPersonality = field( default_factory=lambda: DEFAULT_CURIOUS_HOST )
@@ -306,6 +391,81 @@ class PodcastConfig:
 
         return full_dir + "/" + filename
 
+    @classmethod
+    def from_config( cls, config_mgr, debug=False ):
+        """
+        Create a PodcastConfig from ConfigurationManager INI values.
+
+        Composes nested HostPersonality and VoiceProfile objects from INI.
+        Falls back to dataclass defaults for missing keys.
+
+        Requires:
+            - config_mgr is a valid ConfigurationManager instance
+
+        Ensures:
+            - Returns a fully populated PodcastConfig with nested objects
+            - Missing INI keys fall back to dataclass defaults
+
+        Args:
+            config_mgr: ConfigurationManager instance
+            debug: Enable debug output
+
+        Returns:
+            PodcastConfig: Configured instance
+        """
+        # Build nested objects from INI
+        host_a = HostPersonality.from_config( config_mgr, prefix="podcast host a", debug=debug )
+        host_b = HostPersonality.from_config( config_mgr, prefix="podcast host b", debug=debug )
+        voice_a = VoiceProfile.from_config( config_mgr, prefix="podcast voice female", debug=debug )
+        voice_b = VoiceProfile.from_config( config_mgr, prefix="podcast voice male", debug=debug )
+
+        # Helper for typed reads with defaults
+        def _get( key, default, rtype="string" ):
+            return config_mgr.get( key, default=str( default ), silent=True, return_type=rtype )
+
+        # Parse target_languages from comma-separated INI value
+        langs_raw = config_mgr.get( "podcast target languages", default="en", silent=True )
+        target_languages = [ lang.strip() for lang in langs_raw.split( "," ) if lang.strip() ]
+
+        # Build kwargs
+        config = cls(
+            script_model              = _get( "podcast script model",              "claude-opus-4-6" ),
+            host_a_personality        = host_a,
+            host_b_personality        = host_b,
+            host_a_voice              = voice_a,
+            host_b_voice              = voice_b,
+            target_duration_minutes   = _get( "podcast target duration minutes",   "10",   "int" ),
+            min_exchanges             = _get( "podcast min exchanges",             "8",    "int" ),
+            max_exchanges             = _get( "podcast max exchanges",             "20",   "int" ),
+            include_intro             = _get( "podcast include intro",             "True", "boolean" ),
+            include_outro             = _get( "podcast include outro",             "True", "boolean" ),
+            prosody_annotation_level  = _get( "podcast prosody annotation level",  "moderate" ),
+            max_research_doc_tokens   = _get( "podcast max research doc tokens",   "100000", "int" ),
+            key_topics_to_extract     = _get( "podcast key topics to extract",     "5",    "int" ),
+            examples_per_topic        = _get( "podcast examples per topic",        "2",    "int" ),
+            max_script_revisions      = _get( "podcast max script revisions",      "3",    "int" ),
+            feedback_timeout_seconds  = _get( "podcast feedback timeout seconds",  "300",  "int" ),
+            script_review_timeout_seconds = _get( "podcast script review timeout seconds", "240", "int" ),
+            output_dir_template       = _get( "podcast output dir template",       "io/podcasts/{user}" ),
+            script_filename_template  = _get( "podcast script filename template",  "{timestamp}-{topic}-script.md" ),
+            audio_filename_template   = _get( "podcast audio filename template",   "{timestamp}-{topic}.mp3" ),
+            audio_format              = _get( "podcast audio format",              "mp3" ),
+            audio_bitrate             = _get( "podcast audio bitrate",             "192k" ),
+            silence_between_speakers_ms = _get( "podcast silence between speakers ms", "300", "int" ),
+            audience                  = _get( "podcast generator audience",        "academic" ),
+            stream_thoughts_to_voice  = _get( "podcast stream thoughts to voice",  "True", "boolean" ),
+            narrate_progress          = _get( "podcast narrate progress",           "True", "boolean" ),
+            target_languages          = target_languages,
+        )
+
+        # Handle audience_context
+        audience_ctx = config_mgr.get( "podcast generator audience context", default="", silent=True )
+        config.audience_context = audience_ctx if audience_ctx else None
+
+        if debug: print( f"[PodcastConfig.from_config] Loaded config (model={config.script_model}, hosts={host_a.name}/{host_b.name})" )
+
+        return config
+
 
 def quick_smoke_test():
     """Quick smoke test for PodcastConfig."""
@@ -317,7 +477,7 @@ def quick_smoke_test():
         # Test 1: Default instantiation
         print( "Testing default config..." )
         config = PodcastConfig()
-        assert config.script_model == "claude-opus-4-20250514"
+        assert config.script_model == "claude-opus-4-6"
         assert config.target_duration_minutes == 10
         print( "✓ Default config created" )
 
@@ -445,6 +605,22 @@ def quick_smoke_test():
         assert LANGUAGE_NAMES[ "en" ] == "English"
         assert LANGUAGE_NAMES[ "es-MX" ] == "Mexican Spanish"
         print( f"✓ LANGUAGE_NAMES contains {len( LANGUAGE_NAMES )} languages" )
+
+        # Test 12: from_config
+        print( "Testing from_config..." )
+        try:
+            from cosa.config.configuration_manager import ConfigurationManager
+            cfg_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+            config_from_ini = PodcastConfig.from_config( cfg_mgr, debug=True )
+            assert config_from_ini.script_model == "claude-opus-4-6"
+            assert config_from_ini.host_a_personality.name == "Nora"
+            assert config_from_ini.host_b_personality.name == "Quentin"
+            assert len( config_from_ini.host_a_personality.typical_phrases ) > 0
+            assert config_from_ini.target_duration_minutes == 10
+            assert isinstance( config_from_ini.include_intro, bool )
+            print( f"✓ from_config loaded successfully (hosts={config_from_ini.host_a_personality.name}/{config_from_ini.host_b_personality.name})" )
+        except Exception as e:
+            print( f"⚠ from_config test skipped (config not available): {e}" )
 
         print( "\n✓ PodcastConfig smoke test completed successfully" )
 

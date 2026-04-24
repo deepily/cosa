@@ -292,13 +292,23 @@ async def notify(
     if job_id is None and _job_id is not None:
         job_id = _job_id
 
-    # Check for forced CLI mode or unavailable voice
-    if _force_cli_mode or _cosa_interface is None or not await is_voice_available():
+    # If no cosa_interface is configured (pure CLI tools, tests), print only.
+    # Voice availability (can user hear TTS?) is NOT a gate for persistence —
+    # the UI's notification history + WebSocket fanout should always receive
+    # the event so users can observe agent progress, with or without TTS.
+    # Prior behavior cached is_voice_available() from a probe call; if that
+    # probe threw on a test-env misconfiguration, every subsequent notify
+    # silently degraded to print-only with no DB persistence.
+    if _force_cli_mode or _cosa_interface is None:
         print( f"  {message}" )
         if abstract:
             print( f"\n  Context:\n{abstract}\n" )
         return
 
+    # Always dispatch through cosa_interface — this persists to the
+    # PostgreSQL notifications table AND fans out to the UI WebSocket
+    # (including any subscribed voice bridge). TTS availability is
+    # determined per-subscriber, not globally by the agent.
     try:
         await _cosa_interface.notify_progress(
             message=message, priority=priority, abstract=abstract,
@@ -306,8 +316,8 @@ async def notify(
             progress_group_id=progress_group_id
         )
     except Exception as e:
-        logger.warning( f"Voice notification failed: {e}" )
-        print( f"  {message}" )  # Fallback to print
+        logger.warning( f"Notification dispatch failed: {e}" )
+        print( f"  {message}" )  # Fallback to print so progress is never invisible
 
 
 async def ask_yes_no(

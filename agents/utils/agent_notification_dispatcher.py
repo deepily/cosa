@@ -42,6 +42,18 @@ from cosa.agents.utils.sender_id import build_sender_id
 logger = logging.getLogger( __name__ )
 
 
+def _prepend_operator_routing( abstract: Optional[ str ], original_target: str ) -> str:
+    """
+    Prefix an abstract with an 'Operator routing:' context line so the operator
+    answering a voice gate understands they're acting on behalf of a service
+    account. See Bug 10 (2026-04-15).
+    """
+    header = f"**Operator routing**: originally owned by `{original_target}`"
+    if not abstract:
+        return header
+    return f"{header}\n\n{abstract}"
+
+
 class AgentNotificationDispatcher:
     """
     Shared async notification dispatcher for COSA agents.
@@ -127,6 +139,54 @@ class AgentNotificationDispatcher:
             return build_sender_id( f"{self.agent_type}.{role}", suffix=suffix )
         return self.sender_id
 
+    def _resolve_routing( self, target_user: Optional[ str ] ) -> tuple:
+        """
+        Resolve the effective target_user for a blocking voice call.
+
+        When target_user is a configured service account AND an operator fallback
+        is configured, swap to the operator so TTS reaches a human. See Bug 10
+        (2026-04-15): service accounts have no WebSocket sessions, causing
+        /api/notify to 503 on blocking calls.
+
+        Reads two INI keys (cached on first call):
+            - voice gate operator email       : str   (blank disables rerouting)
+            - voice gate service accounts     : comma-separated list of emails
+
+        Args:
+            target_user: The user the caller originally intended to notify.
+
+        Returns:
+            tuple: ( effective_target, was_redirected, original_target )
+                   - effective_target is the email the request should hit
+                   - was_redirected is True iff a swap happened
+                   - original_target is the input target_user unchanged
+        """
+        if not target_user:
+            return ( target_user, False, target_user )
+
+        # Lazy config load — ConfigurationManager is a global singleton so we
+        # only actually parse the INI once per process.
+        try:
+            from cosa.config.configuration_manager import ConfigurationManager
+            cfg = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+            operator = cfg.get( "voice gate operator email", default=None, return_type="string" ) or ""
+            accounts_raw = cfg.get( "voice gate service accounts", default=None, return_type="string" ) or ""
+        except Exception as e:
+            # Never let a config read failure block notification dispatch.
+            logger.warning( f"_resolve_routing config read failed: {e}" )
+            return ( target_user, False, target_user )
+
+        operator = operator.strip()
+        if not operator:
+            return ( target_user, False, target_user )
+
+        service_set = { a.strip().lower() for a in accounts_raw.split( "," ) if a.strip() }
+        if target_user.lower() in service_set:
+            print( f"[NOTIFY] Operator routing: {target_user} (service account) → {operator}" )
+            return ( operator, True, target_user )
+
+        return ( target_user, False, target_user )
+
     # =========================================================================
     # Primary Interface Methods
     # =========================================================================
@@ -185,7 +245,8 @@ class AgentNotificationDispatcher:
         timeout: int = 60,
         abstract: Optional[ str ] = None,
         job_id: Optional[ str ] = None,
-        role: str = None
+        role: str = None,
+        priority: str = None
     ) -> bool:
         """
         Ask a yes/no question and return boolean result.
@@ -197,20 +258,24 @@ class AgentNotificationDispatcher:
             abstract: Optional supplementary context
             job_id: Optional job ID for routing
             role: Optional agent role (for role-aware dispatchers)
+            priority: "low"/"medium"/"high"/"urgent" (default: "high" for blocking calls)
 
         Returns:
             bool: True if user said yes, False otherwise
         """
         try:
+            effective_target, was_redirected, original_target = self._resolve_routing( self.target_user )
+            if was_redirected:
+                abstract = _prepend_operator_routing( abstract, original_target )
             request = NotificationRequest(
                 message           = question,
                 response_type     = ResponseType.YES_NO,
                 notification_type = NotificationType.CUSTOM,
-                priority          = NotificationPriority( self.default_priority ),
+                priority          = NotificationPriority( priority or self.default_priority or "high" ),
                 timeout_seconds   = timeout,
                 response_default  = default,
                 sender_id         = self._resolve_sender_id( role ),
-                target_user       = self.target_user,
+                target_user       = effective_target,
                 abstract          = abstract,
                 job_id            = job_id,
             )
@@ -220,9 +285,50 @@ class AgentNotificationDispatcher:
             if response.exit_code == 0 and response.response_value:
                 return response.response_value.lower().strip().startswith( "yes" )
 
-            return default == "yes"
+            # exit_code == 2 is the MCP server's explicit "user-unavailable timeout"
+            # signal. Raise VoiceGateTimeoutError so checkpoint-resume can trigger
+            # a clean stall instead of silently falling back to the default.
+            # (Session 9056c113 Phase 1 — doc 16). Lazy import to avoid circular
+            # dependency (TFE state imports utils).
+            if response.exit_code == 2:
+                from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+                raise VoiceGateTimeoutError(
+                    phase   = "confirmation",
+                    message = f"ask_confirmation timeout after {timeout}s — MCP exit_code=2"
+                )
+
+            # Bug 12 (2026-04-16): any other non-0 exit code (HTTP 503 "User is
+            # offline", connection errors, etc.) is a "no answer received"
+            # condition for the orchestrator — NOT an explicit user decline.
+            # Raise so checkpoint-resume fires instead of silently applying
+            # the default. Mirrors present_choices catch-all (line ~453).
+            from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+            raise VoiceGateTimeoutError(
+                phase   = "confirmation",
+                message = (
+                    f"ask_confirmation received no answer "
+                    f"(exit_code={response.exit_code}, status={response.status}) "
+                    f"after {timeout}s"
+                )
+            )
 
         except Exception as e:
+            # VoiceGateTimeoutError must propagate up to the orchestrator gates;
+            # don't swallow it here.
+            from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+            if isinstance( e, VoiceGateTimeoutError ):
+                raise
+            # Bug 13 (2026-04-16): Pydantic ValidationError fires BEFORE the MCP
+            # call (e.g. abstract > 5000 chars). Pre-MCP failures also mean
+            # "voice gate could not fire" — raise VoiceGateTimeoutError so the
+            # orchestrator stalls with a checkpoint instead of silently
+            # applying the default. Matches Bug 12 stall philosophy.
+            from pydantic import ValidationError
+            if isinstance( e, ( ValidationError, ConnectionError ) ):
+                raise VoiceGateTimeoutError(
+                    phase   = "confirmation",
+                    message = f"ask_confirmation pre-MCP failure ({type( e ).__name__}): {str( e )[:200]}"
+                )
             logger.warning( f"ask_confirmation failed: {e}" )
             return default == "yes"
 
@@ -231,7 +337,9 @@ class AgentNotificationDispatcher:
         prompt: str,
         timeout: int = 300,
         job_id: Optional[ str ] = None,
-        role: str = None
+        role: str = None,
+        priority: str = None,
+        response_default: Optional[ str ] = None
     ) -> Optional[ str ]:
         """
         Get open-ended feedback from user via voice.
@@ -241,19 +349,25 @@ class AgentNotificationDispatcher:
             timeout: Maximum seconds to wait
             job_id: Optional job ID for routing to job cards
             role: Optional agent role (for role-aware dispatchers)
+            priority: "low"/"medium"/"high"/"urgent" (default: "high" for blocking calls)
+            response_default: If set AND user is offline, /api/notify returns 200
+                              with default rather than 503. Leave None to preserve
+                              the 503-for-offline behavior (caller handles stall).
 
         Returns:
             str or None: User's transcribed voice response
         """
         try:
+            effective_target, was_redirected, _original_target = self._resolve_routing( self.target_user )
             request = NotificationRequest(
                 message           = prompt,
                 response_type     = ResponseType.OPEN_ENDED,
                 notification_type = NotificationType.CUSTOM,
-                priority          = NotificationPriority( self.default_priority ),
+                priority          = NotificationPriority( priority or self.default_priority or "high" ),
                 timeout_seconds   = timeout,
+                response_default  = response_default,
                 sender_id         = self._resolve_sender_id( role ),
-                target_user       = self.target_user,
+                target_user       = effective_target,
                 job_id            = job_id,
             )
 
@@ -262,9 +376,44 @@ class AgentNotificationDispatcher:
             if response.exit_code == 0:
                 return response.response_value
 
-            return None
+            # exit_code == 2 is the MCP server's explicit "user-unavailable
+            # timeout" signal. Raise VoiceGateTimeoutError so checkpoint-resume
+            # can trigger a clean stall instead of silently returning None.
+            if response.exit_code == 2:
+                from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+                raise VoiceGateTimeoutError(
+                    phase   = "feedback",
+                    message = f"get_feedback timeout after {timeout}s — MCP exit_code=2"
+                )
+
+            # Bug 12 (2026-04-16): any other non-0 exit code (HTTP 503 "User is
+            # offline", connection errors, etc.) is a "no answer received"
+            # condition for the orchestrator. Raise so checkpoint-resume fires
+            # instead of silently returning None. Mirrors present_choices
+            # catch-all and ask_confirmation Bug 12 fix.
+            from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+            raise VoiceGateTimeoutError(
+                phase   = "feedback",
+                message = (
+                    f"get_feedback received no answer "
+                    f"(exit_code={response.exit_code}, status={response.status}) "
+                    f"after {timeout}s"
+                )
+            )
 
         except Exception as e:
+            # VoiceGateTimeoutError must propagate up to the orchestrator gates;
+            # don't swallow it here.
+            from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+            if isinstance( e, VoiceGateTimeoutError ):
+                raise
+            # Bug 13 (2026-04-16): Pre-MCP ValidationError → stall, not silent default.
+            from pydantic import ValidationError
+            if isinstance( e, ( ValidationError, ConnectionError ) ):
+                raise VoiceGateTimeoutError(
+                    phase   = "feedback",
+                    message = f"get_feedback pre-MCP failure ({type( e ).__name__}): {str( e )[:200]}"
+                )
             logger.warning( f"get_feedback failed: {e}" )
             return None
 
@@ -275,7 +424,9 @@ class AgentNotificationDispatcher:
         title: Optional[ str ] = None,
         abstract: Optional[ str ] = None,
         job_id: Optional[ str ] = None,
-        role: str = None
+        role: str = None,
+        priority: str = None,
+        response_default: Optional[ str ] = None
     ) -> dict:
         """
         Present multiple-choice questions and get user's selection.
@@ -287,22 +438,33 @@ class AgentNotificationDispatcher:
             abstract: Optional supplementary context
             job_id: Optional job ID for routing to job cards
             role: Optional agent role (for role-aware dispatchers)
+            priority: "low"/"medium"/"high"/"urgent" (default: "high" for blocking calls)
+            response_default: If set AND user is offline, /api/notify returns 200
+                              with this default rather than 503. Pass literal "{}"
+                              (empty JSON) for the clean-stall path — dispatcher
+                              interprets empty answers as timeout via Bug 7
+                              normalization → VoiceGateTimeoutError.
 
         Returns:
             dict: {"answers": {...}} with selections keyed by header
         """
         try:
+            effective_target, was_redirected, original_target = self._resolve_routing( self.target_user )
+            if was_redirected:
+                abstract = _prepend_operator_routing( abstract, original_target )
+
             message = format_questions_for_tts( questions )
 
             request = NotificationRequest(
                 message           = message,
                 response_type     = ResponseType.MULTIPLE_CHOICE,
                 notification_type = NotificationType.CUSTOM,
-                priority          = NotificationPriority( self.default_priority ),
+                priority          = NotificationPriority( priority or self.default_priority or "high" ),
                 timeout_seconds   = timeout,
+                response_default  = response_default,
                 response_options  = convert_questions_for_api( questions ),
                 sender_id         = self._resolve_sender_id( role ),
-                target_user       = self.target_user,
+                target_user       = effective_target,
                 abstract          = abstract,
                 title             = title,
                 job_id            = job_id,
@@ -312,13 +474,64 @@ class AgentNotificationDispatcher:
 
             if response.exit_code == 0 and response.response_value:
                 try:
-                    return json.loads( response.response_value )
+                    parsed = json.loads( response.response_value )
                 except json.JSONDecodeError:
                     return { "answers": { "response": response.response_value } }
 
-            return { "answers": {} }
+                # Defensive normalization (Session 2026-04-15): treat an empty
+                # answers payload as a no-answer timeout, not an explicit empty
+                # selection. Users never click "submit with nothing selected";
+                # an empty dict means the MCP returned exit_code=0 before the
+                # human interacted (observed with 3s timeout regression). This
+                # keeps VoiceGateTimeoutError as the single signal for "no
+                # answer" so checkpoint-resume fires reliably.
+                answers = parsed.get( "answers", {} ) if isinstance( parsed, dict ) else {}
+                if not answers or all( not v for v in answers.values() ):
+                    from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+                    raise VoiceGateTimeoutError(
+                        phase   = "choices",
+                        message = (
+                            f"present_choices returned empty answers after {timeout}s — "
+                            f"treating as no-response timeout"
+                        )
+                    )
+                return parsed
+
+            # exit_code == 2 is the MCP server's explicit timeout signal.
+            # Raise VoiceGateTimeoutError for checkpoint-resume.
+            if response.exit_code == 2:
+                from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+                raise VoiceGateTimeoutError(
+                    phase   = "choices",
+                    message = f"present_choices timeout after {timeout}s — MCP exit_code=2"
+                )
+
+            # Catch-all (no response value at all): also treat as timeout so
+            # checkpoint-resume applies instead of silently falling through
+            # to an empty-selection completion.
+            from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+            raise VoiceGateTimeoutError(
+                phase   = "choices",
+                message = f"present_choices returned no response after {timeout}s"
+            )
 
         except Exception as e:
+            from cosa.agents.test_fix_expediter.state import VoiceGateTimeoutError
+            if isinstance( e, VoiceGateTimeoutError ):
+                raise
+            # Bug 13 (2026-04-16): Pydantic ValidationError (e.g. abstract > 5000
+            # chars on large TFE proposal lists) fires BEFORE the MCP call, so the
+            # voice gate never reaches the user. Swallowing to empty-answers
+            # masquerades as "user selected nothing" and the job wrongly finalizes
+            # `status=completed` (observed in tfe-e4c73d5c on 2026-04-16). Treat
+            # pre-MCP failures as "voice gate unreachable" and raise
+            # VoiceGateTimeoutError so the orchestrator stalls with a checkpoint.
+            from pydantic import ValidationError
+            if isinstance( e, ( ValidationError, ConnectionError ) ):
+                raise VoiceGateTimeoutError(
+                    phase   = "choices",
+                    message = f"present_choices pre-MCP failure ({type( e ).__name__}): {str( e )[:200]}"
+                )
             logger.warning( f"present_choices failed: {e}" )
             return { "answers": {} }
 

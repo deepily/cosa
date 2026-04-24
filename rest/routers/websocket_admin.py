@@ -12,6 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime
 from typing import Optional
 
+import cosa.utils.util as du
+
 # Import dependencies
 from cosa.rest.auth import get_current_user
 from cosa.rest.websocket_manager import WebSocketManager
@@ -38,7 +40,11 @@ def get_websocket_manager():
     import fastapi_app.main as main_module
     return main_module.websocket_manager
 
-@router.get("/websocket-sessions")
+@router.get(
+    "/websocket-sessions",
+    summary     = "List WebSocket sessions",
+    description = "Return all active WebSocket sessions with total and per-user connection counts."
+)
 async def get_websocket_sessions(
     current_user: dict = Depends(get_current_user),
     websocket_manager: WebSocketManager = Depends(get_websocket_manager)
@@ -78,10 +84,14 @@ async def get_websocket_sessions(
         "total_sessions": len(sessions),
         "total_users": total_users,
         "sessions": sessions,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
-@router.get("/websocket-sessions/stats")
+@router.get(
+    "/websocket-sessions/stats",
+    summary     = "Get WebSocket statistics",
+    description = "Return detailed connection statistics and subscription pattern breakdown."
+)
 async def get_websocket_stats(
     current_user: dict = Depends(get_current_user),
     websocket_manager: WebSocketManager = Depends(get_websocket_manager)
@@ -119,10 +129,14 @@ async def get_websocket_stats(
         "connection_count": websocket_manager.get_connection_count(),
         "user_count": len(websocket_manager.user_sessions),
         "subscription_stats": subscription_stats,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
-@router.post("/websocket-sessions/cleanup")
+@router.post(
+    "/websocket-sessions/cleanup",
+    summary     = "Cleanup stale sessions",
+    description = "Trigger manual cleanup of sessions older than specified max age."
+)
 async def cleanup_websocket_sessions(
     max_age_hours: Optional[int] = 24,
     current_user: dict = Depends(get_current_user),
@@ -164,10 +178,14 @@ async def cleanup_websocket_sessions(
     return {
         "sessions_cleaned": sessions_cleaned,
         "max_age_hours": max_age_hours,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
-@router.get("/websocket-sessions/{session_id}")
+@router.get(
+    "/websocket-sessions/{session_id}",
+    summary     = "Get session details",
+    description = "Return detailed info for a specific WebSocket session by ID."
+)
 async def get_websocket_session(
     session_id: str,
     current_user: dict = Depends(get_current_user),
@@ -208,7 +226,11 @@ async def get_websocket_session(
     
     return session_info
 
-@router.delete("/websocket-sessions/{session_id}")
+@router.delete(
+    "/websocket-sessions/{session_id}",
+    summary     = "Force disconnect session",
+    description = "Forcefully disconnect a specific WebSocket session."
+)
 async def disconnect_websocket_session(
     session_id: str,
     current_user: dict = Depends(get_current_user),
@@ -250,10 +272,14 @@ async def disconnect_websocket_session(
     return {
         "session_id": session_id,
         "status": "disconnected",
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
-@router.put("/websocket-sessions/single-session-policy")
+@router.put(
+    "/websocket-sessions/single-session-policy",
+    summary     = "Set single-session policy",
+    description = "Enable or disable the single-session-per-user enforcement policy."
+)
 async def update_single_session_policy(
     enabled: bool,
     current_user: dict = Depends(get_current_user),
@@ -291,10 +317,14 @@ async def update_single_session_policy(
     
     return {
         "single_session_policy": enabled,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
-@router.get("/websocket-events")
+@router.get(
+    "/websocket-events",
+    summary     = "List available events",
+    description = "Return sorted list of all available WebSocket event types."
+)
 async def get_available_events(
     current_user: dict = Depends(get_current_user),
     websocket_manager: WebSocketManager = Depends(get_websocket_manager)
@@ -327,5 +357,5 @@ async def get_available_events(
     return {
         "available_events": sorted(list(websocket_manager.available_events)),
         "total_events": len(websocket_manager.available_events),
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }

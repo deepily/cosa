@@ -54,7 +54,12 @@ def get_todo_queue():
 
 router = APIRouter(tags=["system"])
 
-@router.get("/", response_class=JSONResponse)
+@router.get(
+    "/",
+    response_class = JSONResponse,
+    summary        = "Root health check",
+    description    = "Basic health check returning service name, status, version, and timestamp."
+)
 async def health_check():
     """
     Basic health check endpoint for service status monitoring.
@@ -77,11 +82,16 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "lupin-fastapi",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": du.get_current_datetime_iso(),
         "version": "0.1.0"
     }
 
-@router.get("/health", response_class=JSONResponse)
+@router.get(
+    "/health",
+    response_class = JSONResponse,
+    summary        = "Lightweight health check",
+    description    = "Minimal health endpoint for high-frequency monitoring. Returns status and timestamp."
+)
 async def health():
     """
     Simplified health endpoint for lightweight monitoring checks.
@@ -102,10 +112,15 @@ async def health():
     """
     return {
         "status": "ok",
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
-@router.get( "/api/server-info", response_class=JSONResponse )
+@router.get(
+    "/api/server-info",
+    response_class = JSONResponse,
+    summary        = "Get server info",
+    description    = "Return current config block ID, masked database URL, and environment name."
+)
 async def get_server_info( config_mgr: ConfigurationManager = Depends( get_config_manager ) ):
     """
     Return current server configuration state for infrastructure monitoring.
@@ -134,7 +149,12 @@ async def get_server_info( config_mgr: ConfigurationManager = Depends( get_confi
     }
 
 
-@router.get( "/api/init", response_class=JSONResponse )
+@router.get(
+    "/api/init",
+    response_class = JSONResponse,
+    summary        = "Hot-reload configuration",
+    description    = "Reload configuration and optionally swap active config block and database connection at runtime."
+)
 async def init( config_block_id: Optional[ str ] = None ):
     """
     Refresh configuration and reload application resources without restart.
@@ -193,21 +213,86 @@ async def init( config_block_id: Optional[ str ] = None ):
             print( "Reloading solution snapshots..." )
             main_module.snapshot_mgr.reload()
 
+        # Reset PredictionEngine singleton so it re-reads config (e.g., test LanceDB table)
+        try:
+            from cosa.agents.prediction_engine.prediction_engine import PredictionEngine, get_prediction_engine
+            PredictionEngine.reset()
+            get_prediction_engine( config_mgr=config_mgr )
+        except Exception as pe:
+            print( f"[INIT] PredictionEngine reset note: {pe}" )
+
         return {
             "status"          : "success",
             "config_block_id" : config_mgr.config_block_id,
             "database_url"    : new_db_url,
             "environment"     : os.environ.get( "LUPIN_ENV", "development" ),
-            "timestamp"       : datetime.now().isoformat()
+            "timestamp"       : du.get_current_datetime_iso()
         }
     except Exception as e:
         return {
             "status"    : "error",
             "message"   : f"Init failed: {str( e )}",
-            "timestamp" : datetime.now().isoformat()
+            "timestamp" : du.get_current_datetime_iso()
         }
 
-@router.get("/api/get-session-id")
+@router.get(
+    "/api/prediction-engine/reset",
+    response_class = JSONResponse,
+    summary        = "Reset PredictionEngine singleton",
+    description    = "Destroy and re-create the PredictionEngine singleton with current config. Used by integration tests to ensure LanceDB table isolation between tests."
+)
+async def reset_prediction_engine( drop_table: bool = True ):
+    """
+    Lightweight endpoint to reset the PredictionEngine singleton.
+
+    Ensures:
+        - LanceDB table is dropped if it exists and drop_table=True (server has write permission)
+        - PredictionEngine singleton is destroyed and re-created
+        - New instance reads current config (e.g., test LanceDB table after hot-swap)
+        - No config reinit, DB swap, or snapshot reload (use /api/init for those)
+    """
+    try:
+        from cosa.agents.prediction_engine.prediction_engine import PredictionEngine, get_prediction_engine
+        import cosa.utils.util as cu
+
+        config_mgr  = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+        table_name  = config_mgr.get( "prediction engine lancedb table", default="prediction_decisions" )
+        table_dropped = False
+
+        # Drop LanceDB table (server process has write permission, test process may not)
+        if drop_table:
+            try:
+                import lancedb
+                lancedb_path = cu.get_project_root() + "/src/conf/long-term-memory/lupin.lancedb"
+                db = lancedb.connect( lancedb_path )
+                if table_name in db.table_names():
+                    db.drop_table( table_name )
+                    table_dropped = True
+            except Exception as drop_err:
+                print( f"[PE-RESET] Table drop note: {drop_err}" )
+
+        PredictionEngine.reset()
+        engine = get_prediction_engine( config_mgr=config_mgr )
+
+        return {
+            "status"        : "success",
+            "lancedb_table" : engine.lancedb_table,
+            "table_dropped" : table_dropped,
+            "timestamp"     : du.get_current_datetime_iso()
+        }
+    except Exception as e:
+        return {
+            "status"  : "error",
+            "message" : f"PredictionEngine reset failed: {str( e )}",
+            "timestamp": du.get_current_datetime_iso()
+        }
+
+
+@router.get(
+    "/api/get-session-id",
+    summary     = "Generate session ID",
+    description = "Generate and return a unique two-word session ID for WebSocket routing."
+)
 async def get_session_id(
     id_gen: TwoWordIdGenerator = Depends(get_id_generator)
 ):
@@ -242,10 +327,14 @@ async def get_session_id(
     
     return {
         "session_id": session_id,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
-@router.get("/api/auth-test")
+@router.get(
+    "/api/auth-test",
+    summary     = "Test authentication",
+    description = "Verify JWT authentication is functioning. Returns authenticated user details."
+)
 async def auth_test(current_user: dict = Depends(get_current_user)):
     """
     Test endpoint to verify authentication system functionality.
@@ -280,10 +369,14 @@ async def auth_test(current_user: dict = Depends(get_current_user)):
         "status": "success",
         "message": "Authentication is working",
         "user": current_user,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
-@router.get("/api/websocket-sessions")
+@router.get(
+    "/api/websocket-sessions",
+    summary     = "List WebSocket sessions",
+    description = "Return info about all active WebSocket sessions including user counts and policy state."
+)
 async def get_websocket_sessions(
     current_user: dict = Depends(get_current_user)
 ):
@@ -335,10 +428,14 @@ async def get_websocket_sessions(
         "users_with_multiple_sessions": sum(1 for count in user_sessions.values() if count > 1),
         "single_session_policy": websocket_manager.single_session_per_user,
         "sessions": sessions,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
-@router.post("/api/websocket-sessions/cleanup")
+@router.post(
+    "/api/websocket-sessions/cleanup",
+    summary     = "Cleanup stale sessions",
+    description = "Remove WebSocket sessions older than the specified age limit."
+)
 async def cleanup_stale_sessions(
     max_age_hours: int = 24,
     current_user: dict = Depends(get_current_user)
@@ -380,10 +477,14 @@ async def cleanup_stale_sessions(
     return {
         "sessions_cleaned": cleaned,
         "max_age_hours": max_age_hours,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
-@router.get("/api/debug/websocket-state")
+@router.get(
+    "/api/debug/websocket-state",
+    summary     = "Debug WebSocket state",
+    description = "Expose complete internal WebSocket manager state for troubleshooting. Debug endpoint."
+)
 async def get_websocket_state():
     """
     Get complete internal state of WebSocket manager for debugging.
@@ -466,10 +567,14 @@ async def get_websocket_state():
             "orphaned_user_mappings": orphaned_users,
             "single_session_policy_enabled": websocket_manager.single_session_per_user
         },
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
-@router.get("/api/config/client")
+@router.get(
+    "/api/config/client",
+    summary     = "Get client config",
+    description = "Return client-side timing configuration including token refresh, heartbeat, and timezone."
+)
 async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
     """
     Return client-side configuration parameters for authenticated users.
@@ -497,7 +602,7 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
             "token_expiry_threshold_secs": 300,           # 5 mins in seconds
             "token_refresh_dedup_window_ms": 60000,       # 60 secs in milliseconds
             "websocket_heartbeat_interval_secs": 30,      # Reference value (secs)
-            "app_timezone": "America/New_York"            # IANA timezone for display
+            "app timezone": "America/New_York"            # IANA timezone for display
         }
 
     Example:
@@ -510,7 +615,7 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
             "token_expiry_threshold_secs": 300,
             "token_refresh_dedup_window_ms": 60000,
             "websocket_heartbeat_interval_secs": 30,
-            "app_timezone": "America/New_York"
+            "app timezone": "America/New_York"
         }
     """
     # Note: user_id parameter required by Depends() - validates JWT token
@@ -520,27 +625,39 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
 
     # Fetch from config with fallback defaults
     refresh_check_interval_mins = config_mgr.get(
-        "jwt_token_refresh_check_interval_mins",
-        default=10
+        "jwt token refresh check interval mins",
+        default=10, return_type="int"
     )
     expiry_threshold_mins = config_mgr.get(
-        "jwt_token_refresh_expiry_threshold_mins",
-        default=5
+        "jwt token refresh expiry threshold mins",
+        default=5, return_type="int"
     )
     dedup_window_secs = config_mgr.get(
-        "jwt_token_refresh_dedup_window_secs",
-        default=60
+        "jwt token refresh dedup window secs",
+        default=60, return_type="int"
     )
     heartbeat_interval_secs = config_mgr.get(
-        "websocket_heartbeat_interval_seconds",
-        default=30
+        "websocket heartbeat interval seconds",
+        default=30, return_type="int"
     )
     app_timezone = config_mgr.get(
-        "app_timezone",
+        "app timezone",
         default="America/New_York"
     )
+    tfe_auto_fix_enabled = config_mgr.get(
+        "test fix expediter auto fix enabled",
+        default=False, return_type="boolean"
+    )
+
+    lupin_env = os.environ.get( "LUPIN_ENV", "" ).lower()
+    if lupin_env in [ "test", "testing" ]:
+        env_label = "TEST"
+    else:
+        env_label = "DEVELOPMENT"
 
     return {
+        "env_label": env_label,
+
         # Convert minutes → milliseconds (for setInterval)
         "token_refresh_check_interval_ms": int( refresh_check_interval_mins * 60 * 1000 ),
 
@@ -554,11 +671,19 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
         "websocket_heartbeat_interval_secs": int( heartbeat_interval_secs ),
 
         # IANA timezone name for client-side date/time formatting
-        "app_timezone": app_timezone
+        "app timezone": app_timezone,
+
+        # TestFixExpediter auto-fix INI default — drives initial state of the
+        # "auto-fix on failure" checkbox in the test runner submission card
+        "test_fix_expediter_auto_fix_enabled": bool( tfe_auto_fix_enabled )
     }
 
 
-@router.get( "/api/config/similarity-confirmation" )
+@router.get(
+    "/api/config/similarity-confirmation",
+    summary     = "Get similarity confirmation toggle",
+    description = "Return the current runtime state of the similarity confirmation feature."
+)
 async def get_similarity_confirmation(
     current_user = Depends( get_current_user ),
     todo_queue   = Depends( get_todo_queue )
@@ -577,12 +702,16 @@ async def get_similarity_confirmation(
         dict: { "enabled": true/false }
     """
     enabled = todo_queue.config_mgr.get(
-        "similarity_confirmation_enabled", default=True, return_type="boolean"
+        "similarity confirmation enabled", default=True, return_type="boolean"
     )
     return { "enabled": enabled }
 
 
-@router.post( "/api/config/similarity-confirmation" )
+@router.post(
+    "/api/config/similarity-confirmation",
+    summary     = "Set similarity confirmation toggle",
+    description = "Toggle the similarity confirmation feature at runtime. Returns new and previous values."
+)
 async def set_similarity_confirmation(
     body: SimilarityConfirmationRequest,
     current_user = Depends( get_current_user ),
@@ -604,9 +733,9 @@ async def set_similarity_confirmation(
         dict: { "enabled": true/false, "previous": true/false }
     """
     previous = todo_queue.config_mgr.get(
-        "similarity_confirmation_enabled", default=True, return_type="boolean"
+        "similarity confirmation enabled", default=True, return_type="boolean"
     )
     todo_queue.config_mgr.set_config(
-        "similarity_confirmation_enabled", str( body.enabled ).lower()
+        "similarity confirmation enabled", str( body.enabled ).lower()
     )
     return { "enabled": body.enabled, "previous": previous }

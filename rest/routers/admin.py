@@ -5,7 +5,7 @@ Provides administrative endpoints for user management.
 All endpoints require admin role authorization.
 """
 
-from fastapi import APIRouter, HTTPException, status, Depends, Request
+from fastapi import APIRouter, HTTPException, status, Depends, Request, BackgroundTasks
 from typing import Optional, List, Dict
 from pydantic import BaseModel, Field
 import traceback
@@ -804,7 +804,7 @@ async def search_snapshots(
 
     try:
         # Use threshold from query param, debug from config
-        debug = _config_mgr.get( "app_debug", default=False, return_type="boolean" )
+        debug = _config_mgr.get( "app debug", default=False, return_type="boolean" )
 
         # Search snapshots using vector similarity
         results = snapshot_mgr.get_snapshots_by_question(
@@ -1119,7 +1119,7 @@ async def get_similar_snapshots(
     Returns:
         SimilarSnapshotsResponse: Similar snapshots grouped by type
     """
-    debug = _config_mgr.get( "app_debug" )
+    debug = _config_mgr.get( "app debug" )
 
     try:
         if debug: print( f"[ADMIN-SIMILAR] Finding similar snapshots for {id_hash}" )
@@ -1219,3 +1219,81 @@ async def get_similar_snapshots(
             status_code = status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail      = "Failed to find similar snapshots"
         )
+
+
+# ============================================================================
+# Refresh Source (test-env only) — re-exec the Python process in place so
+# bind-mounted source edits take effect without a full container restart.
+# Companion to src/scripts/refresh-test-server.sh.
+# ============================================================================
+
+class RefreshSourceResponse( BaseModel ):
+    """Response model for refresh-source endpoint."""
+    status : str
+    pid    : int
+    env    : str
+
+
+def _refresh_source_allowed() -> tuple[ bool, str ]:
+    """
+    Guard check for the refresh-source endpoint.
+
+    Requires:
+        - LUPIN_ENV env var and config key are independently set
+
+    Ensures:
+        - Returns (True, env) only when LUPIN_ENV is "test"/"testing" AND
+          config key "admin refresh source enabled" is True
+        - Returns (False, reason) otherwise
+    """
+    import os as _os
+    env = _os.environ.get( "LUPIN_ENV", "" ).lower()
+    if env not in [ "test", "testing" ]:
+        return False, f"refresh-source disabled: LUPIN_ENV={env!r} (must be test/testing)"
+    enabled = _config_mgr.get( "admin refresh source enabled", default=False, return_type="boolean" )
+    if not enabled:
+        return False, "refresh-source disabled: config key 'admin refresh source enabled' is false"
+    return True, env
+
+
+def _reexec_process():
+    """Replace the current process image with a fresh python invocation."""
+    import os as _os, sys as _sys
+    print( "[ADMIN-REFRESH] Re-executing process via os.execv to reload source" )
+    _sys.stdout.flush()
+    _sys.stderr.flush()
+    _os.execv( _sys.executable, [ _sys.executable, "-m", "fastapi_app.main" ] )
+
+
+@router.post(
+    "/admin/refresh-source",
+    response_model = RefreshSourceResponse,
+    status_code    = status.HTTP_202_ACCEPTED,
+    summary        = "Force test server to reload source (test env only)",
+    description    = "Re-execs the uvicorn process in place so bind-mounted source edits take effect. Gated by LUPIN_ENV in {test,testing} AND config 'admin refresh source enabled'. Discards in-memory state."
+)
+async def refresh_source(
+    background_tasks : BackgroundTasks,
+    admin_user       : Dict = Depends( require_admin )
+) -> RefreshSourceResponse:
+    import os as _os, asyncio as _asyncio
+
+    allowed, detail = _refresh_source_allowed()
+    if not allowed:
+        raise HTTPException(
+            status_code = status.HTTP_403_FORBIDDEN,
+            detail      = detail
+        )
+
+    async def _delayed_reexec():
+        # Give FastAPI a moment to flush the HTTP response before we vanish.
+        await _asyncio.sleep( 0.2 )
+        _reexec_process()
+
+    background_tasks.add_task( _delayed_reexec )
+
+    return RefreshSourceResponse(
+        status = "refreshing",
+        pid    = _os.getpid(),
+        env    = _os.environ.get( "LUPIN_ENV", "" ).lower()
+    )

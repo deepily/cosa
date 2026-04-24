@@ -118,6 +118,33 @@ def get_current_datetime(tz_name: str = "US/Eastern", format_str: str = '%Y-%m-%
     return tz_date.strftime(format_str)
 
 
+def get_current_datetime_iso( tz_name: str = "US/Eastern" ) -> str:
+    """
+    Get an ISO 8601 formatted datetime string with timezone offset.
+
+    Designed for frontend-facing timestamps where JavaScript's new Date()
+    needs to parse the string correctly regardless of browser timezone.
+
+    Requires:
+        - tz_name is a valid timezone string recognized by pytz
+
+    Ensures:
+        - Returns an ISO 8601 string with UTC offset (e.g., "2026-04-08T14:08:19.123456-04:00")
+        - Timezone-aware: JavaScript new Date() correctly handles the offset
+        - Consistent with the system's Eastern timezone convention
+
+    Args:
+        tz_name: The name of the timezone (default: "US/Eastern")
+
+    Returns:
+        An ISO 8601 formatted datetime string with timezone offset
+
+    Raises:
+        pytz.exceptions.UnknownTimeZoneError: If tz_name is not a valid timezone
+    """
+    return get_current_datetime_raw( tz_name ).isoformat()
+
+
 def get_current_date(tz_name: str = "US/Eastern", return_prose: bool = False, offset: int = 0) -> str:
     """
     Get the current date in the specified timezone with optional formatting.
@@ -448,8 +475,8 @@ def get_file_as_dictionary(path: str, lower_case: bool = False, omit_comments: b
             p0 = pipe_regex.sub("", pair[0].strip())
             p1 = pipe_regex.sub("", pair[1].strip())
             lines_as_dict[p0] = p1
-        else:
-            if debug: print("ERROR: [{}]".format(pair[0]))
+        # else:
+        #     if debug: print("ERROR: [{}]".format(pair[0]))
 
     return lines_as_dict
 
@@ -658,7 +685,7 @@ def get_api_key(key_name: str, project_root: str = None) -> Optional[str]:
         print_banner(f"ERROR: Key [{key_name}] not found at [{path}]")
         return None
 
-    return get_file_as_string(path)
+    return get_file_as_string(path).strip()
 
 
 def generate_domain_names(count: int = 10, remove_dots: bool = False, debug: bool = False) -> list[str]:

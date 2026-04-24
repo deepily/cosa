@@ -10,16 +10,22 @@ Generated on: 2025-01-24
 
 import asyncio
 
-from fastapi import APIRouter, Query, HTTPException, Depends, Request
+from fastapi import APIRouter, Query, HTTPException, Depends, Request, Body
 from fastapi.responses import JSONResponse
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Literal
+
+from pydantic import BaseModel
+
+import cosa.utils.util as cu
 
 # Import dependencies
 from cosa.rest.auth import get_current_user
 from cosa.rest.queue_auth import authorize_queue_filter
 from cosa.rest.auth_middleware import is_admin
 from cosa.agents.agentic_job_base import AgenticJobBase
+from cosa.rest.job_state import JobState
+from cosa.rest.queue_util import emit_job_state_transition
 
 router = APIRouter(prefix="/api", tags=["queues"])
 
@@ -119,7 +125,11 @@ def get_notification_queue():
     import fastapi_app.main as main_module
     return main_module.jobs_notification_queue
 
-@router.post("/push")
+@router.post(
+    "/push",
+    summary     = "Push job to queue",
+    description = "Submit a new job to the todo queue. Requires question and websocket_id in request body."
+)
 async def push(
     request: Request,
     current_user: dict = Depends(get_current_user),
@@ -212,7 +222,117 @@ async def push(
         "result"       : result.get( "message", str( result ) ) if isinstance( result, dict ) else str( result )
     }
 
-@router.get("/get-queue/{queue_name}")
+
+@router.post(
+    "/push-agentic",
+    summary     = "Submit agentic job without the runtime argument expeditor",
+    description = "Unattended / service-to-service agentic job submission. Caller supplies routing_command + explicit args dict. No voice-path LORA parsing, no interactive Q&A. Flexible passthrough args support current and future agents."
+)
+async def push_agentic(
+    request      : Request,
+    current_user : dict = Depends( get_current_user ),
+    todo_queue         = Depends( get_todo_queue )
+):
+    """
+    Submit a fully-specified agentic job to the todo queue.
+
+    Request body (JSON):
+        routing_command (str, required): e.g. "agent router go to deep research".
+            Must be one of the commands supported by create_agentic_job.
+        websocket_id (str, required): session routing id (same format + validation as /api/push).
+        args (dict, optional): fully-specified agent args. Passthrough — agent constructor validates.
+        question (str, optional): display-only text for the UI history card.
+        scheduled_at (str, optional): ISO-8601 timestamp for delayed execution.
+        monopolize (bool, optional): request a monopolized execution slot.
+
+    Contrast with POST /api/push: this endpoint bypasses the runtime argument
+    expeditor entirely. If args are incomplete, the agent constructor fails
+    explicitly rather than silently waiting for an interactive reply that
+    unattended submitters cannot provide.
+
+    Auth: same as /api/push (JWT or API key via get_current_user).
+
+    Returns:
+        { status, routing_command, websocket_id, user_id, job_id, result }
+
+    Raises:
+        HTTPException 400 on invalid body / missing fields / unknown routing_command.
+    """
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException( status_code=400, detail=f"Invalid JSON in request body: {e}" )
+
+    if not isinstance( body, dict ):
+        raise HTTPException( status_code=400, detail="Request body must be a JSON object" )
+
+    routing_command = body.get( "routing_command" )
+    websocket_id    = body.get( "websocket_id" )
+    args_dict       = body.get( "args", { } ) or { }
+    question        = body.get( "question" )
+    scheduled_at    = body.get( "scheduled_at" )
+    monopolize      = bool( body.get( "monopolize", False ) )
+
+    # Validate required string fields
+    for field_name, field_value in (
+        ( "routing_command", routing_command ),
+        ( "websocket_id",    websocket_id ),
+    ):
+        if not field_value:
+            raise HTTPException( status_code=400, detail=f"Missing required field: {field_name}" )
+        if not isinstance( field_value, str ):
+            raise HTTPException( status_code=400, detail=f"Field {field_name!r} must be a string" )
+
+    routing_command = routing_command.strip()
+    websocket_id    = websocket_id.strip()
+    if not routing_command or not websocket_id:
+        raise HTTPException( status_code=400, detail="routing_command / websocket_id cannot be empty" )
+
+    if not isinstance( args_dict, dict ):
+        raise HTTPException( status_code=400, detail="Field 'args' must be a JSON object" )
+
+    user_id    = current_user[ "uid" ]
+    user_email = current_user[ "email" ]
+    print( f"[API] /api/push-agentic - command: {routing_command!r}, ws: {websocket_id}, user: {user_email}, args_keys: {list( args_dict.keys() )}" )
+
+    try:
+        result = await asyncio.to_thread(
+            todo_queue.push_job_agentic,
+            routing_command,
+            args_dict,
+            websocket_id,
+            user_id,
+            user_email,
+            question,
+            scheduled_at,
+            monopolize,
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException( status_code=500, detail=f"push-agentic failed: {e}" )
+
+    job_id = result.get( "job_id" ) if isinstance( result, dict ) else None
+    if job_id is None:
+        # Unknown command or construction failure bubbles up as a 400 so the
+        # caller can distinguish "submitted, await outcome" from "rejected".
+        raise HTTPException( status_code=400, detail=result.get( "message" ) if isinstance( result, dict ) else str( result ) )
+
+    return {
+        "status"          : "queued",
+        "routing_command" : routing_command,
+        "websocket_id"    : websocket_id,
+        "user_id"         : user_id,
+        "job_id"          : job_id,
+        "result"          : result.get( "message" ),
+    }
+
+
+@router.get(
+    "/get-queue/{queue_name}",
+    summary     = "Get queue contents",
+    description = "Retrieve jobs from a named queue (todo/run/done/dead) with role-based user filtering."
+)
 async def get_queue(
     queue_name: str,
     current_user: dict = Depends(get_current_user),
@@ -297,6 +417,9 @@ async def get_queue(
     if authorized_filter == "*":
         # Admin requesting ALL users' jobs
         jobs = queue.get_all_jobs()
+    elif authorized_filter.startswith( "!" ):
+        # Admin requesting all jobs EXCEPT their own ("!user_id" sentinel)
+        jobs = queue.get_jobs_excluding_user( authorized_filter[ 1: ] )
     else:
         # Specific user's jobs (could be self or other for admin)
         jobs = queue.get_jobs_for_user( authorized_filter )
@@ -323,19 +446,26 @@ async def get_queue(
                 "response_text"   : job.answer_conversational or job.answer,
                 "timestamp"       : job.run_date or job.created_date,
                 "user_id"         : authorized_filter,
+                "user_email"      : job.user_email,
                 "session_id"      : job.session_id,  # For job-notification correlation
                 "agent_type"      : job.job_type,  # Unified property replaces getattr() chain
                 "has_interactions": bool( job.session_id ),  # True if can query notifications
                 "has_audio_cache" : False,  # Will be determined by frontend cache check
                 "is_cache_hit"    : job.is_cache_hit,  # For Time Saved Dashboard
                 # Phase 7: Agentic job artifacts for enhanced done cards
-                "report_path"     : job.artifacts.get( 'report_path' ) if is_agentic_job else None,
+                "report_path"               : job.artifacts.get( 'report_path' ) if is_agentic_job else None,
+                "remediation_snapshot_path" : job.artifacts.get( 'remediation_snapshot_path' ) if is_agentic_job else None,
+                "yaml_path"                : job.artifacts.get( 'yaml_path' ) if is_agentic_job else None,
+                "pptx_path"                : job.artifacts.get( 'pptx_path' ) if is_agentic_job else None,
                 "abstract"        : job.artifacts.get( 'abstract' ) if is_agentic_job else None,
                 "cost_summary"    : job.cost_summary if is_agentic_job else None,
                 "started_at"      : job.started_at,
                 "completed_at"    : job.completed_at,
-                "status"          : job.status,
+                "status"          : job.state.value if hasattr( job.state, 'value' ) else str( job.state ),
                 "error"           : job.error,
+                "scheduled_at"    : getattr( job, 'scheduled_at', None ),
+                "monopolize"      : getattr( job, 'monopolize', False ),
+                "paused"          : job.state == JobState.PAUSED,
             }
 
             # Calculate duration for agentic jobs
@@ -359,6 +489,61 @@ async def get_queue(
             "total_jobs": len( structured_jobs )
         }
 
+    # Step 5b: Handle dead queue — surface partial artifacts from failed-
+    # before-completion runs so users can recover diagnoses/plans that the
+    # job computed before dying. Previously fell through to the generic
+    # todo/run branch which only returned basic fields; dead TFE/BFE jobs
+    # that wrote a Phase 2 plan had no way to surface it to the UI.
+    # See: src/rnd/v0.1.6/2026.04.11-tfe-forensics-capture-plan.md (Fix 8b)
+    if queue_name == "dead":
+        structured_jobs = []
+        for job in jobs:
+            is_agentic_job = isinstance( job, AgenticJobBase )
+            job_data = {
+                "job_id"          : job.id_hash,
+                "question_text"   : job.last_question_asked,
+                "timestamp"       : job.run_date or job.created_date,
+                "user_id"         : authorized_filter,
+                "user_email"      : job.user_email,
+                "session_id"      : job.session_id,
+                "agent_type"      : job.job_type,
+                "status"          : job.state.value if hasattr( job.state, 'value' ) else str( job.state ),
+                "started_at"      : job.started_at,
+                "completed_at"    : job.completed_at,
+                "error"           : job.error,
+                "is_cache_hit"    : False,
+                "has_interactions": bool( job.session_id ),
+                "scheduled_at"    : getattr( job, 'scheduled_at', None ),
+                "monopolize"      : getattr( job, 'monopolize', False ),
+                "paused"          : job.state == JobState.PAUSED,
+                # Partial artifacts from failed-before-completion runs.
+                # Agents that died mid-pipeline may have populated any of these.
+                "plan_path"                : job.artifacts.get( 'plan_path' )                if is_agentic_job else None,
+                "remediation_snapshot_path": job.artifacts.get( 'remediation_snapshot_path' ) if is_agentic_job else None,
+                "report_path"              : job.artifacts.get( 'report_path' )              if is_agentic_job else None,
+                "yaml_path"                : job.artifacts.get( 'yaml_path' )                if is_agentic_job else None,
+                "cost_summary"             : job.cost_summary                                 if is_agentic_job else None,
+            }
+            # Calculate duration for agentic jobs when both timestamps exist
+            if is_agentic_job and job_data[ "started_at" ] and job_data[ "completed_at" ]:
+                try:
+                    start = datetime.fromisoformat( job_data[ "started_at" ] )
+                    end   = datetime.fromisoformat( job_data[ "completed_at" ] )
+                    job_data[ "duration_seconds" ] = ( end - start ).total_seconds()
+                except Exception:
+                    job_data[ "duration_seconds" ] = None
+            else:
+                job_data[ "duration_seconds" ] = None
+
+            structured_jobs.append( job_data )
+
+        return {
+            f"{queue_name}_jobs_metadata": structured_jobs,
+            "filtered_by" : authorized_filter,
+            "is_admin_view": is_admin( current_user ) and ( user_filter is not None ),
+            "total_jobs"  : len( structured_jobs ),
+        }
+
     # Step 6: Handle todo/run queues with metadata (Phase 7)
     # Using unified interface properties - all job types now have consistent attributes
     structured_jobs = []
@@ -368,11 +553,15 @@ async def get_queue(
             "question_text": job.last_question_asked,
             "timestamp"    : job.run_date or job.created_date,
             "user_id"      : authorized_filter,
+            "user_email"   : job.user_email,
             "session_id"   : job.session_id,
             "agent_type"   : job.job_type,  # Unified property replaces getattr() chain
-            "status"       : job.status,
+            "status"       : job.state.value if hasattr( job.state, 'value' ) else str( job.state ),
             "started_at"   : job.started_at,
             "error"        : job.error,
+            "scheduled_at" : getattr( job, 'scheduled_at', None ),
+            "monopolize"   : getattr( job, 'monopolize', False ),
+            "paused"       : job.state == JobState.PAUSED,
         }
         structured_jobs.append( job_data )
 
@@ -386,7 +575,11 @@ async def get_queue(
         "total_jobs": len( structured_jobs )
     }
 
-@router.post("/reset-queues")
+@router.post(
+    "/reset-queues",
+    summary     = "Reset all queues",
+    description = "Clear all five queues (todo, run, done, dead, notification) and return items-cleared summary."
+)
 async def reset_queues(
     current_user: dict = Depends(get_current_user),
     todo_queue = Depends(get_todo_queue),
@@ -434,7 +627,7 @@ async def reset_queues(
             "status": "success",
             "message": "All queues have been reset",
             "user_id": user_id,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": cu.get_current_datetime_iso(),
             "queues_reset": {
                 "todo": f"cleared {initial_counts['todo']} items",
                 "run": f"cleared {initial_counts['run']} items", 
@@ -453,7 +646,11 @@ async def reset_queues(
         raise HTTPException( status_code=500, detail=f"Failed to reset queues: {str(e)}" )
 
 
-@router.get( "/get-job-interactions/{job_id}" )
+@router.get(
+    "/get-job-interactions/{job_id}",
+    summary     = "Get job interactions",
+    description = "Retrieve notification interaction history for a job with progress deduplication."
+)
 async def get_job_interactions(
     job_id: str,
     current_user: dict = Depends( get_current_user ),
@@ -495,31 +692,56 @@ async def get_job_interactions(
         if job:
             break
 
+    # DB fallback when job not found in in-memory queues
+    db_job = None
     if not job:
-        print( f"[API] Job not found in any queue: {job_id}" )
-        raise HTTPException( status_code=404, detail=f"Job not found: {job_id}" )
+        from cosa.rest.job_persistence import get_job_by_id_hash
+        db_job = get_job_by_id_hash( job_id )
+        if not db_job:
+            print( f"[API] Job not found in any queue or DB: {job_id}" )
+            raise HTTPException( status_code=404, detail=f"Job not found: {job_id}" )
+        print( f"[API] Job {job_id} found in DB (not in memory)" )
 
-    # Authorization check — job.user_id is the single source of truth
-    job_owner = job.user_id
+    # Authorization check — db_job is a dict, job is an object
+    if job:
+        job_owner = job.user_id
+    else:
+        job_owner = db_job.get( "user_id" )
     if job_owner and job_owner != current_user["uid"] and not is_admin( current_user ):
         print( f"[API] Unauthorized access to job {job_id} by {current_user['uid']}" )
         raise HTTPException( status_code=403, detail="Not authorized to view this job" )
 
-    # Build response using unified interface properties
-    # All job types (SolutionSnapshot, AgenticJobBase) now have consistent attributes
-    response = {
-        "job_id"       : job_id,
-        "session_id"   : job.session_id,
-        "job_metadata" : {
-            "question"    : job.last_question_asked,
-            "answer"      : job.answer_conversational or job.answer,
-            "agent_type"  : job.job_type,  # Unified property replaces getattr() chain
-            "run_date"    : job.run_date,
-            "created_date": job.created_date
-        },
-        "interactions"      : [],
-        "interaction_count" : 0
-    }
+    # Build response from in-memory job or DB fallback
+    if job:
+        response = {
+            "job_id"       : job_id,
+            "session_id"   : job.session_id,
+            "job_metadata" : {
+                "question"    : job.last_question_asked,
+                "answer"      : job.answer_conversational or job.answer,
+                "agent_type"  : job.job_type,
+                "run_date"    : job.run_date,
+                "created_date": job.created_date
+            },
+            "interactions"      : [],
+            "interaction_count" : 0
+        }
+    else:
+        metadata   = db_job.get( "metadata_json" ) or {}
+        created_at = db_job.get( "created_at" )
+        response = {
+            "job_id"       : job_id,
+            "session_id"   : db_job.get( "session_id" ),
+            "job_metadata" : {
+                "question"    : db_job.get( "question_text" ),
+                "answer"      : metadata.get( "answer_conversational" ) or metadata.get( "response_text" ),
+                "agent_type"  : db_job.get( "job_type" ),
+                "run_date"    : created_at.isoformat() if hasattr( created_at, "isoformat" ) else created_at,
+                "created_date": created_at.isoformat() if hasattr( created_at, "isoformat" ) else created_at
+            },
+            "interactions"      : [],
+            "interaction_count" : 0
+        }
 
     # Query notifications by job_id (direct lookup - much simpler than time-window)
     try:
@@ -566,7 +788,11 @@ async def get_job_interactions(
     return response
 
 
-@router.post( "/jobs/{job_id}/message" )
+@router.post(
+    "/jobs/{job_id}/message",
+    summary     = "Send message to job",
+    description = "Send a user-initiated message to a running agentic job via WebSocket notification."
+)
 async def send_job_message(
     job_id: str,
     request: Request,
@@ -685,10 +911,32 @@ async def send_job_message(
                     "priority"          : priority,
                     "job_id"            : job_id,
                     "sender_id"         : f"user@{current_user[ 'email' ]}",
-                    "timestamp"         : datetime.now().isoformat(),
+                    "timestamp"         : cu.get_current_datetime_iso(),
                 },
             },
         )
+
+        # Cross-user delivery: CC listeners authenticate as a service account
+        # (different user_id), so emit_to_user_sync won't reach them.
+        if job_id:
+            listener_sid = f"cc-listener-{job_id}"
+            ws_manager.emit_to_session_sync(
+                session_id = listener_sid,
+                event      = "notification_queue_update",
+                data       = {
+                    "notification": {
+                        "id"                : notification_id,
+                        "id_hash"           : notification_id,
+                        "type"              : "user_initiated_message",
+                        "notification_type" : "user_initiated_message",
+                        "message"           : message_text,
+                        "priority"          : priority,
+                        "job_id"            : job_id,
+                        "sender_id"         : f"user@{current_user[ 'email' ]}",
+                        "timestamp"         : cu.get_current_datetime_iso(),
+                    },
+                },
+            )
 
         # Echo acknowledgment back to user as a progress notification
         # Persist to database so it appears in job interaction history
@@ -722,7 +970,7 @@ async def send_job_message(
                 "priority"          : "low",
                 "job_id"            : job_id,
                 "sender_id"         : f"swe.lead@lupin",
-                "timestamp"         : datetime.now().isoformat(),
+                "timestamp"         : cu.get_current_datetime_iso(),
             },
         }
         ws_manager.emit_to_user_sync( user_id=user_id, event="notification_queue_update", data=echo_data )
@@ -739,7 +987,11 @@ async def send_job_message(
     }
 
 
-@router.post( "/jobs/{job_id}/cancel" )
+@router.post(
+    "/jobs/{job_id}/cancel",
+    summary     = "Cancel running job",
+    description = "Request graceful cancellation of a running agentic job at its next phase boundary."
+)
 async def cancel_job(
     job_id: str,
     current_user: dict = Depends( get_current_user ),
@@ -802,4 +1054,793 @@ async def cancel_job(
         "status"  : "cancel_requested",
         "job_id"  : job_id,
         "message" : "Cancellation requested. Job will stop at next checkpoint.",
+    }
+
+
+@router.delete(
+    "/queue/{queue_name}/all",
+    summary     = "Delete all jobs from a queue",
+    description = "Bulk remove all jobs from todo, run, done, or dead queue. "
+                  "Admins clear the entire queue; regular users delete only their own jobs."
+)
+async def delete_all_queue_jobs(
+    queue_name: str,
+    current_user: dict = Depends( get_current_user ),
+    running_queue      = Depends( get_running_queue ),
+    done_queue         = Depends( get_done_queue ),
+    dead_queue         = Depends( get_dead_queue ),
+    todo_queue         = Depends( get_todo_queue ),
+):
+    """
+    Bulk delete all jobs from an in-memory queue.
+
+    For running jobs, signals cancellation on each before removal.
+    Admins get a full queue.clear(); regular users get per-job deletion
+    scoped to their own user_id (same auth model as single-job delete).
+
+    Route-order note: this literal-path handler is declared BEFORE the
+    parameterized `/queue/{queue_name}/{job_id}` sibling so FastAPI matches
+    `/queue/done/all` here rather than binding `job_id="all"` and returning 404.
+
+    Requires:
+        - queue_name is one of: 'todo', 'run', 'done', 'dead'
+        - current_user is authenticated
+
+    Ensures:
+        - All matching jobs removed from queue
+        - Running jobs receive cancel signal before removal
+        - Returns { status, queue_name, items_deleted, timestamp }
+
+    Raises:
+        - HTTPException 400: Invalid queue name
+    """
+    user_id = current_user[ "uid" ]
+
+    queue_map = {
+        "todo" : todo_queue,
+        "run"  : running_queue,
+        "done" : done_queue,
+        "dead" : dead_queue
+    }
+    if queue_name not in queue_map:
+        raise HTTPException( status_code=400, detail=f"Invalid queue name: {queue_name}. Must be 'todo', 'run', 'done', or 'dead'." )
+
+    queue = queue_map[ queue_name ]
+
+    print( f"[API] DELETE /api/queue/{queue_name}/all - user: {user_id}, admin: {is_admin( current_user )}" )
+
+    if is_admin( current_user ):
+        count = queue.size()
+        queue.clear()
+        items_deleted = count
+    else:
+        jobs = queue.get_jobs_for_user( user_id )
+        items_deleted = 0
+        for job in jobs:
+            if queue_name == "run" and isinstance( job, AgenticJobBase ):
+                job.request_cancel()
+            deleted = queue.delete_by_id_hash( job.id_hash )
+            if deleted:
+                items_deleted += 1
+
+    print( f"[API] Deleted {items_deleted} jobs from {queue_name} queue by user {user_id}" )
+
+    return {
+        "status"        : "deleted",
+        "queue_name"    : queue_name,
+        "items_deleted" : items_deleted,
+        "timestamp"     : cu.get_current_datetime_iso()
+    }
+
+
+@router.delete(
+    "/queue/{queue_name}/{job_id}",
+    summary     = "Remove job from queue",
+    description = "Forcefully remove a job from todo, run, done, or dead queue."
+)
+async def delete_queue_job(
+    queue_name: str,
+    job_id: str,
+    current_user: dict = Depends( get_current_user ),
+    running_queue = Depends( get_running_queue ),
+    done_queue    = Depends( get_done_queue ),
+    dead_queue    = Depends( get_dead_queue ),
+    todo_queue    = Depends( get_todo_queue ),
+):
+    """
+    Forcefully remove a job from an in-memory queue.
+
+    For running jobs, also signals cancellation so the execution thread stops.
+    For todo jobs, the underlying TodoFifoQueue.delete_by_id_hash wakes the
+    consumer via condition.notify so it recalculates eligibility.
+    Emits a job_removed WebSocket event so other connected clients update.
+
+    Requires:
+        - queue_name is one of: 'todo', 'run', 'done', 'dead'
+        - job_id identifies an existing job in the specified queue
+        - current_user is authenticated
+        - Job belongs to current user OR user is admin
+
+    Ensures:
+        - Job is removed from the specified queue
+        - Running jobs receive cancel signal before removal
+        - WebSocket event emitted for UI synchronization
+        - Returns confirmation with job_id and queue name
+
+    Raises:
+        - HTTPException 400: Invalid queue name
+        - HTTPException 404: Job not found in specified queue
+        - HTTPException 403: User does not own this job and is not admin
+
+    Args:
+        queue_name: Target queue ('todo', 'run', 'done', 'dead')
+        job_id: Target job ID
+        current_user: Authenticated user info
+        running_queue: Running queue dependency
+        done_queue: Done queue dependency
+        dead_queue: Dead queue dependency
+        todo_queue: Todo queue dependency
+
+    Returns:
+        dict: {status, job_id, queue}
+    """
+    user_id = current_user[ "uid" ]
+
+    # Validate queue name
+    queue_map = {
+        "todo" : todo_queue,
+        "run"  : running_queue,
+        "done" : done_queue,
+        "dead" : dead_queue
+    }
+    if queue_name not in queue_map:
+        raise HTTPException( status_code=400, detail=f"Invalid queue name for deletion: {queue_name}. Must be 'todo', 'run', 'done', or 'dead'." )
+
+    queue = queue_map[ queue_name ]
+
+    print( f"[API] DELETE /api/queue/{queue_name}/{job_id} - user: {user_id}" )
+
+    # Validate job exists
+    try:
+        job = queue.get_by_id_hash( job_id )
+    except KeyError:
+        raise HTTPException( status_code=404, detail=f"Job not found in {queue_name} queue: {job_id}" )
+
+    # Validate ownership (user or admin)
+    if job.user_id != user_id and not is_admin( current_user ):
+        raise HTTPException( status_code=403, detail="Not authorized to remove this job" )
+
+    # For running jobs: signal cancellation before removal
+    if queue_name == "run" and isinstance( job, AgenticJobBase ):
+        job.request_cancel()
+        print( f"[API] Cancel signaled for running job {job_id} before removal" )
+
+    # Remove from queue
+    deleted = queue.delete_by_id_hash( job_id )
+    if not deleted:
+        raise HTTPException( status_code=404, detail=f"Failed to delete job {job_id} from {queue_name} queue" )
+
+    # Emit WebSocket event for UI synchronization (canonical dual-emit:
+    # owner + watching admins, deduplicated). See
+    # WebSocketManager.emit_to_user_and_admins_sync for the rationale.
+    # NOTE: import path is `fastapi_app.main` not `src.fastapi_app.main` —
+    # PYTHONPATH already includes src/, so the `src.` prefix raises
+    # ModuleNotFoundError and silently swallowed every job_removed emit
+    # before today (Session 248e740e fix).
+    try:
+        import fastapi_app.main as main_module
+        ws_manager = main_module.websocket_manager
+        if ws_manager:
+            ws_manager.emit_to_user_and_admins_sync( user_id, 'job_removed', {
+                'job_id'    : job_id,
+                'queue'     : queue_name,
+                'timestamp' : cu.get_current_datetime_iso()
+            } )
+    except Exception as e:
+        print( f"[API] Warning: Failed to emit job_removed event: {e}" )
+
+    print( f"[API] Job {job_id} removed from {queue_name} queue by user {user_id}" )
+
+    return {
+        "status" : "deleted",
+        "job_id" : job_id,
+        "queue"  : queue_name
+    }
+
+
+# ===========================================================================
+# Job History (CJ Flow Persistence)
+# ===========================================================================
+
+
+@router.get(
+    "/job-history",
+    summary     = "Query job history",
+    description = "Paginated history of agentic jobs from PostgreSQL persistence. "
+                  "Admin sees all jobs; regular users see only their own."
+)
+async def get_job_history(
+    current_user: dict      = Depends( get_current_user ),
+    status: Optional[str]   = Query( None, description="Filter by status: pending, running, completed, failed, interrupted" ),
+    job_type: Optional[str] = Query( None, description="Filter by job type: deep_research, podcast, claude_code, swe_team, research_to_podcast" ),
+    limit: int              = Query( 20, ge=1, le=100, description="Results per page (max 100)" ),
+    offset: int             = Query( 0, ge=0, description="Pagination offset" ),
+    days: Optional[int]     = Query( None, ge=1, le=365, description="Time window in days (e.g. 7, 14, 30). None = all time." ),
+    exclude_ids: Optional[str] = Query( None, description="Comma-separated job IDs to exclude (for live queue deduplication)" )
+):
+    """
+    Query paginated job history with optional filters.
+
+    Requires:
+        - Authenticated user (Bearer token)
+
+    Ensures:
+        - Admin users see all jobs (user_id=None filter)
+        - Regular users see only their own jobs
+        - Results are paginated and sorted by created_at DESC
+        - exclude_ids supports the overlay model: frontend passes live Done/Dead job IDs
+          so they are excluded from history results (no duplicates)
+        - Returns { jobs: [...], total: N, filtered_by: str, limit: N, offset: N }
+    """
+    from cosa.rest.job_persistence import query_job_history
+
+    # Admin sees all, regular user sees own only
+    user_id = None if is_admin( current_user ) else current_user[ "uid" ]
+
+    # Parse comma-separated exclude_ids into a list
+    exclude_list = [ eid.strip() for eid in exclude_ids.split( "," ) if eid.strip() ] if exclude_ids else None
+
+    result = query_job_history(
+        user_id     = user_id,
+        status      = status,
+        job_type    = job_type,
+        limit       = limit,
+        offset      = offset,
+        days        = days,
+        exclude_ids = exclude_list
+    )
+
+    return {
+        "jobs"        : result[ "jobs" ],
+        "total"       : result[ "total" ],
+        "filtered_by" : user_id or "all",
+        "limit"       : limit,
+        "offset"      : offset
+    }
+
+
+@router.get(
+    "/job-history/{job_id}",
+    summary     = "Get job detail",
+    description = "Retrieve a single job's full history record by ID hash."
+)
+async def get_job_history_detail(
+    job_id: str,
+    current_user: dict = Depends( get_current_user )
+):
+    """
+    Get a single job's persistence record.
+
+    Requires:
+        - Authenticated user (Bearer token)
+        - job_id is a valid id_hash string
+
+    Ensures:
+        - Returns full job dict if found and authorized
+        - 404 if job not found
+        - 403 if regular user accessing another user's job
+    """
+    from cosa.rest.job_persistence import get_job_by_id_hash
+
+    job = get_job_by_id_hash( job_id )
+
+    if job is None:
+        raise HTTPException( status_code=404, detail=f"Job not found: {job_id}" )
+
+    # Authorization: regular users can only see their own jobs
+    if not is_admin( current_user ) and job.get( "user_id" ) != current_user[ "uid" ]:
+        raise HTTPException( status_code=403, detail="Not authorized to view this job" )
+
+    return job
+
+
+@router.delete(
+    "/job-history/all",
+    summary     = "Bulk delete job history",
+    description = "Delete all job history records matching the given time window. "
+                  "Admins delete across all users; regular users delete only their own records."
+)
+async def delete_all_job_history(
+    current_user: dict    = Depends( get_current_user ),
+    days: Optional[str]   = Query( None, description="Time window: 1, 7, 14, 30, or 'all'. Defaults to 'all'." )
+):
+    """
+    Bulk delete job history from PostgreSQL.
+
+    Route-order note: this literal-path handler is declared BEFORE the
+    parameterized `/job-history/{job_id}` sibling so FastAPI matches
+    `/job-history/all` here rather than binding `job_id="all"` and returning 404.
+
+    Requires:
+        - Authenticated user (Bearer token)
+        - days is None, 'all', or a numeric string matching 1/7/14/30
+
+    Ensures:
+        - Deletes all matching history rows for the user (or all users if admin)
+        - Returns { status, items_deleted, days_filter, timestamp }
+
+    Raises:
+        - HTTPException 400: Invalid days parameter
+    """
+    from cosa.rest.job_persistence import delete_job_history_bulk
+
+    user_id = None if is_admin( current_user ) else current_user[ "uid" ]
+
+    days_int = None
+    days_label = "all"
+    if days and days != "all":
+        try:
+            days_int   = int( days )
+            days_label = str( days_int )
+        except ValueError:
+            raise HTTPException( status_code=400, detail=f"Invalid days parameter: {days}. Use a number or 'all'." )
+
+    print( f"[API] DELETE /api/job-history/all - user: {current_user['uid']}, days: {days_label}" )
+
+    items_deleted = delete_job_history_bulk( user_id=user_id, days=days_int )
+
+    print( f"[API] Deleted {items_deleted} history records (days={days_label}) for user {current_user['uid']}" )
+
+    return {
+        "status"        : "deleted",
+        "items_deleted" : items_deleted,
+        "days_filter"   : days_label,
+        "timestamp"     : cu.get_current_datetime_iso()
+    }
+
+
+@router.delete(
+    "/job-history/{job_id}",
+    summary     = "Delete job from history",
+    description = "Hard delete a job history record. Admin or job owner only."
+)
+async def delete_job_history_endpoint(
+    job_id: str,
+    current_user: dict = Depends( get_current_user )
+):
+    """
+    Delete a single job from PostgreSQL persistence.
+
+    Requires:
+        - Authenticated user (Bearer token)
+        - job_id is a valid id_hash string
+        - User must be admin or the job's owner
+
+    Ensures:
+        - Returns { status: "deleted", job_id: str } on success
+        - 404 if job not found
+        - 403 if regular user deleting another user's job
+    """
+    from cosa.rest.job_persistence import get_job_by_id_hash, delete_job_history
+
+    job = get_job_by_id_hash( job_id )
+
+    if job is None:
+        raise HTTPException( status_code=404, detail=f"Job not found: {job_id}" )
+
+    # Authorization: regular users can only delete their own jobs
+    if not is_admin( current_user ) and job.get( "user_id" ) != current_user[ "uid" ]:
+        raise HTTPException( status_code=403, detail="Not authorized to delete this job" )
+
+    deleted = delete_job_history( job_id )
+
+    if not deleted:
+        raise HTTPException( status_code=500, detail="Failed to delete job from history" )
+
+    return { "status": "deleted", "job_id": job_id }
+
+
+@router.post(
+    "/job-history/{job_id}/retry",
+    summary     = "Retry a failed or interrupted job",
+    description = "Re-submit a failed or interrupted job to the todo queue as a new job."
+)
+async def retry_job_history(
+    job_id: str,
+    request: Request,
+    current_user: dict = Depends( get_current_user ),
+    todo_queue         = Depends( get_todo_queue )
+):
+    """
+    Re-submit a failed/interrupted job to the CJ Flow todo queue.
+
+    Requires:
+        - Authenticated user (Bearer token)
+        - job_id is a valid id_hash of a failed or interrupted job
+        - Request body contains JSON with "websocket_id" field
+        - User must be admin or the job's owner
+
+    Ensures:
+        - Creates a new todo entry with the original question_text
+        - Returns { status: "retried", original_job_id: str }
+        - 404 if job not found
+        - 403 if unauthorized
+        - 400 if job status is not failed or interrupted
+        - 400 if websocket_id missing from request body
+    """
+    import asyncio
+    from cosa.rest.job_persistence import get_job_by_id_hash
+
+    job = get_job_by_id_hash( job_id )
+
+    if job is None:
+        raise HTTPException( status_code=404, detail=f"Job not found: {job_id}" )
+
+    # Authorization: regular users can only retry their own jobs
+    if not is_admin( current_user ) and job.get( "user_id" ) != current_user[ "uid" ]:
+        raise HTTPException( status_code=403, detail="Not authorized to retry this job" )
+
+    # Only allow retry of terminal failure states
+    if job.get( "status" ) not in ( "failed", "interrupted" ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot retry job with status '{job.get( 'status' )}'. Only failed or interrupted jobs can be retried."
+        )
+
+    # Parse request body for websocket_id
+    try:
+        request_data = await request.json()
+    except Exception as e:
+        raise HTTPException( status_code=400, detail=f"Invalid JSON in request body: {str( e )}" )
+
+    websocket_id = request_data.get( "websocket_id" )
+    if not websocket_id or not isinstance( websocket_id, str ):
+        raise HTTPException( status_code=400, detail="Missing required field: websocket_id" )
+
+    question     = job.get( "question_text", "" )
+    user_id      = current_user[ "uid" ]
+    user_email   = current_user[ "email" ]
+
+    print( f"[API] /api/job-history/{job_id}/retry - re-submitting: '{question[:80]}', user: {user_id}" )
+
+    # Push to todo queue using the same pattern as POST /api/push
+    result = await asyncio.to_thread( todo_queue.push_job, question, websocket_id, user_id, user_email )
+
+    return {
+        "status"          : "retried",
+        "original_job_id" : job_id,
+        "result"          : result
+    }
+
+
+# =============================================================================
+# CJ Flow: Job Pause/Resume (Todo Queue Only)
+# =============================================================================
+
+
+@router.patch(
+    "/queue/todo/{job_id}/pause",
+    summary     = "Pause a todo queue job",
+    description = "Set paused=True on a todo queue job. Consumer skips it until resumed."
+)
+async def pause_job(
+    job_id: str,
+    current_user: dict = Depends( get_current_user ),
+    todo_queue         = Depends( get_todo_queue ),
+):
+    """
+    Pause a job in the todo queue.
+
+    A paused job remains in the queue but is skipped by the consumer during
+    eligibility checks. Resume the job to make it eligible again.
+
+    Requires:
+        - job_id identifies a job currently in the todo queue
+        - current_user is authenticated
+        - Job belongs to current user OR user is admin
+
+    Ensures:
+        - Job's paused flag is set to True
+        - Returns confirmation
+
+    Raises:
+        - HTTPException 404: Job not found in todo queue
+        - HTTPException 403: User does not own this job
+    """
+    user_id = current_user[ "uid" ]
+
+    print( f"[API] PATCH /api/queue/todo/{job_id}/pause - user: {user_id}" )
+
+    try:
+        job = todo_queue.get_by_id_hash( job_id )
+    except KeyError:
+        raise HTTPException( status_code=404, detail=f"Job not found in todo queue: {job_id}" )
+
+    if job.user_id != user_id and not is_admin( current_user ):
+        raise HTTPException( status_code=403, detail="Not authorized to pause this job" )
+
+    job.state = JobState.PAUSED
+
+    # Emit WebSocket event for UI update (state transition: queued/scheduled → paused).
+    # Canonical dual-emit so admin viewers also see the pause badge appear.
+    try:
+        import fastapi_app.main as main_module
+        ws_manager = main_module.websocket_manager
+        ws_manager.emit_to_user_and_admins_sync(
+            user_id = user_id,
+            event   = "job_state_transition",
+            data    = {
+                "job_id"     : job_id,
+                "from_state" : JobState.QUEUED.value,
+                "to_state"   : JobState.PAUSED.value,
+                "timestamp"  : cu.get_current_datetime_iso(),
+            },
+        )
+    except Exception as e:
+        print( f"[API] Warning: WebSocket emission failed for pause transition: {e}" )
+
+    print( f"[API] Job paused: {job_id} by user {user_id}" )
+
+    return {
+        "status"  : "paused",
+        "job_id"  : job_id,
+        "message" : "Job paused. Consumer will skip it until resumed."
+    }
+
+
+@router.patch(
+    "/queue/todo/{job_id}/resume",
+    summary     = "Resume a paused todo queue job",
+    description = "Set paused=False and notify consumer to recalculate eligibility."
+)
+async def resume_job(
+    job_id: str,
+    current_user: dict = Depends( get_current_user ),
+    todo_queue         = Depends( get_todo_queue ),
+):
+    """
+    Resume a paused job in the todo queue.
+
+    Clears the paused flag and notifies the consumer thread to recalculate
+    eligibility. If the job's scheduled_at has already passed, it becomes
+    immediately eligible.
+
+    Requires:
+        - job_id identifies a paused job in the todo queue
+        - current_user is authenticated
+        - Job belongs to current user OR user is admin
+
+    Ensures:
+        - Job's paused flag is set to False
+        - Consumer thread is notified to recalculate
+        - Returns confirmation
+
+    Raises:
+        - HTTPException 404: Job not found in todo queue
+        - HTTPException 403: User does not own this job
+    """
+    user_id = current_user[ "uid" ]
+
+    print( f"[API] PATCH /api/queue/todo/{job_id}/resume - user: {user_id}" )
+
+    try:
+        job = todo_queue.get_by_id_hash( job_id )
+    except KeyError:
+        raise HTTPException( status_code=404, detail=f"Job not found in todo queue: {job_id}" )
+
+    if job.user_id != user_id and not is_admin( current_user ):
+        raise HTTPException( status_code=403, detail="Not authorized to resume this job" )
+
+    job.state = JobState.QUEUED
+
+    # Emit WebSocket event for UI update (state transition: paused → queued).
+    # Canonical dual-emit so admin viewers also see the pause badge clear.
+    try:
+        import fastapi_app.main as main_module
+        ws_manager = main_module.websocket_manager
+        ws_manager.emit_to_user_and_admins_sync(
+            user_id = user_id,
+            event   = "job_state_transition",
+            data    = {
+                "job_id"     : job_id,
+                "from_state" : JobState.PAUSED.value,
+                "to_state"   : JobState.QUEUED.value,
+                "timestamp"  : cu.get_current_datetime_iso(),
+            },
+        )
+    except Exception as e:
+        print( f"[API] Warning: WebSocket emission failed for resume transition: {e}" )
+
+    # Notify consumer to recalculate eligibility (may wake from timed sleep)
+    with todo_queue.condition:
+        todo_queue.condition.notify()
+
+    print( f"[API] Job resumed: {job_id} by user {user_id}" )
+
+    return {
+        "status"  : "resumed",
+        "job_id"  : job_id,
+        "message" : "Job resumed. Consumer will process it when eligible."
+    }
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint-resume: reconstruct a stalled job from its checkpoint
+# (Session 9056c113)
+# ---------------------------------------------------------------------------
+
+class ResumeFromCheckpointRequest( BaseModel ):
+    """Optional per-resume model + thinking-effort overrides.
+
+    All fields optional. Old clients may POST with no body — `request` is then
+    an empty model and no overrides apply. New clients may POST:
+    ``{"lead_model_override": "claude-opus-4-7", "thinking_effort": "xhigh"}``
+    to steer a specific resume without touching INI defaults.
+    """
+    lead_model_override   : Optional[ str ] = None
+    worker_model_override : Optional[ str ] = None
+    thinking_effort       : Optional[ Literal[ "low", "medium", "high", "xhigh", "max" ] ] = None
+
+
+@router.post(
+    "/jobs/{id_hash}/resume-from-checkpoint",
+    summary     = "Resume a stalled job from its saved checkpoint",
+    description = "Reconstructs a stalled (voice-gate-timeout) job from its "
+                  "checkpoint in job_history, pushes to todo queue. Optional "
+                  "body may specify per-resume model + thinking-effort overrides.",
+)
+async def resume_stalled_job(
+    id_hash      : str,
+    request      : ResumeFromCheckpointRequest = Body( default_factory=ResumeFromCheckpointRequest ),
+    current_user = Depends( get_current_user ),
+    todo_queue   = Depends( get_todo_queue ),
+):
+    """
+    Resume a stalled job from its checkpoint.
+
+    Requires:
+        - id_hash references a stalled job with checkpoint data in job_history
+
+    Ensures:
+        - New job reconstructed with checkpoint loaded on orchestrator
+        - Pushed to todo queue for consumer pickup
+        - Returns the new job ID and resume phase info
+    """
+    from cosa.rest.agentic_job_factory import resume_job
+
+    overrides = request.model_dump( exclude_none=True ) if request else {}
+    job = resume_job( id_hash, config_mgr=None, args_overrides=overrides or None )
+    if job is None:
+        raise HTTPException(
+            status_code = 404,
+            detail      = f"Job {id_hash} not found, not stalled, or has no checkpoint"
+        )
+
+    # Push to todo queue
+    todo_queue.push( job )
+
+    resume_info = job._resume_checkpoint
+    print(
+        f"[API] POST /api/jobs/{id_hash}/resume-from-checkpoint - "
+        f"new job: {job.id_hash}, "
+        f"resume from phase {resume_info.get( 'phase_name', '?' )}"
+        + ( f", overrides: {overrides}" if overrides else "" )
+    )
+
+    return {
+        "status"           : "resumed",
+        "resumed_job_id"   : job.id_hash,
+        "original_job_id"  : id_hash,
+        "resume_from_phase": resume_info.get( "phase_ordinal" ),
+        "phase_name"       : resume_info.get( "phase_name" ),
+        "resume_count"     : resume_info.get( "resume_count", 1 ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Smart TFE resume: dispatch free-form input (job ID or plan path) to resume
+# (Session 9056c113 continued — Phase D4b file-path resume)
+# ---------------------------------------------------------------------------
+
+
+class TFEResumeFromRequest( BaseModel ):
+    """Request body for smart TFE resume-from endpoint.
+
+    The resume_from field accepts any of:
+    - TFE job ID: "tfe-7c25082a" or "tfe-7c25082a::user@example.com"
+    - Plan doc path: "io/swe-team/plans/.../c1-plan.md"
+    - Checkpoint JSON path (future): "io/checkpoints/.../checkpoint.json"
+    - Natural language description (Phase 2, not yet implemented)
+
+    Optional overrides (all default None, SDK/INI default applies):
+    - lead_model_override / worker_model_override: per-resume model swap
+    - thinking_effort: extended-thinking level for this resume
+    """
+    resume_from           : str
+    lead_model_override   : Optional[ str ] = None
+    worker_model_override : Optional[ str ] = None
+    thinking_effort       : Optional[ Literal[ "low", "medium", "high", "xhigh", "max" ] ] = None
+
+
+@router.post(
+    "/test-fix-expediter/resume-from",
+    summary     = "Smart TFE resume — auto-detect job ID or plan path",
+    description = "Accepts free-form input (job ID, plan doc path, or description) "
+                  "and resolves to a stalled TFE job, then resumes from checkpoint.",
+)
+async def resume_tfe_smart(
+    request: TFEResumeFromRequest,
+    current_user = Depends( get_current_user ),
+    todo_queue   = Depends( get_todo_queue ),
+):
+    """
+    Smart resume: auto-detect input type and dispatch.
+
+    Requires:
+        - request.resume_from is a non-empty string
+        - current_user is authenticated
+
+    Ensures:
+        - 200 with status=resumed if auto-resolved to a single stalled job
+        - 200 with status=ambiguous + candidates if multiple matches (Phase 2)
+        - 404 if no match found
+    """
+    from cosa.agents.test_fix_expediter.resume_resolver import resolve_resume_target
+    from cosa.rest.agentic_job_factory import resume_job
+
+    user_email = current_user.get( "email" ) or current_user.get( "user_email" )
+    if not user_email:
+        raise HTTPException( status_code=400, detail="Authenticated user has no email" )
+
+    target = resolve_resume_target( request.resume_from, user_email )
+
+    if target.source_type == "not_found":
+        raise HTTPException( status_code=404, detail=target.diagnostic )
+
+    # Multi-match disambiguation (Phase 2 — LLM fuzzy matcher)
+    if target.job_id is None and target.candidates:
+        return {
+            "status"     : "ambiguous",
+            "candidates" : target.candidates,
+            "diagnostic" : target.diagnostic,
+        }
+
+    # Single match — delegate to existing resume_job() factory
+    overrides = {
+        "lead_model_override"   : request.lead_model_override,
+        "worker_model_override" : request.worker_model_override,
+        "thinking_effort"       : request.thinking_effort,
+    }
+    overrides = { k: v for k, v in overrides.items() if v is not None }
+    job = resume_job( target.job_id, config_mgr=None, args_overrides=overrides or None )
+    if job is None:
+        raise HTTPException(
+            status_code = 404,
+            detail      = f"Job {target.job_id} resolved but cannot be resumed "
+                          f"(may have been already resumed or cleared)"
+        )
+
+    todo_queue.push( job )
+
+    resume_info = job._resume_checkpoint
+    print(
+        f"[API] POST /api/test-fix-expediter/resume-from - "
+        f"input: '{request.resume_from[:60]}', "
+        f"source_type: {target.source_type}, "
+        f"resolved: {target.job_id}, "
+        f"new job: {job.id_hash}, "
+        f"resume from phase {resume_info.get( 'phase_name', '?' )}"
+    )
+
+    return {
+        "status"           : "resumed",
+        "source_type"      : target.source_type,
+        "matched_path"     : target.matched_path,
+        "confidence"       : target.confidence,
+        "resumed_job_id"   : job.id_hash,
+        "original_job_id"  : target.job_id,
+        "resume_from_phase": resume_info.get( "phase_ordinal" ),
+        "phase_name"       : resume_info.get( "phase_name" ),
+        "resume_count"     : resume_info.get( "resume_count", 1 ),
+        "diagnostic"       : target.diagnostic,
     }

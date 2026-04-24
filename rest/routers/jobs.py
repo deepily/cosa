@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from datetime import datetime
 import os
+import cosa.utils.util as du
 
 router = APIRouter(tags=["jobs"])
 
@@ -35,7 +36,11 @@ def get_static_dir():
     import fastapi_app.main as main_module
     return main_module.static_dir
 
-@router.get("/api/delete-snapshot/{id}")
+@router.get(
+    "/api/delete-snapshot/{id}",
+    summary     = "Delete job snapshot",
+    description = "Delete a completed job snapshot by ID. Phase 1 stub."
+)
 async def delete_snapshot(id: str):
     """
     Delete a completed job snapshot.
@@ -70,10 +75,14 @@ async def delete_snapshot(id: str):
         "status": "deleted",
         "id": id,
         "message": f"Snapshot {id} deleted successfully (STUB)",
-        "timestamp": datetime.now().isoformat()
+        "timestamp": du.get_current_datetime_iso()
     }
 
-@router.get("/get-answer/{id}")
+@router.get(
+    "/get-answer/{id}",
+    summary     = "Get job audio answer",
+    description = "Return audio for a completed job. Phase 1 stub serving placeholder audio."
+)
 async def get_answer(id: str):
     """
     Retrieve audio answer for completed job.

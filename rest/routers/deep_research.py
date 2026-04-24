@@ -43,8 +43,11 @@ class DeepResearchSubmitRequest( BaseModel ):
     websocket_id: Optional[ str ] = Field( None, description="WebSocket session ID for notifications" )
     lead_model: Optional[ str ] = Field( None, description="Model for lead agent (None = use default)" )
     dry_run: bool = Field( False, description="Simulate execution without API calls" )
+    force_failure_mode: Optional[ str ] = Field( None, description="Phase 6 dry-run repair loop: 'code_bug' | 'infra_timeout' | 'rate_limit' to inject a failure at the end of dry-run" )
     audience: Optional[ str ] = Field( None, description="Target audience level: beginner, general, expert, academic" )
     audience_context: Optional[ str ] = Field( None, description="Custom audience description" )
+    scheduled_at: Optional[ str ] = Field( None, description="ISO datetime for deferred execution (None = immediate)" )
+    monopolize: bool = Field( False, description="Run exclusively, block all other jobs until complete" )
 
 
 class DeepResearchSubmitResponse( BaseModel ):
@@ -74,7 +77,12 @@ def get_todo_queue():
 # Job Submission Endpoint
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@router.post( "/api/deep-research/submit", response_model=DeepResearchSubmitResponse )
+@router.post(
+    "/api/deep-research/submit",
+    response_model = DeepResearchSubmitResponse,
+    summary        = "Submit deep research job",
+    description    = "Create a deep research job and push to the CJ Flow todo queue."
+)
 async def submit_research(
     request_body: DeepResearchSubmitRequest,
     current_user: dict = Depends( get_current_user ),
@@ -137,6 +145,8 @@ async def submit_research(
             args_dict[ "budget" ] = str( request_body.budget )
         if request_body.dry_run:
             args_dict[ "dry_run" ] = True
+        if request_body.force_failure_mode:
+            args_dict[ "force_failure_mode" ] = request_body.force_failure_mode
         if request_body.audience:
             args_dict[ "audience" ] = request_body.audience
         if request_body.audience_context:
@@ -156,6 +166,10 @@ async def submit_research(
         # Apply lead_model if specified (factory doesn't handle this)
         if request_body.lead_model:
             job.lead_model = request_body.lead_model
+
+        # Scheduling attributes pass-through (CJ Flow timed execution + monopolize)
+        if request_body.scheduled_at: job.scheduled_at = request_body.scheduled_at
+        if request_body.monopolize:   job.monopolize   = request_body.monopolize
 
         # Atomic: scope ID + index for user filtering BEFORE push (race condition prevention)
         job.id_hash = user_job_tracker.register_scoped_job( job.id_hash, user_id, session_id )
@@ -186,7 +200,12 @@ async def submit_research(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@router.get( "/api/deep-research/report", response_class=PlainTextResponse )
+@router.get(
+    "/api/deep-research/report",
+    response_class = PlainTextResponse,
+    summary        = "Get research report",
+    description    = "Retrieve a research report by local path or GCS URI as raw Markdown."
+)
 async def get_report(
     path: str = Query( ..., description="Local file path or GCS URI (gs://bucket/path/file.md)" )
 ):
@@ -296,7 +315,11 @@ async def get_report(
             )
 
 
-@router.get( "/api/deep-research/health" )
+@router.get(
+    "/api/deep-research/health",
+    summary     = "Deep research health check",
+    description = "Report GCS availability and local research directory status."
+)
 async def deep_research_health():
     """
     Health check for deep research endpoints.

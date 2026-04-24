@@ -44,7 +44,7 @@ class EmbeddingCacheTable:
         # Get standardized embedding dimension from config
         self._embedding_dim = int( self._config_mgr.get( "embedding dimensions", default="768" ) )
 
-        uri = du.get_project_root() + self._config_mgr.get( "database_path_wo_root" )
+        uri = du.get_project_root() + self._config_mgr.get( "path to database wo root" )
 
         db = lancedb.connect( uri )
 
@@ -283,7 +283,7 @@ class EmbeddingCacheTable:
         """
         import pyarrow as pa
         
-        uri = du.get_project_root() + self._config_mgr.get( "database_path_wo_root" )
+        uri = du.get_project_root() + self._config_mgr.get( "path to database wo root" )
         db = lancedb.connect( uri )
         
         du.print_banner( "Initializing embedding_cache_tbl schema..." )

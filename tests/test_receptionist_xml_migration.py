@@ -491,7 +491,7 @@ class ReceptionistXmlMigrationTester:
         
         try:
             # Test 1: Global strategy setting
-            global_strategy = self.config_mgr.get( "xml_parsing_global_strategy", default="baseline" )
+            global_strategy = self.config_mgr.get( "xml parsing global strategy", default="baseline" )
             results[ "global_strategy_config" ] = global_strategy in [ "baseline", "hybrid_v1", "structured_v2" ]
             
             # Test 2: Per-agent override

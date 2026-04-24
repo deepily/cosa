@@ -198,7 +198,7 @@ class XmlPromptGenerator:
             config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
             agent_function_mapping_compound_commands = {
                 # This data set is not only static vs. dynamic, but also memory search vs. web search
-                "agent router go to search function mapping": config_mgr.get( "path_to_search_function_mapping_data_wo_root" )
+                "agent router go to search function mapping": config_mgr.get( "path to search function mapping data wo root" )
             }
             self._test_command_paths( agent_function_mapping_compound_commands )
             return agent_function_mapping_compound_commands
@@ -727,6 +727,32 @@ class XmlPromptGenerator:
             - Length matches requested_length if specified
         """
         return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-max-segments.txt", requested_length=requested_length )
+
+    def get_renderer_names( self, requested_length: Optional[int]=None ) -> list:
+        """
+        Gets placeholder renderer names for presentation generation.
+
+        Requires:
+            - requested_length is None or positive integer
+
+        Ensures:
+            - Returns list of renderer names (mermaid, matplotlib, d2, veo, nano_banana + ASR variants)
+            - Length matches requested_length if specified
+        """
+        return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-renderer-names.txt", requested_length=requested_length )
+
+    def get_duration_minutes( self, requested_length: Optional[int]=None ) -> list:
+        """
+        Gets placeholder duration values in minutes for presentation/podcast generation.
+
+        Requires:
+            - requested_length is None or positive integer
+
+        Ensures:
+            - Returns list of duration values as strings (mix of numeric and word forms)
+            - Length matches requested_length if specified
+        """
+        return self._get_placeholder_values( "/src/ephemera/prompts/data/placeholders-duration-minutes.txt", requested_length=requested_length )
 
     def get_agentic_templates( self, requested_length: Optional[int]=None ) -> list:
         """

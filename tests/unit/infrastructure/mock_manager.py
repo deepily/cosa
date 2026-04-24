@@ -90,7 +90,7 @@ class MockManager:
         """
         return {
             "config_manager": {
-                "app_debug": False,
+                "app debug": False,
                 "agent_timeout": 30,
                 "openai_api_key": "test_key_12345",
                 "agent_math_prompt_template": "Solve: {question}",
@@ -425,7 +425,7 @@ def isolated_unit_test():
         
         # Test config manager mock
         with mgr.config_manager_mock() as config_mock:
-            value = config_mock.get( "app_debug", default=False, return_type="boolean" )
+            value = config_mock.get( "app debug", default=False, return_type="boolean" )
             assert isinstance( value, bool ), "Config mock failed"
         
         # Test fixtures creation

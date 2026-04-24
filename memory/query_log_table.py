@@ -57,7 +57,7 @@ class QueryLogTable:
         self._embedding_dim = int( self._config_mgr.get( "embedding dimensions", default="768" ) )
 
         # Get database path from config
-        uri = du.get_project_root() + self._config_mgr.get( "database_path_wo_root" )
+        uri = du.get_project_root() + self._config_mgr.get( "path to database wo root" )
 
         if self.debug:
             print( f"Connecting to LanceDB at: {uri}" )
@@ -187,7 +187,7 @@ class QueryLogTable:
             # Context and metadata
             pa.field( "input_type", pa.string() ),             # 'voice', 'text', 'api'
             pa.field( "user_satisfaction", pa.string() ),      # 'satisfied', 'unsatisfied', 'unknown'
-            pa.field( "normalization_version", pa.string() ),   # Track algorithm version
+            pa.field( "normalization version", pa.string() ),   # Track algorithm version
             pa.field( "gist_model_version", pa.string() ),     # Track which LLM generated gist
 
             # Cache performance metrics
@@ -272,7 +272,7 @@ class QueryLogTable:
                 # Context
                 "input_type": input_type,
                 "user_satisfaction": "unknown",  # Can be updated later
-                "normalization_version": self._config_mgr.get( "normalization_version", "v2.0" ),
+                "normalization version": self._config_mgr.get( "normalization version", "v2.0" ),
                 "gist_model_version": self._config_mgr.get( "llm spec key for gist generation", "unknown" ),
 
                 # Cache performance

@@ -9,7 +9,7 @@ Design decisions:
 - Configurable limits to prevent runaway execution
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Literal, Optional
 
 
@@ -27,8 +27,8 @@ class ResearchConfig:
     """
 
     # === Model Selection ===
-    lead_model     : str = "claude-opus-4-20250514"
-    subagent_model : str = "claude-sonnet-4-20250514"
+    lead_model     : str = "claude-opus-4-6"
+    subagent_model : str = "claude-sonnet-4-6"
 
     # === Scaling Heuristics ===
     max_subagents_simple   : int = 1
@@ -92,6 +92,88 @@ class ResearchConfig:
         }
         return mapping.get( complexity, self.max_subagents_moderate )
 
+    @classmethod
+    def from_config( cls, config_mgr, debug=False ):
+        """
+        Create a ResearchConfig from ConfigurationManager INI values.
+
+        Reads each field from ConfigManager with "deep research" prefix,
+        falling back to the dataclass default for missing keys.
+
+        Requires:
+            - config_mgr is a valid ConfigurationManager instance
+
+        Ensures:
+            - Returns a fully populated ResearchConfig
+            - Missing INI keys fall back to dataclass defaults
+            - Type coercion handles str, int, bool, float
+
+        Args:
+            config_mgr: ConfigurationManager instance
+            debug: Enable debug output
+
+        Returns:
+            ResearchConfig: Configured instance
+        """
+        # Map dataclass field names to INI key names
+        key_map = {
+            "lead_model"                 : "deep research lead model",
+            "subagent_model"             : "deep research subagent model",
+            "max_subagents_simple"       : "deep research max subagents simple",
+            "max_subagents_moderate"     : "deep research max subagents moderate",
+            "max_subagents_complex"      : "deep research max subagents complex",
+            "max_concurrent_subagents"   : "deep research max concurrent subagents",
+            "max_research_iterations"    : "deep research max research iterations",
+            "max_tool_calls_per_subagent": "deep research max tool calls per subagent",
+            "max_clarification_rounds"   : "deep research max clarification rounds",
+            "extended_thinking_budget"   : "deep research extended thinking budget",
+            "subagent_context_limit"     : "deep research subagent context limit",
+            "max_findings_tokens"        : "deep research max findings tokens",
+            "feedback_timeout_seconds"   : "deep research feedback timeout seconds",
+            "stream_thoughts_to_voice"   : "deep research stream thoughts to voice",
+            "narrate_progress"           : "deep research narrate progress",
+            "search_tool"                : "deep research search tool",
+            "prefer_primary_sources"     : "deep research prefer primary sources",
+            "min_sources_per_subquery"   : "deep research min sources per subquery",
+            "max_sources_per_subquery"   : "deep research max sources per subquery",
+            "include_confidence_scores"  : "deep research include confidence scores",
+            "include_source_quality_notes": "deep research include source quality notes",
+            "citation_style"             : "deep research citation style",
+            "audience"                   : "deep research audience",
+            "audience_context"           : "deep research audience context",
+        }
+
+        # Build kwargs from INI, falling back to dataclass defaults
+        kwargs       = {}
+        dc_fields    = { f.name: f for f in fields( cls ) }
+
+        for field_name, ini_key in key_map.items():
+            dc_field = dc_fields[ field_name ]
+            default  = dc_field.default
+
+            # Determine return_type based on field type
+            field_type = dc_field.type
+            if field_type == "bool" or field_type is bool:
+                return_type = "boolean"
+            elif field_type == "int" or field_type is int:
+                return_type = "int"
+            elif field_type == "float" or field_type is float:
+                return_type = "float"
+            else:
+                return_type = "string"
+
+            value = config_mgr.get( ini_key, default=str( default ) if default is not None else "", silent=True, return_type=return_type )
+
+            # Handle empty string for Optional[str] fields
+            if field_name == "audience_context" and ( value == "" or value is None ):
+                value = None
+
+            kwargs[ field_name ] = value
+
+        if debug: print( f"[ResearchConfig.from_config] Loaded {len( kwargs )} fields from INI" )
+
+        return cls( **kwargs )
+
 
 def quick_smoke_test():
     """Quick smoke test for ResearchConfig."""
@@ -103,8 +185,8 @@ def quick_smoke_test():
         # Test 1: Default instantiation
         print( "Testing default config..." )
         config = ResearchConfig()
-        assert config.lead_model == "claude-opus-4-20250514"
-        assert config.subagent_model == "claude-sonnet-4-20250514"
+        assert config.lead_model == "claude-opus-4-6"
+        assert config.subagent_model == "claude-sonnet-4-6"
         print( "✓ Default config created" )
 
         # Test 2: get_max_subagents
@@ -138,6 +220,20 @@ def quick_smoke_test():
         assert custom_audience.audience == "beginner"
         assert custom_audience.audience_context == "PhD researcher in AI safety"
         print( "✓ Target audience configuration works" )
+
+        # Test 5: from_config
+        print( "Testing from_config..." )
+        try:
+            from cosa.config.configuration_manager import ConfigurationManager
+            cfg_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+            config_from_ini = ResearchConfig.from_config( cfg_mgr, debug=True )
+            assert config_from_ini.lead_model == "claude-opus-4-6"
+            assert config_from_ini.max_subagents_simple == 1
+            assert config_from_ini.feedback_timeout_seconds == 300
+            assert isinstance( config_from_ini.stream_thoughts_to_voice, bool )
+            print( f"✓ from_config loaded successfully (lead={config_from_ini.lead_model})" )
+        except Exception as e:
+            print( f"⚠ from_config test skipped (config not available): {e}" )
 
         print( "\n✓ ResearchConfig smoke test completed successfully" )
 

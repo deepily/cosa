@@ -19,10 +19,13 @@ Example:
 """
 
 import asyncio
+import time
 from datetime import datetime
 from typing import Optional, List
 
+import cosa.utils.util as cu
 from cosa.agents.agentic_job_base import AgenticJobBase
+from cosa.rest.job_state import JobState
 
 
 class PodcastGeneratorJob( AgenticJobBase ):
@@ -59,6 +62,7 @@ class PodcastGeneratorJob( AgenticJobBase ):
         target_languages: Optional[ List[ str ] ] = None,
         max_segments: Optional[ int ] = None,
         dry_run: bool = False,
+        force_failure_mode: Optional[ str ] = None,
         audience: Optional[ str ] = None,
         audience_context: Optional[ str ] = None,
         debug: bool = False,
@@ -99,12 +103,13 @@ class PodcastGeneratorJob( AgenticJobBase ):
         )
 
         # Podcast parameters
-        self.research_path    = research_path
-        self.target_languages = target_languages or [ "en" ]
-        self.max_segments     = max_segments
-        self.dry_run          = dry_run
-        self.audience         = audience
-        self.audience_context = audience_context
+        self.research_path      = research_path
+        self.target_languages   = target_languages or [ "en" ]
+        self.max_segments       = max_segments
+        self.dry_run            = dry_run
+        self.force_failure_mode = force_failure_mode
+        self.audience           = audience
+        self.audience_context   = audience_context
 
         # Results (populated after execution)
         self.audio_path    = None
@@ -139,24 +144,24 @@ class PodcastGeneratorJob( AgenticJobBase ):
         if self.debug:
             print( f"[PodcastGeneratorJob] Starting do_all() for: {self.research_path}" )
 
-        self.status     = "running"
-        self.started_at = datetime.now().isoformat()
+        self.state      = JobState.RUNNING
+        self.started_at = cu.get_current_datetime_iso()
 
         try:
             result = asyncio.run( self._execute() )
 
             # Check if cancellation was requested during execution
             if self._cancel_requested:
-                self.status                = "cancelled"
-                self.completed_at          = datetime.now().isoformat()
+                self.state                 = JobState.CANCELLED
+                self.completed_at          = cu.get_current_datetime_iso()
                 self.error                 = "Cancelled by user request"
                 self.answer_conversational = result or "Podcast generation was cancelled by the user."
                 if self.debug:
                     print( f"[PodcastGeneratorJob] Cancelled by user request" )
                 return self.answer_conversational
 
-            self.status       = "completed"
-            self.completed_at = datetime.now().isoformat()
+            self.state        = JobState.COMPLETED
+            self.completed_at = cu.get_current_datetime_iso()
             self.result       = result
             self.answer_conversational = result
 
@@ -167,8 +172,8 @@ class PodcastGeneratorJob( AgenticJobBase ):
             return result
 
         except Exception as e:
-            self.status       = "failed"
-            self.completed_at = datetime.now().isoformat()
+            self.state        = JobState.FAILED
+            self.completed_at = cu.get_current_datetime_iso()
             self.error        = str( e )
 
             if self.debug:
@@ -193,6 +198,8 @@ class PodcastGeneratorJob( AgenticJobBase ):
         from cosa.agents.podcast_generator import voice_io, cosa_interface
         import cosa.utils.util as cu
         import os
+
+        self._start_time = time.time()
 
         # Re-establish core voice_io binding (import-order race: last configure() wins)
         voice_io.reconfigure()
@@ -231,21 +238,20 @@ class PodcastGeneratorJob( AgenticJobBase ):
             # Notify start
             await voice_io.notify(
                 f"Starting podcast generation from: {os.path.basename( full_path )}",
-                priority="medium"
+                priority="medium",
+                queue_name="run"
             )
 
-            # Create config
-            config = PodcastConfig()
-
-            # Target audience configuration (job arg overrides config file)
+            # Create config from INI
             from cosa.config.configuration_manager import ConfigurationManager
             config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-            config.audience = self.audience or config_mgr.get(
-                "podcast generator audience",
-                default="academic"
-            )
-            audience_context_from_config = config_mgr.get( "podcast generator audience context", default="" )
-            config.audience_context = self.audience_context or audience_context_from_config or None
+            config = PodcastConfig.from_config( config_mgr, debug=self.debug )
+
+            # Job args override INI values
+            if self.audience:
+                config.audience = self.audience
+            if self.audience_context:
+                config.audience_context = self.audience_context
 
             # Create orchestrator
             agent = PodcastOrchestratorAgent(
@@ -263,7 +269,7 @@ class PodcastGeneratorJob( AgenticJobBase ):
             script = await agent.do_all_async()
 
             if script is None:
-                await voice_io.notify( "Podcast generation was cancelled.", priority="medium" )
+                await voice_io.notify( "Podcast generation was cancelled.", priority="medium", queue_name="run" )
                 return "Podcast generation was cancelled by the user."
 
             # Extract results from agent state
@@ -285,9 +291,55 @@ class PodcastGeneratorJob( AgenticJobBase ):
             }
             self.artifacts[ "cost_summary" ] = self.cost_summary
 
-            # Return conversational answer
-            duration = script.estimated_duration_minutes
-            return f"Podcast complete! Generated {script.get_segment_count()} segments, ~{duration:.1f} minutes. Audio: {self.audio_path}"
+            # ── Completion report (Phase 11 pattern: outcome-aware TTS + rich abstract) ──
+            n_segments    = script.get_segment_count()
+            script_minutes = script.estimated_duration_minutes
+            elapsed_sec   = round( time.time() - self._start_time, 1 )
+            has_audio     = bool( self.audio_path )
+            languages     = getattr( self, "target_languages", [] ) or [ "en" ]
+            n_langs       = len( languages )
+
+            # Three-variant TTS
+            if has_audio and n_segments > 0:
+                tts_msg = (
+                    f"Podcast complete. {n_segments} segment{'s' if n_segments != 1 else ''} "
+                    f"rendered in {n_langs} language{'s' if n_langs != 1 else ''}."
+                )
+            elif n_segments > 0:
+                tts_msg = f"Podcast script complete. Audio rendering pending or failed."
+            else:
+                tts_msg = "Podcast generation complete with no segments produced."
+
+            # Rich markdown abstract
+            lines = [ "**Podcast Activity Report**", "" ]
+            lines.append( f"**Segments**: {n_segments} (~{script_minutes:.1f} min)" )
+            lines.append( f"**Languages**: {', '.join( languages )}" )
+            if self.script_path:
+                lines.append( f"**Script**: `{self.script_path}`" )
+            if self.audio_path:
+                lines.append( f"**Audio**: `{self.audio_path}`" )
+            if self.cost_summary:
+                total_cost = self.cost_summary.get( "total_cost_usd", 0.0 )
+                lines.append( f"**Cost**: ${total_cost:.4f}" )
+            lines.append( f"**Duration**: {elapsed_sec}s" )
+            completion_abstract = "\n".join( lines )
+
+            try:
+                await voice_io.notify(
+                    tts_msg,
+                    priority   = "medium",
+                    abstract   = completion_abstract,
+                    job_id     = self.id_hash,
+                    queue_name = "run",
+                )
+            except Exception as notify_err:
+                print( f"[PodcastGeneratorJob] completion notify failed: {notify_err}" )
+
+            # Conversational answer
+            return (
+                f"Podcast complete! Generated {n_segments} segment{'s' if n_segments != 1 else ''}, "
+                f"~{script_minutes:.1f} minutes. Audio: {self.audio_path}"
+            )
 
         finally:
             voice_io.clear_job_id()
@@ -319,23 +371,23 @@ class PodcastGeneratorJob( AgenticJobBase ):
             print( f"[PodcastGeneratorJob] DRY RUN MODE for: {filename}" )
 
         # Breadcrumb: Starting
-        await voice_io.notify( f"🧪 Dry run: Starting podcast simulation from {filename}", priority="low", job_id=self.id_hash )
+        await voice_io.notify( f"🧪 Dry run: Starting podcast simulation from {filename}", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
         # Breadcrumb: Content analysis
-        await voice_io.notify( "🧪 Dry run: skipping content analysis", priority="low", job_id=self.id_hash )
+        await voice_io.notify( "🧪 Dry run: skipping content analysis", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
         # Breadcrumb: Script generation
-        await voice_io.notify( "🧪 Dry run: skipping script generation", priority="low", job_id=self.id_hash )
+        await voice_io.notify( "🧪 Dry run: skipping script generation", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
         # Breadcrumb: TTS generation
-        await voice_io.notify( "🧪 Dry run: skipping TTS generation (10 segments)", priority="low", job_id=self.id_hash )
+        await voice_io.notify( "🧪 Dry run: skipping TTS generation (10 segments)", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
         # Breadcrumb: Audio stitching
-        await voice_io.notify( "🧪 Dry run: skipping audio stitching", priority="low", job_id=self.id_hash )
+        await voice_io.notify( "🧪 Dry run: skipping audio stitching", priority="low", job_id=self.id_hash, queue_name="run" )
         await asyncio.sleep( 1.0 )
 
         # Set mock results
@@ -355,6 +407,11 @@ class PodcastGeneratorJob( AgenticJobBase ):
         }
         self.artifacts[ "cost_summary" ] = self.cost_summary
 
+        # Phase 6 repair loop hook: deliberately fail the dry-run to exercise
+        # the dead-queue watchdog + BFE auto-fix pipeline.
+        if self.force_failure_mode:
+            await self._raise_forced_failure( voice_io )
+
         completion_abstract = f"""**🧪 Dry Run Complete!**
 
 **Script**: {self.script_path} (mock - not actually created)
@@ -368,7 +425,8 @@ class PodcastGeneratorJob( AgenticJobBase ):
             "🧪 Dry run complete! Podcast simulation finished.",
             priority="medium",
             abstract=completion_abstract,
-            job_id=self.id_hash
+            job_id=self.id_hash,
+            queue_name="run"
         )
 
         return "Dry run complete. Podcast simulation finished."
@@ -423,7 +481,7 @@ def quick_smoke_test():
         assert job.target_languages == [ "en" ]
         assert job.max_segments == 5
         assert job.user_email == "test@test.com"
-        assert job.status == "pending"
+        assert job.state == JobState.PENDING
         print( "✓ All attributes set correctly" )
 
         # Test 7: Check JOB_TYPE and JOB_PREFIX

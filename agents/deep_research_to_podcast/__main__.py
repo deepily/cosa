@@ -122,7 +122,7 @@ Mode Options:
         "--lead-model",
         type    = str,
         default = None,
-        help    = "Model for DR lead agent (default: claude-opus-4-20250514)"
+        help    = "Model for DR lead agent (default: claude-opus-4-6)"
     )
 
     parser.add_argument(

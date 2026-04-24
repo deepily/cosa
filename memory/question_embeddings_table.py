@@ -60,7 +60,7 @@ class QuestionEmbeddingsTable():
         # Get standardized embedding dimension from config
         self._embedding_dim = int( self._config_mgr.get( "embedding dimensions", default="768" ) )
 
-        uri = du.get_project_root() + self._config_mgr.get( "database_path_wo_root" )
+        uri = du.get_project_root() + self._config_mgr.get( "path to database wo root" )
 
         db = lancedb.connect( uri )
 
@@ -232,7 +232,7 @@ class QuestionEmbeddingsTable():
     #
     #     self.config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
     #
-    #     uri = du.get_project_root() + self.config_mgr.get( "database_path_wo_root" )
+    #     uri = du.get_project_root() + self.config_mgr.get( "path to database wo root" )
     #
     #     db = lancedb.connect( uri )
     #

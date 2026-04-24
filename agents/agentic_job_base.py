@@ -21,6 +21,9 @@ import uuid
 from datetime import datetime
 from typing import Optional, Dict, Any
 
+import cosa.utils.util as cu
+from cosa.rest.job_state import JobState
+
 
 class AgenticJobBase( ABC ):
     """
@@ -57,6 +60,8 @@ class AgenticJobBase( ABC ):
         user_id: str,
         user_email: str,
         session_id: str,
+        scheduled_at: str = None,
+        monopolize: bool = False,
         debug: bool = False,
         verbose: bool = False
     ) -> None:
@@ -89,12 +94,12 @@ class AgenticJobBase( ABC ):
         # Queue system required attributes (compatible with SolutionSnapshot/AgentBase)
         self.id_hash      = self._generate_id()
         self.push_counter = 0
-        self.run_date     = datetime.now().isoformat()
+        self.run_date     = cu.get_current_datetime_iso()
 
         # Execution state tracking
         self.started_at   = None
         self.completed_at = None
-        self.status       = "pending"  # pending, running, completed, cancelled, failed
+        self.state        = JobState.PENDING
         self.error        = None
         self.is_cache_hit = False      # Agentic jobs are never cache hits
 
@@ -106,9 +111,18 @@ class AgenticJobBase( ABC ):
         self.result       = None
         self.artifacts    = {}  # e.g., {"report_path": "...", "audio_path": "..."}
 
+        # Scheduling attributes (CJ Flow timed execution + monopolize)
+        self.scheduled_at          = scheduled_at   # ISO datetime string or None (immediate)
+        self.monopolize            = monopolize      # Exclusive execution flag
+
+        # CJ Flow persistence fields — populated by agentic_job_factory.create_agentic_job()
+        # so job_history persists routing_command and the exact args the job was submitted with.
+        # BFE's resubmit path reads these to reconstruct the original job faithfully.
+        self.routing_command : Optional[ str ]  = None
+        self.original_args   : Optional[ dict ] = None
+
         # For compatibility with queue UI display
         self.answer_conversational = None
-        self.routing_command       = self.JOB_TYPE
 
     def _generate_id( self ) -> str:
         """
@@ -279,7 +293,7 @@ class AgenticJobBase( ABC ):
         Returns:
             bool: True if status is "completed"
         """
-        return self.status == "completed"
+        return self.state == JobState.COMPLETED
 
     def formatter_ran_to_completion( self ) -> bool:
         """
@@ -381,9 +395,47 @@ class AgenticJobBase( ABC ):
         end   = datetime.fromisoformat( self.completed_at )
         return ( end - start ).total_seconds()
 
+    async def _raise_forced_failure( self, voice_io ) -> None:
+        """
+        Phase 6 dry-run repair-loop hook — deliberately fail the job.
+
+        Subclasses that support the Phase 6 dry-run repair loop accept a
+        `force_failure_mode` constructor parameter and store it as
+        `self.force_failure_mode`. When that flag is set, their `_execute_dry_run()`
+        path calls this method at the end of the simulated breadcrumbs to raise
+        a matching exception so the job lands in the dead queue with a realistic
+        error signature. The dead-queue watchdog then classifies the failure
+        and triggers the Bug Fix Expediter auto-fix pipeline.
+
+        This method NEVER runs during live execution — it is gated behind
+        `self.dry_run == True` in the caller.
+
+        Requires:
+            - self.force_failure_mode in { "code_bug", "infra_timeout", "rate_limit" }
+
+        Raises:
+            - KeyError for "code_bug"
+            - asyncio.TimeoutError for "infra_timeout"
+            - Exception (with "RateLimitError: 429" prefix) for "rate_limit"
+            - ValueError for any other value
+        """
+        import asyncio
+        mode = getattr( self, "force_failure_mode", None )
+        await voice_io.notify(
+            f"🧪 Dry run: simulating {mode} failure for Phase 6 loop test",
+            priority="low", job_id=self.id_hash, queue_name="run"
+        )
+        if mode == "code_bug":
+            raise KeyError( "'source_path' — simulated mock failure for Phase 6 dry-run loop" )
+        if mode == "infra_timeout":
+            raise asyncio.TimeoutError( "simulated mock timeout for Phase 6 dry-run loop" )
+        if mode == "rate_limit":
+            raise Exception( "RateLimitError: 429 Too Many Requests — simulated for Phase 6 dry-run loop" )
+        raise ValueError( f"Unknown force_failure_mode: {mode}" )
+
     def __repr__( self ) -> str:
         """String representation for debugging."""
-        return f"<{self.__class__.__name__} id={self.id_hash} status={self.status}>"
+        return f"<{self.__class__.__name__} id={self.id_hash} state={self.state.value}>"
 
 
 def quick_smoke_test():
@@ -424,7 +476,7 @@ def quick_smoke_test():
                 return f"[Test] {self.query}"
 
             def do_all( self ):
-                self.status = "completed"
+                self.state = JobState.COMPLETED
                 self.answer_conversational = "Test complete"
                 return self.answer_conversational
 
@@ -461,7 +513,7 @@ def quick_smoke_test():
         print( "Testing do_all() execution..." )
         result = job.do_all()
         assert result == "Test complete"
-        assert job.status == "completed"
+        assert job.state == JobState.COMPLETED
         assert job.code_ran_to_completion() == True
         assert job.formatter_ran_to_completion() == True
         print( "✓ do_all() executed successfully" )

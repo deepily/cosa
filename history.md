@@ -1,5 +1,892 @@
 # COSA Development History
 
+> **📝 SESSION 114be500 STAGED**: Session 9b840935 CoSA bundle — `NotificationFifoQueue._emit_queue_update()` method + `_emit_notification_added()` DRY refactor + 5-test regression suite (2026.04.22)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> Lands the CoSA-side submodule work from Lupin-parent Session **9b840935** (2026-04-22 bug-fix-mode — cross-repo notification bugs reported by the Lupin-mobile session). Parent Lupin commits `cd4e5e6` (main fix, 6 files, +279/−8) and `2fb829c` (hash-pin follow-up, 3 files, +6/−6) already landed; this is the matching CoSA-side commit covering two of the session's three fixes (Fix 1 + Fix 3 — Fix 2 was Lupin-only `notifications.js` wiring).
+>
+> **Body 1 — Fix 1: `NotificationFifoQueue._emit_queue_update()` method** (`rest/notification_fifo_queue.py`):
+> - **Problem**: `POST /api/notifications/{id}/played` 500'd because `mark_played()` at `notification_fifo_queue.py:409` called `self._emit_queue_update()`, but that method was never defined on `NotificationFifoQueue` or its parent `FifoQueue`. Parent's auto-emission had been refactored away at some earlier date and the emission logic was inlined into subclass `push()` overrides; `mark_played` was not updated to match. Three `patch.object(queue, '_emit_queue_update')` calls in `tests/unit/rest/test_fifo_queue.py:446-458` masked the defect during unit testing. Mobile client (Lupin-mobile session) silently swallowed the 500, causing diverged unread-count state on the server.
+> - **Fix**: Added `_emit_queue_update()` method on `NotificationFifoQueue` (broadcasts `notification_queue_update` event with `{queue_name="notification", value=size, unplayed_count}`). Silent no-op when `websocket_mgr=None` or `emit_enabled=False`. Broadcast-not-per-user because `mark_played` only has the notification id; badge recomputation is cheap.
+>
+> **Body 2 — Fix 3: DRY refactor — extract `_emit_notification_added()` helper** (`rest/notification_fifo_queue.py`):
+> - **Problem**: Investigation surfaced ~22 lines of duplicated emission block across `push()` (lines 244-267) and `push_notification()` high/urgent branch (lines 343-365). Identical `event_data` construction + `emit_to_user_sync` / `emit` / `emit_to_session_sync` fan-out in each, differing only in debug-print strings ("notification" vs "priority notification"). Risk analysis during planning confirmed BOTH blocks are LIVE code on mutually exclusive priority paths (normal → `push`; high/urgent → inline in `push_notification`) — not dead code. Neither could be removed without breaking its path.
+> - **Fix**: Extracted new private method `_emit_notification_added(notification)` (sibling to `_emit_queue_update`, different payload — includes the full `notification.to_dict()` for newly-added items). Replaced both call sites with `self._emit_notification_added(notification)`. Unified debug-print strings (dropped the "priority" qualifier). Net diff: ~44 lines of duplication collapsed to ~22 lines of shared helper + 2 call-site lines.
+>
+> **Body 3 — NEW: 5-test regression suite** (`tests/unit/rest/test_notification_fifo_queue.py`):
+> - Lock-in tests for the Fix 1 regression. Cover the canonical `_emit_queue_update` contract: event name, payload shape (queue_name + value + unplayed_count), silent no-op on missing websocket_mgr / disabled emission, and behavior with mocked WebSocketManager.
+>
+> **Files Modified (1) + Created (1)**:
+> - `rest/notification_fifo_queue.py` — new `_emit_queue_update()` method (Fix 1) + new `_emit_notification_added()` helper with both call sites swapped to use it (Fix 3).
+> - `tests/unit/rest/test_notification_fifo_queue.py` (new) — 5 regression tests for Fix 1.
+>
+> **Validation** (per Lupin `history.md` Session 9b840935):
+> - CoSA unit: 5/5 PASS (new suite)
+> - CoSA module smoke test: PASS (priority insertion + mark_played both verified)
+> - Lupin-side Notification unit tests: 27/27 PASS
+> - Lupin-side integration regression: 3/3 PASS (new `TestMarkPlayedEndpoint` in Lupin's `test_notifications_integration.py`)
+> - Live probe on Lupin `:7999` confirmed `/played` endpoint reachable (clean 404 on bogus id, not 500)
+> - User manually confirmed Chrome end-to-end path after browser restart cleared stale-keepalive sockets
+>
+> **Pre-existing CoSA unit test regressions (NOT fixed this session, filed as follow-up)**:
+> - `tests/unit/rest/test_fifo_queue.py::TestFifoQueue::test_websocket_emission` (1 test) — expects `_emit_queue_update` on parent `FifoQueue`; parent was refactored to not have it. Cosmetic test-drift, not a runtime issue.
+> - `tests/unit/rest/test_notifications_router.py::TestNotificationsRouter::*` (8 tests) — expect config key `"app_timezone"` (underscore); code at `rest/routers/notifications.py:112` uses `"app timezone"` (space). Cosmetic test-drift.
+>
+> **Commit landed this session**:
+> - `5c804cd` — 3 files, +272/−52. Pushed to `origin/wip-v0.1.6-2026.03.12-tracking-lupin-work`.
+>
+> ---
+
+> **📝 SESSION 957df6a5 STAGED**: Session 9934d315 + b802e633 CoSA bundle — TFE/BFE telemetry demotion + stderr parity + `/queue/all` route reorder + thinking_effort plumbing + `resume_job()` args override + FifoQueue abstract auto-promotion + suite timeout bumps (2026.04.21)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> Lands the CoSA-side submodule work accumulated from Lupin-parent Sessions **9934d315** (2026-04-21 afternoon/evening — TFE telemetry demotion + stop.py rebaseline + BFE stderr parity) and **b802e633** (2026-04-21 bug-fix-mode — DELETE `/queue/all` 404 + job-id chip refinement). Parent Lupin commits `f533c08` (Part 1 + Part 2 checkpoint) and `82243e4` / `0f67635` (bug-fix-mode fixes) already landed; this is the matching CoSA-side commit, plus three new product features developed in the same working-tree checkpoint that were not explicitly called out in the Lupin history.
+>
+> **Body 1 — Session 9934d315: TFE/BFE telemetry demotion + stderr parity** (`agents/shared/fix_executor.py`, `agents/bug_fix_expediter/{state,job}.py`, `agents/test_fix_expediter/job.py`):
+> - **Problem**: Overnight `tfe-10b2963e` ran 17 fixes, all failed verification, and triggered 3 blocking operator-intervention prompts ("Fix Verification Failed after 2 attempt(s)") because `FixExecutor` escalated via `present_choices()` after `max_fix_attempts`. Operator had to interrupt sleep to dismiss gates that had no actionable decision.
+> - **Fix — fire-and-forget telemetry**: Replaced blocking `present_choices()` after `max_fix_attempts` with a fire-and-forget `notify(priority="low")` + automatic `FixResult(applied=False, success=False, details="Auto-rejected after {iteration} verification attempt(s)")`. Removes the "Accept without tests / Reject" dialog entirely — the orchestrator treats exhausted verification as an auto-reject, with the diagnostics surfaced asynchronously.
+> - **Fix — stderr preservation**: New `_tail_lines( text, max_lines=12, max_chars=2000 )` helper distills tester_output (potentially tens of KB of pytest output) into a triage-sized tail. `FixResult` grows `attempts: int = 0` and `last_stderr: Optional[str] = None` fields (pydantic BaseModel). End-of-run completion abstracts on both BFE (`job.py`, single-fix work unit — no cap) and TFE (`job.py`, multi-cluster — capped at top-5 failures with pointer to worktree log for the rest) render a "**Failed fix diagnostics**" block so triage no longer requires digging through worktree logs.
+> - **Success-path attempts tracking**: Successful `FixResult` emissions also carry `attempts=iteration` so downstream consumers can see how many verification loops a passing fix needed.
+>
+> **Body 2 — Session b802e633: DELETE `/api/queue/{name}/all` route-shadowing fix** (`rest/routers/queues.py`):
+> - **Problem**: Test server logged `DELETE /api/queue/done/all → 404 Not Found`. Investigation confirmed the parameterized `/queue/{queue_name}/{job_id}` route was declared BEFORE the literal `/queue/{queue_name}/all` — FastAPI bound `job_id="all"`, failed the jobid lookup, and raised 404. Same latent shadowing defect existed on the `/job-history/all` vs `/job-history/{job_id}` pair (not yet user-reported but broken).
+> - **Fix**: Reordered both pairs so the literal `/all` route is declared ABOVE its `/{id}` sibling. Added docstring route-order notes to both bulk handlers (so future edits don't accidentally swap them back). 282-line churn is mostly the move itself (the handler bodies are unchanged).
+> - **Verification** (done on Lupin side, mirrored here): new `src/tests/integration/test_queue_delete_all.py` (6 lock-in cases), route-table introspection confirms literal `/all` precedes `/{job_id}` for both pairs. Standalone HTTP probe against `:7999` dev: 8/8 regression assertions pass.
+>
+> **Body 3 — NEW: Extended-thinking `effort` plumbing for BFE + TFE** (`agents/{bug_fix,test_fix}_expediter/{config,orchestrator,job}.py`, `rest/agentic_job_factory.py`):
+> - **Context**: The SDK `ClaudeAgentOptions.effort` parameter ("low" | "medium" | "high" | "xhigh" | "max") controls extended-thinking budget. Previously the only way to set it was to edit the global SDK default — no per-invocation override, no way to match effort to proposal complexity (e.g. Sonnet+high for normal proposals; Opus+max only for complex root-cause diagnosis).
+> - **Fix**: New `thinking_effort: Optional[str] = None` field on both `BugFixExpediterConfig` and `TestFixExpediterConfig` dataclasses. Both orchestrators forward `effort=self.config.thinking_effort` to every `ClaudeAgentOptions(...)` construction (BFE: 4 call sites — diagnose, proposal, fix, verify; TFE: matching set). Both Job classes accept `thinking_effort` in their constructor, self-assign, and apply as an override to `config.thinking_effort` at `_execute_run()` start (mirrors the existing `lead_model_override` / `worker_model_override` pattern).
+> - **Factory plumbing**: `create_agentic_job()` now reads `args_dict.get("thinking_effort") or None` and forwards to both BFE + TFE Job constructors. Exposes the new knob to any caller that uses the factory path (API request bodies, Resume UI, voice-expediter dispatches).
+> - **Default semantics**: `None` = SDK default (unchanged behavior); any string value flows end-to-end through Factory → Job → Config → Orchestrator → `ClaudeAgentOptions`.
+>
+> **Body 4 — NEW: `resume_job()` args override merge** (`rest/agentic_job_factory.py`):
+> - **Context**: The Resume UI lets operators override model/effort per-resume (e.g. "retry this stalled TFE with Sonnet instead of Opus"). Previously Resume had to pass the entire `original_args` dict verbatim, so any override had to clobber every unrelated key too.
+> - **Fix**: `resume_job( job_id_hash, config_mgr=None, args_overrides=None )` — optional dict of keys to merge into `original_args`. **Override semantics**: `None` values are *skipped* (preserve original), any non-`None` value *replaces* the corresponding key. Callers can now pass a sparse model dump (e.g. `{"thinking_effort": "high", "lead_model_override": None, ...}`) without wiping other original_args entries.
+> - **Design by Contract** documented in docstring: `Requires: args_overrides is None or a dict of keys to merge into original_args`; `Ensures: Overrides with value None are ignored; any non-None override replaces the corresponding key`.
+>
+> **Body 5 — NEW: FifoQueue `abstract` auto-promotion** (`rest/fifo_queue.py`):
+> - **Context**: Agentic jobs set `job.artifacts["abstract"]` to carry rich completion context (worktree paths, failed-fix diagnostics, Phase 5 branch/commit/PR links, etc.). But `FifoQueue._notify()` historically emitted only `msg` + `target_user` + priority — the abstract was reaching only the secondary progress row the job explicitly emitted, never the primary task-card.
+> - **Fix**: `_notify()` gains an `abstract: str = None` parameter. Resolution logic: if caller passes an explicit `abstract`, it wins; otherwise, if `job is not None`, the method reads `job.artifacts["abstract"]` via `getattr(..., "artifacts", None) or {}`. The `getattr` defensive read is intentional here (documented in inline comment as a **system-boundary** per the "fix at source, normalize at boundaries" rule): `FifoQueue._notify()` serves both `AgenticJobBase` (has `.artifacts`) and `AgentBase` / `SolutionSnapshot` (may not). Auto-promotion now surfaces the rich completion context on the primary task card with zero caller changes.
+> - **Design by Contract** additions: docstring Ensures clause adds "*If `job.artifacts["abstract"]` exists and no explicit abstract was passed, it rides along on the notification*"; Args section documents auto-read semantics.
+>
+> **Body 6 — Test suite timeout bumps** (`agents/test_suite/job.py::SUITE_TIMEOUTS_SECONDS`, Session 9934d315 Phase A straggler):
+> - **Smoke**: 1800s (30 min) → 3600s (60 min). Observed 2456s on `ts-f55d172d` when 160 smoke tests + container_preflight overhead ran together; 1.46× margin at the new cap.
+> - **Integration**: 1200s (20 min) → 2000s (33 min). Observed 1392s when SWE-team dry-run tests joined the integration run; 1.44× margin at the new cap.
+> - Tunable values in comments updated with observation dates and the underlying driver (not just "tunable" — the *reason* the prior cap failed is now documented inline).
+>
+> **Antecedent CoSA commits** (already landed on the branch before this session): `60c8829` (Session 7c8b0ce2 session-end), `6d8ded3` (new `tfe_to_cc/` engine variant scaffold), `34c7513` (TFE Option A tier budgets + Worktree Artifacts + Coder prompt audit), `c35a2d9` (C4: `resume_from` added to `all_agents` profile), `2502b4c` (C2: `PRODUCT_NAMES` entry for TFE Resume agent). All were landed under the preceding CoSA session `7c8b0ce2`.
+>
+> **Files Modified (12)**:
+> - `agents/shared/fix_executor.py` — `_tail_lines()` helper + blocking-to-fire-and-forget demotion after `max_fix_attempts`.
+> - `agents/bug_fix_expediter/state.py` — `FixResult.{attempts, last_stderr}`.
+> - `agents/bug_fix_expediter/job.py` — `thinking_effort` constructor arg + self-assign + override wiring; Failed-fix-diagnostics abstract section.
+> - `agents/bug_fix_expediter/orchestrator.py` — `effort=self.config.thinking_effort` forwarded to 4 `ClaudeAgentOptions` call sites.
+> - `agents/bug_fix_expediter/config.py` — `thinking_effort: Optional[str] = None`.
+> - `agents/test_fix_expediter/job.py` — `thinking_effort` constructor arg + self-assign + override wiring; Failed-fix-diagnostics abstract section (top-5 capped).
+> - `agents/test_fix_expediter/orchestrator.py` — `effort=self.config.thinking_effort` forwarded to matching call sites.
+> - `agents/test_fix_expediter/config.py` — `thinking_effort: Optional[str] = None`.
+> - `agents/test_suite/job.py` — smoke + integration timeout bumps with observation-driven justifications.
+> - `rest/agentic_job_factory.py` — `thinking_effort` plumbed through `create_agentic_job()` for both BFE + TFE; `resume_job()` gains `args_overrides` merge with None-skipping semantics.
+> - `rest/fifo_queue.py` — `_notify()` gains `abstract` param + `job.artifacts["abstract"]` auto-promotion via boundary-level `getattr`.
+> - `rest/routers/queues.py` — `/queue/{name}/all` + `/job-history/all` literal routes reordered above their `/{id}` siblings; docstring route-order notes.
+>
+> **Diff stats**: +327 / −166 across 12 files.
+>
+> **Validation**: All 12 modified files `py_compile` clean (planned post-commit verification). Lupin-parent unit/integration tests referenced in this session's Lupin `history.md` entries (unit 3549 green, WS 50/50, integration 226 passed / 6 pre-existing env+fixture failures, E2E full 355 passed / 2 separate-root-cause failures) provide the wider verification surface for Bodies 1+2; Bodies 3-6 have no dedicated unit tests yet and are held to compile-only verification + live exercise on `:7999` dev.
+>
+> **Commit landed this session**:
+> - `<TBD>` — 12 files, +327/−166 (to be filled post-commit).
+>
+> ---
+
+> **📝 SESSION 7c8b0ce2 STAGED**: Session be57a252 + d8831785 CoSA bundle — TFE Option A tier budgets + Worktree Artifacts + Coder tool-use breadcrumbs + Coder prompt audit + TFE-to-CC engine variant scaffold (2026.04.20)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> Lands the CoSA-side work from Lupin parent Sessions **be57a252** (2026-04-18 through 04-19 post-game) and **d8831785** (2026-04-20 TFE-to-CC harness + live test). Three distinct bodies of work bundled because they co-habited the working tree; parent Lupin commits `6c9fe77`, `68f0423`, `74ef141`, `aa7848f`, `4b531fd`, `ad55c29` already landed — this is the matching CoSA-side commit series. Today's session has documentation-only scope on the CoSA submodule (no new code beyond the previously staged edits); it exists purely to capture the uncommitted work under a dedicated session-end entry per the parent-`.claude-session.md` manifest convention.
+>
+> **Body 1 — Session be57a252: TFE Option A auto-tiered Coder turn budget** (`agents/test_fix_expediter/config.py`, `orchestrator.py`):
+> - **Problem**: `tfe-8b2eaeda` produced 11/11 `error_max_turns` with the flat `max_fix_attempts * 10 = 20` budget. Visual-baseline fixes (4+ files) need headroom; single-line test-value flips do not.
+> - **Fix**: Three new INI keys — `test fix expediter coder budget {small,medium,large} turns = 30/50/80` — materialized as fields on `TestFixExpediterConfig`. Orchestrator derives tier per proposal via `_derive_budget_tier( proposed, cluster=... )`: small (1 file + `test_patch`/`config_change`), large (≥4 files), medium (default). `_build_tfe_coder_options` reads `self._current_budget_tier` (set by Phase 3 loop before each `executor.execute_fix(...)` — single-writer safe under sequential Phase 3 execution).
+> - **2026-04-19 fix**: Tier derivation now falls back to `cluster.affected_files_guess` length when `proposed.changes` is empty (TFE proposals routinely leave `changes` empty, which was causing every proposal to fall to `medium` regardless of real scope).
+> - **Applying-fix notification** now appends `[budget=<tier>]` so operator sees the chosen budget in-flight.
+>
+> **Body 1 — Session be57a252: Coder tool-use breadcrumbs** (`agents/test_fix_expediter/orchestrator.py::_summarize_tool_use`, mirrored `agents/bug_fix_expediter/orchestrator.py`):
+> - **Problem**: Operator note — prior `Coder: {block.name}` breadcrumbs produced long runs of identical-looking `Coder: Bash` lines with no context, "almost meaningless."
+> - **Fix**: Static helper converts `Bash`→`Bash: <first line of command>`, `Read`/`Edit`/`Write`→`<name>: <trailing 100 chars of file_path>`, `Grep`/`Glob`→`<name>: <pattern>`. Cap at 100 chars per segment. Both TFE and BFE orchestrators use the same shape.
+>
+> **Body 1 — Session be57a252: Completion-abstract Worktree Artifacts section** (`agents/test_fix_expediter/{orchestrator,job}.py`, `agents/bug_fix_expediter/{orchestrator,job}.py`):
+> - **Problem**: Operator had no way to find the preserved worktree + commits after Phase 5 exit when `cosa worktree auto cleanup = false`.
+> - **Fix**: New pure helpers `render_worktree_artifacts_abstract()` on both TFE (method, reads instance state) and BFE (static method, takes `job_id`/`fix_result`/`fix_applied`) orchestrators. Emit a Markdown block in the completion abstract with: worktree path, per-cluster ✓/✗ outcome + affected-files count (TFE), Phase 5 branch/commit-count/PR URL, and two `git -C <path> …` inspection commands. `job.py` wires in both agents via `.extend( … )` of the returned line list. Pure helpers → unit-testable in isolation against staged orchestrator state (tests live in Lupin parent at `src/tests/unit/test_worktree_artifacts_abstract.py`).
+>
+> **Body 2 — Session be57a252 Phase 2: Coder prompt audit** (`agents/test_fix_expediter/prompts/fix.py::CODER_SYSTEM_PROMPT`):
+> - **Problem**: `tfe-a1c6e15a` post-game: 0/11 fixed over 63 min at ~$6.50 / 13 SDK calls; `num_turns` distribution showed Coder exhausting budget caps (most runs at 31/51/78). C6's Coder wrote a valid 3-line fix in 31 turns — clear evidence of exploration waste before committing to the Edit.
+> - **Phase 1 design doc**: Lupin parent `src/rnd/v0.1.6/2026.04.19-coder-prompt-audit.md` (committed in Lupin as `aa7848f`) identified 5 exploration-inviting phrases in the old prompt and proposed 5 efficiency rules.
+> - **Phase 2 implementation (this commit)**: rewrote `CODER_SYSTEM_PROMPT` into two sections — **Efficiency rules** (commit to Edit within 3 calls after Read; read targeted file paths only, no broad Grep; one py_compile per file, optional for single-line test-value changes; do NOT run pytest — Tester verifies; stop on unclear proposals rather than speculate) + **Behavior rules** (don't modify test files for `code_patch`, no destructive commands, summarize at end). Hypothesized savings: ~10-30 turns per Coder run, ~$4 saved per TFE run, higher fix-landing rate.
+>
+> **Body 3 — Session d8831785: NEW `agents/tfe_to_cc/` engine variant scaffold** (5 files, 807 lines):
+> - **Context**: Claude Code (CC) engine as a peer to the SDK-based TFE path for Phases 1 and 3. Design doc 19 + Phase 1 execution log 20 + Phase 3 execution log 21 live in Lupin parent under `src/rnd/v0.1.6/2026.04.10-test-fix-expediter/`. Phase 3 live test result: **CC + Task subagents landed 4/11 fixes in 8 min**, vs **0/11 for three consecutive SDK runs at 63/120/180 min**.
+> - **Selection mechanism** (future): runtime INI flags `test fix expediter phase 1 engine = sdk | claude_code` and `test fix expediter phase 3 engine = sdk | claude_code`. Both SDK and CC paths are maintained side-by-side; no existing SDK code changed here.
+> - **Files**:
+>     - `agents/tfe_to_cc/__init__.py` (10 lines — package marker + design-doc pointer)
+>     - `agents/tfe_to_cc/prompts/__init__.py` (1 line)
+>     - `agents/tfe_to_cc/prompts/bundle_phase1.py` (163 lines — `build_diagnosis_bundle_prompt(clusters, failure_context=None)`: single self-contained markdown prompt instructing CC to diagnose root causes per cluster and emit a fenced `tfe-diagnosis` JSON block)
+>     - `agents/tfe_to_cc/prompts/bundle_phase3.py` (245 lines — Phase 3 apply-fixes bundle prompt)
+>     - `agents/tfe_to_cc/prompts/output_contract.py` (388 lines — fenced JSON output schemas + parsers for both phases)
+>
+> **Body 3 — Session d8831785: 1-line partial TFE-proposal landing** (`agents/runtime_argument_expeditor/agent_registry.py`):
+> - `quick_smoke_test()` assertion `len( AGENTIC_AGENTS ) == 9 → == 10`. Retires 1 of the 3 `== 9` sites flagged in the TFE `ts-79829a75` proposal series. Remaining 2 sites (in Lupin-parent unit tests) unaffected here.
+>
+> **Antecedent CoSA commits** (already landed on the branch before this session): `c35a2d9` (C4: resume_from added to all_agents profile in `config.py`) and `2502b4c` (C2: PRODUCT_NAMES entry for TFE Resume agent). Both were individual TFE-proposal landings from the `ts-79829a75` post-game that were picked out of the live-test worktree.
+>
+> **Files Modified (7) + Created (5)**:
+> - Modified: `agents/bug_fix_expediter/{job,orchestrator}.py`, `agents/test_fix_expediter/{config,job,orchestrator}.py`, `agents/test_fix_expediter/prompts/fix.py`, `agents/runtime_argument_expeditor/agent_registry.py`
+> - Created: `agents/tfe_to_cc/__init__.py`, `agents/tfe_to_cc/prompts/{__init__,bundle_phase1,bundle_phase3,output_contract}.py`
+> - Diff stats (modified only): +237 / −13 across 7 files; new directory adds 807 lines across 5 files
+>
+> **Validation**: All modified files `py_compile` clean (planned post-commit verification). Lupin-parent unit tests for Bodies 1+2 (budget_tier, coder_tool_summary, worktree_artifacts_abstract, config_integration_tfe_option_a, bundle_phase1, bundle_phase3, output_contract, result_parser) land in separate Lupin commits — outcome captured in Lupin `history.md` Session be57a252 + d8831785 entries.
+>
+> **Commits landed this session**:
+> - `34c7513` — Session be57a252 code bundle (7 modified files, +237/−13)
+> - `6d8ded3` — Session d8831785 new `tfe_to_cc/` scaffold (5 new files, +807)
+> - Session-end docs (this entry + `.claude-session.md`) committed separately.
+>
+> ---
+
+> **📝 SESSION 44581b8c STAGED**: Bug 14 watchdog factory routing + Bug 15 SDK streaming-mode workaround + 500-char response cap removal (2026.04.17)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> Lands the CoSA-side fixes from Lupin parent Session 44581b8c, which walked the TFE Resume path end-to-end. Three production bugs root-caused and patched; 42/42 unit tests green (36 watchdog + 6 new wrap helper). Parent Lupin commits already staged — this is the matching CoSA-side commit.
+>
+> **Bug 14 — Auto-dispatched TFE unresumable** (`rest/test_suite_completion_watchdog.py`):
+> - **Symptom**: TFE jobs auto-dispatched by the watchdog persisted with empty `routing_command` and no `metadata_json.original_args`, making them unresumable from the UI Resume button (factory-required fields missing).
+> - **Root cause**: `_dispatch_tfe()` constructed `TestFixExpediterJob` directly via its class constructor, bypassing `create_agentic_job()` — the single source of truth for routing-command + original-args bookkeeping. The voice-expediter path used the factory; the watchdog path didn't.
+> - **Fix**: Replace direct construction with `create_agentic_job( command="agent router go to test fix expediter", args_dict=... )`. Args dict carries `remediation_snapshot_path`, `source_test_suite_job_id`, `original_test_types`, `dry_run=False`. Returns None defensively if factory rejects (logged).
+> - **Validated**: 36/36 watchdog unit tests green. DB-patched stalled `tfe-3436c5b8` row in `lupin_db_test.job_history` (pre-patch snapshot at `/tmp/tfe-3436c5b8-pre-patch.json` for rollback).
+>
+> **Bug 15 — `claude-agent-sdk ≥ 0.1.36` rejects str prompt with `can_use_tool`** (NEW `agents/swe_team/hooks.py::wrap_prompt_for_streaming` + 7 call sites in 3 orchestrators):
+> - **Symptom**: Every Phase 1/3 SDK delegation in TFE/BFE/SWE-team raised `ValueError( "can_use_tool callback requires streaming mode. Please provide prompt as an AsyncIterable instead of a string." )` → 0 diagnoses, 0 fixes applied.
+> - **Root cause**: Python SDK ≥ 0.1.36 hard-validates: when `options.can_use_tool` is set, prompt must be an AsyncIterable (not a string). TypeScript SDK has no such restriction. Upstream issue [#18735](https://github.com/anthropics/claude-code/issues/18735) is unresolved.
+> - **Fix**: New helper `wrap_prompt_for_streaming( prompt, session_id=None )` — async generator yielding exactly one SDK-format message dict (`type=user`, `message={role: user, content: prompt}`, `parent_tool_use_id=None`, `session_id=<uuid4>`). Matches the SDK's internal `query()` shape. 7 call sites swapped: 3 in `swe_team/orchestrator.py` (delegation, verification, redelegation), 2 in `bug_fix_expediter/orchestrator.py` (Phase 1 diagnose, Phase 3 verify), 2 in `test_fix_expediter/orchestrator.py` (mirror). Each call site has inline `# Bug 15 WORKAROUND` comment + upstream URL.
+> - **Helper exported** from `agents/swe_team/__init__.py` so all consumers import via the public package surface.
+> - **Removal note**: When upstream fixes the str-path, grep for `wrap_prompt_for_streaming` to find every revert site.
+> - **Validated**: 6 new unit tests in `src/tests/unit/test_wrap_prompt_for_streaming.py` (Lupin parent) + 36/36 Bug 14 regression = **42/42 passed**.
+>
+> **500-char response_value cap removal** (`rest/routers/notifications.py`):
+> - **Symptom**: Voice-gate replies with the 11-proposal abstract were rejected with HTTP 400 "Response too long (maximum 500 characters)" before reaching the orchestrator.
+> - **Fix**: Removed the 7-line length-validation block (lines 845-851 in pre-fix tree). XSS sanitization (regex strip of `<[^>]+>`) and post-strip empty-check preserved.
+> - **Trade-off accepted**: Length-DoS protection delegated to upstream HTTP body limits + downstream consumers; rationale captured in Lupin parent TODO.md (open backlog item to optionally re-introduce a higher ceiling like 10k if review prefers).
+>
+> **Postmortems filed** (Lupin parent side):
+> - `src/rnd/v0.1.6/2026.04.17-bug-14-auto-dispatched-tfe-lacks-routing-command.md`
+> - `src/rnd/v0.1.6/2026.04.17-bug-15-claude-agent-sdk-streaming-mode-workaround.md`
+> - `src/rnd/v0.1.6/2026.04.17-bug-9a-container-missing-git-for-worktree.md` (Bug 9a was Lupin-side `docker-compose.yml` only — no CoSA changes)
+>
+> **Files Modified (7)**:
+> - `agents/swe_team/hooks.py` (+40, helper added)
+> - `agents/swe_team/__init__.py` (+2, helper exported)
+> - `agents/swe_team/orchestrator.py` (+15 / −3, 3 SDK call sites)
+> - `agents/bug_fix_expediter/orchestrator.py` (+12 / −2, 2 SDK call sites + import)
+> - `agents/test_fix_expediter/orchestrator.py` (+12 / −2, 2 SDK call sites + import)
+> - `rest/routers/notifications.py` (−7, length cap removal)
+> - `rest/test_suite_completion_watchdog.py` (+30 / −18, factory routing)
+> - **Diff stats**: +109 / −36 across 7 files
+>
+> **Validation**: All 7 files `py_compile` clean. Lupin parent unit suite **42/42 green** (6 wrap helper + 36 watchdog regression). End-to-end Resume path validated through Bugs X1/X2/14/9a/15/showToast/500-char-cap; Phase 3 FixExecutor observation deferred to next session (requires container bounce after these CoSA changes land + live re-Resume on `tfe-72adc928`).
+>
+> ---
+
+> **📝 SESSION 79ef7dfd STAGED**: Bug 9 worktree isolation + Bug 12/13 voice-gate stall + CJ Flow Delete All + protected-accounts guard (2026.04.16)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> Batches four separate Lupin-parent sessions' CoSA-side work that was left uncommitted on the submodule. Parent Lupin commits already landed; this is the matching CoSA-side commit.
+>
+> **Bug 9 — Worktree isolation for TFE/BFE Phase 3 + Phase 5** (Session eb50bd56, 2026.04.16):
+> - NEW `agents/shared/worktree_context.py` — async context manager that creates `<sandbox>/<job_id>` via `git worktree add <base_ref>`. Gated by `[cosa_worktree] enabled` INI key (default `false` pre-flip, `true` post-flip).
+> - `agents/shared/fix_executor.py` — accepts `worktree_cwd: Optional[str]` constructor arg for Phase 3 SDK delegation audit.
+> - `agents/bug_fix_expediter/orchestrator.py` + `agents/test_fix_expediter/orchestrator.py` — new `worktree_scope()` async context manager + `_warn_on_uncommitted_changes_if_any()` safety guard. `_build_coder_options` / `_build_tester_options` / Phase 5 `run_git_strategy` use `self._worktree_cwd or cu.get_project_root()` for cwd routing.
+> - `agents/bug_fix_expediter/job.py` + `agents/test_fix_expediter/job.py` — wrap Phase 3 + Phase 5 in `async with orchestrator.worktree_scope()`; Phase 6 runs outside the scope (REST-API-only, no git mutation).
+>
+> **Bug 12 — MCP 503 → VoiceGateTimeoutError** (Session 2026-04-16):
+> - `agents/utils/agent_notification_dispatcher.py` — `ask_confirmation()` and `get_feedback()` now raise `VoiceGateTimeoutError` on ANY non-0 exit code (HTTP 503 "User is offline", connection errors, not just `exit_code==2`). Prevents silent default-application when the operator is offline.
+>
+> **Bug 13 — Pre-MCP ValidationError → VoiceGateTimeoutError** (Session 2026-04-16):
+> - `agents/utils/agent_notification_dispatcher.py` — `ask_confirmation()` / `get_feedback()` / `present_choices()` outer `except` now converts `pydantic.ValidationError` + `ConnectionError` into `VoiceGateTimeoutError`. Pre-MCP failures (e.g. `abstract > 5000 chars` before the 5000-char cap was removed on the Lupin side) no longer masquerade as "user selected nothing" — orchestrator stalls with a checkpoint instead.
+>
+> **CJ Flow — Delete All for 5 queue panes** (Session eb50bd56, 2026.04.16):
+> - `rest/routers/queues.py` — new `DELETE /api/queue/{queue_name}/all` (admins clear whole queue; regular users delete only their own jobs; running-job cancel signal before removal) + new `DELETE /api/job-history/all?days=N` (respects time-window filter; admin vs owner scoping).
+> - `rest/job_persistence.py` — new `delete_job_history_bulk( user_id=None, days=None )` helper: single SQL DELETE with optional user + time-window filters; returns rowcount; never raises.
+>
+> **Protected-accounts guard** (seed-companion migration support):
+> - `rest/postgres_models.py` — new `User.is_protected: bool` column (`nullable=False, default=False, server_default="false"`).
+> - `rest/admin_service.py` — `admin_delete_user()` short-circuits with `"Cannot delete system-protected account '{email}'"` when `is_protected=True`, before the sole-admin guard runs.
+>
+> **Plan docs** (Lupin parent side):
+> - `src/rnd/v0.1.6/2026.04.16-bug-9-worktree-isolation.md`
+> - `src/rnd/v0.1.6/2026.04.16-bug-12-mcp-503-to-voice-gate-timeout.md`
+> - `src/rnd/v0.1.6/2026.04.16-cj-flow-delete-all-buttons.md`
+>
+> **Files Modified (10) + Created (1)**:
+> - Modified: `agents/bug_fix_expediter/{job,orchestrator}.py`, `agents/test_fix_expediter/{job,orchestrator}.py`, `agents/shared/fix_executor.py`, `agents/utils/agent_notification_dispatcher.py`, `rest/{admin_service,job_persistence,postgres_models}.py`, `rest/routers/queues.py`
+> - Created: `agents/shared/worktree_context.py`
+> - Diff stats: +428 / −21 across 10 modified files, 1 new file
+>
+> **Validation**: Lupin parent history confirms live end-to-end validation via `tfe-3436c5b8` (Bug 12 + 13 stalled cleanly), `tfe-152111fe` (Bug 10 op-routing + Bug 11 STALLED terminal), and CJ Flow Delete All buttons exercised against the dev UI.
+>
+> ---
+
+> **📝 SESSION 248e740e + 9a488d40 STAGED**: Presentation pipeline bugs + Marp PPTX export + pytest_direct suite type (2026.04.13)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 248e740e — 9 bug fixes + Marp PPTX export feature** (parent Lupin):
+> - **Bug 1 — env label** (`rest/routers/system.py`): `/api/config/client` now returns `env_label` (`"TEST"` vs `"DEVELOPMENT"`) derived from `LUPIN_ENV`; consumed by notifications header.
+> - **Bug 3 — Imagen 3.0 retired** (`agents/presentation_generator/gemini_client.py`, `config.py`): upgraded model from `imagen-3.0-generate-002` → `imagen-4.0-generate-001`.
+> - **Bug 4 — Rerender button missing from history cards** (`rest/job_persistence.py`): added `yaml_path` + `remediation_snapshot_path` to `rich_fields` so history cards see them.
+> - **Bug 6 — Imagen 4.0 safety filter** (`agents/presentation_generator/renderers/nano_banana.py`): `BLOCK_MEDIUM_AND_ABOVE` unsupported → `BLOCK_LOW_AND_ABOVE`.
+> - **Bug 8 — D2 icon CDN 403** (`agents/presentation_generator/renderers/d2_renderer.py`): strip `icon:` lines referencing terrastruct.com CDN before invoking d2 CLI.
+> - **Renderer rebalance** (`renderers/placeholder.py`, `prompts/image_gen.py`): moved `before_after` + `icon_only` visual types from PlaceholderRenderer → NanoBananaRenderer path; added style modifiers for both.
+> - **Feature — Marp PPTX export** (`agents/presentation_generator/orchestrator.py`, `job.py`, `config.py`): new Phase 8.5 calls `marp --pptx --allow-local-files` converting the Marp markdown to PPTX; emits `pptx_path` artifact when enabled via INI toggle.
+> - **PPTX pipeline plumbing** (`rest/routers/queues.py`, `rest/routers/io_files.py`, `rest/running_fifo_queue.py`): `pptx_path` propagated through `/api/get-queue` + `job_transition` WS payload; `/api/io/file` grows `.pptx` media-type + `download=true` query param for attachment-style response.
+>
+> **Session 9a488d40 — `pytest_direct` test-suite type** (parent Lupin):
+> - `agents/test_suite/job.py`: new `pytest_direct` entry in `SUITE_SCRIPTS` (→ `src/tests/run-pytest-direct.sh`); added to `FILE_DRIVEN_TEST_TYPES` frozenset (mirrors frontend); `SUITE_TIMEOUTS_SECONDS` = 1200s; `/tmp/pytest-direct-latest.log` wired into completion-log lookup. Subprocess env now propagates `LUPIN_TEST_PORT` (from `PORT` env var) so scheduled pytest files can target the right container.
+>
+> **Regression**: all presentation-generator unit tests pass (27 tests via parent Lupin `test_presentation_nano_banana_renderer.py` + neighbors).
+>
+> **Plan docs** (Lupin parent):
+> - `src/rnd/v0.1.6/2026.04.13-marp-cli-pptx-export-plan.md`
+> - `src/rnd/v0.1.6/2026.04.13-session-triage-and-option-c-docker-non-root.md`
+>
+> **Files Modified (14)**: `agents/presentation_generator/{config,gemini_client,job,orchestrator}.py`, `agents/presentation_generator/prompts/image_gen.py`, `agents/presentation_generator/renderers/{d2_renderer,nano_banana,placeholder}.py`, `agents/test_suite/job.py`, `rest/job_persistence.py`, `rest/routers/{io_files,queues,system}.py`, `rest/running_fifo_queue.py`
+
+---
+
+> **📝 SESSION 9056c113 STAGED**: TFE checkpoint-resume + completion report + MCP timeout stall + voice-driven TFE resume (2026.04.12)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Phase A — TFE completion voice notification** (`agents/test_fix_expediter/job.py`): Outcome-aware three-variant TTS (success / partial / no-op) with rich markdown abstract mirroring Deep Research pattern; fires before terminal transition.
+>
+> **Phase B — STALLED lifecycle** (`agents/bug_fix_expediter/state.py`): New `JobState.STALLED` + `RESUMABLE_STATES` convenience set + `RUNNING↔STALLED` transitions. Consumed by TFE + BFE for checkpoint-resume.
+>
+> **Phase C — Checkpoint/stall plumbing** (`agents/bug_fix_expediter/orchestrator.py`, `agents/test_fix_expediter/job.py`): `VoiceGateTimeoutError` + `StalledException` + `CheckpointData` TypedDict + `TFE_PHASE_ORDINALS` + `save_checkpoint()`/`load_checkpoint()`/`set_resume_phase()` on TFE orchestrator; `__STALLED__` sentinel in `_execute()`/`do_all()`; voice gate timeout propagation through BFE's two internal gates.
+>
+> **Phase D — Resume dispatch** (`rest/routers/queues.py`, `rest/agentic_job_factory.py`, `rest/dead_queue_watchdog.py`, new `agents/test_fix_expediter/resume_resolver.py`): `get_checkpoint_for_job()` / `get_original_args_for_job()` queries + `resume_job()` factory wiring + dead-queue path awareness. `resume_resolver.py` provides `list_resume_candidates()` + `fuzzy_match_candidates()` for voice-driven resume lookup.
+>
+> **Phase 1 — MCP timeout detection → VoiceGateTimeoutError** (`agents/utils/agent_notification_dispatcher.py`): Both `ask_confirmation()` and `present_choices()` now raise `VoiceGateTimeoutError` on `NotificationResponse.exit_code == 2` (user-unavailable signal). Lazy import avoids circular dep. BFE `run_diagnosis` + `run_proposal` catch the exception, save checkpoint, raise `StalledException`.
+>
+> **Phase 2 — Voice-driven TFE resume** (`agents/runtime_argument_expeditor/agent_registry.py`, `agents/runtime_argument_expeditor/expeditor.py`): New `"agent router go to test fix expediter resume"` registry entry with `resume_from` required arg + `tfe_checkpoint_match` special handler + arg_mapping synonyms. New `_handle_tfe_checkpoint_match()` (~120 lines) in expeditor reuses `resume_resolver.list_resume_candidates` + `fuzzy_match_candidates`. Fast-path for literal job IDs / plan paths (skips LLM). Auto-select at confidence ≥ 0.9 for stalled jobs. Numeric + partial-string disambiguation fallback.
+>
+> **Supporting edits**:
+> - `agents/io_models/xml_models.py` — new XML shapes for checkpoint/resume commands
+> - `agents/podcast_generator/job.py` — completion-report pattern parity (skill v3.0 Phase 11)
+>
+> **Regression**: 535 unit tests passing, 0 failures across touched files (Lupin parent side).
+>
+> **Plan docs** (Lupin parent):
+> - `src/rnd/v0.1.6/2026.04.10-test-fix-expediter/14-checkpoint-resume-and-completion-report.md`
+> - `src/rnd/v0.1.6/2026.04.10-test-fix-expediter/16-final-mile-mcp-timeouts-voice-resume-e2e.md`
+>
+> **Files Modified (12)**: `agents/bug_fix_expediter/{job,orchestrator,state}.py`, `agents/io_models/xml_models.py`, `agents/podcast_generator/job.py`, `agents/runtime_argument_expeditor/{agent_registry,expeditor}.py`, `agents/test_fix_expediter/job.py`, `agents/utils/agent_notification_dispatcher.py`, `rest/agentic_job_factory.py`, `rest/dead_queue_watchdog.py`, `rest/routers/queues.py`
+> **Files Created (1)**: `agents/test_fix_expediter/resume_resolver.py`
+
+---
+
+> **✅ SESSION 248e740e COMMITTED**: TFE forensics capture — lifecycle states, persistence allowlist, dead-queue artifacts (2026.04.11)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 248e740e — TFE forensics capture fixes**:
+> - **`job.py` lifecycle overhaul**: Replaced bare `self.status` strings with `JobState` enum (`RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED`); full Python traceback captured into `self.error` on failure (was just `f"TFE failed: {e}"`); unconditional `print()` of traceback to stdout (not gated behind `self.debug`) so Docker logs always have forensics; cancellation support via `_cancel_requested` flag; `cu.get_current_datetime_iso()` timestamps replacing `datetime.now().isoformat()`
+> - **Voice routing fix (Fix 7)**: Root cause of `tfe-d9e6b50f`'s "Cannot resolve target_user" crash — TFE's `cosa_interface.py` delegates to BFE's dispatcher module, which reads `SENDER_ID` and `TARGET_USER` from its own module-level state. `_execute()` now sets `_bfe_ci.TARGET_USER = self.user_email` and `_bfe_ci.SENDER_ID` before entering the pipeline
+> - **Urgent crash notification (Fix 3)**: `_execute()` wraps pipeline in try/except that emits `voice_io.notify()` with `priority="urgent"` and full traceback in the `abstract` field before re-raising. Notify failure is caught separately so it never masks the original exception
+> - **Plan path artifact (Fix 8a)**: `self.artifacts["plan_path"]` set after Phase 2 proposal completes — survives if a later phase crashes (tfe-d9e6b50f had a complete plan on disk but no link in the UI)
+> - **`orchestrator.py` Fix 6**: Removed invalid `notification_type="progress"` kwarg from `notify_progress()` — the dispatcher sets `NotificationType.PROGRESS` internally; passing it as a kwarg caused `TypeError` on every call, resulting in hundreds of `[TFE notify error]` log lines per run with no actual progress notifications sent
+> - **`job_persistence.py`**: Added `"test_fix_expediter"` to `AGENTIC_JOB_TYPES` frozenset — without this, every TFE failure landed in the UI as "Unknown error" because the entire persistence layer was gated behind this allowlist
+> - **`queues.py` dead queue handler (Fix 8b)**: New dead-queue branch in `get_queue()` surfaces partial artifacts (`plan_path`, `remediation_snapshot_path`, `report_path`, `yaml_path`, `cost_summary`) from failed-before-completion agentic jobs. Previously fell through to the generic todo/run branch which only returned basic fields
+>
+> **Plan doc**: `src/rnd/v0.1.6/2026.04.11-tfe-forensics-capture-plan.md`
+>
+> **Files Modified (4)**: `agents/test_fix_expediter/job.py`, `agents/test_fix_expediter/orchestrator.py`, `rest/job_persistence.py`, `rest/routers/queues.py`
+> **Commit**: 0c9d40a
+
+---
+
+> **✅ SESSIONS 1b8c1cc0+1cfcdf73 COMMITTED**: TestFixExpediter (TFE) + shared fix primitives + CJ Flow persistence gaps + BFE Phase 6 dry-run (2026.04.10)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 1cfcdf73 — TestFixExpediter end-to-end + shared fix primitives extraction**:
+> - **New `agents/shared/` peer package** (extracted from BFE so TFE can reuse it):
+>   - `plan_writer.py` — moved verbatim from BFE with standalone smoke test using `SimpleNamespace` mocks (zero back-dependency on `bug_fix_expediter/`)
+>   - `git_strategist.py` — `resolve_trust_level`, `generate_slug`, `commit_and_pr_single` (BFE) + new `commit_and_pr_multi` (TFE's one-branch-N-commits-one-PR strategy)
+>   - `fix_executor.py` — `FIX_PROMPT_BUILDERS` registry + polymorphic `FixExecutor.execute_fix()` retry loop; accepts `delegate_to_coder_fn` / `verify_fix_fn` callbacks so BFE's `patch.object(orchestrator, ...)` unit tests still work
+> - **BFE refactor**: `orchestrator.run_fix()` + `run_git_strategy()` → thin shims over shared engine. `bug_fix_expediter/plan_writer.py` reduced to re-export shim. `prompts/fix.py` self-registers into `shared.FIX_PROMPT_BUILDERS["bfe"]` at import time. All 58 pre-existing BFE Phase-6 unit tests green byte-for-byte through every extraction commit.
+> - **New `agents/test_fix_expediter/` package** (14 files): config, state, snapshot_loader, cluster, cosa_interface, voice_io, orchestrator, job, prompts/ (cluster, diagnosis, proposal, fix). `TestFixExpediterJob` extends `AgenticJobBase` with `JOB_TYPE="test_fix_expediter"`, `JOB_PREFIX="tfe"`. 6-phase pipeline: Phase 0 heuristic clustering (groups by `(normalized_classname, first_non_pytest_traceback_frame)`), Phase 1 diagnosis (test-aware prompts with 4 failure-mode categories), Phase 2 proposal (aggregated multi-select voice gate), Phase 3 fix (per-cluster `FixExecutor(prompt_builder_key="tfe")` + dedicated `_delegate_to_coder`/`_verify_fix`/`_build_tfe_*_options` mirroring BFE pattern to preserve test-patch surface), Phase 5 multi-cluster git via `GitStrategist.commit_and_pr_multi()`, Phase 6 async rerun with recursion guard (`metadata["triggered_by_tfe"] = self.job_id`)
+> - **New `rest/test_suite_completion_watchdog.py`**: 6 eligibility gates (enabled, job_type, snapshot valid, recursion guard, failure cap, repair tracker) wrapped in try/except so it can never crash the queue consumer. Hook in `running_fifo_queue.py` around line 401 fires after `jobs_done_queue.push()`. Module-level singleton via `init_watchdog()` / `get_watchdog()` / `reset_watchdog()`
+> - **Factory routing**: `agentic_job_factory.create_agentic_job()` TFE elif branch routes `"agent router go to test fix expediter"` → `TestFixExpediterJob`
+> - **Key scope deviations** (documented inline): `FixContext` uses `SimpleNamespace` duck-typed pass-through (not Pydantic); BFE's `_delegate_to_coder`/`_verify_fix` stayed on BFE orchestrator (TFE copies pattern); no `api_client.py`/`cost_tracker.py`/`rate_limiter.py` in TFE (follows BFE SDK-delegated pattern, not deep_research's direct-API); Phase 0 `llm_refine` uses pure-Python `_cap_enforce()` fallback (SDK wiring deferred)
+>
+> **Session 1b8c1cc0 Part 1 — BFE Phase 6 dry-run smoke test infrastructure**:
+> - `force_failure_mode: Literal[...]` threaded through `MockJobSubmitRequest`, DR/podcast/presentation REST request models, `agentic_job_factory.create_agentic_job()`, into each job constructor
+> - Shared `_raise_forced_failure(voice_io)` helper on `AgenticJobBase` — raises `KeyError` / `asyncio.TimeoutError` / `Exception("RateLimitError: 429...")` at end of dry-run breadcrumbs so jobs land in dead queue with realistic error signatures
+> - BFE `_execute_dry_run()` extended to package real `DeadJobContext`, strip `force_failure_mode` from `original_args`, build mocked successful `FixResult`, and call `_resubmit_original_job()` — so `dry_run=True` now exercises the full Phase 6 loop
+> - `dead_queue_watchdog._submit_bfe()` propagates `dry_run=True` to spawned BFE when failed job was dry-run mock
+>
+> **Session 1b8c1cc0 Part 2 — CJ Flow persistence gaps fix**:
+> - `routing_command` + `original_args` attributes added to `AgenticJobBase.__init__` (both default `None`); `original_args` added to `AgentBase.__init__` and `SolutionSnapshot.__init__` so every CJ-Flow-eligible job carries the attributes — enables `TodoFifoQueue.push()` to read them directly without defensive `getattr` fallbacks
+> - Removed stale `self.routing_command = self.JOB_TYPE` line from `AgenticJobBase` (was setting bare job_type instead of full routing command string)
+> - `agentic_job_factory.create_agentic_job()` refactored to direct-assignment pattern: each branch builds `job = FooJob(...)`, single tail sets `job.routing_command = command` and `job.original_args = dict(args_dict)` — no wrapper, no indirection
+> - `TodoFifoQueue.push()` metadata enriched with `session_id`, `routing_command`, `original_args` via direct attribute reads
+> - `job_persistence._build_metadata_json()` whitelists `original_args` in rich_fields; `persist_job_completed_from_metadata()` + `persist_job_failed_from_metadata()` now **merge** existing `metadata_json` instead of overwriting (preserves `original_args` through state transitions)
+> - `dead_job_packager.py` reverted to direct `row[key]` reads (dropped `_JOB_TYPE_TO_ROUTING_COMMAND` lookup + `or ""` coercions)
+> - BFE `_execute_dry_run()` resubmit args simplified to `{**original_args, dry_run: True}` with `force_failure_mode` popped
+>
+> **Session 1b8c1cc0 Part 3 — Bonus regex bugfix**:
+> - `dead_queue_watchdog.py` `INFRA_RATE_LIMIT` regex tightened — was matching bare `429` anywhere in error text (e.g. traceback `line 429`), misclassifying code-bug `KeyError` failures as rate-limit failures and routing them to `_direct_retry()` instead of `_submit_bfe()`
+> - New pattern requires HTTP context: `\b(?:HTTP|status|code|error)\s*(?:code\s*)?429\b`. `RateLimitError`, `rate.limit`, `Too Many Requests`, `overloaded` patterns still match; all classification unit tests pass
+>
+> **Files Modified (23)**: `agents/agent_base.py`, `agents/agentic_job_base.py`, `agents/bug_fix_expediter/{dead_job_packager,job,orchestrator,plan_writer,prompts/fix}.py`, `agents/deep_research/job.py`, `agents/podcast_generator/job.py`, `agents/presentation_generator/job.py`, `agents/test_suite/job.py`, `memory/solution_snapshot.py`, `rest/agentic_job_factory.py`, `rest/dead_queue_watchdog.py`, `rest/job_persistence.py`, `rest/routers/{deep_research,mock_job,podcast_generator,presentation_generator,queues}.py`, `rest/running_fifo_queue.py`, `rest/todo_fifo_queue.py`
+> **Files Created (19)**: `agents/shared/{__init__,plan_writer,git_strategist,fix_executor}.py`, `agents/test_fix_expediter/{__init__,cluster,config,cosa_interface,job,orchestrator,snapshot_loader,state,voice_io}.py`, `agents/test_fix_expediter/prompts/{__init__,cluster,diagnosis,fix,proposal}.py`, `rest/test_suite_completion_watchdog.py`
+> **Commit**: a577cec
+>
+> **Test status (Lupin parent repo, CoSA working-tree paired with it)**: 3119 passed, 1 xfailed, zero regression across every intermediate commit. Baseline 2916 → 2954 (+38 scaffolding) → 2989 (+35 Phase 0) → 3006 (+17 Phase 1) → 3040 (+34 Phase 2) → 3072 (+32 Phase 3) → 3119 (+47 Phase 5+6+watchdog+PEFT+live). 76/76 BFE Phase 6 unit tests (58 pre-existing + 18 new for Session 1b8c1cc0 dry-run + persistence fixes) all green.
+>
+> Total: +509 insertions, -745 deletions across 23 modified files + 19 new files
+>
+> **Parent Lupin commit context**: All tests, fixtures, planning docs (20 docs under `src/rnd/v0.1.6/2026.04.10-test-fix-expediter/`), user-facing guides (5 docs under `src/docs/agents/`), proxy Q&A script, PEFT training data, INI keys landed in Lupin parent repo — see Lupin `history.md` entries for Sessions 1cfcdf73 and 1b8c1cc0.
+
+---
+
+> **✅ SESSIONS bacc971a+6b8670e7+f28d32d1 COMMITTED**: Idempotency, cross-user WS delivery, remediation snapshots (2026.04.09)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session bacc971a — Bug Fix: 4x Duplicate Notifications + CBR Prediction JSON**:
+> - Server-side idempotency cache (OrderedDict, 60s TTL) for duplicate notification suppression
+> - Reordered persist-before-push in notifications.py (PostgreSQL first, FIFO queue only if connected)
+> - CBR prediction: `json.loads()` on string values before `_other` wrapping — extracts structured `answers` from browser JSON strings
+> - [DIAG-JR] diagnostic logging for job routing verification
+>
+> **Session 6b8670e7 — Bug Fix: CC Listener Sessions Not Appearing**:
+> - `emit_to_session_sync()` in WebSocketManager — sync wrapper for cross-user session targeting
+> - Cross-user CC listener delivery in `notification_fifo_queue.py` at both priority paths
+> - Cross-user delivery for `user_initiated_message` events in `queues.py`
+> - Cross-user diagnostic in `notifications.py` showing all CC listeners regardless of auth user
+>
+> **Session f28d32d1 — Test Suite Remediation Snapshots**:
+> - Enhanced `_parse_junit_xml()` for per-failure detail extraction (classname, test name, type, message, traceback)
+> - JSON snapshot writer in `do_all()` — produces `*-remediation.json` alongside markdown reports
+> - `remediation_snapshot_path` in API response (`queues.py`) and WS metadata (`running_fifo_queue.py`)
+> - `ET.fromstring()` fix (was `ET.parse()`), falsy Element bug fix (`el = failure_el if failure_el is not None else error_el`)
+> - Stale queue entry guard in `fifo_queue.py` `pop_next_eligible()`
+>
+> **Files Modified (8)**: `prediction_engine.py`, `test_suite/job.py`, `fifo_queue.py`, `notification_fifo_queue.py`, `routers/notifications.py`, `routers/queues.py`, `running_fifo_queue.py`, `websocket_manager.py`
+> **Commit**: 7618499
+>
+> Total: +250 insertions, -38 deletions across 8 files
+
+---
+
+> **✅ SESSIONS 97f29034+a312ee22 COMMITTED**: CJ Flow UPE — Admin broadcast, timezone timestamps, delete endpoint, test suite hardening (2026.04.08)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session a312ee22 — Bug Fix: Queue Badge Counts + Process Owner Badge + Timestamps + Delete**:
+> - Badge counts: local `queueCounts` tracker replaces DOM counting on collapsed containers
+> - Process owner: `user_email` propagated through API responses (2 dicts in `queues.py`), all WebSocket metadata dicts (8 in `running_fifo_queue.py`, 2 in `todo_fifo_queue.py`, 1 in `queue_consumer.py`)
+> - Timezone: `get_current_datetime_iso()` added to `util.py` — returns Eastern ISO with offset. Replaced ~65 `datetime.now().isoformat()` calls across 20 files
+> - Delete endpoint: `DELETE /api/queue/{queue_name}/{job_id}` with owner/admin auth, `job_removed` WS event
+>
+> **Session 97f29034 — CJ Flow UPE + Test Suite Hardening**:
+> - WebSocket admin broadcast: `is_admin` stored in session metadata at connect, `emit_to_admins_sync()` broadcasts to admin sessions with `exclude_user_id`
+> - `websocket.py` +roles param for admin detection
+> - `cosa_interface.py`: `_dispatcher.notify()` → `_dispatcher.notify_progress()` (method fix)
+> - `test_suite/job.py`: Removed redundant "View Full Log" link, false positive fix (exit_code → parsed results for pass/fail)
+> - `system.py`: Timestamp fixes for `/api/config/client` and system endpoints
+>
+> **Files Modified (23)**: `util.py`, `queue_consumer.py`, `queue_util.py`, `running_fifo_queue.py`, `todo_fifo_queue.py`, `websocket_manager.py`, `routers/queues.py`, `routers/jobs.py`, `routers/system.py`, `routers/websocket.py`, `routers/websocket_admin.py`, `agentic_job_base.py`, `bug_fix_expediter/job.py`, `claude_code/job.py`, `deep_research/job.py`, `deep_research_to_podcast/job.py`, `deep_research_to_presentation/job.py`, `podcast_generator/job.py`, `presentation_generator/job.py`, `presentation_generator/orchestrator.py`, `swe_team/job.py`, `test_suite/cosa_interface.py`, `test_suite/job.py`
+> **Commit**: 4a97876
+>
+> Total: +470 insertions, -162 deletions across 23 files
+
+---
+
+> **✅ SESSIONS 5946362f+a47f938e COMMITTED**: Render-only mode, 3 UI bug fixes, BFE Phase 6 automated repair loop (2026.04.07)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 5946362f — Phase D Postmortem + Sonnet Pivot + Render-Only Mode**:
+> - Pivoted automated testing default from Haiku to Sonnet (`claude-sonnet-4-6`). Sonnet: 15 slides, $0.46, 8/8 PASS
+> - 3 UI bug fixes: YAML 404 (added `.yaml`/`.yml` to MEDIA_TYPES in `io_files.py`), View Full Report 404 (relative artifact paths in `job.py`, absolute path stripping in `io_files.py`), Job interactions 404 (DB fallback in `queues.py`)
+> - Render-only pipeline: `render_from_yaml_async()` in orchestrator, `render_only` flag wired through job/config/router/factory/registry
+> - YAML auto-detect in voice routing (`expeditor.py`), `yaml_path` in queue metadata and done responses
+> - Presentation `SUITE_SCRIPTS` and stderr surfacing in `test_suite/job.py`
+>
+> **Session a47f938e — BFE Phase 6: Automated Repair Loop**:
+> - Dead Queue Watchdog (`dead_queue_watchdog.py`): failure classification (code bug vs infra), eligibility filter, BFE recursion prevention
+> - RepairAttemptTracker (`repair_attempt_tracker.py`): per-chain circuit breakers, cost budget, wall-clock timeout, semantic dedup via Gister + cosine similarity
+> - BFE resubmit pipeline: `_resubmit_original_job()` reconstructs original job with user identity
+> - `RESUBMITTING` phase + `resubmitted_job_id` added to BFE state
+> - Watchdog hook wired into `running_fifo_queue.py`
+>
+> **Files Created (2)**: `rest/dead_queue_watchdog.py`, `rest/repair_attempt_tracker.py`
+> **Files Modified (13)**: `bug_fix_expediter/job.py`, `bug_fix_expediter/state.py`, `presentation_generator/config.py`, `presentation_generator/job.py`, `presentation_generator/orchestrator.py`, `runtime_argument_expeditor/agent_registry.py`, `runtime_argument_expeditor/expeditor.py`, `test_suite/job.py`, `rest/agentic_job_factory.py`, `rest/routers/io_files.py`, `rest/routers/presentation_generator.py`, `rest/routers/queues.py`, `rest/running_fifo_queue.py`
+> **Commit**: 7a57ad9
+>
+> Total: +1,427 insertions, -57 deletions across 15 files
+
+---
+
+> **✅ SESSION 387 — Research Only**: PEFT/LoRA GCP migration thought experiment + GitHub Actions CI/CD plan (2026.03.31)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 387 — PEFT/LoRA GCP Migration Thought Experiment**:
+> - Explored existing training pipeline: `run-agentic-intent-training.sh`, `peft_trainer.py`, 5 model configs, `Dockerfile`, training data
+> - Designed standalone parallel GCP implementation (Phase 1: training, Phase 2: MLOps)
+> - Plan: 12 new `-gcp` suffixed files in `src/cosa/training/gcp/` subdirectory, zero modifications to existing code
+> - Key decisions: thin PeftTrainer subclass, GCS for training data, Secret Manager for HF token, Cloud Run + GPU for serving, `lupin-router-ml` Artifact Registry
+>
+> **Session 387 — GitHub Actions CI/CD Plan**:
+> - Designed two-phase CI/CD: Phase 1 free (pytest + ruff), Phase 2 paid (Claude Code PR review via `anthropics/claude-code-action@v1`)
+> - Discovered 2,691 unit tests across 99 files, all collectible
+> - Ruff config: bugs-only (F, E9, B, S, UP, RUF), all style rules disabled to respect custom conventions
+> - Identified `flash-attn` CUDA dependency as CI blocker — proposed `requirements-ci.txt` with CPU-only torch
+>
+> **Session 387 — FastAPI API Docs Research**:
+> - Investigated `src/docs/fastapi/api.md` generation — confirmed it was manually generated by Claude Code from `api.json` (commit `89cf554`), no automation script exists
+>
+> **Files Created (Lupin repo, not COSA)**: `src/rnd/2026.03.31-peft-lora-gcp-standalone-implementation.md`, `src/rnd/2026.03.31-github-actions-cicd-plan.md`
+> **Files Modified (COSA)**: `history.md` only
+>
+> **✅ SESSIONS 385+386 COMMITTED**: Unified Job State Machine + TestSuiteJob agent + scheduling timezone fix (2026.03.31)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 385 — CJ Flow: Unified Job State Machine**:
+> - `rest/job_state.py` (new): 9-state `JobState( str, Enum )` with frozen transition matrix, `validate_transition()`/`assert_valid_transition()`, convenience sets (TERMINAL, PRE_EXECUTION, ACTIVE), `STATE_TO_UI_CONTAINER` mapping
+> - `rest/queue_protocol.py`: `status: str` → `state: JobState`, removed `paused: bool`
+> - `agents/agentic_job_base.py`: Removed `paused` constructor param, updated to `state: JobState`
+> - `agents/agent_base.py`, `memory/solution_snapshot.py`: Updated to `JobState` protocol fields
+> - 9 agent job subclasses updated: `bug_fix_expediter`, `claude_code`, `deep_research`, `deep_research_to_podcast`, `deep_research_to_presentation`, `podcast_generator`, `presentation_generator`, `swe_team`, `mock_job`
+> - `rest/queue_util.py`: `emit_job_state_transition()` renamed `from_queue`/`to_queue` → `from_state`/`to_state` with transition validation
+> - `rest/job_persistence.py`, `rest/fifo_queue.py`, `rest/queue_consumer.py`, `rest/running_fifo_queue.py`, `rest/todo_fifo_queue.py`, `rest/routers/queues.py`: Updated for JobState enum throughout
+>
+> **Session 386 — TestSuiteJob: New CJ Flow Agentic Agent**:
+> - `agents/test_suite/` (new package): `job.py`, `voice_io.py`, `cosa_interface.py`, `__init__.py` — runs integration/E2E test suites as AgenticJob with `monopolize=True`
+> - `rest/routers/test_suite.py` (new): `POST /api/test-suite/submit` endpoint
+> - `rest/agentic_job_factory.py`: Factory branch for `test_suite` (9th agent)
+> - `agents/runtime_argument_expeditor/agent_registry.py`: Registry entry for `test_suite`
+> - `agents/notification_proxy/config.py`: Test profile for `test_suite` auto-answer
+>
+> **Session 386 — Bug Fix: Scheduled Jobs Execute Immediately**:
+> - `rest/fifo_queue.py`: `pop_next_eligible()` and `earliest_scheduled_at()` — timezone-aware UTC vs naive local comparison caused `TypeError`, caught by blanket `except`, treating scheduled jobs as immediate. Fix: `.astimezone().replace( tzinfo=None )` normalizes to naive-local
+>
+> **Files Created (4)**: `rest/job_state.py`, `agents/test_suite/{__init__,job,voice_io,cosa_interface}.py`, `rest/routers/test_suite.py`
+> **Files Modified (23)**: `queue_protocol.py`, `agentic_job_base.py`, `agent_base.py`, `solution_snapshot.py`, 9 agent jobs, `queue_util.py`, `job_persistence.py`, `fifo_queue.py`, `queue_consumer.py`, `running_fifo_queue.py`, `todo_fifo_queue.py`, `routers/queues.py`, `agentic_job_factory.py`, `agent_registry.py`, `notification_proxy/config.py`
+>
+> Total: +230 insertions, -131 deletions across 23 modified + 4 new files
+
+---
+
+> **✅ SESSIONS 383+383b+384 COMMITTED**: Presentation Generator Phase 8, DR→Presentation bridge, BFE Phases 2-4, CJ Flow scheduling, SentenceTransformer fix (2026.03.30)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 383 — Presentation Generator Phase 8 (Delivery & Chaining)**:
+> - `presentation_generator/orchestrator.py`: Real `_deliver_async()` — artifact verification, delivery summary dict
+> - `presentation_generator/state.py`: Added `visuals_rendered`, `delivery_summary` to initial state
+> - Created `deep_research_to_presentation/` bridge module (5 files): `state.py`, `agent.py`, `job.py`, `__init__.py`, `__main__.py`
+> - `rest/routers/deep_research_to_presentation.py`: REST router (`POST /api/deep-research-to-presentation/submit`)
+> - `agent_registry.py`: 8th agent entry (`research_to_presentation`, prefix `rx-`)
+> - `agentic_job_factory.py`: Factory branch for `research_to_presentation`
+> - `job_persistence.py`: Added `presentation`, `research_to_presentation` to AGENTIC_JOB_TYPES
+> - `todo_fifo_queue.py`: MODE_METADATA, AGENTIC_MODE_MAP, PRODUCT_NAMES for `research_to_presentation`
+> - `notification_proxy/config.py`: 2 new test profiles + updated union profile
+>
+> **Session 383b — Bug Fixes + CJ Flow Scheduling UI/Voice**:
+> - `local_embedding_engine.py`: Added `local_files_only=True` to SentenceTransformer (prevents Hub calls)
+> - `rest/routers/claude_code_queue.py`: Added `scheduled_at` + `monopolize` fields to `ClaudeCodeQueueRequest` + pass-through
+> - `runtime_argument_expeditor/expeditor.py`: Scheduling section in confirmation summary + modification parser accepts scheduling args
+> - `rest/todo_fifo_queue.py`: Runtime scheduling arg extraction + voice-path normalization ("immediately"→None, "yes"→True)
+>
+> **Session 384 — Bug Fix Expediter Phases 2-4 (Diagnose → Propose → Fix)**:
+> - `bug_fix_expediter/orchestrator.py` (new): `BFEOrchestrator` with `run_diagnosis()`, `run_proposal()`, `run_fix()`
+> - `bug_fix_expediter/plan_writer.py` (new): `PlanWriter` class for structured markdown plans
+> - `bug_fix_expediter/prompts/` (new): `diagnosis.py`, `proposal.py`, `fix.py` prompt templates
+> - `bug_fix_expediter/config.py`: +`min_diagnosis_confidence` (0.7), +`max_file_changes_per_fix` (20)
+> - `bug_fix_expediter/job.py`: Full orchestrator pipeline wiring (replaces foundation stub)
+> - `bug_fix_expediter/__init__.py`: Exports for `BFEOrchestrator`, `PlanWriter`
+>
+> **Files Created (12)**: `orchestrator.py`, `plan_writer.py`, `prompts/{__init__,diagnosis,proposal,fix}.py`, `deep_research_to_presentation/{__init__,__main__,state,agent,job}.py`, `routers/deep_research_to_presentation.py`
+> **Files Modified (13)**: `__init__.py`, `config.py`, `job.py` (BFE), `notification_proxy/config.py`, `orchestrator.py`, `state.py` (PG), `agent_registry.py`, `expeditor.py`, `local_embedding_engine.py`, `agentic_job_factory.py`, `job_persistence.py`, `claude_code_queue.py`, `todo_fifo_queue.py`
+> **Commit**: 8db89ff
+>
+> Total: +4634 insertions, -37 deletions across 25 files
+
+---
+
+> **✅ SESSIONS 382+382b+382d+382e COMMITTED**: CJ Flow Phase 5 UI, Config Manager bug fix, Presentation Generator Phases 6-7, Bug Fix Expediter Phase 0.95+1 (2026.03.28)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 382 — CJ Flow Phase 5: Notifications UI + WebSocket Integration**:
+> - `rest/routers/queues.py`: Added WebSocket emission (`job_paused`/`job_resumed`) to pause/resume endpoints
+> - `rest/todo_fifo_queue.py`: Added `scheduled_at`, `monopolize`, `paused` to push metadata (cards created from WS events were missing these fields)
+>
+> **Session 382b — Bug Fix: Config Manager Visual Grouping**:
+> - `config/configuration_manager.py`: Fixed `key.split( "_" )[ 0 ]` → `key.split()[ 0 ]` — blank lines inserted between every key instead of only between prefix groups after space-separated key convention change
+>
+> **Session 382d — Presentation Generator Phases 6-7**:
+> - Phase 6 (Marp Text Rendering): Created `MarpTextRenderer` — stateless `@staticmethod` class converting `PresentationModel` → Marp Markdown. Frontmatter, slide type dispatch, presenter notes, visual placeholders. Default theme file (`templates/themes/default.yaml`). Orchestrator integration: `_render_text_async()` + `_load_theme_config()` + `_write_marp()`
+> - Phase 7 (Visual Rendering): Created `VisualRenderer` ABC + `VisualRendererRegistry` — type dispatch with PlaceholderRenderer fallback. `MermaidRenderer` — LLM-backed Mermaid code generation via Claude API. `PlaceholderRenderer` — visible TODO markers. `prompts/visual.py` — Mermaid system prompt + diagram type hints. `call_for_mermaid()` added to `PresentationAPIClient`. Orchestrator: `_render_visuals_async()` + Gate 4.
+> - Files created: `renderers/marp_text_renderer.py`, `renderers/visual_registry.py`, `renderers/placeholder.py`, `renderers/mermaid.py`, `prompts/visual.py`, `templates/themes/default.yaml`
+> - Files modified: `renderers/__init__.py`, `prompts/__init__.py`, `orchestrator.py`, `api_client.py`
+>
+> **Session 382e — Bug Fix Expediter Phase 0.95 (Model Update) + Phase 1 (Foundation)**:
+> - Phase 0.95: Updated all agentic job model defaults from `claude-opus-4-20250514`/`claude-sonnet-4-20250514` to `claude-opus-4-6`/`claude-sonnet-4-6`. 11 config/CLI files updated, cost tracker +3 model tiers
+> - Phase 1: Created `agents/bug_fix_expediter/` package (7 files): `__init__.py`, `config.py`, `state.py`, `cosa_interface.py`, `voice_io.py`, `dead_job_packager.py`, `job.py`. Created `rest/routers/bug_fix_expediter.py`. Registered in `agent_registry.py`, `agentic_job_factory.py`, `job_persistence.py`
+>
+> **Files Created (14)**:
+> - `agents/bug_fix_expediter/__init__.py`, `config.py`, `state.py`, `cosa_interface.py`, `voice_io.py`, `dead_job_packager.py`, `job.py`
+> - `agents/presentation_generator/renderers/marp_text_renderer.py`, `visual_registry.py`, `placeholder.py`, `mermaid.py`
+> - `agents/presentation_generator/prompts/visual.py`
+> - `agents/presentation_generator/templates/themes/default.yaml`
+> - `rest/routers/bug_fix_expediter.py`
+>
+> **Files Modified (21)**: `deep_research/cli.py`, `deep_research/config.py`, `cost_tracker.py`, `deep_research_to_podcast/__main__.py`, `deep_research_to_podcast/agent.py`, `notification_proxy/config.py`, `podcast_generator/config.py`, `test_podcast_generator.py`, `presentation_generator/api_client.py`, `presentation_generator/config.py`, `presentation_generator/orchestrator.py`, `prompts/__init__.py`, `renderers/__init__.py`, `agent_registry.py`, `swe_team/__main__.py`, `swe_team/config.py`, `configuration_manager.py`, `agentic_job_factory.py`, `job_persistence.py`, `routers/queues.py`, `todo_fifo_queue.py`
+>
+> Total: +467 insertions, -42 deletions across 21 modified + 14 new files
+
+---
+
+> **✅ SESSIONS 381b+381c COMMITTED**: CJ Flow Timed Execution + Monopolize + Pause/Resume (backend Phases 0-4), Agentic Job Consistency Remediation (2026.03.27)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 381b — CJ Flow: Timed Execution + Monopolize + Pause/Resume (Backend)**:
+> - `rest/queue_protocol.py`: Added `scheduled_at`, `monopolize`, `paused` fields to QueueableJob protocol
+> - `agents/agentic_job_base.py`, `agents/agent_base.py`, `memory/solution_snapshot.py`: Added 3 new protocol fields to all implementations
+> - `rest/fifo_queue.py`: New `pop_next_eligible()` scans for eligible jobs (not paused, scheduled time reached); `earliest_scheduled_at()` calculates dynamic wake-up timeout; `delete_by_id_hash()` override notifies consumer on removal
+> - `rest/queue_consumer.py`: Full rewrite — replaces `pop()` with `pop_next_eligible()`, dynamic `condition.wait(timeout=...)` for timed jobs, all-paused guard, monopolize placeholder
+> - `rest/todo_fifo_queue.py`: Pause/resume methods with consumer notification
+> - `rest/routers/queues.py`: New `PATCH /api/queue/todo/{id}/pause` and `/resume` endpoints; queue GET serialization updated
+> - `rest/routers/deep_research.py`, `podcast_generator.py`, `presentation_generator.py`, `swe_team.py`, `mock_job.py`: Added `scheduled_at`/`monopolize` request fields to all 5 routers
+> - `rest/job_persistence.py`: `scheduled_at` + `monopolize` added to JSONB metadata extraction
+> - `rest/running_fifo_queue.py`: Added `scheduled_at`/`monopolize` to dead-job metadata
+>
+> **Session 381c — Agentic Job Consistency Remediation**:
+> - `agents/swe_team/job.py`: Added `set_job_id()`/`clear_job_id()` in live execution path
+> - `agents/swe_team/config.py`: Added `from_config()` classmethod for INI-driven configuration
+> - `agents/podcast_generator/job.py`: Added `queue_name="run"` to all 8 notify calls (live + dry-run)
+> - `agents/claude_code/job.py`: Added `queue_name="run"` to all 13 `notify_progress()` calls
+> - `agents/presentation_generator/job.py`: Added `queue_name="run"` to all 9 notify calls (live + dry-run)
+> - `agents/test_harness/mock_job.py`: Updated with protocol fields and consistency fixes
+>
+> **Files Modified (22)**:
+> - `rest/queue_protocol.py` (+16) — 3 new protocol fields
+> - `agents/agentic_job_base.py` (+8) — Protocol field implementations
+> - `agents/agent_base.py` (+5) — Protocol field implementations
+> - `memory/solution_snapshot.py` (+5) — Protocol field implementations
+> - `rest/fifo_queue.py` (+76) — `pop_next_eligible()`, `earliest_scheduled_at()`, `delete_by_id_hash()` override
+> - `rest/queue_consumer.py` (+49/-4) — Full consumer loop rewrite with dynamic wake-up
+> - `rest/todo_fifo_queue.py` (+25/-1) — Pause/resume methods
+> - `rest/routers/queues.py` (+119) — Pause/resume endpoints, serialization updates
+> - `rest/routers/deep_research.py` (+6) — scheduled_at/monopolize fields
+> - `rest/routers/podcast_generator.py` (+12/-1) — scheduled_at/monopolize fields
+> - `rest/routers/presentation_generator.py` (+8/-1) — scheduled_at/monopolize fields
+> - `rest/routers/swe_team.py` (+6) — scheduled_at/monopolize fields
+> - `rest/routers/mock_job.py` (+6) — scheduled_at/monopolize fields
+> - `rest/job_persistence.py` (+3/-1) — Metadata extraction for new fields
+> - `rest/running_fifo_queue.py` (+2) — Dead-job metadata fields
+> - `agents/swe_team/config.py` (+69/-1) — `from_config()` classmethod
+> - `agents/swe_team/job.py` (+31/-5) — `set_job_id`/`clear_job_id` + INI-driven config
+> - `agents/claude_code/job.py` (+39/-4) — `queue_name="run"` on all 13 notify calls
+> - `agents/podcast_generator/job.py` (+18/-3) — `queue_name="run"` on all 8 notify calls
+> - `agents/presentation_generator/job.py` (+37/-4) — `queue_name="run"` on all 9 notify calls
+> - `agents/test_harness/mock_job.py` (+17/-2) — Protocol fields + consistency fixes
+> - `agents/deep_research/job.py` (+6/-1) — Cost summary in artifacts
+> - Total: +487 insertions, -76 deletions
+
+---
+
+> **✅ SESSIONS 376+378 COMMITTED**: Presentation Generator bug fixes (dry-run, cost attr, completion abstract, Docker notifications), PredictionEngine test isolation endpoint, API key strip fix (2026.03.26)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 376 — Bug Fixes: Presentation Generator + Docker Notifications**:
+> - `agents/presentation_generator/job.py`: Wired `_execute_dry_run()` call in `_execute()` (was dead code — dry run went through orchestrator without identity setup, causing `is_voice_available()` to cache False). Added identity setup (`SENDER_ID`, `TARGET_USER`) + `try/finally` cleanup in dry-run path.
+> - `agents/presentation_generator/job.py`: Fixed `estimated_cost_usd` AttributeError — wrong attribute chain `agent.api_client.estimated_cost_usd` → `agent.api_client.cost_estimate.estimated_cost_usd`
+> - `agents/presentation_generator/job.py`: Added completion abstract with clickable `/app/docs?path=` links (matching podcast pattern), `report_path` pointing to Marp output, `voice_io.notify()` with `queue_name="run"` for job card routing
+> - `utils/config_loader.py`: Added `LUPIN_API_KEY` env var support — direct key value bypasses config file lookup (for Docker/CI where `~/.lupin/config` unavailable). Updated `get_api_config()` conditional logic and `load_api_key()` priority chain.
+>
+> **Session 378 — UPE LanceDB Test Isolation + Warm Test Fix**:
+> - `rest/routers/system.py`: Added `PredictionEngine.reset()` + `get_prediction_engine()` to `/api/init` hot-swap endpoint
+> - `rest/routers/system.py`: Created new `GET /api/prediction-engine/reset` lightweight endpoint — drops LanceDB table + resets singleton. Needed because test process can't drop root-owned LanceDB files and `/api/init` is too heavy per-test (causes 429 rate limiting)
+> - `utils/util.py`: Fixed `get_api_key()` returning file contents with trailing `\n` — HTTP headers reject newlines. Added `.strip()` at source (system boundary normalization)
+>
+> **Files Modified (4)**:
+> - `agents/presentation_generator/job.py` (+96/-52) — Dry-run wiring, cost attr fix, completion abstract + links
+> - `rest/routers/system.py` (+61) — PredictionEngine reset in /api/init + new /api/prediction-engine/reset endpoint
+> - `utils/config_loader.py` (+13/-5) — LUPIN_API_KEY env var for Docker
+> - `utils/util.py` (+1/-1) — get_api_key() .strip() fix
+> - Total: +177 insertions, -52 deletions
+
+---
+
+> **✅ SESSIONS 372-374 COMMITTED**: Voice injection bug fix, session_name pipeline, Presentation Generator mode map (2026.03.25)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 372 — Bug Fix: Voice Injection Silent Crash on Null Title**:
+> - `rest/notification_fifo_queue.py`: Changed `title: Optional[str] = None` → `title: str = ""` and `abstract: Optional[str] = None` → `abstract: str = ""` in both `NotificationItem.__init__()` and `push_notification()` — prevents `startswith()` crash when title is None
+> - `rest/routers/notifications.py`: Added API boundary normalization (`title = title or ""`, `abstract = abstract or ""`) to catch None from absent query params
+> - `agents/utils/proxy_agents/base_listener.py`: Enhanced error logging — checks for `_log` method before falling back to `print()`
+>
+> **Session 372b — session_name Pipeline (set_session_topic → UI Header)**:
+> - `rest/notification_fifo_queue.py`: Added `session_name: Optional[str] = None` parameter to `NotificationItem` and `push_notification()`, included in `to_dict()` serialization
+> - `rest/routers/notifications.py`: Added `session_name` query parameter to `/api/notify`, added `"session_topic"` to valid notification types, plumbed `session_name` through to `push_notification()`
+>
+> **Session 374 — Presentation Generator CJ Flow Mode Map**:
+> - `rest/todo_fifo_queue.py`: Added `"presentation"` entry to `MODE_METADATA` and `AGENTIC_MODE_MAP` — agent now visible in UI mode selector and routable through CJ Flow
+>
+> **Files Modified (4)**:
+> - `agents/utils/proxy_agents/base_listener.py` (+6/-1) — Enhanced error logging
+> - `rest/notification_fifo_queue.py` (+24/-8) — title/abstract defaults, session_name field
+> - `rest/routers/notifications.py` (+10/-2) — session_name param, session_topic type, boundary normalization
+> - `rest/todo_fifo_queue.py` (+2) — Presentation Generator mode map entries
+> - Total: +42 insertions, -11 deletions
+
+---
+
+> **✅ SESSIONS 369-371c COMMITTED**: Presentation Generator Phases 3-5, CJ Flow Persistence Phase 6, WebSocket bug fixes (2026.03.24)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 370 — Presentation Generator Phase 3 (Expeditor + Ingest + Narrative Analysis)**:
+> - `agents/presentation_generator/__main__.py`: Full CLI rewrite with `--user-visible-args` expeditor protocol, dry-run mode
+> - `agents/presentation_generator/api_client.py` (NEW): `AsyncAnthropic` client with exponential backoff retry, per-request cost tracking (Opus/Sonnet pricing), 3 call methods (analysis, outline, elaboration)
+> - `agents/presentation_generator/prompts/narrative.py` (NEW): Narrative arc analysis system prompt, prompt builder with slide budget, JSON response parser with fallback
+> - `agents/presentation_generator/orchestrator.py`: `_ingest_async()` (markdown section parser, plain text paragraph parser, format auto-detection), `_analyze_async()` (Claude call → parse → NarrativeSection), Gate 1 voice review
+> - `agents/presentation_generator/state.py`: `NarrativeSection`, `NarrativeAnalysis` Pydantic models
+> - `agents/runtime_argument_expeditor/agent_registry.py`: Registry entry for presentation generator (6 agents total)
+> - `agents/runtime_argument_expeditor/expeditor.py`: Agent-aware `fuzzy_file_match` lookup
+> - `agents/notification_proxy/config.py`: Presentation generator proxy profile
+>
+> **Session 371 — CJ Flow Persistence Phase 6 (Job History UI)**:
+> - `rest/job_persistence.py`: Extended `query_job_history()` with `days` and `exclude_ids` filters, added `delete_job_history()`
+> - `rest/routers/queues.py`: `DELETE /api/job-history/{job_id}`, `POST /api/job-history/{job_id}/retry`, updated `GET` params
+>
+> **Session 371b — Bug Fix: Action-Required Card Stuck + WS Send-After-Close Crash**:
+> - `rest/routers/websocket.py`: Explicit `except WebSocketDisconnect` before generic handler (Fix 4), wrapped outer handler's `close()` in try/except for safe close
+>
+> **Session 371c — Presentation Generator Phases 4-5 (Outline, Elaborate, Serialize)**:
+> - `agents/presentation_generator/prompts/outline.py` (NEW): Outline generation prompt
+> - `agents/presentation_generator/prompts/elaboration.py` (NEW): Elaboration prompt for slide content
+> - `agents/presentation_generator/prompts/__init__.py`: Module exports for new prompts
+> - `agents/presentation_generator/orchestrator.py`: `_outline_async()`, `_elaborate_async()` with chunked fallback, `_serialize_async()` with thread-pool file I/O, Gate 2 + Gate 3 voice review, cost summary
+> - `agents/presentation_generator/state.py`: `SlideOutline` model, `to_yaml()`/`from_yaml()` on `PresentationModel`
+> - `agents/presentation_generator/job.py`: `audience_context` field
+> - `rest/agentic_job_factory.py`: Updated factory for audience_context
+> - `rest/todo_fifo_queue.py`: Presentation generator routing
+>
+> **Files Modified (13) + New (4)**:
+> - 13 modified files across agents, rest, and routers
+> - 4 new files in `agents/presentation_generator/`
+> - Total: +1,710 insertions, -117 deletions
+
+---
+
+> **✅ SESSIONS 365-368 COMMITTED**: Admin filter, Presentation Generator, CJ Flow persistence wiring, bug fixes (2026.03.23)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 365 — CUDA Memory Optimization (Embedding OOM Retry)**:
+> - `memory/local_embedding_engine.py`: Added `_run_with_cuda_retry()` — on CUDA OOM, runs `gc.collect()` + `torch.cuda.empty_cache()` then retries once. Multi-batch warmup support.
+>
+> **Session 366 — 5 Bug Fixes (WebSocket, LanceDB, Config Keys, Phantom Connection)**:
+> - `agents/decision_proxy/proxy_decision_embeddings.py`: Schema validation in `_ensure_table()` — drop+recreate on column mismatch (fixes `response_type` field missing from pre-existing tables)
+> - `rest/routers/websocket.py`: Identity guard in finally blocks — old handler's `disconnect()` no longer kills new connection on reconnect. TokenExpiredException handling added.
+> - `rest/websocket_manager.py`: Dedup `user_sessions` in `connect()`, orphan cleanup in `emit_to_user()`, explicit `ws.close()` in `disconnect()` to prevent phantom connections
+> - `rest/routers/system.py`: Fixed 4 config key underscore/space mismatches in `/api/config/client` + added `return_type="int"` to prevent string multiplication
+>
+> **Session 367 — Notification Admin Filter Toggle ("Not My Jobs" Mode)**:
+> - `rest/queue_auth.py`: Added `!self` authorization case (Case 2b) — admins can view jobs NOT belonging to them
+> - `rest/fifo_queue.py`: Added `get_jobs_excluding_user()` method
+> - `rest/routers/queues.py`: Wired `!`-prefix sentinel to exclusion method
+> - `rest/routers/notifications.py`: Added `exclude_own_jobs` param on senders-visible and bulk-delete endpoints
+> - `rest/db/repositories/notification_repository.py`: Added `exclude_job_ids` filtering in sender listing + bulk delete
+>
+> **Session 367b — Presentation Generator Agent (Phases 1-2 Foundation)**:
+> - `agents/presentation_generator/` (NEW — 10 files): `PresentationGeneratorJob` (AgenticJobBase), `PresentationConfig` with `from_config()`, 6 Pydantic state models, `PresentationOrchestratorAgent` (8-phase state machine), cosa_interface.py, voice_io.py
+> - `rest/routers/presentation_generator.py` (NEW): REST router at `/api/presentation-generator/submit`
+> - `rest/agentic_job_factory.py`: Factory branch for presentation generator
+>
+> **Session 367d — CJ Flow Persistence (Phases 3-5 Write-Through + Recovery + API)**:
+> - `rest/queue_util.py`: Wired `job_persistence.py` into `emit_job_state_transition()` — persistence fires after WS emit, filtered by `is_agentic_job_type()`. Changed `websocket_mgr=None` from early-return to conditional guard.
+> - `rest/routers/queues.py`: Added `GET /api/job-history` (paginated, role-based) and `GET /api/job-history/{job_id}` (detail with 403/404)
+>
+> **Session 368 — Bug Fix: WebSocket 503 "user_not_available" Notifications**:
+> - `rest/routers/notifications.py`: Added ungated OFFLINE DIAG dump for debugging user-not-available failures
+> - `rest/websocket_manager.py`: Added `[WS] STATE` summary logs after connect/disconnect
+> - `rest/routers/websocket.py`: Added auth_request handler to audio WS endpoint (~40 lines)
+>
+> **Other Router Standardization** (Sessions 365-368):
+> - Standardized auth imports and dependency injection across routers: `auth.py`, `claude_code.py`, `claude_code_queue.py`, `decision_proxy.py`, `deep_research.py`, `embeddings.py`, `io_files.py`, `jobs.py`, `mock_job.py`, `mode.py`, `speech.py`, `stats.py`, `swe_team.py`, `websocket_admin.py`
+>
+> **Files Modified (26) + New (10+1)**:
+> - 26 modified files across agents, memory, rest, and routers
+> - 10 new files in `agents/presentation_generator/`
+> - 1 new router `rest/routers/presentation_generator.py`
+> - Total: +899 insertions, -155 deletions
+
+---
+
+> **✅ SESSIONS 359-364 COMMITTED**: Config migration, CJ Flow persistence, CUDA OOM fix, WS logging guard (2026.03.14)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 364 — Claude Agent SDK Config Migration (Phases 0-4)**:
+> - `deep_research/config.py`: Added `ResearchConfig.from_config( config_mgr )` classmethod — reads 24 fields from INI with type coercion, falls back to dataclass defaults
+> - `deep_research/job.py`: Updated to use `ResearchConfig.from_config()` with job arg overrides
+> - `deep_research/cli.py`: Updated to use `from_config()` with CLI arg overrides
+> - `podcast_generator/config.py`: Added `HostPersonality.from_config()`, `VoiceProfile.from_config()`, `PodcastConfig.from_config()` — nested composition with pipe-delimited list parsing for `typical_phrases` (27 keys)
+> - `podcast_generator/job.py`: Updated to use `PodcastConfig.from_config()` with job arg overrides
+> - `llm_client_factory.py`: Replaced hardcoded `VENDOR_URLS`, `VENDOR_API_ENV_VARS`, `CLIENT_DEFAULT_PARAMS` class dicts with instance methods loading from INI at singleton init (10 keys)
+>
+> **Session 360 — CJ Flow Persistence (Phases 1-2)**:
+> - `rest/postgres_models.py`: Added `JobHistory` SQLAlchemy model — 16 columns, 5 indexes for tracking agentic job lifecycle
+> - `rest/job_persistence.py` (NEW): Stateless persistence service with 8 functions (INSERT/UPDATE/query/recovery). Fire-and-forget error handling.
+>
+> **Session 359 — Bug Fix: Periodic CUDA OOM on Whisper Transcription**:
+> - `rest/routers/speech.py`: Added `_run_whisper_with_retry()` — on CUDA OOM, runs `gc.collect()` + `torch.cuda.empty_cache()` then retries once. Returns 503 with `Retry-After: 5` on persistent failure.
+>
+> **Session 363 — WS-QUEUE Verbose Logging Guard**:
+> - `rest/routers/websocket.py`: Gated `[WS-QUEUE] Received message from` print behind `app_debug and app_verbose` — stops sys_pong flood from cc-listener sessions
+>
+> **Files Modified (9) + New (1)**:
+> - `agents/deep_research/config.py` (+98 lines) — `from_config()` classmethod
+> - `agents/deep_research/job.py` (+29/-13 lines) — Use `from_config()`
+> - `agents/deep_research/cli.py` (+16/-4 lines) — Use `from_config()`
+> - `agents/podcast_generator/config.py` (+178 lines) — Nested `from_config()` classmethods
+> - `agents/podcast_generator/job.py` (+18/-4 lines) — Use `from_config()`
+> - `agents/llm_client_factory.py` (+95/-26 lines) — INI-based vendor config
+> - `rest/postgres_models.py` (+129 lines) — `JobHistory` model
+> - `rest/job_persistence.py` (NEW, ~200 lines) — Persistence service
+> - `rest/routers/speech.py` (+85/-20 lines) — Whisper CUDA OOM retry
+> - `rest/routers/websocket.py` (+1/-1 lines) — Logging guard
+
+---
+
+> **✅ SESSIONS 349-356 COMMIT**: INI key standardization, document viewer/audio player routes, SWE team notification fix (2026.03.13)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 349 — Standardize ~91 Underscore Config Keys to Space-Separated**:
+> - Renamed all underscore config keys to space-separated naming across 45 CoSA files (agents, memory, REST, tests, training, utils, config)
+> - Key regroupings: `auto_debug` → `debug auto`, `inject_bugs` → `debug inject bugs`, `database_path_wo_root` → `path to database wo root`, `code_execution_file_path` → `path to code execution file`
+> - Commented out singleton reuse debug print in `configuration_manager.py`
+> - Fixed 5 false positives where Python attribute names were incorrectly renamed as config keys
+> - Full regression green: unit 2094/2094, WebSocket 50/50, integration 136 passed
+>
+> **Sessions 353-354 — Document Viewer + Audio Player Routes & Link Migration**:
+> - `pages.py`: Added `/app/docs` and `/app/audio` route table entries + route functions
+> - `orchestrator.py`: Migrated 10 link URLs from `/api/io/file?path=` → `/app/docs?path=` (markdown) and `/app/audio?path=` (MP3)
+> - `cli.py`: Changed local-path deep research report URL from hardcoded `http://localhost:7999/api/deep-research/report` → relative `/app/docs?path=deep-research/`
+>
+> **Session 356 — SWE Team Notification Routing Bug Fix**:
+> - `swe_team/job.py`: Added `cosa_interface.TARGET_USER = self.user_email` in both live and dry-run execution paths — notifications now route to job submitter instead of personal email
+> - `fifo_queue.py`: Replaced hardcoded `ricardo.felipe.ruiz@gmail.com` fallback with `LUPIN_DEV_EMAIL` env var; skips notification if env var unset
+>
+> **Files Modified (50)**:
+> - 45 files: INI config key renames (agents, memory, REST, tests, training, utils, config)
+> - `rest/routers/pages.py` — `/app/docs` + `/app/audio` routes (+10 lines)
+> - `agents/podcast_generator/orchestrator.py` — 10 link URL migrations (+10/-10 lines)
+> - `agents/deep_research/cli.py` — 1 local-path URL migration (+1/-1 lines)
+> - `agents/swe_team/job.py` — TARGET_USER assignment (+2/-1 lines)
+> - `rest/fifo_queue.py` — env var email fallback (+6/-3 lines)
+
+---
+
+> **✅ SESSION 354 COMMIT**: Audio Player Viewer — in-browser MP3 playback page (2026.03.13)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 354 — Audio Player Viewer: In-Browser MP3 Playback Page**:
+> - Created `audio-player.html` (Lupin parent): Styled HTML5 `<audio>` player page mirroring document-viewer architecture — same nav bar, CSS patterns, container layout; includes title derivation from filename, companion `-script.md` metadata lookup, HEAD request for file size, download button, collapsed file details accordion
+> - `pages.py`: Added `/app/audio` route table entry + `page_audio()` route function
+> - `orchestrator.py`: Migrated last 2 MP3 link URLs from `/api/io/file?path=` → `/app/audio?path=` so podcast MP3 links open in styled player instead of triggering raw download
+>
+> **Files Modified (2 COSA + 1 Lupin)**:
+> - `rest/routers/pages.py` — `/app/audio` route (+5 lines)
+> - `agents/podcast_generator/orchestrator.py` — 2 MP3 link URLs migrated to `/app/audio` (+2/-2 lines)
+> - `src/fastapi_app/static/html/audio-player.html` (Lupin) — New file (~140 lines HTML/CSS/JS)
+
+---
+
+> **✅ SESSION 353 COMMIT**: Markdown Document Viewer Phase 2 — frontmatter fix + link URL migration (2026.03.13)
+> **Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> ### Accomplishments
+>
+> **Session 353 — Document Viewer Phase 2: Frontmatter Accordion + Link Migration**:
+> - `document-viewer.html` (Lupin parent): Added `extractFrontmatter()` to strip YAML frontmatter before marked.js parsing; renders metadata as collapsed `<details>` accordion with CSS grid definition list
+> - `orchestrator.py`: Migrated 8 markdown link URLs from `/api/io/file?path=` → `/app/docs?path=` so "View Script" / "View Research" links open in the formatted viewer; kept 2 MP3 links on `/api/io/file` for direct download
+> - `cli.py`: Changed local-path deep research report URL from hardcoded `http://localhost:7999/api/deep-research/report?path=` → relative `/app/docs?path=deep-research/`; GCS paths kept on old endpoint
+>
+> **Files Modified (2 COSA + 1 Lupin)**:
+> - `agents/podcast_generator/orchestrator.py` — 8 link URLs migrated to `/app/docs` (+8/-8 lines)
+> - `agents/deep_research/cli.py` — 1 local-path URL migrated (+1/-1 lines)
+> - `src/fastapi_app/static/html/document-viewer.html` (Lupin) — Frontmatter accordion (~55 lines added)
+
+---
+
+> **✅ v0.1.5 PR & MERGE**: PR #17 merged to main, tagged v0.1.5, new branch v0.1.6 created (2026.03.12)
+> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work` → merged → deleted
+>
+> ### Accomplishments
+>
+> **v0.1.5 Release — PR & Branch Lifecycle**:
+> - Updated README.md with v0.1.5 "What's New" section (Trust Proxy, UPE, Integration Test Infra, CJ Flow, new agents, testing expansion)
+> - Created PR #17 via `gh pr create` with comprehensive description (28 commits, 112 files, +13,355/-7,742 lines)
+> - Merged to main, verified tag `v0.1.5`, deleted old branch (local + remote)
+> - Created new development branch `wip-v0.1.6-2026.03.12-tracking-lupin-work`
+>
+> **Files Modified (1)**:
+> - `README.md` — Replace stale v0.7.0 content with v0.1.5 features (+60/-98 lines)
+
+---
+
 > **✅ SESSIONS 340-348 COMMIT**: UPE response_type filtering, integration test hot-swap infrastructure (2026.03.12)
 > **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
 >
@@ -306,707 +1193,16 @@
 
 ---
 
-> **✅ SESSIONS 268-276 COMMIT**: CLI→lupin_cli migration, data_origin provenance, interactive dry-run, SWE classifier dry-run, bug fixes (2026.02.26)
-> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
->
-> ### Accomplishments
->
-> **Committed accumulated work from Lupin sessions 268-276** (32 files: 1 new + 22 modified + 9 deleted, +440/-4396 lines):
->
-> **CLI → lupin_cli Migration (Session 275)**:
-> - Deleted entire `cli/` package (7 files, ~3107 lines) — notification infrastructure moved to Lupin-owned `lupin_cli.notifications` package
-> - Deleted 2 unit test files from `tests/unit/cli/` (~1148 lines) — moved to Lupin test suite
-> - Updated imports in 11 consumer files: `cosa.cli.*` → `lupin_cli.notifications.*`
-> - Wired `resolve_target_user()` helper into `sync_notify.py` (replaces hardcoded default email)
-> - Renamed env var `LUPIN_NOTIFICATION_RECIPIENT` → `LUPIN_DEV_EMAIL` in `config_loader.py` (removed deprecation shim)
->
-> **Data Provenance — `data_origin` Field (Sessions 270-271)**:
-> - Added `data_origin` column to `ProxyDecision` ORM model (String(50), default="organic", indexed)
-> - Added `data_origin` param to `log_shadow()` and `log_decision()` in proxy_decision_repository
-> - Added `data_origin` to LanceDB schema, `add_decision()`, `find_similar()` with optional provenance filter
-> - Added `data_origin` to pending decisions API response
->
-> **INTERACTIVE Dry-Run for ClaudeCodeJob (Session 269)**:
-> - Split `_execute_dry_run()` into `_execute_dry_run_bounded()` / `_execute_dry_run_interactive()` dispatcher
-> - Interactive mode: 7-phase MessageHistory exercise with multi-turn context prompt validation
-> - Added `dry_run_phases`/`dry_run_delay` constructor params + class-level `DRY_RUN_BOUNDED_LABELS` (5) / `DRY_RUN_INTERACTIVE_LABELS` (7)
-> - Extended smoke test with 3 new test cases
->
-> **SWE Team Real Classifier Dry-Run (Sessions 270-273)**:
-> - Replaced 3 hardcoded mock proxy decisions with real `EngineeringClassifier` pipeline (zero LLM cost)
-> - Added `DRY_RUN_PHASE_QUESTIONS` (10 entries) with role-specific sender_ids
-> - Decisions tagged `data_origin="synthetic_generated"`
->
-> **Bug Fix: SWE Team Output Path (Session 274)**:
-> - Fixed `io/swe_team/` → `io/swe-team/` (Lupin naming convention: dashes for non-Python)
->
-> **CUDA Fallback Removal (Session 268)**:
-> - Removed dead CUDA→CPU fallback from CodeEmbeddingEngine and ProseEmbeddingEngine
->
-> **Files Created (1)**:
-> - `training/__init__.py`
->
-> **Files Modified (22)**:
-> - `agents/claude_code/cosa_interface.py`, `agents/claude_code/job.py`
-> - `agents/deep_research/cosa_interface.py`, `agents/podcast_generator/cosa_interface.py`
-> - `agents/runtime_argument_expeditor/expeditor.py`, `agents/swe_team/cosa_interface.py`
-> - `agents/swe_team/job.py`, `agents/swe_team/orchestrator.py`, `agents/swe_team/state_files.py`
-> - `agents/decision_proxy/proxy_decision_embeddings.py`
-> - `agents/utils/agent_notification_dispatcher.py`, `agents/utils/sync_notify.py`
-> - `crud_for_dataframes/agent.py`, `memory/local_embedding_engine.py`
-> - `rest/db/repositories/notification_repository.py`, `rest/db/repositories/proxy_decision_repository.py`
-> - `rest/fifo_queue.py`, `rest/postgres_models.py`, `rest/routers/decision_proxy.py`
-> - `rest/running_fifo_queue.py`, `rest/todo_fifo_queue.py`, `utils/config_loader.py`
->
-> **Files Deleted (9)**:
-> - `cli/__init__.py`, `cli/notification_models.py`, `cli/notification_types.py`
-> - `cli/notify_user.py`, `cli/notify_user_async.py`, `cli/notify_user_sync.py`, `cli/test_notifications.py`
-> - `tests/unit/cli/test_notification_types.py`, `tests/unit/cli/test_notify_user.py`
->
-> **Commit**: c0634ab
-
----
-
-> **✅ SESSIONS 260-266 COMMIT**: Voice refactoring, gist jettison, preference learning Phases 0-3, embeddings API, QueryLogTable fix (2026.02.24)
-> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
->
-> ### Accomplishments
->
-> **Committed accumulated work from Lupin sessions 260-266** (35 files: 10 new + 25 modified, +2015 new / +1300-2251 modified lines):
->
-> **Voice Module Refactoring — 5-Phase Deduplication (Session 260)**:
-> - Created shared `AgentNotificationDispatcher`, `sender_id.py`, `feedback_analysis.py`, `sync_notify.py`
-> - Eliminated ~1,548 lines of copy-paste duplication across 16 files
-> - All `cosa_interface.py` files delegate to dispatcher; all `voice_io.py` files reduced to thin re-export wrappers
-> - Removed `inspect.signature()` hacks from core voice_io.py
->
-> **Jettison Gist Embeddings (Session 261)**:
-> - Removed gist embedding generation from per-query and per-snapshot paths (~30% embedding cost savings)
-> - Removed `get_snapshots_by_solution_gist_similarity()` (~120 lines) from LanceDB manager
-> - Removed 2 dead methods from solution_snapshot.py, gist comparison from deprecated snapshot_mgr
-> - Cleaned admin similarity endpoint: removed gist_threshold, gist search block, gist response fields
->
-> **Preference Learning Phases 0-2 (Session 262)**:
-> - Phase 0: Created `ProxyDecisionEmbeddings` LanceDB store (768-dim vector index) + `CBRDecisionStore` (retrieve + majority vote + confidence)
-> - Phase 1: Added Beta-Bernoulli trust model to TrustTracker (dual-model dispatch, 95% credible interval)
-> - Phase 2: Created `BayesianLogisticRegression` class (~160 lines) — online Laplace approximation with Sherman-Morrison updates
-> - Thompson Sampling gate in EngineeringStrategy — Beta posterior sampling for act/suggest/shadow
-> - Decision diagnostics in DecisionResponder
->
-> **QueryLogTable Fix (Session 264)**:
-> - Removed `embedding_gist` and `cache_hit_gist` from schema, row data, analytics, smoke test — fixes ArrowInvalid after gist jettison
->
-> **CPU Embedding Fallback + Embeddings API (Session 265)**:
-> - Created `POST /api/embeddings/generate`, `POST /api/embeddings/batch`, `GET /api/embeddings/info` endpoints
-> - Added CUDA-not-available fallback to CPU for ProseEmbeddingEngine and CodeEmbeddingEngine
->
-> **Phase 3: Conformal Guarantees + ICRL (Session 266)**:
-> - Created `ConformalDecisionWrapper` (~80 lines) — split conformal inference with calibration
-> - Created ICRL prompt template package (prompts/) — `ICRL_DECISION_PROMPT`, `format_case_history()`, `build_icrl_prompt()`
-> - Integrated conformal into EngineeringStrategy.gate(), ICRL into decide()
-> - Extended DecisionResponder diagnostics with conformal status
->
-> **Cache Threshold Confirmation + Snapshot Deletion Support (misc)**:
-> - Added 3-tier cache hit scoring (exact/threshold/reject) in RunningFifoQueue
-> - Added `delete_by_snapshot_id()` to CanonicalSynonymsTable
->
-> **Files Created (10)**:
-> - `agents/utils/sender_id.py`, `agents/utils/feedback_analysis.py`
-> - `agents/utils/agent_notification_dispatcher.py`, `agents/utils/sync_notify.py`
-> - `agents/decision_proxy/bayesian_trust.py`, `agents/decision_proxy/cbr_decision_store.py`
-> - `agents/decision_proxy/conformal_wrapper.py`, `agents/decision_proxy/proxy_decision_embeddings.py`
-> - `agents/decision_proxy/prompts/__init__.py`, `agents/decision_proxy/prompts/icrl_decision.py`
-> - `rest/routers/embeddings.py`
->
-> **Files Modified (25)**:
-> - `agents/claude_code/cosa_interface.py`, `agents/deep_research/cosa_interface.py`
-> - `agents/podcast_generator/cosa_interface.py`, `agents/swe_team/cosa_interface.py`
-> - `agents/deep_research/voice_io.py`, `agents/podcast_generator/voice_io.py`
-> - `agents/swe_team/voice_io.py`, `agents/decision_proxy/voice_io.py`
-> - `agents/notification_proxy/voice_io.py`, `agents/utils/voice_io.py`
-> - `agents/utils/__init__.py`, `utils/notification_utils.py`
-> - `agents/decision_proxy/config.py`, `agents/decision_proxy/responder.py`
-> - `agents/decision_proxy/trust_tracker.py`, `agents/swe_team/proxy/engineering_strategy.py`
-> - `memory/query_log_table.py`, `memory/local_embedding_engine.py`
-> - `memory/solution_snapshot.py`, `memory/solution_snapshot_mgr.py`
-> - `memory/lancedb_solution_manager.py`, `memory/canonical_synonyms_table.py`
-> - `rest/routers/admin.py`, `rest/running_fifo_queue.py`, `rest/todo_fifo_queue.py`
->
-> **Commit**: 3b565b2
-
----
-
-> **✅ SESSION 255 COMMIT**: Proxy decision delete endpoint + SWE dry-run mock decisions (2026.02.23)
-> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
->
-> ### Accomplishments
->
-> **Committed accumulated work from Lupin session 255** (3 files, +161/-0 lines):
->
-> **Proxy Decision Delete Endpoint (Session 255)**:
-> - Added `delete_pending()` method to `ProxyDecisionRepository` — hard-deletes pending decisions only, raises ValueError for non-pending states
-> - Added `DELETE /api/proxy/decision/{decision_id}` REST endpoint in `decision_proxy.py` — audit-logged deletion with user_email query param, 404/400/500 error handling
-> - Safety guard: only `ratification_state="pending"` decisions can be deleted — approved/rejected protected
->
-> **SWE Team Dry-Run Mock Proxy Decisions (Session 255)**:
-> - Added mock proxy decision insertion at end of `_execute_dry_run()` in `SweTeamJob` — 3 mock decisions (testing/deployment/destructive categories) with realistic confidence, trust levels, and reasons
-> - Enables UI testing of Trust Dashboard ratification page without running a full SWE team job
-> - Non-fatal: wrapped in try/except, debug-logged on failure
->
-> **Commit**: (pending)
-
----
-
-> **✅ SESSIONS 246-248 COMMIT**: Phase 7+8 proxy notifications, trust mode hot-reload, batch lifecycle, echo persistence, pages router, bug fixes (2026.02.22)
-> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
->
-> ### Accomplishments
->
-> **Committed accumulated work from Lupin sessions 246-248** (9 files, +455/-17 lines):
->
-> **Phase 7 — Proxy Summary Notifications + Circuit Breaker (Session 248)**:
-> - Added `_proxy_pending_count` / `_user_email` state to `SweTeamOrchestrator` for proxy notification tracking
-> - Added `_emit_proxy_summary_notification()` — fetches batch ID from proxy endpoint, sends progress notification with trust details + WebSocket broadcast for ratify page
-> - Added `_on_circuit_breaker_trip()` callback — high-priority alert via HTTP POST when circuit breaker trips
-> - Wired `on_trip_callback` into CircuitBreaker construction in orchestrator `__init__`
-> - Added proxy summary emission in `_gated_confirmation()` for `suggest`/`defer` actions
-> - In-memory proxy batch state in `decision_proxy.py` — `get_current_batch_id()`, `acknowledge_batch()`
-> - `POST /api/proxy/acknowledge` + `GET /api/proxy/batch-id` REST endpoints
-> - Relaxed `progress_group_id` regex to accept `pr-{hex}-{N}` batch format alongside `pg-{hex}`
-> - Widened `progress_group_id` DB column from String(12) to String(24)
->
-> **Phase 8 — Trust Mode Hot-Reload (Session 248)**:
-> - Added `_orchestrator` reference on `SweTeamJob` (set during `_execute`, cleared in `finally`)
-> - Added per-job `trust_mode` override param to `SweTeamJob`, `SweTeamSubmitRequest`, `agentic_job_factory`
-> - `PUT /api/proxy/mode` endpoint — hot-reloads running orchestrator's trust_mode, falls back to INI config
-> - `GET /api/proxy/mode` endpoint — returns INI mode, running mode, effective mode, has_running_job flag
-> - `TrustModeUpdateRequest` model, `_find_running_swe_job()` helper, `get_run_queue()`/`get_config_mgr()` dependencies
->
-> **Bug Fixes + UX (Session 246)**:
-> - Echo acknowledgment persisted to DB in `queues.py` — visible in job interaction history
-> - Simplified echo message to "📨 Your message has been queued"
-> - Added `abstract` field to `get_job_interactions` API response
->
-> **Central Navigation Hub (Session 247)**:
-> - NEW: `rest/routers/pages.py` (108 lines) — clean `/app/*` URL router mapping 12 routes to static HTML via FileResponse
->
-> **Commit**: (pending)
-
----
-
-> **✅ SESSIONS 239-242 COMMIT**: Proxy INI integration, trust feedback persistence, configurable dry-run, user_initiated_message rename, conditional LoRA args (2026.02.20)
-> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
->
-> ### Accomplishments
->
-> **Committed accumulated work from Lupin sessions 239-242** (10 files, +406/-90 lines):
->
-> **Decision Proxy INI Integration + DB Persistence (Sessions 241+)**:
-> - Added `trust_proxy_config_from_config_mgr()` factory in `decision_proxy/config.py` — reads 14 generic trust proxy INI keys with defaults
-> - Added `swe_proxy_config_from_config_mgr()` factory in `swe_team/proxy/config.py` — reads 4 SWE-specific proxy INI keys (accepted_senders as comma-separated list)
-> - Added `_persist_decision()` to `DecisionResponder` — DB persistence for all 4 action branches (shadow, suggest, act, defer), non-fatal best-effort
-> - Rewired `SweTeamOrchestrator.__init__()` proxy initialization to build TrustTracker + CircuitBreaker from INI config via factory functions
-> - Restructured `_gated_confirmation()`: always evaluates proxy (shadow/suggest/active), records trust feedback after every user decision, persists to DB via `_persist_trust_feedback()`
-> - Added proxy status fields to `get_status()` (trust_mode, trust_levels, trust_stats, circuit_breaker)
-> - Changed SWE Team default `trust_mode` from `"disabled"` to `"shadow"` in `swe_team/config.py`
-> - Added INI-driven `trust_mode` read in `SweTeamJob._execute()` with fallback to shadow
->
-> **Approach D Rename + Configurable Dry-Run (Session 242)**:
-> - Renamed notification type `"user_message"` → `"user_initiated_message"` in `notification_client.py`, `queues.py` (filter, docstrings, smoke test dicts)
-> - Added echo acknowledgment WebSocket emission in `queues.py` — progress notification echoed back to sender after job message persisted
-> - Added `id_hash` field to WebSocket notification payloads in `queues.py`
-> - Added `dry_run_phases` (default 10) and `dry_run_delay` (default 1.5s) params to `SweTeamJob`
-> - Replaced 6 hardcoded sleep/notify blocks with loop over `DRY_RUN_PHASE_LABELS` list
-> - Mock cost summary now uses actual simulated duration; artifacts stored for queue pickup
-> - Wired `dry_run_phases`/`dry_run_delay` through `agentic_job_factory.py`
->
-> **Training Data Conditional Args (Session 240)**:
-> - Added conditional_args detection in `xml_coordinator.py` `build_agentic_job_training_prompts()` — scans voice commands for trigger phrases, appends matching arg values to output
->
-> **Commit**: (pending)
-
----
-
-> **✅ SESSIONS 235-236 COMMIT**: Unified job-user association (Bug #5) + Approach D user-initiated messaging (2026.02.20)
-> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
->
-> ### Accomplishments
->
-> **Committed accumulated work from Lupin sessions 235-236** (15 files, +828/-214 lines):
->
-> **Bug #5 — Unify Job-User-Session Association (Session 235)**:
-> - Added `register_scoped_job()` atomic operation to `UserJobTracker` — combines `generate_user_scoped_hash()` + `associate_job_with_user()` into single call
-> - Replaced 2-call pattern with `register_scoped_job()` across all 6 agentic routers + 3 `todo_fifo_queue` call sites
-> - Replaced 8 `user_job_tracker.get_user_for_job()` lookups with direct `job.user_id` in `running_fifo_queue.py`
-> - Replaced tracker lookup with `job.user_id` in `queue_consumer.py` and `queues.py` router
-> - Removed dead code: session tracking (`associate_job_with_session`, `get_session_for_job`, `get_jobs_for_session`), `get_user_for_job()`, `extract_base_hash()`
-> - Fixed `user_id` key `"user_id"` → `"uid"` in `deep_research_to_podcast.py` and `podcast_generator.py`
->
-> **Approach D — User-Initiated Messaging (Session 236)**:
-> - NEW: `agents/swe_team/notification_client.py` (381 lines) — `OrchestratorNotificationClient` WebSocket listener for user messages → `threading.Queue`
-> - Added `_user_messages` queue + `_urgent_interrupt` event to orchestrator
-> - Extended `_check_in_with_user()` to drain messages, analyze via lead model, present with gated confirmation
-> - Added urgent interrupt check in `_execute_live()` loop for immediate check-in on urgent messages
-> - Added `_start_notification_client()` to `SweTeamJob._execute()` with try/finally cleanup
-> - Added `enable_user_messages` config field + `job_id` param to orchestrator constructor
-> - New REST endpoint: `POST /api/jobs/{job_id}/message` in `queues.py` router
->
-> **Commit**: ab88631
-
----
-
-> **✅ SESSIONS 226-234 COMMIT**: Voice-driven SWE factory, _parse_boolean, agentic modes, expeditor UX, speculative job ID, LoRA env resolution, check-in MVP, sender_id fix (2026.02.18)
-> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
->
-> ### Accomplishments
->
-> **Committed accumulated work from Lupin sessions 226-234** (16 files, +474/-145 lines):
->
-> **Voice-Driven SWE Team + _parse_boolean (Session 226)**:
-> - Wired canonical `create_agentic_job()` factory into voice path in `todo_fifo_queue.py` (deleted 75 lines inline factory)
-> - Added `_parse_boolean()` to `agentic_job_factory.py` — fixes string `"no"` truthy bug on all 5 `dry_run` lines
-> - Added `dry_run` to SWE Team registry entry, CLI `--user-visible-args`, proxy TEST_PROFILES
-> - Removed 3 hardcoded `dry_run` exclusions in `expeditor.py` (now whitelist-controlled)
->
-> **LoRA Env Var Resolution (Session 227)**:
-> - Added `os.path.expandvars()` in `ConfigurationManager.get()` for `${ENV_VAR}` pattern resolution
-> - Added `_update_lora_env()` to `PeftTrainer` — auto-updates `~/.lora_env` after successful training runs
->
-> **Agentic Mode Switches (Session 229)**:
-> - Added `AGENTIC_MODE_MAP` (5 entries) + `MODE_METADATA` entries for UI dropdown in `todo_fifo_queue.py`
-> - Agentic modes bypass LoRA router, routing directly to disambiguation → expeditor → factory
->
-> **Expeditor UX + Speculative Job ID (Session 230)**:
-> - Truncated batch TTS to count-only preamble in `notification_utils.py`
-> - Added fallback default pre-population in `expeditor.py` (original_question → default_value)
-> - Added `job_prefix` to all 5 AGENTIC_AGENTS registry entries
-> - Speculative job ID generation before expeditor runs in `todo_fifo_queue.py`
-> - Added None→empty-string coercion `field_validator` to `ExpeditorResponse` + `ArgConfirmationResponse`
-> - Extended `job_id` regex to accept compound short format (`prefix-hex8::UUID`) in `notification_models.py`
->
-> **Duplicate Notification Fix (Session 231)**:
-> - Added early return after AGENTIC_AGENTS branch in `push_job()` to prevent fallthrough double-notify
->
-> **SWE Team Training Data Routing (Session 232)**:
-> - Added `get_swe_team_tasks()` to `xml_prompt_generator.py`
-> - Registered `swe_team_tasks` in `xml_coordinator.py` dispatch dict
->
-> **User-Initiated Check-In MVP (Session 233)**:
-> - Added `_check_in_with_user()` to `orchestrator.py` with WAITING_FEEDBACK state + configurable timeout
-> - 2 check-in call sites: between-task (with feedback injection) and post-completion
-> - Added `enable_checkins` + `checkin_timeout` config fields in `swe_team/config.py`
->
-> **Bug F: sender_id Validation (Session 234)**:
-> - Fixed `get_sender_id()` in `cosa_interface.py` to strip `::user_id` suffix from compound session IDs
->
-> **Commit**: 4510eb7
-
----
-
-> **✅ SESSIONS 219-225 COMMIT**: Factory safe parsing, progress_group_id persistence, training cleanup, SWE Team routing (2026.02.18)
-> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
->
-> ### Accomplishments
->
-> **Committed accumulated work from Lupin sessions 219-225** (11 files, +156/-122 lines):
->
-> **Factory ValueError Fix (Session 219)**:
-> - Added `_SEMANTIC_NONE` set + `_parse_optional_int()`/`_parse_optional_float()` safe parsing helpers in `agentic_job_factory.py`
-> - Replaced 6 raw `int()`/`float()` casts across all 5 agentic job types (deep research, podcast, research-to-podcast, claude code, swe team)
-> - Added `"timeout"` + `"default"` to expeditor skip guards at both batch and single paths
->
-> **progress_group_id Backend Persistence (Session 220 Checkpoint 3)**:
-> - Added `progress_group_id` column to `Notification` model (String(12), nullable, indexed)
-> - Wired `progress_group_id` through all 3 `create_notification()` call sites in notifications router
-> - Added `progress_group_id` + `job_id` to both serialization dicts (`get_sender_conversation` + `get_sender_conversation_by_date`)
->
-> **Training Pipeline Cleanup (Session 222)**:
-> - Deleted `write_agentic_job_ttv_split_to_jsonl()` + `get_agentic_job_train_test_validate_split()` (stale, unused)
-> - Refactored `build_agentic_job_training_prompts()` to config-driven dispatch via `_load_agentic_commands_config()` + `_get_placeholder_values_by_name()`
-> - Updated `xml_prompt_generator.py` to use enriched JSON config format
->
-> **SWE Team Notification Routing Fix (Session 225)**:
-> - Changed `agentic_job_base.py` `notify_progress()`/`notify_completion()` to import core `voice_io` instead of deep research `voice_io`
-> - Added `SESSION_ID = self.id_hash` in SWE Team job `_execute()` and `_execute_dry_run()` paths
-> - Added `progress_group_id` parameter to SWE Team `voice_io.notify()` wrapper
-> - Converted all 4 dispatch branches in `utils/voice_io.py` from positional to keyword arguments
->
-> **Commit**: 7a7ea21
-
----
-
-> **✅ SESSIONS 214-218 COMMIT**: SWE Team notifications/Surface 3, answer_is_correct, semantic match, Calculator bugs, PEFT OOM (2026.02.16)
-> **Branch**: `wip-v0.1.5-2026.02.16-tracking-lupin-work`
->
-> ### Accomplishments
->
-> **Committed accumulated work from Lupin sessions 214-218** (28 files, +1,268/-174 lines):
->
-> **SWE Team Notifications & Surface 3 (Sessions 214-218)**:
-> - 3-tier notification gap analysis (20 gaps): progress, escalation, job_id, artifacts, ResultMessage, state emission, contracts, decision proxy, ProgressLog
-> - Surface 2A/2B: SWE Team Job class, factory registration, FastAPI router, 22 tests + 6 mock scenarios
-> - Surface 3: Registered SWE Team in AGENTIC_AGENTS (5th agent), added `--user-visible-args` to CLI, created proxy profile
->
-> **answer_is_correct Tri-State Field (Session 215)**:
-> - Added `answer_is_correct` (True/False/None) to SolutionSnapshot + LanceDB schema
-> - Non-blocking async verification via `_fire_correctness_check_async()` in RunningFifoQueue
-> - Cache hits inherit stored value
->
-> **Semantic Match Simplification (Session 215)**:
-> - Removed 95% hard threshold floor, 3-tier decision (100% auto-accept, >=90% ask user, <90% skip to LLM)
-> - Commented out L3 gist match block, removed L4 threshold filter
->
-> **Calculator Bug Fixes (Session 214)**:
-> - MathAgent snapshot replay: missing `prompt_response_dict` copy-back
-> - "unitless" bug: prompt rule 6, unit validation guard, whole-number format check
->
-> **PEFT Resume OOM (Session 216)**: Documented as WILL NOT FIX (cold allocator, 16GB monolithic segment)
->
-> **PR #16 merged** → v0.1.4 tag created → new branch `wip-v0.1.5-2026.02.16-tracking-lupin-work`
->
-> **Commit**: 96606c8
-
----
-
-> **✅ SESSIONS 206-213 COMMIT**: SWE Team Delegation/Verification/Decision Proxy + PEFT Resume-from-Merged + GPU Memory Release (2026.02.14)
-> **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
->
-> ### Accomplishments
->
-> **Committed accumulated work from Lupin sessions 206-213** (34 files, +4,755/-375 lines):
->
-> **SWE Team Multi-Agent System (Sessions 206-207, 210)**:
-> - Phase 2: Lead→Coder delegation loop via Claude Agent SDK — `hooks.py` (notification/pre-tool/post-tool hooks), `state_files.py` (FeatureList + ProgressLog persistence), `_decompose_task()` → `_parse_task_specs()` → `_delegate_task()` pipeline, coder role activated (v0.2.0)
-> - Phase 3: Coder-Tester verification loop — `test_runner.py` (pytest subprocess via `asyncio.create_subprocess_exec`), `VerificationResult` model, `_verify_result()` + `_redelegate_with_feedback()`, MAX_VERIFICATION_ITERATIONS=3, tester role activated (v0.3.0)
-> - Phase 4: Trust-Aware Decision Proxy — 4-layer hybrid architecture:
->   - Extracted shared proxy infra to `agents/utils/proxy_agents/` (7 files): BaseStrategy protocol, BaseWebSocketListener, BaseResponder ABC, shared config, REST submitter, CLI args
->   - Built decision proxy framework in `agents/decision_proxy/` (13 files): trust mode, smart router, category classifier ABC, base decision strategy ABC, XML models, circuit breaker, trust tracker L1-L5 with time-weighted decay
->   - SWE engineering domain in `agents/swe_team/proxy/` (5 files): 6 engineering categories (deployment/testing/deps/architecture/destructive/general), keyword classifier with sender hints
->   - Decision store + ratification API: ProxyDecision + TrustState ORM models in `postgres_models.py`, repository with shadow/log/ratify/find_similar, FastAPI router (4 endpoints)
->   - Refactored `notification_proxy/config.py` for backward compatibility (re-export shared constants)
->
-> **PEFT Trainer Enhancements (Sessions 209, 213)**:
-> - `peft_trainer.py`: Added `--resume-from-merged` CLI arg — skips phases 1-3, uses existing merged adapter for phases 4-5 (post-validation, quantization)
-> - `peft_trainer.py`: Removed `run_pipeline_adhoc()` (170 lines hardcoded workaround) — replaced by new CLI flag
-> - `quantizer.py`: Added `release_gpu_memory()` — `model.cpu()` + GC + CUDA cache clear for post-quantization vLLM OOM fix
-> - `peft_trainer.py`: Cleanup block calls `release_gpu_memory()` before `del quantizer`
->
-> **Bug Fix: vLLM max_tokens overflow in PEFT validation**:
-> - `xml_coordinator.py`: Threads `max_new_tokens` param through to `CompletionClient.run()`
->
-> **Commit**: 357ca84
->
-> ---
-
-> **✅ SESSIONS 201-205 COMMIT**: Routing Command Normalization + Cache N/A Bug Fix + Similarity Confirmation Toggle + WebSocket Exception Fix + SWE Team Agent (2026.02.14)
-> **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
->
-> ### Accomplishments
->
-> **Committed accumulated work from Lupin sessions 201-205** (~11 files modified, 1 new package, +219/-74 lines):
->
-> **Routing Command Normalization (Sessions 201-205)**:
-> - Shortened verbose routing commands across 6 files: `"date and time"` → `"datetime"`, `"todo list"` → `"todo"`, `"automatic routing mode"` → `"automatic"`
-> - `date_and_time_agent.py`: Default routing_command updated
-> - `todo_list_agent.py`: Default routing_command updated
-> - `prompt_template_processor.py`: MODEL_MAPPING keys normalized
-> - `xml_parser_factory.py`: agent_model_map + formatter keys normalized
-> - `xml_models.py`: AgentRouterResponse valid_commands list normalized
-> - `todo_fifo_queue.py`: Backward-compatible `in` tuple/list checks for old + new command strings
-> - `llm_client_factory.py`: Smoke test prompt template key normalized
-> - `xml_coordinator.py`: Training augmentation_config keys normalized
->
-> **Bug Fix: Cache Re-Execution of Non-Executable Code — "N/A" Bug (Session 204)**:
-> - `solution_snapshot.py`: Changed code fallback from `"N/A"` to `[ "" ]` (correct `list[str]` type)
-> - `solution_snapshot.py`: Added empty-code guard in `run_code()` raising `ValueError` before subprocess spawn
-> - `running_fifo_queue.py`: `try/except ValueError` wrapper in `_format_cached_result()` for empty code
->
-> **Bug Fix: Missing WebSocket Event in Generic Exception Handler (Session 204)**:
-> - `running_fifo_queue.py`: Generic except block in `_process_job()` now emits `job_state_transition('run', 'dead')` with full metadata (error, timing, status) + TTS notification — matching `_handle_error_case()` pattern
->
-> **Bug Fix: Stopwatch API Mismatch in Cache Hit Path (Session 204)**:
-> - `running_fifo_queue.py`: Replaced non-existent `stop()` + `get_elapsed_millis()` with `get_delta_ms()`
->
-> **Similarity Confirmation Toggle — Runtime Configurable (Session 205)**:
-> - `todo_fifo_queue.py`: Check `similarity_confirmation_enabled` config before prompting user; auto-accept semantic match when disabled
-> - `rest/routers/system.py`: New GET/POST `/api/config/similarity-confirmation` endpoints with Pydantic models + `get_todo_queue()` dependency
->
-> **Dead Code Removal**:
-> - `todo_fifo_queue.py`: Removed unreachable `refactor` branch in math routing, removed defensive `hasattr(agent, 'id_hash')` check
->
-> ---
-
-> **✅ SESSIONS 190-200 COMMIT**: CJ Flow Bounded Jobs + 768-dim Embedding Standardization + Dead Job WebSocket Fix + Batch XML Model + Expeditor open_ended_batch Fix (2026.02.12)
-> **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
->
-> ### Accomplishments
->
-> **Committed accumulated work from Lupin sessions 190-200** (~38 files modified, +863/-189 lines):
->
-> **CJ Flow Bounded Job Packaging + Claude Code LORA Data (Session 197)**:
-> - `claude_code/job.py`: Externalized hardcoded defaults (max_turns=50, timeout_seconds=3600) to config with class-level caching
-> - `agentic_job_factory.py`: Registered ClaudeCodeJob in shared factory
-> - `claude_code_queue.py`: Router updated to use shared factory
-> - `agent_registry.py`: ClaudeCodeJob entry with display_name + user-visible-args
-> - CJ Flow branding propagated to 12 files (docstrings/comments only): agentic_job_base, queue_protocol, queue_consumer, running_fifo_queue, websocket_manager, 5 routers
-> - `xml_coordinator.py` + `xml_prompt_generator.py` + `xml_models.py`: Claude Code LORA training pipeline (66 templates, 1,500 samples)
->
-> **LanceDB Embedding Dimension Mismatch — 768 Standardization (Session 198)**:
-> - `embedding_manager.py`: Pass `dimensions=embedding_dim` to OpenAI API (MRL truncation)
-> - `embedding_provider.py`: Simplified `dimensions` + `code_dimensions` properties using centralized config
-> - All 6 LanceDB table classes: Simplified dimension init + added `_validate_embedding_dimensions()` auto-drop/recreate on schema mismatch
->   - canonical_synonyms_table, embedding_cache_table, input_and_output_table, lancedb_solution_manager, query_log_table, question_embeddings_table
->
-> **Dead Job Card WebSocket Fix (Session 199)**:
-> - `running_fifo_queue.py`: Added missing `emit_job_state_transition()` in `_handle_error_case()` for `run -> dead` transition with full error metadata
->
-> **Batch XML Model + Ampersand Escaping (Session 195)**:
-> - `notification_proxy/xml_models.py`: NEW `BatchScriptMatcherResponse` — first-class Pydantic XML model with nested `<entries><entry>` structure
-> - `llm_script_matcher.py`: Updated `_handle_batch()` to use new model
-> - `prompt_template_processor.py`: Registered batch model in `MODEL_MAPPING`
-> - `util_xml_pydantic.py`: Added `&` entity escaping in `from_xml()` for bare ampersands in LLM reasoning
->
-> **Expeditor open_ended_batch Fix (Session 200)**:
-> - `notifications.py`: Added `"open_ended_batch"` to `valid_response_types` list
-> - `notify_user_sync.py`: Enhanced HTTP error diagnostic — status code now in error string (`http_error_400`)
-> - `expeditor.py`: Updated expeditor notification flow
-> - `notification_proxy/voice_io.py`: Voice I/O enhancements
-> - `notification_proxy/config.py` + `responder.py`: Configuration updates
->
-> **Other**:
-> - `rest/middleware/api_key_auth.py`: Auth middleware additions
-> - `mock_job.py`: Expeditor test mode updates
-> - `llm_client_factory.py`: Client factory refinements
->
-> **Commit**: 399c991
->
-> ---
-
-> **✅ SESSIONS 182-189 COMMIT**: LLM Script Matcher + Data-Driven Sender IDs + CRUD Dedup Guards + Local Embedding Provider + vLLM Marlin Config (2026.02.12)
-> **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
->
-> ### Accomplishments
->
-> **Committed accumulated work from Lupin sessions 182-189** (~26 files modified/created):
->
-> **Notification Proxy LLM Script Matcher (Session 183)** — 3 new files:
-> - `xml_models.py` — `ScriptMatcherResponse` and `VerificationResponse` BaseXMLModel subclasses
-> - `strategies/llm_script_matcher.py` — `LlmScriptMatcherStrategy` drop-in replacement for `ExpediterRuleStrategy`, Phi-4 powered
-> - `verification.py` — `LlmAnswerVerifier` with exact-match bypass optimization
-> - `responder.py`: 3-tier strategy chain (script_matcher → rules → cloud)
-> - `__main__.py`: `--strategy` CLI flag for strategy selection
-> - `config.py`: 10 new constants for script matcher configuration
-> - `prompt_template_processor.py`: 2 `MODEL_MAPPING` entries
->
-> **Data-driven sender ID filtering (Session 187)**:
-> - Replaced hardcoded `EXPEDITER_SENDER_ID` with data-driven `sender_ids` field from Q&A script JSON
-> - `expediter_rules.py`: `accepted_senders` param + list-based `can_handle()`
-> - `config.py`: `DEFAULT_ACCEPTED_SENDERS` list + deprecated alias
-> - `responder.py`: Extract `sender_ids` from script, pass to strategies at construction
->
-> **CRUD dedup guards + live pipeline test (Session 189)**:
-> - `crud_operations.py`: Dedup guard in `add_item()`, multi-delete guard in `delete_item()`, infrastructure column rejection in `_validate_match_fields()`
-> - `schemas.py`: `DEDUP_KEYS` dict, `INFRASTRUCTURE_COLS` frozenset, `get_dedup_keys()` helper
-> - `dispatcher.py`: `"duplicate"` voice formatting
-> - `config.py`: `crud` profile in `TEST_PROFILES`
->
-> **Local embedding provider** (undocumented session):
-> - `memory/embedding_provider.py` (NEW) — Routing layer: "openai" → EmbeddingManager (1536 dims), "local" → CodeEmbeddingEngine/ProseEmbeddingEngine (768 dims)
-> - `memory/local_embedding_engine.py` (NEW) — CodeEmbeddingEngine (nomic-ai/CodeRankEmbed) + ProseEmbeddingEngine (nomic-embed-text-v1.5 Matryoshka)
-> - All 7 memory tables: Configurable embedding dimension from provider config (hardcoded 1536 → dynamic)
-> - `todo_fifo_queue.py`: Switched from `EmbeddingManager` to `EmbeddingProvider` for embedding generation
-> - `requirements.txt`: Added sentence-transformers, nomic, llama-index-embeddings-huggingface/nomic
->
-> **vLLM PEFT pipeline improvements (Sessions 182, 184)**:
-> - `llama_3_2_3b.py`: `"quantization": "gptq_marlin"` in vllm_config, expanded config structure
-> - `peft_trainer.py`: `quantization` parameter + `verbose_server` flag for Marlin kernel verification
->
-> **Commit**: 9f807aa
->
-> ---
-
-> **✅ SESSIONS 168-180 COMMIT**: Notification Proxy Agent + Calculator Pipeline job_id + JWT WebSocket Fix + vLLM V1 Engine Compatibility (2026.02.10)
-> **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
->
-> ### Accomplishments
->
-> **Committed accumulated work from Lupin sessions 168-180** (~20 files modified/created):
->
-> **New Notification Proxy Agent (Session 171)** — 10 new files:
-> - `agents/notification_proxy/` package — standalone CLI agent that connects via WebSocket, subscribes to notification events, auto-answers expediter questions using hybrid strategy (rules for known patterns, LLM fallback for unknowns)
-> - `listener.py` — async WebSocket client with auth, ping/pong, exponential backoff reconnection
-> - `responder.py` — notification router + REST API response submission
-> - `strategies/expediter_rules.py` — rule-based keyword matching with 4 test profiles
-> - `strategies/llm_fallback.py` — Anthropic SDK fallback
-> - `config.py` — 2-tier credential resolution (Session 173), test profiles, `all_agents` union profile (Session 179)
->
-> **Calculator agent pipeline (Sessions 161, 172, 177)**:
-> - `SolutionSnapshot`: CalculatorAgent formatter bypass (skip LLM reformatting), `str()` wrapper on answer field
-> - `push_job()` returns `Dict` with `job_id` at all 5 return sites in todo_fifo_queue.py
-> - `queues.py`: Extract `job_id` from dict return, include in `/api/push` API response
-> - `queue_extensions.py`: Double-scoping prevention in `create_compound_hash()`
-> - `xml_coordinator.py`: Added `"agent router go to calculator": { "factor": 3 }` to augmentation_config
->
-> **JWT WebSocket auth fix (Session 173)**:
-> - `websocket.py`: Strip `Bearer ` prefix before `verify_token()` — REST endpoints got this from FastAPI's HTTPBearer, WebSocket needed manual handling
->
-> **vLLM V1 engine compatibility (post-0.8.5 upgrade)**:
-> - `ministral_8b.py`: Added `max_num_seqs=64` to prevent V1 engine warmup OOM
-> - `qwen3_4b.py`: Reduced `gpu_memory_utilization` 0.90→0.70, added `tensor_parallel_size=1`, `max_num_seqs=64`
-> - `peft_trainer.py`: Config-driven TP size override (was always auto-detect), `max_num_seqs` passthrough to vLLM serve command
->
-> **Training pipeline fix**:
-> - `xml_coordinator.py`: Pass `max_tokens=max_new_tokens` to `llm_client.run()` — was dropping parameter, causing context overflow
->
-> **Expediter rules fix (Session 179)**:
-> - Keyword ordering fix in `expediter_rules.py`
->
-> **Commit**: 1b58d95
->
-> ---
-
-> **✅ SESSIONS 155-167 COMMIT**: Batch Questions + PEFT Multi-LLM + Calculator Agent + CRUD Delete Fix + Expeditor Enhancements (2026.02.09)
-> **Owner**: claude.code@cosa.deepily.ai#b726f9e6
-> **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
->
-> ### Accomplishments
->
-> **Committed accumulated work from Lupin sessions 155-167** (~20 files modified, 2 new):
->
-> **Batch open-ended questions + expeditor defaults (Session 156)**:
-> - New `OPEN_ENDED_BATCH` ResponseType in notification_models.py
-> - `format_open_ended_batch_for_tts()` and `convert_open_ended_batch_for_api()` in notification_utils.py
-> - `_batch_collect_args()` in expeditor.py — partitions batchable vs special-handler args
-> - `_resolve_default()` three-tier override chain (config INI > agent_registry fallback_defaults > None)
-> - `fallback_defaults` dict added to each agent entry in agent_registry.py
->
-> **PEFT dual quantization + multi-LLM support (Session 157)**:
-> - `--quantize-bits {both,4,8}` loop producing separate quantized models per bit width
-> - `_write_training_summary_to_file()` markdown dashboard with YAML frontmatter + 4 tables
-> - Qwen3-4B-Base LoRA config with Alpaca prompt template (new `qwen3_4b.py`)
-> - Model registered in `MODEL_CONFIG_MAP` and `supported_model_names` (model_config_loader.py)
-> - KLUDGE vendor fallback in llm_client_factory.py for HF model ID parsing
-> - Fixed post-training validation model name — bare path for vLLM (4 call sites)
-> - Bash executable fix for venv activation in `_start_vllm_server()`
->
-> **CRITICAL delete bug fix (Session 159)**:
-> - `_validate_match_fields()` helper in crud_operations.py — returns error if key doesn't exist in DataFrame columns
-> - Guards added to both `delete_item()` and `update_item()` preventing silent all-row deletion
->
-> **Expeditor job_id threading + request context (Session 160)**:
-> - `_build_request_context()` method for human-readable notification card abstracts
-> - `job_id` threaded through all notification calls (_ask_for_confirmation, _ask_for_arg, _batch_collect_args)
-> - `display_name` added to agent_registry.py entries
-> - DIAG logging gate: 8-line WebSocket state dump wrapped behind `app_debug and app_verbose`
-> - Safer default: `response_default="no"` in `_ask_for_confirmation()`
->
-> **New Calculator agent (Session 161)**:
-> - `agents/calculator/` package — CalculatorAgent with `run_prompt_with_fallback()` + `_delegate_to_math_agent()`
-> - CalcIntent XML model with `get_example_for_template()` fix (literal JSON braces → descriptive text)
->
-> **Expeditor timeout chain fix (Session 163)**:
-> - Raised notification timeouts: `_ask_for_arg` 60→180s, `_ask_for_confirmation` 60→180s, `_batch_collect_args` 120→300s
-> - Diagnostic `[Expeditor]` debug prints after all 3 `notify_user_sync` calls
-> - API default timeout 30→120s in notifications.py
->
-> **Commit**: 0f139aa
->
-> ---
-
-> **✅ SESSIONS 147-154 COMMIT**: Audience Normalization + Expeditor Enhancements + PEFT Dashboard + Principled Augmentation (2026.02.07)
-> **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
->
-> ### Accomplishments
->
-> **Committed accumulated work from Lupin sessions 147-154** (30 files, +1,101/-214 lines):
->
-> **Audience normalization across all agents (Session 149)**:
-> - Renamed `target_audience` → `audience`, default `"expert"` → `"academic"` across all 3 pipelines
-> - Wired `audience`/`audience_context` through job → factory → REST router → agent registry → prompts
-> - Added `AUDIENCE_DIALOGUE_GUIDELINES` dict to podcast `script_generation.py`
-> - Updated `PodcastConfig`, CLI args, REST models, and agent_base.py
->
-> **Runtime Argument Expeditor enhancements (Sessions 151, 154)**:
-> - Confirmation loop: `_confirm_and_iterate()` + `_parse_modification()` in expeditor.py
-> - `ArgConfirmationResponse` BaseXMLModel with `is_approval()`/`is_cancel()`/`is_modify()` helpers
-> - User-visible args whitelist: agents publish `USER_VISIBLE_ARGS`, expeditor consumes via `get_user_visible_args()`
-> - Changed confirmation from blacklist (hide system_provided) to whitelist (show only user-visible)
-> - Added `--user-visible-args` flag to all 3 agent CLIs
->
-> **PEFT training improvements (Sessions 148, 152)**:
-> - Results dashboard: 4 comparison tables (overall, per-command, quantization, timing) in peft_trainer.py
-> - Augmentation factor loop: `augmentation_config` parameter per command in xml_coordinator.py
-> - `skip_empty`/`skip_comments` for `get_file_as_list()` in util.py
-> - Automatic routing mode handler in todo_fifo_queue.py
->
-> **CRUD pipeline alignment (Session 148 CP3)**:
-> - Replaced ad-hoc placeholder with `{{PYDANTIC_XML_EXAMPLE}}` marker in prompt_template_processor
-> - Registered `CRUDIntent` in `MODEL_MAPPING`
-> - Generic placeholders for unbiased LLM XML structure
->
-> **Commit**: bebdac7
->
-> ---
-
-> **✅ SESSIONS 136-146 COMMIT**: DataFrame CRUD System + PEFT Training + Async Fix (2026.02.06)
-> **Owner**: claude.code@cosa.deepily.ai#5d7d4301
-> **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
->
-> ### Accomplishments
->
-> **Committed accumulated work from Lupin sessions 136-146** (16 files, +2,746/-80 lines):
->
-> **New `crud_for_dataframes/` package (10 files)**:
-> - Phase 1 storage layer: schemas, xml_models, storage, crud_operations (Session 137)
-> - Phase 2 agent layer: agent, todo_crud_agent, calendar_crud_agent, dispatcher, intent_extractor (Session 143)
->
-> **Queue integration (Phase 3, Session 143)**:
-> - Feature-flag routing swap: TodoCrudAgent/CalendarCrudAgent replace legacy agents in todo_fifo_queue.py
-> - Cache skip + serialization exclusion for mutable CRUD data in running_fifo_queue.py
-> - Voice confirmation for destructive operations (delete, update) via notify_user_sync
-> - Agentic command disambiguation with product names (Deep Dive, PodMaker, Doc-to-Pod)
->
-> **PEFT training improvements (Sessions 131, 136, 142, 146)**:
-> - Stratified validation sampling (equal per command instead of random) in peft_trainer.py
-> - File-loaded templates replacing 10 hardcoded patterns with 65+ per command in xml_coordinator.py
-> - Fixed DataFrameGroupBy.apply DeprecationWarning (include_groups=False)
-> - GPU memory release logging moved to after actual release
->
-> **Bug fixes (Sessions 142, 144)**:
-> - Fixed async event loop deadlock in expeditor test mode (asyncio.to_thread in mock_job.py)
-> - Fixed expeditor voice prompt priority (HIGH) and suppress_ding (False) in expeditor.py
->
-> **Commit**: 3adb85e
->
-> ---
-
-> **✅ SESSION 135 COMPLETE**: Branch Transition v0.1.3 → v0.1.4 (2026.02.05)
-> **Owner**: claude.code@cosa.deepily.ai#6aeca163
-> **Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
->
-> ### Accomplishments
->
-> **Completed branch transition from v0.1.3 to v0.1.4 via PR merge workflow**:
-> - Stashed 11 modified + 3 untracked WIP files (v0.1.4 in-progress work)
-> - Created PR #15: "COSA v0.1.3: Sessions 108-128" (8 commits, 55 files, +4,316/-1,380 lines)
-> - PR merged on GitHub, fast-forwarded main to `8a596ac`
-> - Created new branch `wip-v0.1.4-2026.02.05-tracking-lupin-work` from updated main
-> - Restored stashed WIP changes cleanly (no conflicts)
->
-> **PR #15**: https://github.com/deepily/cosa/pull/15
-> **WIP files restored**: RuntimeArgumentExpeditor, agentic_job_factory, training pipeline improvements, router updates
->
-> ---
-
 ## Archive Navigation
 
 ### Monthly Archives
+- **[Feb 2026 (Feb 5-26)](history/2026-02-05-to-26-history.md)** - Sessions 135-276: DataFrame CRUD, SWE Team Phases 2-4, Decision Proxy, Notification Proxy, Prediction Engine, voice refactoring, preference learning
 - **[Nov 2025 - Feb 2026 (Nov 8, 2025 - Feb 3, 2026)](history/2025-11-08-to-2026-02-03-history.md)** - Sessions 56-126: Conversation Identity, Deep Research Agent, Podcast Generator, Queue Protocol, Directory Analyzer, Lupin sync entries
 - **[October 2025 (Oct 4-30)](history/2025-10-history.md)** - Planning workflows, CLI modernization, history management, branch analyzer refactoring (9 sessions)
 - **[June-October 2025 (Jun 27 - Oct 3)](history/2025-06-27-to-10-03-history.md)** - Authentication infrastructure, WebSocket implementation, notification system refactor, testing framework (20 sessions)
 
 ### Project Context
 - **Project Span**: June 2025 - Present (COSA framework within Lupin project)
-- **Current Branch**: `wip-v0.1.4-2026.02.05-tracking-lupin-work`
+- **Current Branch**: `wip-v0.1.6-2026.03.12-tracking-lupin-work`
 - **Architecture**: Collection of Small Agents (COSA) for Lupin FastAPI application
 - **Parent Project**: Lupin (located at `../..`)

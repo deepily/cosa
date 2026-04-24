@@ -124,6 +124,77 @@ AGENTIC_AGENTS = {
             "task_type"        : "BOUNDED",
         },
     },
+    "agent router go to presentation generator" : {
+        "job_prefix"         : "pr",
+        "cli_module"         : "cosa.agents.presentation_generator",
+        "job_class_path"     : "cosa.agents.presentation_generator.job.PresentationGeneratorJob",
+        "display_name"       : "Presentation Generator",
+        "required_user_args" : [ "source" ],
+        "system_provided"    : [ "user_id", "user_email", "session_id" ],
+        "arg_mapping"        : {
+            "source"                  : "source",
+            "source_path"             : "source",
+            "document"                : "source",
+            "file"                    : "source",
+            "doc"                     : "source",
+            "target_duration_minutes" : "target_duration_minutes",
+            "duration"                : "target_duration_minutes",
+            "minutes"                 : "target_duration_minutes",
+            "audience"                : "audience",
+            "audience_context"        : "audience_context",
+            "theme"                   : "theme",
+            "render_only"             : "render_only",
+            "render"                  : "render_only",
+        },
+        "fallback_questions" : {
+            "source"                  : "Which document should I convert to a presentation, or which YAML to re-render? Describe it or say the filename.",
+            "target_duration_minutes" : "How long should the presentation be in minutes? Say a number, or 'default' for 15 minutes.",
+            "audience"                : "Who is the target audience? Options: beginner, general, expert, or academic.",
+            "audience_context"        : "Any additional context about the audience? Say 'none' to skip.",
+            "theme"                   : "Which presentation theme? Say 'default' or a theme name.",
+        },
+        "fallback_defaults" : {
+            "target_duration_minutes" : "default",
+            "audience"                : "general",
+            "audience_context"        : "none",
+            "theme"                   : "default",
+        },
+        "special_handlers" : {
+            "source" : "fuzzy_file_match",
+        },
+    },
+    "agent router go to research to presentation" : {
+        "job_prefix"         : "rx",
+        "cli_module"         : "cosa.agents.deep_research_to_presentation",
+        "job_class_path"     : "cosa.agents.deep_research_to_presentation.job.DeepResearchToPresentationJob",
+        "display_name"       : "Research to Presentation",
+        "required_user_args" : [ "query" ],
+        "system_provided"    : [ "user_email", "session_id", "user_id" ],
+        "arg_mapping"        : {
+            "topic"                   : "query",
+            "query"                   : "query",
+            "question"                : "query",
+            "budget"                  : "budget",
+            "target_duration_minutes" : "target_duration_minutes",
+            "duration"                : "target_duration_minutes",
+            "theme"                   : "theme",
+            "audience"                : "audience",
+            "audience_context"        : "audience_context",
+        },
+        "fallback_questions" : {
+            "query"                   : "What topic should I research and present? Describe the topic or question.",
+            "budget"                  : "Research budget in USD? Say a number, or 'default' for unlimited.",
+            "target_duration_minutes" : "How long should the presentation be? Say minutes, or 'default' for 15.",
+            "theme"                   : "Presentation theme? Say 'default' or a theme name.",
+        },
+        "fallback_defaults" : {
+            "budget"                  : "default",
+            "target_duration_minutes" : "default",
+            "theme"                   : "default",
+            "audience"                : "general",
+            "audience_context"        : "none",
+        },
+    },
     "agent router go to swe team" : {
         "job_prefix"         : "swe",
         "cli_module"         : "cosa.agents.swe_team",
@@ -148,6 +219,87 @@ AGENTIC_AGENTS = {
             "budget"           : "no limit",
             "timeout"          : "default",
             "dry_run"          : "no",
+        },
+    },
+
+    "agent router go to bug fix expediter" : {
+        "job_prefix"         : "bfe",
+        "cli_module"         : "cosa.agents.bug_fix_expediter",
+        "job_class_path"     : "cosa.agents.bug_fix_expediter.job.BugFixExpediterJob",
+        "display_name"       : "Bug Fix Expediter",
+        "required_user_args" : [ "dead_job_id" ],
+        "system_provided"    : [ "user_id", "user_email", "session_id" ],
+        "arg_mapping"        : {
+            "dead_job_id"   : "dead_job_id",
+            "job_id"        : "dead_job_id",
+            "failed_job"    : "dead_job_id",
+            "extra_context" : "extra_context",
+            "context"       : "extra_context",
+            "dry_run"       : "dry_run",
+        },
+        "fallback_questions" : {
+            "dead_job_id"   : "Which failed job would you like me to fix? Provide the job ID.",
+            "extra_context" : "Any additional context about the failure? Say 'none' to skip.",
+            "dry_run"       : "Would you like to enable dry run mode? Say 'yes' or 'no'.",
+        },
+        "fallback_defaults" : {
+            "extra_context" : "none",
+            "dry_run"       : "no",
+        },
+    },
+
+    "agent router go to test fix expediter resume" : {
+        # Voice-driven resume of a stalled Test Fix Expediter job.
+        # Session 9056c113 doc 16 Phase 2 — wires into existing REST endpoint
+        # POST /api/test-fix-expediter/resume-from via the resume_job() factory.
+        # The resume_from arg is resolved via special_handler "tfe_checkpoint_match"
+        # which fuzzy-matches user description against stalled/recent TFE jobs.
+        "job_prefix"         : "tfe",   # resumed job reuses TFE prefix
+        "cli_module"         : "cosa.agents.test_fix_expediter",
+        "job_class_path"     : "cosa.agents.test_fix_expediter.job.TestFixExpediterJob",
+        "display_name"       : "TFE Resume",
+        "required_user_args" : [ "resume_from" ],
+        "system_provided"    : [ "user_id", "user_email", "session_id" ],
+        "arg_mapping"        : {
+            "resume_from"       : "resume_from",
+            "job_id"            : "resume_from",
+            "plan_path"         : "resume_from",
+            "checkpoint"        : "resume_from",
+            "description"       : "resume_from",
+        },
+        "special_handlers"   : {
+            "resume_from" : "tfe_checkpoint_match",
+        },
+        "fallback_questions" : {
+            "resume_from" : "Which stalled TFE job would you like to resume? Describe it, paste a job ID (tfe-*), or paste a plan doc path.",
+        },
+        "fallback_defaults" : {
+            # No defaults — resume_from is a required arg with no safe fallback.
+        },
+    },
+
+    "agent router go to test suite" : {
+        "job_prefix"         : "ts",
+        "cli_module"         : None,
+        "job_class_path"     : "cosa.agents.test_suite.job.TestSuiteJob",
+        "display_name"       : "Test Suite",
+        "required_user_args" : [],
+        "system_provided"    : [ "user_id", "user_email", "session_id" ],
+        "arg_mapping"        : {
+            "test_types"  : "test_types",
+            "suites"      : "test_types",
+            "pytest_args" : "pytest_args",
+            "dry_run"     : "dry_run",
+        },
+        "fallback_questions" : {
+            "test_types"  : "Which test suites? Options: integration, e2e, or both.",
+            "pytest_args" : "Any extra pytest arguments? Say 'none' to skip.",
+            "dry_run"     : "Would you like to enable dry run mode? Say 'yes' or 'no'.",
+        },
+        "fallback_defaults" : {
+            "test_types"  : "integration,e2e",
+            "pytest_args" : "none",
+            "dry_run"     : "no",
         },
     },
 }
@@ -274,7 +426,7 @@ def quick_smoke_test():
     # Test 1: Registry structure
     print( "\n1. Testing registry structure..." )
     try:
-        assert len( AGENTIC_AGENTS ) == 5, f"Expected 5 agents, got {len( AGENTIC_AGENTS )}"
+        assert len( AGENTIC_AGENTS ) == 10, f"Expected 10 agents, got {len( AGENTIC_AGENTS )}"
         for key, entry in AGENTIC_AGENTS.items():
             assert "cli_module" in entry, f"Missing cli_module in {key}"
             assert "required_user_args" in entry, f"Missing required_user_args in {key}"

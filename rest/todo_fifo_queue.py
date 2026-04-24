@@ -34,6 +34,7 @@ from cosa.agents.io_models.utils.util_xml_pydantic import XMLParsingError
 from datetime import datetime
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.rest.queue_extensions import user_job_tracker
+from cosa.rest.job_state import JobState
 from cosa.rest.queue_util import emit_job_state_transition
 from cosa.rest.queue_protocol import is_queueable_job
 
@@ -75,17 +76,23 @@ MODE_METADATA = {
     "research_to_podcast": { "display_name": "Research to Podcast", "description": "Convert existing research to podcast" },
     "claude_code"        : { "display_name": "Claude Code",         "description": "Run a coding task" },
     "swe_team"           : { "display_name": "SWE Team",            "description": "Multi-agent engineering team" },
+    "presentation"              : { "display_name": "Presentation",              "description": "Generate slides from a document" },
+    "research_to_presentation"  : { "display_name": "Research to Presentation",  "description": "Research a topic and create slides" },
+    "test_suite"                : { "display_name": "Test Suite",                "description": "Run integration and E2E tests" },
 }
 
 # Agentic mode keys → AGENTIC_AGENTS routing command strings
 # When user selects an agentic mode, this maps directly to the command
 # that enters the `elif command in AGENTIC_AGENTS:` branch
 AGENTIC_MODE_MAP = {
-    "deep_research"      : "agent router go to deep research",
-    "podcast"            : "agent router go to podcast generator",
-    "research_to_podcast": "agent router go to research to podcast",
-    "claude_code"        : "agent router go to claude code",
-    "swe_team"           : "agent router go to swe team",
+    "deep_research"            : "agent router go to deep research",
+    "podcast"                  : "agent router go to podcast generator",
+    "research_to_podcast"      : "agent router go to research to podcast",
+    "claude_code"              : "agent router go to claude code",
+    "swe_team"                 : "agent router go to swe team",
+    "presentation"             : "agent router go to presentation generator",
+    "research_to_presentation" : "agent router go to research to presentation",
+    "test_suite"               : "agent router go to test suite",
 }
 
 class TodoFifoQueue( FifoQueue ):
@@ -126,8 +133,8 @@ class TodoFifoQueue( FifoQueue ):
         self.config_mgr          = config_mgr
         self.emit_speech_callback = emit_speech_callback
         
-        self.auto_debug   = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
-        self.inject_bugs  = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
+        self.auto_debug   = False if config_mgr is None else config_mgr.get( "debug auto",  default=False, return_type="boolean" )
+        self.inject_bugs  = False if config_mgr is None else config_mgr.get( "debug inject bugs", default=False, return_type="boolean" )
         
         # Initialize LLM client factory for v010 compatibility
         self.llm_factory = LlmClientFactory( debug=debug, verbose=verbose )
@@ -488,7 +495,7 @@ class TodoFifoQueue( FifoQueue ):
                 # Top-1 + confirm strategy: no threshold filtering — all results returned by manager
                 # threshold_question = self.config_mgr.get( "similarity_threshold_question",      default=98.0, return_type="float" )  # OBSOLETE
                 # threshold_gist     = self.config_mgr.get( "similarity_threshold_question_gist", default=95.0, return_type="float" )  # OBSOLETE
-                threshold_confirmation = self.config_mgr.get( "similarity_threshold_confirmation", default=90.0, return_type="float" )
+                threshold_confirmation = self.config_mgr.get( "similarity threshold confirmation", default=90.0, return_type="float" )
                 print( f"push_job(): Top-1 + confirm strategy (ask floor: {threshold_confirmation}%)" )
 
                 # We're searching for similar snapshots without any salutations prepended to the question.
@@ -532,7 +539,7 @@ class TodoFifoQueue( FifoQueue ):
 
             elif best_score >= threshold_confirmation:
                 # Good enough to ask — confirm with user (score >= 90%)
-                confirmation_enabled = self.config_mgr.get( "similarity_confirmation_enabled", default=True, return_type="boolean" )
+                confirmation_enabled = self.config_mgr.get( "similarity confirmation enabled", default=True, return_type="boolean" )
 
                 if confirmation_enabled:
 
@@ -932,11 +939,16 @@ class TodoFifoQueue( FifoQueue ):
 
     # Product name mapping for agentic command disambiguation
     PRODUCT_NAMES = {
-        "agent router go to deep research"      : "Deep Dive (investigate a topic)",
-        "agent router go to podcast generator"   : "PodMaker (create a podcast from a topic)",
-        "agent router go to research to podcast" : "Doc-to-Pod (convert existing research to podcast)",
-        "agent router go to claude code"         : "Claude Code (run a coding task)",
-        "agent router go to swe team"            : "SWE Team (multi-agent engineering team)",
+        "agent router go to deep research"             : "Deep Dive (investigate a topic)",
+        "agent router go to podcast generator"         : "PodMaker (create a podcast from a topic)",
+        "agent router go to research to podcast"       : "Doc-to-Pod (convert existing research to podcast)",
+        "agent router go to claude code"               : "Claude Code (run a coding task)",
+        "agent router go to presentation generator"    : "SlideCraft (create a presentation from a document)",
+        "agent router go to research to presentation"  : "Research-to-Slides (research a topic and create a presentation)",
+        "agent router go to swe team"                  : "SWE Team (multi-agent engineering team)",
+        "agent router go to bug fix expediter"         : "Bug Fix Expediter (diagnose and fix a failed job)",
+        "agent router go to test suite"                : "TestRunner (run integration and E2E test suites)",
+        "agent router go to test fix expediter resume" : "Test Fix Expediter Resume (resume a stalled TFE job)",
     }
 
     def _confirm_agentic_routing( self, command, args, user_id, user_email, original_question ):
@@ -1066,9 +1078,10 @@ class TodoFifoQueue( FifoQueue ):
             'agent_type'    : display_name,
             'timestamp'     : du.get_current_time(),
             'status'        : 'pending',
-            'expediting'    : True
+            'expediting'    : True,
+            'user_email'    : user_email
         }
-        emit_job_state_transition( self.websocket_mgr, spec_id, 'pending', 'todo', user_id, spec_metadata )
+        emit_job_state_transition( self.websocket_mgr, spec_id, JobState.PENDING, JobState.QUEUED, user_id, spec_metadata )
 
         if self.debug:
             print( f"[TODO-QUEUE] Speculative card emitted: {spec_id} (expediting=True)" )
@@ -1092,10 +1105,23 @@ class TodoFifoQueue( FifoQueue ):
 
         # ── Step 4: Handle cancel/timeout ────────────────────────────────
         if args_dict is None:
-            emit_job_state_transition( self.websocket_mgr, spec_id, 'todo', 'dead', user_id )
+            emit_job_state_transition( self.websocket_mgr, spec_id, JobState.QUEUED, JobState.CANCELLED, user_id )
             self.user_job_tracker.remove_job( spec_id )
             self._notify( "Job cancelled.", target_user=user_email )
             return "Agentic job cancelled by user or timeout."
+
+        # ── Step 4.5: Extract runtime scheduling args (not agent-specific) ──
+        scheduled_at_raw = args_dict.pop( "scheduled_at", None )
+        monopolize_raw   = args_dict.pop( "monopolize", None )
+
+        # Normalize voice-path defaults: "immediately" → None, "no"/"yes" → bool
+        if scheduled_at_raw and str( scheduled_at_raw ).lower() in ( "immediately", "now", "none" ):
+            scheduled_at_raw = None
+
+        if isinstance( monopolize_raw, str ):
+            monopolize_raw = monopolize_raw.lower() in ( "yes", "true", "1" )
+        else:
+            monopolize_raw = bool( monopolize_raw ) if monopolize_raw else False
 
         # ── Step 5: Create real job and inherit speculative ID ────────────
         job = create_agentic_job(
@@ -1109,13 +1135,17 @@ class TodoFifoQueue( FifoQueue ):
         )
 
         if job is None:
-            emit_job_state_transition( self.websocket_mgr, spec_id, 'todo', 'dead', user_id )
+            emit_job_state_transition( self.websocket_mgr, spec_id, JobState.QUEUED, JobState.FAILED, user_id )
             self.user_job_tracker.remove_job( spec_id )
             self._notify( "Failed to create job.", target_user=user_email )
             return "Failed to create agentic job."
 
         # Override the job's auto-generated ID with the speculative ID
         job.id_hash = spec_id
+
+        # Apply runtime scheduling attributes (CJ Flow timed execution + monopolize)
+        if scheduled_at_raw: job.scheduled_at = scheduled_at_raw
+        if monopolize_raw:   job.monopolize   = monopolize_raw
 
         # Ding for new job
         self.websocket_mgr.emit( 'notification_sound_update', { 'soundFile': '/static/gentle-gong.mp3' } )
@@ -1126,6 +1156,108 @@ class TodoFifoQueue( FifoQueue ):
         msg = f"New {job.JOB_TYPE} job submitted."
         self._notify( msg, job=job )
         return msg
+
+    def push_job_agentic(
+        self,
+        routing_command : str,
+        args_dict       : Dict,
+        websocket_id    : str,
+        user_id         : str,
+        user_email      : str,
+        question        : Optional[ str ] = None,
+        scheduled_at    : Optional[ str ] = None,
+        monopolize      : bool = False,
+    ) -> Dict:
+        """
+        Submit an agentic job with explicit routing_command + args, bypassing
+        the runtime argument expeditor entirely.
+
+        Designed for unattended / service-to-service job submission (E2E test
+        harnesses, CLI tools, downstream agents). The caller supplies all
+        required args up-front; no interactive Q&A is triggered. If the agent
+        constructor rejects the args, the factory returns None and this method
+        returns an error result.
+
+        Contrast with `push_job` (the voice/UI /api/push path) which runs the
+        expeditor to fill arg gaps interactively.
+
+        Requires:
+            - routing_command matches one of the branches in create_agentic_job
+            - args_dict is a dict (may be empty; agent constructor validates)
+            - websocket_id, user_id, user_email are non-empty strings
+
+        Ensures:
+            - Returns dict with "message" (str) and "job_id" (str or None)
+            - On success: job is pushed to the todo queue and UI state transitions
+              are emitted (pending→todo) with the same flow as _handle_agentic_command
+            - On unknown command or construction failure: returns error message
+              with job_id=None and emits no state transitions
+        """
+        agent_entry = AGENTIC_AGENTS.get( routing_command, {} )
+        job_prefix  = agent_entry.get( "job_prefix", "aj" )
+
+        # Speculative card for UI consistency with /api/push flow
+        spec_id      = f"{job_prefix}-{uuid.uuid4().hex[ :8 ]}"
+        spec_id      = self.user_job_tracker.register_scoped_job( spec_id, user_id, websocket_id )
+        display_name = agent_entry.get( "display_name", routing_command.replace( "agent router go to ", "" ) )
+        display_text = question or routing_command
+
+        spec_metadata = {
+            'question_text' : display_text,
+            'agent_type'    : display_name,
+            'timestamp'     : du.get_current_time(),
+            'status'        : 'pending',
+            'expediting'    : False,
+            'user_email'    : user_email,
+        }
+        emit_job_state_transition(
+            self.websocket_mgr, spec_id, JobState.PENDING, JobState.QUEUED, user_id, spec_metadata
+        )
+
+        # Inject system args the factory relies on (mirrors expeditor behavior)
+        args_dict = dict( args_dict ) if args_dict else { }
+        args_dict.setdefault( "no_confirm", True )
+
+        try:
+            job = create_agentic_job(
+                command    = routing_command,
+                args_dict  = args_dict,
+                user_id    = user_id,
+                user_email = user_email,
+                session_id = websocket_id,
+                debug      = self.debug,
+                verbose    = self.verbose,
+            )
+        except Exception as e:
+            emit_job_state_transition( self.websocket_mgr, spec_id, JobState.QUEUED, JobState.FAILED, user_id )
+            self.user_job_tracker.remove_job( spec_id )
+            err = f"Agent construction failed: {type( e ).__name__}: {e}"
+            self._notify( err, target_user=user_email )
+            return { "message": err, "job_id": None }
+
+        if job is None:
+            emit_job_state_transition( self.websocket_mgr, spec_id, JobState.QUEUED, JobState.FAILED, user_id )
+            self.user_job_tracker.remove_job( spec_id )
+            msg = f"Unknown routing_command: {routing_command!r}"
+            self._notify( msg, target_user=user_email )
+            return { "message": msg, "job_id": None }
+
+        # Override the job's auto-generated id_hash with the speculative ID so
+        # the UI card that was already emitted matches the real job.
+        job.id_hash = spec_id
+
+        # Runtime scheduling attributes (CJ Flow timed execution + monopolize)
+        if scheduled_at: job.scheduled_at = scheduled_at
+        if monopolize:   job.monopolize   = True
+
+        # Ding for new job (same UX as voice path)
+        self.websocket_mgr.emit( 'notification_sound_update', { 'soundFile': '/static/gentle-gong.mp3' } )
+
+        self.push( job )
+
+        msg = f"New {job.JOB_TYPE} job submitted via /api/push-agentic (no expeditor)."
+        self._notify( msg, job=job )
+        return { "message": msg, "job_id": spec_id }
 
     def push( self, item: Any ) -> None:
         """
@@ -1153,15 +1285,45 @@ class TodoFifoQueue( FifoQueue ):
         user_id = item.user_id
 
         metadata = {
-            'question_text' : item.last_question_asked,
-            'agent_type'    : item.job_type,
-            'timestamp'     : item.created_date
+            'question_text'    : item.last_question_asked,
+            'agent_type'       : item.job_type,
+            'timestamp'        : item.created_date,
+            'scheduled_at'     : item.scheduled_at,
+            'monopolize'       : item.monopolize,
+            'paused'           : item.state == JobState.PAUSED,
+            'user_email'       : item.user_email,
+            'session_id'       : item.session_id,
+            'routing_command'  : item.routing_command,
+            'original_args'    : item.original_args,
         }
-        emit_job_state_transition( self.websocket_mgr, item.id_hash, 'pending', 'todo', user_id, metadata )
+        emit_job_state_transition( self.websocket_mgr, item.id_hash, JobState.PENDING, JobState.QUEUED, user_id, metadata )
 
         if self.debug:
             print( f"[TODO-QUEUE] Added job, emitted pending→todo, and notified consumer: {item.id_hash}" )
-    
+
+    def delete_by_id_hash( self, id_hash: str ) -> bool:
+        """
+        Override parent's delete to notify consumer thread when a job is removed.
+
+        When a timed job is deleted while the consumer is sleeping until its
+        scheduled_at, the consumer needs to wake up and recalculate its timeout.
+
+        Requires:
+            - id_hash is a string
+
+        Ensures:
+            - Item is removed via parent method
+            - Consumer thread is notified to recalculate eligibility
+
+        Returns:
+            - bool: True if item was found and deleted, False otherwise
+        """
+        with self.condition:
+            result = super().delete_by_id_hash( id_hash )
+            if result:
+                self.condition.notify()  # Wake consumer to recalculate
+            return result
+
 def quick_smoke_test():
     """Quick smoke test to validate TodoFifoQueue functionality."""
     import cosa.utils.util as du

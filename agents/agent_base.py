@@ -17,6 +17,7 @@ from cosa.config.configuration_manager import ConfigurationManager
 from cosa.memory.solution_snapshot import SolutionSnapshot
 from cosa.agents.two_word_id_generator import TwoWordIdGenerator
 from cosa.agents.io_models.utils.xml_parser_factory import XmlParserFactory
+from cosa.rest.job_state import JobState
 
 class CodeGenerationFailedException( Exception ):
     """
@@ -110,6 +111,7 @@ class AgentBase( RunnableCode, abc.ABC ):
         self.inject_bugs           = inject_bugs
         self.df_path_key           = df_path_key
         self.routing_command       = routing_command
+        self.original_args         = None  # CJ Flow persistence field — agent jobs don't carry structured args
         self.user_id               = user_id
         self.user_email            = user_email  # Email for TTS notification routing
         self.session_id            = session_id  # WebSocket session ID for job-notification correlation
@@ -170,10 +172,14 @@ class AgentBase( RunnableCode, abc.ABC ):
         # QueueableJob protocol compliance - status tracking attributes
         self.answer       = ""
         self.error        = ""  # Must be str, not None (protocol requirement)
-        self.status       = "pending"
+        self.state        = JobState.PENDING
         self.is_cache_hit = False
         self.started_at   = ""
         self.completed_at = ""
+
+        # Scheduling attributes (CJ Flow) — sync agents are always immediate, never monopolize
+        self.scheduled_at = None
+        self.monopolize   = False
 
         self.execution_state = AgentBase.STATE_WAITING_TO_RUN
     

@@ -49,7 +49,7 @@ class InputAndOutputTable():
         # Read nprobes configuration for vector search performance tuning
         self._nprobes = self._config_mgr.get( "solution snapshots lancedb nprobes", default=20, return_type="int" )
 
-        self.db = lancedb.connect( du.get_project_root() + self._config_mgr.get( "database_path_wo_root" ) )
+        self.db = lancedb.connect( du.get_project_root() + self._config_mgr.get( "path to database wo root" ) )
 
         # Validate existing table dimensions match config before creating/opening
         self._validate_embedding_dimensions( self.db, "input_and_output_tbl", "input_embedding" )

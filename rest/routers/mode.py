@@ -101,7 +101,12 @@ def _get_display_name( mode: Optional[str] ) -> str:
 # Endpoints
 # ============================================================================
 
-@router.get( "/available", response_model=AvailableModesResponse )
+@router.get(
+    "/available",
+    response_model = AvailableModesResponse,
+    summary        = "List available modes",
+    description    = "List all selectable agent modes including system mode."
+)
 async def get_available_modes(
     current_user = Depends( get_current_user ),
     todo_queue   = Depends( get_todo_queue )
@@ -118,7 +123,12 @@ async def get_available_modes(
     return AvailableModesResponse( modes=modes )
 
 
-@router.get( "/current", response_model=ModeResponse )
+@router.get(
+    "/current",
+    response_model = ModeResponse,
+    summary        = "Get current mode",
+    description    = "Return the authenticated user's current agent mode."
+)
 async def get_mode(
     current_user = Depends( get_current_user ),
     todo_queue   = Depends( get_todo_queue )
@@ -142,7 +152,12 @@ async def get_mode(
     )
 
 
-@router.post( "/current", response_model=ModeChangeResponse )
+@router.post(
+    "/current",
+    response_model = ModeChangeResponse,
+    summary        = "Set current mode",
+    description    = "Set the user's agent mode to a specific key or null for system mode."
+)
 async def set_mode(
     request     : ModeSetRequest,
     current_user = Depends( get_current_user ),
@@ -174,7 +189,12 @@ async def set_mode(
     )
 
 
-@router.delete( "/current", response_model=ModeChangeResponse )
+@router.delete(
+    "/current",
+    response_model = ModeChangeResponse,
+    summary        = "Clear current mode",
+    description    = "Clear the user's agent mode back to system default."
+)
 async def clear_mode(
     current_user = Depends( get_current_user ),
     todo_queue   = Depends( get_todo_queue )

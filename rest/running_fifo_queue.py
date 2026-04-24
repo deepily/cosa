@@ -3,6 +3,7 @@ from cosa.agents.receptionist_agent import ReceptionistAgent
 from cosa.agents.weather_agent import WeatherAgent
 from cosa.crud_for_dataframes.agent import CrudForDataFramesAgent
 from cosa.rest.fifo_queue import FifoQueue
+from cosa.rest.job_state import JobState
 from cosa.rest.queue_util import emit_job_state_transition
 from cosa.rest.queue_protocol import is_queueable_job
 from cosa.agents.agent_base import AgentBase
@@ -65,11 +66,11 @@ class RunningFifoQueue( FifoQueue ):
         self.jobs_dead_queue     = jobs_dead_queue
         self.emit_speech_callback = emit_speech_callback
         
-        self.auto_debug              = False if config_mgr is None else config_mgr.get( "auto_debug",  default=False, return_type="boolean" )
-        self.inject_bugs             = False if config_mgr is None else config_mgr.get( "inject_bugs", default=False, return_type="boolean" )
-        self.debug                   = False if config_mgr is None else config_mgr.get( "app_debug",   default=False, return_type="boolean" )
-        self.verbose                 = False if config_mgr is None else config_mgr.get( "app_verbose", default=False, return_type="boolean" )
-        self.threshold_confirmation  = 90.0  if config_mgr is None else config_mgr.get( "similarity_threshold_confirmation", default=90.0, return_type="float" )
+        self.auto_debug              = False if config_mgr is None else config_mgr.get( "debug auto",  default=False, return_type="boolean" )
+        self.inject_bugs             = False if config_mgr is None else config_mgr.get( "debug inject bugs", default=False, return_type="boolean" )
+        self.debug                   = False if config_mgr is None else config_mgr.get( "app debug",   default=False, return_type="boolean" )
+        self.verbose                 = False if config_mgr is None else config_mgr.get( "app verbose", default=False, return_type="boolean" )
+        self.threshold_confirmation  = 90.0  if config_mgr is None else config_mgr.get( "similarity threshold confirmation", default=90.0, return_type="float" )
         self.io_tbl                  = InputAndOutputTable()
         self.gist_normalizer         = GistNormalizer( debug=self.debug, verbose=self.verbose )
     
@@ -221,7 +222,7 @@ class RunningFifoQueue( FifoQueue ):
                 self._notify( f"Job failed: {e}", job=failed_job, priority="urgent" )
 
                 # Build metadata matching _handle_error_case pattern
-                completed_at     = datetime.now().isoformat()
+                completed_at     = du.get_current_datetime_iso()
                 started_at       = failed_job.started_at
                 duration_seconds = None
                 if started_at:
@@ -237,14 +238,15 @@ class RunningFifoQueue( FifoQueue ):
                     'question_text'   : failed_job.last_question_asked,
                     'agent_type'      : failed_job.job_type,
                     'timestamp'       : failed_job.created_date,
-                    'status'          : 'failed',
+                    'status'          : JobState.FAILED.value,
                     'has_interactions' : bool( failed_job.session_id ),
                     'is_cache_hit'    : False,
+                    'user_email'      : failed_job.user_email,
                     'started_at'      : started_at,
                     'completed_at'    : completed_at,
                     'duration_seconds': duration_seconds
                 }
-                emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'dead', user_id, metadata )
+                emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.FAILED, user_id, metadata )
 
                 # Now pop and move to dead queue
                 self.pop()
@@ -285,7 +287,7 @@ class RunningFifoQueue( FifoQueue ):
         job_id  = running_job.id_hash
         user_id = running_job.user_id
 
-        completed_at = datetime.now().isoformat()
+        completed_at = du.get_current_datetime_iso()
         started_at   = running_job.started_at
         duration_seconds = None
         if started_at:
@@ -301,14 +303,15 @@ class RunningFifoQueue( FifoQueue ):
             'question_text'   : running_job.last_question_asked,
             'agent_type'      : running_job.job_type,
             'timestamp'       : running_job.created_date,
-            'status'          : 'failed',
+            'status'          : JobState.FAILED.value,
             'has_interactions': bool( running_job.session_id ),
             'is_cache_hit'    : False,
+            'user_email'      : running_job.user_email,
             'started_at'      : started_at,
             'completed_at'    : completed_at,
             'duration_seconds': duration_seconds
         }
-        emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'dead', user_id, metadata )
+        emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.FAILED, user_id, metadata )
 
         self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
 
@@ -349,6 +352,60 @@ class RunningFifoQueue( FifoQueue ):
             du.print_banner( f"AgenticJob [{running_job.id_hash}] complete!", prepend_nl=True, end="\n" )
             job_timer.print( "Done!", use_millis=True )
 
+            # Stalled terminal (Bug 11, 2026-04-15): voice gate timed out and
+            # orchestrator saved a checkpoint. Route to Done with status=stalled
+            # so the UI badge + Resume button activate. Do NOT invoke the
+            # dead-queue/auto-repair watchdog — the checkpoint IS the repair
+            # path and BFE would just swallow the checkpoint on its own DB lookup.
+            if running_job.state == JobState.STALLED:
+                job_id  = running_job.id_hash
+                user_id = running_job.user_id
+                completed_at = du.get_current_datetime_iso()
+                started_at   = running_job.started_at
+
+                duration_seconds = None
+                if started_at:
+                    try:
+                        start = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
+                        end   = datetime.fromisoformat( completed_at )
+                        duration_seconds = ( end - start ).total_seconds()
+                    except Exception:
+                        pass
+
+                metadata = {
+                    'response_text'   : running_job.answer_conversational,
+                    'abstract'        : running_job.artifacts.get( 'abstract' ),
+                    'report_link'     : running_job.artifacts.get( 'report_path' ),
+                    'checkpoint'      : running_job.artifacts.get( 'checkpoint' ),
+                    'plan_path'       : running_job.artifacts.get( 'plan_path' ),
+                    'question_text'   : running_job.last_question_asked,
+                    'agent_type'      : running_job.job_type,
+                    'timestamp'       : running_job.created_date,
+                    'status'          : JobState.STALLED.value,
+                    'has_interactions': bool( running_job.session_id ),
+                    'is_cache_hit'    : False,
+                    'user_email'      : running_job.user_email,
+                    'started_at'      : started_at,
+                    'completed_at'    : completed_at,
+                    'duration_seconds': duration_seconds,
+                }
+                emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.STALLED, user_id, metadata )
+
+                self.pop()  # Auto-emits 'run_update'
+                self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
+
+                try:
+                    self.io_tbl.insert_io_row(
+                        input_type   = running_job.routing_command,
+                        input        = running_job.last_question_asked,
+                        output_raw   = str( running_job.artifacts ),
+                        output_final = running_job.answer_conversational
+                    )
+                except Exception as io_e:
+                    if self.debug: print( f"[AGENTIC] I/O table write skipped (stalled): {io_e}" )
+
+                return running_job
+
             if running_job.code_ran_to_completion() and running_job.formatter_ran_to_completion():
                 # Success path
                 # TTS Migration (Session 97): Use notification service instead of _emit_speech
@@ -358,7 +415,7 @@ class RunningFifoQueue( FifoQueue ):
                 job_id  = running_job.id_hash
                 user_id = running_job.user_id
                 # Calculate completed_at timestamp for duration calculation
-                completed_at = datetime.now().isoformat()
+                completed_at = du.get_current_datetime_iso()
                 started_at   = running_job.started_at
 
                 # Calculate duration_seconds if both timestamps exist
@@ -374,25 +431,42 @@ class RunningFifoQueue( FifoQueue ):
                 metadata = {
                     'response_text'   : running_job.answer_conversational,
                     'abstract'        : running_job.artifacts.get( 'abstract' ),
-                    'report_link'     : running_job.artifacts.get( 'report_path' ),
+                    'report_link'                : running_job.artifacts.get( 'report_path' ),
+                    'remediation_snapshot_path'  : running_job.artifacts.get( 'remediation_snapshot_path' ),
+                    'yaml_path'                  : running_job.artifacts.get( 'yaml_path' ),
+                    'pptx_path'                  : running_job.artifacts.get( 'pptx_path' ),
                     'cost_summary'    : running_job.artifacts.get( 'cost_summary' ),
                     'error'           : None,
                     # Phase 6.2: Card-rendering fields for client-side card creation
                     'question_text'   : running_job.last_question_asked,
                     'agent_type'      : running_job.job_type,
                     'timestamp'       : running_job.created_date,
-                    'status'          : 'completed',
+                    'status'          : JobState.COMPLETED.value,
                     'has_interactions': bool( running_job.session_id ),
                     'is_cache_hit'    : running_job.is_cache_hit,
+                    'user_email'      : running_job.user_email,
                     'started_at'      : started_at,
                     'completed_at'    : completed_at,
                     'duration_seconds': duration_seconds
                 }
-                emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'done', user_id, metadata )
+                emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.COMPLETED, user_id, metadata )
 
                 # Move through queue system
                 self.pop()  # Auto-emits 'run_update'
                 self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
+
+                # TFE auto-dispatch hook (Session 1cfcdf73, step 13 of TFE plan).
+                # If the completed job is a TestSuiteJob that finished with
+                # failures, the TestSuiteCompletionWatchdog will enqueue a TFE
+                # job to attempt automated remediation. All eligibility gating
+                # happens inside evaluate() — we never raise here.
+                try:
+                    from cosa.rest.test_suite_completion_watchdog import get_watchdog
+                    _tfe_watchdog = get_watchdog()
+                    if _tfe_watchdog is not None:
+                        _tfe_watchdog.evaluate( running_job )
+                except Exception as _tfe_e:
+                    if self.debug: print( f"[AGENTIC] TFE watchdog evaluate skipped: {_tfe_e}" )
 
                 # Log to I/O table (skip if not available)
                 try:
@@ -422,7 +496,7 @@ class RunningFifoQueue( FifoQueue ):
                 user_id = running_job.user_id
 
                 # Calculate timestamps for error case
-                completed_at = datetime.now().isoformat()
+                completed_at = du.get_current_datetime_iso()
                 started_at   = running_job.started_at
                 duration_seconds = None
                 if started_at:
@@ -435,22 +509,27 @@ class RunningFifoQueue( FifoQueue ):
 
                 metadata = {
                     'error'           : error_msg,
+                    'stack_trace'     : running_job.error,  # Job-reported error (no Python traceback)
                     # Phase 6.2: Card-rendering fields for client-side card creation
                     'question_text'   : running_job.last_question_asked,
                     'agent_type'      : running_job.job_type,
                     'timestamp'       : running_job.created_date,
                     # Session 107: Fix field parity between WebSocket and server-fetched cards
-                    'status'          : 'failed',
+                    'status'          : JobState.FAILED.value,
                     'has_interactions': bool( running_job.session_id ),
                     'is_cache_hit'    : False,
+                    'user_email'      : running_job.user_email,
                     'started_at'      : started_at,
                     'completed_at'    : completed_at,
                     'duration_seconds': duration_seconds
                 }
-                emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'dead', user_id, metadata )
+                emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.FAILED, user_id, metadata )
 
                 self.pop()  # Auto-emits 'run_update'
                 self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
+
+                # Phase 6A: Evaluate for automated repair
+                self._evaluate_for_auto_fix( running_job )
 
         except Exception as e:
             # Unexpected exception during execution
@@ -461,7 +540,7 @@ class RunningFifoQueue( FifoQueue ):
                 debug=self.debug
             )
 
-            running_job.status = "failed"
+            running_job.state = JobState.FAILED
             running_job.error  = str( e )
 
             # TTS Migration (Session 97): Use notification service instead of _emit_speech
@@ -477,7 +556,7 @@ class RunningFifoQueue( FifoQueue ):
             user_id = running_job.user_id
 
             # Calculate timestamps for crash case
-            completed_at = datetime.now().isoformat()
+            completed_at = du.get_current_datetime_iso()
             started_at   = running_job.started_at
             duration_seconds = None
             if started_at:
@@ -490,24 +569,47 @@ class RunningFifoQueue( FifoQueue ):
 
             metadata = {
                 'error'           : str( e ),
+                'stack_trace'     : traceback.format_exc(),
                 # Phase 6.2: Card-rendering fields for client-side card creation
                 'question_text'   : running_job.last_question_asked,
                 'agent_type'      : running_job.job_type,
                 'timestamp'       : running_job.created_date,
                 # Session 107: Fix field parity between WebSocket and server-fetched cards
-                'status'          : 'failed',
+                'status'          : JobState.FAILED.value,
                 'has_interactions': bool( running_job.session_id ),
                 'is_cache_hit'    : False,
+                'user_email'      : running_job.user_email,
                 'started_at'      : started_at,
                 'completed_at'    : completed_at,
                 'duration_seconds': duration_seconds
             }
-            emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'dead', user_id, metadata )
+            emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.FAILED, user_id, metadata )
 
             self.pop()  # Auto-emits 'run_update'
             self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
 
+            # Phase 6A: Evaluate for automated repair
+            self._evaluate_for_auto_fix( running_job )
+
         return running_job
+
+    def _evaluate_for_auto_fix( self, failed_job ):
+        """
+        Evaluate a failed job for automated BFE repair via the dead queue watchdog.
+
+        Called after a job is pushed to the dead queue. Silently no-ops if the
+        watchdog is not initialized or auto-fix is disabled.
+
+        Args:
+            failed_job: The job that just failed and was pushed to dead queue
+        """
+        try:
+            from cosa.rest.dead_queue_watchdog import get_watchdog
+            watchdog = get_watchdog()
+            if watchdog:
+                watchdog.evaluate( failed_job )
+        except Exception as e:
+            if self.debug: print( f"[RunningFifoQueue] Watchdog evaluation error: {e}" )
 
     def _handle_base_agent( self, running_job: AgentBase, truncated_question: str, agent_timer: sw.Stopwatch ) -> Any:
         """
@@ -607,7 +709,7 @@ class RunningFifoQueue( FifoQueue ):
             user_id = running_job.user_id
 
             # Calculate completed_at timestamp for duration calculation
-            completed_at = datetime.now().isoformat()
+            completed_at = du.get_current_datetime_iso()
             started_at   = running_job.started_at
 
             # Calculate duration_seconds if both timestamps exist
@@ -631,15 +733,16 @@ class RunningFifoQueue( FifoQueue ):
                 'agent_type'      : running_job.job_type,
                 'timestamp'       : running_job.created_date,
                 # Session 107: Fix field parity between WebSocket and server-fetched cards
-                'status'          : 'completed',
+                'status'          : JobState.COMPLETED.value,
                 'has_interactions': bool( running_job.session_id ),
                 'is_cache_hit'       : running_job.is_cache_hit,
+                'user_email'         : running_job.user_email,
                 'answer_is_correct'  : running_job.answer_is_correct if isinstance( running_job, SolutionSnapshot ) else None,
                 'started_at'         : started_at,
                 'completed_at'       : completed_at,
                 'duration_seconds'   : duration_seconds
             }
-            emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'done', user_id, metadata )
+            emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.COMPLETED, user_id, metadata )
 
             self.pop()  # Auto-emits 'run_update'
             self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
@@ -688,7 +791,7 @@ class RunningFifoQueue( FifoQueue ):
         user_id = running_job.user_id
 
         # Calculate completed_at timestamp for duration calculation
-        completed_at = datetime.now().isoformat()
+        completed_at = du.get_current_datetime_iso()
         started_at   = running_job.started_at
 
         # Calculate duration_seconds if both timestamps exist
@@ -712,15 +815,16 @@ class RunningFifoQueue( FifoQueue ):
             'agent_type'      : running_job.job_type,
             'timestamp'       : running_job.created_date,
             # Session 107: Fix field parity between WebSocket and server-fetched cards
-            'status'          : 'completed',
+            'status'          : JobState.COMPLETED.value,
             'has_interactions'  : bool( running_job.session_id ),
             'is_cache_hit'      : False,
+            'user_email'        : running_job.user_email,
             'answer_is_correct' : running_job.answer_is_correct,
             'started_at'        : started_at,
             'completed_at'      : completed_at,
             'duration_seconds'  : duration_seconds
         }
-        emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'done', user_id, metadata )
+        emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.COMPLETED, user_id, metadata )
 
         self.pop()  # Auto-emits 'run_update'
         self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
@@ -901,7 +1005,7 @@ class RunningFifoQueue( FifoQueue ):
         user_id = done_queue_entry.user_id
 
         # Calculate completed_at timestamp for duration calculation (cache retrieval time)
-        completed_at = datetime.now().isoformat()
+        completed_at = du.get_current_datetime_iso()
         started_at   = original_job.started_at
 
         # Calculate duration_seconds if both timestamps exist (will be very short for cache hits)
@@ -925,15 +1029,16 @@ class RunningFifoQueue( FifoQueue ):
             'agent_type'      : cached_snapshot.job_type,
             'timestamp'       : cached_snapshot.created_date,
             'is_cache_hit'      : True,
+            'user_email'        : cached_snapshot.user_email,
             'answer_is_correct' : cached_snapshot.answer_is_correct,
             # Session 107: Fix field parity between WebSocket and server-fetched cards
-            'status'            : 'completed',
+            'status'            : JobState.COMPLETED.value,
             'has_interactions'  : bool( original_job.session_id ),
             'started_at'        : started_at,
             'completed_at'      : completed_at,
             'duration_seconds'  : duration_seconds
         }
-        emit_job_state_transition( self.websocket_mgr, job_id, 'run', 'done', user_id, metadata )
+        emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.COMPLETED, user_id, metadata )
 
         # Move job through the queue system properly
         self.pop()  # Remove from running queue, auto-emits 'run_update'

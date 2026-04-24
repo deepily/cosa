@@ -23,7 +23,9 @@ import asyncio
 from datetime import datetime
 from typing import Optional, List
 
+import cosa.utils.util as cu
 from cosa.agents.agentic_job_base import AgenticJobBase
+from cosa.rest.job_state import JobState
 
 
 class DeepResearchToPodcastJob( AgenticJobBase ):
@@ -141,14 +143,14 @@ class DeepResearchToPodcastJob( AgenticJobBase ):
         if self.debug:
             print( f"[DeepResearchToPodcastJob] Starting do_all() for: {self.query[ :50 ]}..." )
 
-        self.status     = "running"
-        self.started_at = datetime.now().isoformat()
+        self.state      = JobState.RUNNING
+        self.started_at = cu.get_current_datetime_iso()
 
         try:
             result = asyncio.run( self._execute() )
 
-            self.status       = "completed"
-            self.completed_at = datetime.now().isoformat()
+            self.state        = JobState.COMPLETED
+            self.completed_at = cu.get_current_datetime_iso()
             self.result       = result
             self.answer_conversational = result
 
@@ -159,8 +161,8 @@ class DeepResearchToPodcastJob( AgenticJobBase ):
             return result
 
         except Exception as e:
-            self.status       = "failed"
-            self.completed_at = datetime.now().isoformat()
+            self.state        = JobState.FAILED
+            self.completed_at = cu.get_current_datetime_iso()
             self.error        = str( e )
 
             if self.debug:
@@ -416,7 +418,7 @@ def quick_smoke_test():
         assert job.target_languages == [ "en" ]
         assert job.max_segments == 5
         assert job.user_email == "test@test.com"
-        assert job.status == "pending"
+        assert job.state == JobState.PENDING
         print( "✓ All attributes set correctly" )
 
         # Test 7: Check JOB_TYPE and JOB_PREFIX

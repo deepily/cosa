@@ -41,7 +41,7 @@ def get_auth_db_path() -> Path:
         Path: Absolute path to authentication database
     """
     # SAFETY CHECK 1: Configuration flag
-    config_test_mode = config_mgr.get( "app_testing", default=False, return_type="boolean" )
+    config_test_mode = config_mgr.get( "app testing", default=False, return_type="boolean" )
 
     # Get database path from current configuration block
     db_path_rel = config_mgr.get(

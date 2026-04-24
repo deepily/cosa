@@ -48,10 +48,12 @@ def authorize_queue_filter(
         |---------|----------------|------------------|--------|
         | User    | None           | current_user_id  | ✓ 200  |
         | User    | "*"            | HTTPException    | ✗ 403  |
+        | User    | "!self"        | HTTPException    | ✗ 403  |
         | User    | other_id       | HTTPException    | ✗ 403  |
         | User    | own_id         | current_user_id  | ✓ 200  |
         | Admin   | None           | current_user_id  | ✓ 200  |
         | Admin   | "*"            | "*"              | ✓ 200  |
+        | Admin   | "!self"        | "!<user_id>"     | ✓ 200  |
         | Admin   | other_id       | other_id         | ✓ 200  |
 
     Examples:
@@ -66,6 +68,10 @@ def authorize_queue_filter(
         # Admin can request all jobs
         >>> authorize_queue_filter({"uid": "admin_1", "roles": ["admin"]}, "*")
         "*"
+
+        # Admin can exclude own jobs
+        >>> authorize_queue_filter({"uid": "admin_1", "roles": ["admin"]}, "!self")
+        "!admin_1"
     """
     requesting_user_id = current_user["uid"]
 
@@ -84,6 +90,15 @@ def authorize_queue_filter(
                 detail="Only admin users can query all jobs. Regular users can only view their own jobs."
             )
         return "*"  # Authorized wildcard
+
+    # Case 2b: "!self" → all jobs EXCEPT requesting user's (admin only)
+    if filter_user_id == "!self":
+        if not user_is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Only admin users can use the '!self' filter. Regular users can only view their own jobs."
+            )
+        return f"!{requesting_user_id}"  # Sentinel: "!" prefix signals exclusion
 
     # Case 3: Specific user_id requested (different from self)
     if filter_user_id != requesting_user_id:

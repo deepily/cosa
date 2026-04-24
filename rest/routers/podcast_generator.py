@@ -22,7 +22,7 @@ import uuid
 import difflib
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from cosa.rest.auth import get_current_user
 from cosa.rest.queue_extensions import user_job_tracker
@@ -46,12 +46,15 @@ class PodcastSubmitRequest( BaseModel ):
     - If it looks like a path → direct mode (immediate job creation)
     - If it looks like text → description mode (fuzzy match + confirmation)
     """
-    research_source   : str
-    target_languages  : Optional[ List[ str ] ] = None
-    max_segments      : Optional[ int ]         = None
-    dry_run           : bool                    = False
-    audience          : Optional[ str ]         = None
-    audience_context  : Optional[ str ]         = None
+    research_source    : str
+    target_languages   : Optional[ List[ str ] ] = None
+    max_segments       : Optional[ int ]         = None
+    dry_run            : bool                    = False
+    force_failure_mode : Optional[ str ]         = Field( None, description="Phase 6 dry-run repair loop: 'code_bug' | 'infra_timeout' | 'rate_limit' to inject a failure at the end of dry-run" )
+    audience           : Optional[ str ]         = None
+    audience_context   : Optional[ str ]         = None
+    scheduled_at      : Optional[ str ]         = Field( None, description="ISO datetime for deferred execution (None = immediate)" )
+    monopolize        : bool                    = Field( False, description="Run exclusively, block all other jobs until complete" )
 
 
 class PodcastSubmitResponse( BaseModel ):
@@ -526,6 +529,8 @@ async def submit_podcast_job(
             args_dict[ "languages" ] = ",".join( request.target_languages )
         if request.dry_run:
             args_dict[ "dry_run" ] = True
+        if request.force_failure_mode:
+            args_dict[ "force_failure_mode" ] = request.force_failure_mode
         if request.audience:
             args_dict[ "audience" ] = request.audience
         if request.audience_context:
@@ -546,6 +551,10 @@ async def submit_podcast_job(
         # Apply max_segments if specified (factory doesn't handle this)
         if request.max_segments:
             job.max_segments = request.max_segments
+
+        # Scheduling attributes pass-through (CJ Flow timed execution + monopolize)
+        if request.scheduled_at: job.scheduled_at = request.scheduled_at
+        if request.monopolize:   job.monopolize   = request.monopolize
 
         # Atomic: scope ID + index for user filtering BEFORE push (race condition prevention)
         job.id_hash = user_job_tracker.register_scoped_job( job.id_hash, user_id, session_id )
@@ -652,6 +661,8 @@ async def submit_podcast_job(
                 args_dict[ "languages" ] = ",".join( request.target_languages )
             if request.dry_run:
                 args_dict[ "dry_run" ] = True
+            if request.force_failure_mode:
+                args_dict[ "force_failure_mode" ] = request.force_failure_mode
             if request.audience:
                 args_dict[ "audience" ] = request.audience
             if request.audience_context:
@@ -674,6 +685,10 @@ async def submit_podcast_job(
             # Apply max_segments if specified
             if request.max_segments:
                 job.max_segments = request.max_segments
+
+            # Scheduling attributes pass-through (CJ Flow timed execution + monopolize)
+            if request.scheduled_at: job.scheduled_at = request.scheduled_at
+            if request.monopolize:   job.monopolize   = request.monopolize
 
             # Inherit speculative ID (already registered with user_job_tracker)
             job.id_hash = spec_id

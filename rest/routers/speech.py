@@ -18,8 +18,10 @@ import uuid
 import os
 import json
 from datetime import datetime
+import gc
 import aiohttp
 import websockets
+import torch
 
 # Import dependencies
 from openai import OpenAI
@@ -33,24 +35,55 @@ from cosa.rest.auth import get_current_user_id
 
 router = APIRouter(prefix="/api", tags=["speech"])
 
+
+def _run_whisper_with_retry( whisper_pipeline, path, debug=False, **kwargs ):
+    """
+    Run Whisper inference with CUDA OOM retry.
+
+    Requires:
+        - whisper_pipeline is initialized
+        - path points to a valid audio file
+
+    Ensures:
+        - Returns transcription dict on success
+        - Retries once after clearing CUDA cache on OOM
+
+    Raises:
+        - torch.cuda.OutOfMemoryError on second failure
+    """
+    try:
+        return whisper_pipeline( path, **kwargs )
+    except torch.cuda.OutOfMemoryError:
+        if debug: print( "[WARN] CUDA OOM on Whisper inference, clearing cache and retrying..." )
+        gc.collect()
+        torch.cuda.empty_cache()
+        return whisper_pipeline( path, **kwargs )
+
+
 # Global dependencies (temporary access via main module)
 def get_whisper_pipeline():
     """
     Dependency to get Whisper pipeline from main module.
-    
+
     Requires:
         - fastapi_app.main module is available
         - main_module has whisper_pipeline attribute
-        
+
     Ensures:
-        - Returns the Whisper pipeline instance
-        - Provides access to speech-to-text transcription
-        
+        - Returns the Whisper pipeline instance if loaded
+        - Raises HTTP 503 if pipeline is None (model failed to load at startup)
+
     Raises:
         - ImportError if main module not available
-        - AttributeError if whisper_pipeline not found
+        - HTTPException( 503 ) if whisper_pipeline is None
     """
     import fastapi_app.main as main_module
+    if main_module.whisper_pipeline is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Speech-to-text service unavailable. Whisper model failed to load at startup (likely no GPU available).",
+            headers={ "Retry-After": "60" }
+        )
     return main_module.whisper_pipeline
 
 def get_websocket_manager():
@@ -129,7 +162,11 @@ def get_todo_queue():
     import fastapi_app.main as main_module
     return main_module.jobs_todo_queue
 
-@router.post("/upload-and-transcribe-mp3")
+@router.post(
+    "/upload-and-transcribe-mp3",
+    summary     = "Transcribe MP3 audio",
+    description = "Accept base64-encoded MP3, transcribe via Whisper, and queue result as a multimodal job."
+)
 async def upload_and_transcribe_mp3_file(
     request: Request,
     prefix: Optional[str] = Query(None),
@@ -189,7 +226,7 @@ async def upload_and_transcribe_mp3_file(
         decoded_audio = base64.b64decode(body)
         
         # Get recording path from config
-        recording_path = config_mgr.get( "audio_recording_file_path" )
+        recording_path = config_mgr.get( "path to audio recording file" )
         path = du.get_project_root() + recording_path
         
         if app_debug: 
@@ -201,12 +238,12 @@ async def upload_and_transcribe_mp3_file(
         if app_debug: 
             print(" saved.")
         
-        # Transcribe using Whisper pipeline
-        raw_transcription = whisper_pipeline(path, chunk_length_s=30, stride_length_s=5)
-        
+        # Transcribe using Whisper pipeline (with CUDA OOM retry)
+        raw_transcription = _run_whisper_with_retry( whisper_pipeline, path, debug=app_debug, chunk_length_s=30, stride_length_s=5 )
+
         if app_debug:
             print(f"Raw transcription: [{raw_transcription}]")
-        
+
         # Process transcription
         processed_text = raw_transcription["text"].strip()
         
@@ -260,11 +297,19 @@ async def upload_and_transcribe_mp3_file(
         
         return JSONResponse(response_data)
         
-    except Exception as e:
-        print(f"[ERROR] MP3 transcription failed: {e}")
-        raise HTTPException(status_code=500, detail="Audio transcription failed. Please try uploading the file again or check that it's a valid audio format.")
+    except torch.cuda.OutOfMemoryError:
+        print( "[ERROR] MP3 transcription failed: CUDA out of memory (after retry)" )
+        raise HTTPException( status_code=503, detail="Server GPU memory temporarily unavailable. Please retry in a few seconds.", headers={ "Retry-After": "5" } )
 
-@router.post("/get-speech")
+    except Exception as e:
+        print( f"[ERROR] MP3 transcription failed: {e}" )
+        raise HTTPException( status_code=500, detail="Audio transcription failed. Please try uploading the file again or check that it's a valid audio format." )
+
+@router.post(
+    "/get-speech",
+    summary     = "Synthesize speech (OpenAI)",
+    description = "Generate TTS audio via OpenAI and stream to the client's WebSocket session."
+)
 async def get_tts_audio(
     request: Request,
     ws_manager: WebSocketManager = Depends(get_websocket_manager),
@@ -385,7 +430,11 @@ async def get_tts_audio(
         print(f"[ERROR] TTS request failed: {e}")
         raise HTTPException(status_code=500, detail="Audio generation failed. Please try again, or check your connection and refresh the page.")
 
-@router.post("/get-speech-elevenlabs")
+@router.post(
+    "/get-speech-elevenlabs",
+    summary     = "Synthesize speech (ElevenLabs)",
+    description = "Generate low-latency TTS audio via ElevenLabs and stream to WebSocket."
+)
 async def get_tts_audio_elevenlabs(
     request: Request,
     ws_manager: WebSocketManager = Depends(get_websocket_manager),
@@ -536,7 +585,11 @@ async def get_tts_audio_elevenlabs(
         print(f"[ERROR] ElevenLabs TTS request failed: {e}")
         raise HTTPException(status_code=500, detail="Audio generation failed. Please try again, or check your connection and refresh the page.")
 
-@router.post("/upload-and-transcribe-wav")
+@router.post(
+    "/upload-and-transcribe-wav",
+    summary     = "Transcribe WAV audio",
+    description = "Accept a WAV file upload, transcribe via Whisper, and return transcription text."
+)
 async def upload_and_transcribe_wav_file(
     file: UploadFile = File(...),
     prefix: Optional[str] = Query(None),
@@ -589,9 +642,9 @@ async def upload_and_transcribe_wav_file(
             content = await file.read()
             f.write(content)
         
-        # Transcribe using Whisper pipeline
-        raw_transcription = whisper_pipeline(temp_file)
-        
+        # Transcribe using Whisper pipeline (with CUDA OOM retry)
+        raw_transcription = _run_whisper_with_retry( whisper_pipeline, temp_file, debug=app_debug )
+
         # Process transcription
         processed_text = raw_transcription["text"].strip()
         
@@ -613,13 +666,21 @@ async def upload_and_transcribe_wav_file(
         # Return plain text (different from MP3 endpoint)
         return processed_text
         
+    except torch.cuda.OutOfMemoryError:
+        # Clean up temp file on error
+        if 'temp_file' in locals() and os.path.exists( temp_file ):
+            os.remove( temp_file )
+
+        print( "[ERROR] WAV transcription failed: CUDA out of memory (after retry)" )
+        raise HTTPException( status_code=503, detail="Server GPU memory temporarily unavailable. Please retry in a few seconds.", headers={ "Retry-After": "5" } )
+
     except Exception as e:
         # Clean up temp file on error
-        if 'temp_file' in locals() and os.path.exists(temp_file):
-            os.remove(temp_file)
-        
-        print(f"[ERROR] WAV transcription failed: {e}")
-        raise HTTPException(status_code=500, detail=f"WAV transcription failed: {str(e)}")
+        if 'temp_file' in locals() and os.path.exists( temp_file ):
+            os.remove( temp_file )
+
+        print( f"[ERROR] WAV transcription failed: {e}" )
+        raise HTTPException( status_code=500, detail=f"WAV transcription failed: {str( e )}" )
 
 async def stream_tts_hybrid(session_id: str, msg: str, ws_manager: WebSocketManager):
     """

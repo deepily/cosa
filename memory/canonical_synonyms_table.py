@@ -68,7 +68,7 @@ class CanonicalSynonymsTable:
         else:
             # Load from configuration (production use)
             self._config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
-            uri = du.get_project_root() + self._config_mgr.get( "database_path_wo_root" )
+            uri = du.get_project_root() + self._config_mgr.get( "path to database wo root" )
 
         if self.debug:
             print( f"Connecting to LanceDB at: {uri}" )

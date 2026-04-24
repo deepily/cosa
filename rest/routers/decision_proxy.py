@@ -64,7 +64,11 @@ def acknowledge_batch() -> dict:
     return { "retired_batch": old_id, "new_batch": new_id }
 
 
-@router.post( "/acknowledge" )
+@router.post(
+    "/acknowledge",
+    summary     = "Acknowledge proxy batch",
+    description = "Retire current proxy notification batch and start a new one."
+)
 async def acknowledge_proxy_batch():
     """
     Retire the current proxy notification batch and start a new one.
@@ -79,7 +83,11 @@ async def acknowledge_proxy_batch():
     return { "status": "success", **result }
 
 
-@router.get( "/batch-id" )
+@router.get(
+    "/batch-id",
+    summary     = "Get proxy batch ID",
+    description = "Return the current proxy batch progress_group_id."
+)
 async def get_proxy_batch_id():
     """
     Return the current proxy batch progress_group_id.
@@ -90,7 +98,11 @@ async def get_proxy_batch_id():
     return { "status": "success", "batch_id": get_current_batch_id() }
 
 
-@router.get( "/pending/{user_email}" )
+@router.get(
+    "/pending/{user_email}",
+    summary     = "Get pending decisions",
+    description = "Retrieve pending decisions awaiting ratification for a user with optional domain/category filter."
+)
 async def get_pending_decisions(
     user_email: str,
     domain: Optional[str] = Query( None, description="Filter by domain (e.g., 'swe')" ),
@@ -163,7 +175,11 @@ async def get_pending_decisions(
         )
 
 
-@router.post( "/ratify/{decision_id}" )
+@router.post(
+    "/ratify/{decision_id}",
+    summary     = "Ratify decision",
+    description = "Approve or reject a pending decision. Updates ratification state and trust counters."
+)
 async def ratify_decision(
     decision_id: str,
     approved: bool = Query( ..., description="True to approve, False to reject" ),
@@ -258,7 +274,11 @@ async def ratify_decision(
         )
 
 
-@router.delete( "/decision/{decision_id}" )
+@router.delete(
+    "/decision/{decision_id}",
+    summary     = "Delete pending decision",
+    description = "Hard-delete a decision in pending state. Approved/rejected decisions are protected."
+)
 async def delete_decision(
     decision_id: str,
     user_email: str = Query( ..., description="Email of the user performing deletion (audit)" )
@@ -325,7 +345,11 @@ async def delete_decision(
         )
 
 
-@router.get( "/trust/{user_email}" )
+@router.get(
+    "/trust/{user_email}",
+    summary     = "Get trust state",
+    description = "Return all trust state records for a user across domains and categories."
+)
 async def get_trust_state(
     user_email: str,
     domain: Optional[str] = Query( None, description="Filter by domain" )
@@ -388,7 +412,11 @@ async def get_trust_state(
         )
 
 
-@router.get( "/decisions/{domain}/{category}" )
+@router.get(
+    "/decisions/{domain}/{category}",
+    summary     = "Get decisions by domain",
+    description = "Return decision history for a specific domain and category combination."
+)
 async def get_decisions_by_domain_category(
     domain: str,
     category: str,
@@ -524,7 +552,11 @@ def _find_running_swe_job( run_queue ):
     return None
 
 
-@router.get( "/mode" )
+@router.get(
+    "/mode",
+    summary     = "Get trust mode",
+    description = "Return current effective trust mode from INI config and any running job orchestrator."
+)
 async def get_trust_mode(
     current_user: dict = Depends( get_current_user ),
     run_queue=Depends( get_run_queue ),
@@ -570,7 +602,11 @@ async def get_trust_mode(
     }
 
 
-@router.put( "/mode" )
+@router.put(
+    "/mode",
+    summary     = "Update trust mode",
+    description = "Hot-reload trust mode at runtime. Persists to INI and updates running proxy if available."
+)
 async def update_trust_mode(
     request_body: TrustModeUpdateRequest,
     current_user: dict = Depends( get_current_user ),

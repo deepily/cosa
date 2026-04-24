@@ -2930,6 +2930,97 @@ class FuzzyFileMatchResponse( BaseXMLModel ):
             return False
 
 
+class TFEResumeMatchResponse( BaseXMLModel ):
+    """
+    TFE resume fuzzy-match response model.
+
+    Handles XML responses for matching a user's natural-language description
+    of a stalled Test Fix Expediter job against a list of candidate job IDs:
+    <response>
+        <matches>tfe-7c25082a::user@example.com, tfe-3b8c92d1::user@example.com</matches>
+    </response>
+
+    The matches field contains a comma-separated list of TFE job IDs ranked by
+    relevance to the user's description, or an empty string if no matches.
+
+    Used by the TFE resume resolver (session 9056c113) for voice / natural-language
+    resume path resolution.
+    """
+
+    matches: str = Field(
+        ...,
+        description="Comma-separated list of matching TFE job IDs in rank order, or empty string"
+    )
+
+    @classmethod
+    def get_example_for_template( cls ) -> 'TFEResumeMatchResponse':
+        """
+        Get example instance for prompt templates.
+
+        Returns a TFE resume match response example that matches the expected
+        XML structure for the tfe-resume-matching.txt template.
+
+        Requires:
+            - None
+
+        Ensures:
+            - Returns TFEResumeMatchResponse with sample comma-separated job IDs
+        """
+        return cls(
+            matches='tfe-7c25082a::user@example.com, tfe-3b8c92d1::user@example.com'
+        )
+
+    def get_matches_list( self ) -> List[ str ]:
+        """
+        Get matches as a list of job IDs.
+
+        Requires:
+            - self.matches is a string (guaranteed by Pydantic)
+
+        Ensures:
+            - Returns list of trimmed, non-empty job ID strings
+            - Returns empty list if matches is empty or whitespace-only
+
+        Returns:
+            List of TFE job ID strings in rank order
+        """
+        if not self.matches or not self.matches.strip():
+            return []
+
+        return [ m.strip() for m in self.matches.split( ',' ) if m.strip() ]
+
+    @classmethod
+    def quick_smoke_test( cls, debug: bool = False ) -> bool:
+        """Quick smoke test for TFEResumeMatchResponse."""
+        try:
+            # Basic construction + parsing
+            response = cls( matches="tfe-abc::u1, tfe-def::u1, tfe-xyz::u1" )
+            matches_list = response.get_matches_list()
+            assert len( matches_list ) == 3
+            assert matches_list[ 0 ] == "tfe-abc::u1"
+
+            # XML round-trip
+            xml_str = response.to_xml()
+            assert "<matches>tfe-abc::u1, tfe-def::u1, tfe-xyz::u1</matches>" in xml_str
+            parsed = cls.from_xml( xml_str )
+            assert parsed.matches == response.matches
+
+            # Empty + whitespace
+            assert cls( matches="" ).get_matches_list() == []
+            assert cls( matches="   " ).get_matches_list() == []
+
+            # Template example
+            example = cls.get_example_for_template()
+            assert "tfe-" in example.matches
+
+            if debug: print( f"✓ {cls.__name__} smoke test PASSED" )
+            return True
+
+        except Exception as e:
+            if debug: print( f"✗ {cls.__name__} smoke test FAILED: {e}" )
+            return False
+
+
 def quick_smoke_test() -> bool:
     """
     Quick smoke test for all XML models.
