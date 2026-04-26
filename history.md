@@ -1,5 +1,49 @@
 # COSA Development History
 
+### 2026.04.25 - Session c608199a | CoSA-side wrap of Lupin Session 6c798a07 (Podcast generator completion abstract — clickable URLs)
+
+**Context**: Session-end commit for the CoSA-side work from Lupin-parent Session `6c798a07` (2026-04-25). User submitted a podcast generation job (`pg-6bcf412d`), it completed, but the completion notification's abstract showed bare filesystem paths in backticks instead of clickable URLs — no way to play or download the generated MP3 from the UI. Two-stage fix in one session: (1) build clickable Markdown links + switch artifacts to relative paths, (2) point Listen at canonical in-app player route after a brief detour through the raw-file API endpoint.
+
+**Body — Podcast completion abstract clickable URLs** (Lupin parent session `6c798a07`)
+
+- **`agents/podcast_generator/job.py`** — at line ~277-310 in the success-path block of `_run_orchestrator()`:
+  - Added `_to_rel()` local helper that normalizes 3 input shapes (abs paths under `cu.get_project_root() + "/io/"`, `"io/"`-prefixed relatives, `"/"`-prefixed paths) to clean relative paths under `io/`. Mirrors the receiving logic in `rest/routers/io_files.py:88-98` and the convention already used by `agents/presentation_generator/job.py:301-341`.
+  - Switched `self.artifacts[ "audio_path" ]` and `self.artifacts[ "script_path" ]` from absolute filesystem paths to relative paths (so the UI job-card consumer at `cosa/rest/routers/queues.py` builds correct URLs).
+  - Added new `self.artifacts[ "report_path" ] = script_rel` so the queue-card metadata exposes the script as a "report link" artifact (renderReportLinkSection consumes this on the Lupin frontend).
+  - Replaced the 2 bare-backtick path lines (`f"**Script**: \`{self.script_path}\`"`, `f"**Audio**: \`{self.audio_path}\`"`) in the rich-markdown abstract with 3 clickable Markdown links:
+    - Listen: `[🎧 Listen](/app/audio?path=...)` (routes to canonical in-app HTML5 audio player at `static/html/audio-player.html` — full player UI with title, subtitle from script H1, file size, embedded download button)
+    - Download: `[⬇️ Download](/api/io/file?path=...&download=true)` (forces `Content-Disposition: attachment` via `download=true` query param)
+    - View Script: `[📝 View Script](/app/docs?path=...)`
+  - URL-encodes path components via `urllib.parse.quote()`.
+
+**Stage-2 detour + revert** (no CoSA-side change — recorded for completeness):
+- First iteration of Stage 2 pointed Listen at `/api/io/file?path=...` (the raw-file endpoint). User noted this forced download because Starlette `FileResponse(filename=...)` defaults to `Content-Disposition: attachment`. Briefly fixed `io_files.py` with `content_disposition_type="inline"` then **reverted** when user clarified Listen should target the canonical `/app/audio` route alias. Final Listen URL: `/app/audio?path=...` (player page, no API change needed). The CoSA `io_files.py` was never modified in the final state.
+
+#### Verification (parent-side, replicated here)
+
+| Layer | Result |
+|---|---|
+| py_compile (`agents/podcast_generator/job.py`) | ✅ OK |
+| Import chain (`from cosa.agents.podcast_generator.job import PodcastGeneratorJob`) | ✅ OK |
+| Lupin podcast completion unit tests (`test_podcast_completion_report.py`) | ✅ 6/6 (URL-link assertions + parametrized `test_completion_url_path_normalization` covering 3 input shapes) |
+| Lupin broader podcast-related unit regression | ✅ 26/26 |
+| Manual smoke (parent): `/app/audio?path=...mp3` | ✅ HTTP 200 `text/html` (player page) |
+| Manual smoke (parent): `/api/io/file?path=...mp3&download=true` | ✅ `Content-Disposition: attachment` |
+| Manual smoke (parent): `/api/io/file?path=...mp3` (raw) | ✅ Still works for media-element consumption inside player |
+
+#### Cross-repo separation
+Per `CLAUDE.md` and memory `feedback_verify_repo_before_commit.md`: this CoSA-context session ONLY commits files inside `src/cosa/`. The Lupin-parent test updates (`src/tests/unit/test_podcast_completion_report.py`) and history-archive bookkeeping (`history/2026-04-14-to-21-history.md`, `history.md`, `TODO.md`) belong to parent context and are not amended here. CoSA history mirrors the Lupin entry per CoSA `CLAUDE.md` cross-repo duplication mandate.
+
+#### Files in this commit (CoSA only)
+
+- `agents/podcast_generator/job.py` (+39/−7)
+- `history.md`
+- `.claude-session.md`
+
+**Commit**: [pending — awaiting user approval]
+
+---
+
 ### 2026.04.24 - Session 70323998 | CoSA-side wrap of Lupin sessions 52a71953 (sender_id fix) + 616112aa (v0.1.7 CJ Flow async pool)
 
 **Context**: Session-end commit bundle for the CoSA-side work from two Lupin-parent sessions on 2026-04-24, on branch `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Both bodies of work were verified parent-side; this session lands the CoSA submodule pieces under two clearly-scoped commits per `feedback_lupin_only_never_cosa.md` cross-repo separation.
