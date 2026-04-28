@@ -1,5 +1,93 @@
 # COSA Development History
 
+### 2026.04.27 - Session c2b5912f | CoSA-side wrap of Lupin Sessions aabece5e (Conversation Mode) + 49c27830 (Notification Dispatch Unification + CJ Flow card-rendering wrap) + deferred 2026-04-26 podcast tuning
+
+**Context**: Session-end commit bundle for the CoSA-side work from three Lupin-parent commits, on branch `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Three clearly-scoped commits per `feedback_lupin_only_never_cosa.md` cross-repo separation, each mapping unambiguously to a named parent commit.
+
+**Body 1 — Conversation Mode for Claude Code** (Lupin parent commit: `48dc03e`, session `aabece5e`)
+
+Claude Code now has a per-session "conversation mode" toggle backed by the cosa-voice session-bridge file at `~/.claude/sessions/cc-{PPID}.json`. When `conversation_mode_active=True`, Claude auto-`notify(full_text, suppress_ding=True)` after every turn so the user can hold a voice dialogue at a distance via TTS rather than reading the terminal. Four convergent activation surfaces (voice phrase "enter conversation mode", `/conversation-mode-on` slash command, MCP `enter_conversation_mode()` tool, UI toggle button per-session in the sender card header). All paths converge on the bridge file as canonical state; UI clients hold a localStorage read-through cache hydrated by the GET endpoint and the `conversation_mode_changed` WebSocket event broadcast on POST.
+
+- **`rest/routers/conversation_mode.py` (NEW)** — JWT/API-key gated endpoint pair under `/api/cosa-voice/conversation-mode/{session_id}`:
+  - `GET` — reads `conversation_mode_active` from the bridge file via `find_session_path_by_id()` + `get_conversation_mode()`. Returns 404 if no bridge matches the session_id.
+  - `POST` — writes the flag via `set_conversation_mode()` and broadcasts a `conversation_mode_changed` WebSocket event to the authenticated user's sessions so all UI tabs sync. Bridge write is canonical; broadcast is best-effort (failures logged but non-fatal — bridge write succeeded).
+  - Pulls bridge helpers from the parent Lupin tree (`from lupin_cli.claude_code.hooks.lib.session_bridge import ...`); imports across the cross-repo boundary are fine, only git ops are restricted.
+
+**Body 2 — Notification Dispatch Unification (Phases A-F)** (Lupin parent commit: `f28b63b`, session `49c27830`)
+
+USER-REPORTED bug — 3 user-initiated messages from the LookML CC notifications panel UI targeting CC session `b2ce9133` were silently dropped. Forensic dive surfaced a duplicated dispatch pattern across 6 sites with inconsistent behavior: `notify_user` short-circuited on `is_user_connected(target_system_id)=False` even though `cc-listener-{job_id}` was right there in `active_connections` under a different shared service-account user_id (`claude.code@lupin.deepily.ai`). Day's arc: narrow fix → audit → planned full unification → executed Phases A-F.
+
+- **`rest/websocket_manager.py`** — new `emit_to_user_or_listener_sync()` helper (~95 lines incl. Design-by-Contract docstring), sibling to the canonical `emit_to_user_and_admins_sync` precedent. Always tries the primary user emit (when user_id is provided AND `is_user_connected()`); independently tries the cc-listener path when job_id is provided AND `cc-listener-{job_id}` is in `active_connections`. Returns `{user_delivered, listener_delivered, any_delivered}` dict. Errors in either underlying call are logged and never re-raised (consistent with sibling sync helpers).
+- **`rest/routers/notifications.py`** — Migrations 1, 2, 3:
+  - Migration 1 (`notify_user` fire-and-forget): replaces the inline narrow fix from earlier in the day. When `is_connected=False` AND `job_id` is set, the helper attempts the cross-user listener fallback before falling through to `user_not_available`. State updated to 'delivered' on success; idempotency cache populated.
+  - Migration 2 (`notification_expired` SSE timeout broadcast): swapped `await ws_manager.emit_to_user(...)` for the helper — gains the listener fallback that was missing.
+  - Migration 3 (`notification_responded` response-submission broadcast): same swap; captures `notification.job_id` before session closes so the helper has it for the cross-user emit.
+- **`rest/routers/queues.py`** — Migration 4 (`send_job_message`): collapses the 40-line dual-emit (one `emit_to_user_sync` + one cross-user `emit_to_session_sync`) to a single helper call. Also adds Body 3's `_count_interactions_for_jobs()` helper + done/dead-bucket consumers (see below).
+- **`rest/notification_fifo_queue.py`** — Migration 5 (`_emit_notification_added`): collapsed targeted-user + listener emits into the helper. Broadcast path (when `notification.user_id is None`) still fires `emit()` to all connected clients but ALSO routes explicitly via the helper with `user_id=None` to ensure listener-only delivery when `job_id` is set.
+- **`tests/unit/rest/test_notifications_router.py`** — small alignment fix: `app_timezone` → `app timezone` (matches the actual `lupin-app.ini` key name with space, not underscore).
+
+**Body 3 — CJ Flow card-rendering wrap** (Lupin parent commit: `f28b63b`, same session `49c27830`)
+
+Three orthogonal hardening pieces that landed in the same parent commit as Body 2:
+
+- **`rest/db/repositories/notification_repository.py`** — new `count_by_job_ids(job_ids)` method. Single batched SQL query (`func.count(Notification.id).group_by(Notification.job_id)`) excluding soft-hidden rows for parity with the lazy-load endpoint at `/api/get-job-interactions/{job_id}`. Returns `{job_id: int}` dict with every input job_id present (zero-fill for missing). Used to populate `has_interactions` accurately without N+1 queries.
+- **`rest/routers/queues.py`** — new `_count_interactions_for_jobs()` private helper wrapping `NotificationRepository.count_by_job_ids` with graceful failure (returns `{}` on DB error, logged). Done- and dead-bucket handlers in `get_queue` now compute `notif_counts = _count_interactions_for_jobs([j.id_hash for j in jobs])` once per request, then set `"has_interactions": notif_counts.get(job.id_hash, 0) > 0`. Replaces the old `bool(job.session_id)` proxy that gave false positives whenever a job had a session but no notifications.
+- **`rest/job_persistence.py`** — `/api/job-history` shape parity with `/api/get-queue/done`:
+  - New `_count_notifications_for_jobs(session, job_ids)` — bulk count using the active SQLAlchemy session (avoids pulling NotificationRepository into the persistence module's import surface).
+  - New `_unpack_metadata_json(md)` — flattens rich fields out of the JSONB blob: `response_text` (with legacy `answer_conversational` fallback), `abstract`, `report_path` (with legacy `report_link` alias), `remediation_snapshot_path`, `yaml_path`, `pptx_path`, `cost_summary`, `scheduled_at`, `monopolize`.
+  - New `_build_history_row(row, has_interactions)` — converts a `JobHistory` ORM row into the flat dict shape the frontend renderer expects: top-level identity/column fields + flattened metadata + `has_interactions` from the bulk count + `paused=False` (history is terminal). `metadata_json` retained as backward-compat (additive, not removed).
+  - `query_job_history()` rewritten to call the bulk-count helper once and the row-builder per row. Net effect: `/api/job-history` cards now render with the same affordances as `/api/get-queue/done` cards (interaction badge, abstract, scheduled-at, monopolize flag, etc.) and history-list shows accurate has_interactions instead of the legacy session_id proxy.
+- **`rest/running_fifo_queue.py`** — pool-path stall fix (Bug 11 port to v0.1.7 pool dispatcher). New `_transition_to_stalled(job, formatted_output)` method mirrors `_transition_to_done`'s structure but emits `JobState.STALLED` with `checkpoint` + `plan_path` in the metadata blob (instead of `JobState.COMPLETED` with no checkpoint). Persistence dispatch in `queue_util.emit_job_state_transition` routes `to_state == JobState.STALLED` to `persist_job_stalled_from_metadata`, which writes `status='stalled'` to `job_history` and preserves the checkpoint blob in `metadata_json` for later resume. Early-return added to `_on_agentic_complete` at line ~466: `if job.state == JobState.STALLED: self._transition_to_stalled(job, formatted_output); return`. Background: Bug 11 (2026-04-15) added the equivalent stall handling in the legacy serial `_handle_agentic_job` path (~line 898). Phase 2's pool refactor moved agentic dispatch to `_on_agentic_complete` but did not port the stall check, leaving status='completed' as the unconditional outcome for ALL agentic jobs going through the pool — including TFE and BFE voice-gate stalls. This closes that gap; checkpoint-resume now works under the pool.
+
+**Body 4 — Podcast persona tone tuning** (Lupin parent commit: `cb6c2c4`, deferred from 2026-04-26)
+
+CoSA-side companion to yesterday's Lupin checkpoint that tuned podcast TTS style values in `lupin-app.ini` (Nora 0.40→0.65, Quentin 0.50→0.70). The CoSA persona-config tone strings are read by the host setup logic to seed character voice direction:
+
+- **`agents/podcast_generator/config.py`** — `DEFAULT_CURIOUS_HOST.tone`: "enthusiastic and inquisitive" → "highly animated, fast-paced, and inquisitive". `DEFAULT_EXPERT_HOST.tone`: "warm and authoritative" → "energetic, warm, and authoritative". 4 lines changed total.
+
+#### Verification
+
+| Layer | Result |
+|---|---|
+| py_compile (all 10 modified .py files) | ✅ all OK |
+| AST symbol probe (10 new symbols across 8 files) | ✅ all present |
+| Live `:7999` endpoint registration check (`/api/cosa-voice/conversation-mode/{id}`) | ✅ 401 (auth-required, route registered) |
+| Lupin parent verification (per `48dc03e`) | ✅ 23 new pytest tests across 3 files, 52/52 pass incl. pre-existing session_bridge suite |
+| Lupin parent verification (per `f28b63b`) | ✅ Lupin unit suite **3672 pass / 1 xfail / 0 fail** (was 3638 pre-session → +34 tests). With CoSA notification fifo queue tests: **3677 pass**. WebSocket smoke 50/50. Final grep audit: zero `emit_to_session_sync` in 3 migrated routers; helper is the single chokepoint. |
+
+#### Cross-repo separation
+
+Per `CLAUDE.md` and memory `feedback_verify_repo_before_commit.md` / `feedback_lupin_only_never_cosa.md`: this CoSA-context session ONLY commits files inside `src/cosa/`. The Lupin-parent commits (`48dc03e`, `f28b63b`, `cb6c2c4`) are owned by the parent context and not amended here. CoSA history mirrors the corresponding Lupin entries per CoSA `CLAUDE.md` cross-repo duplication mandate.
+
+#### Files in this commit bundle (CoSA only)
+
+**Commit A — Conversation mode router** (Lupin parent: `48dc03e`):
+- `rest/routers/conversation_mode.py` (NEW)
+
+**Commit B — Notification dispatch unification + CJ Flow card-rendering wrap** (Lupin parent: `f28b63b`):
+- `rest/websocket_manager.py`
+- `rest/routers/notifications.py`
+- `rest/routers/queues.py`
+- `rest/notification_fifo_queue.py`
+- `tests/unit/rest/test_notifications_router.py`
+- `rest/db/repositories/notification_repository.py`
+- `rest/job_persistence.py`
+- `rest/running_fifo_queue.py`
+
+**Commit C — Podcast persona tone tuning** (Lupin parent: `cb6c2c4`):
+- `agents/podcast_generator/config.py`
+
+**Commit D (session-end docs)**:
+- `history.md`
+- `.claude-session.md`
+
+**Commit A**: `2081452` (1 file, +168/-0) — Conversation mode router
+**Commit B**: `1de2084` (8 files, +543/-67) — Notification dispatch unification + CJ Flow card-rendering wrap
+**Commit C**: `aec2713` (1 file, +2/-2) — Podcast persona tone tuning
+**Commit D**: (this entry — session-end docs with backfilled hashes)
+
+---
+
 ### 2026.04.25 - Session c608199a | CoSA-side wrap of Lupin Session 6c798a07 (Podcast generator completion abstract — clickable URLs)
 
 **Context**: Session-end commit for the CoSA-side work from Lupin-parent Session `6c798a07` (2026-04-25). User submitted a podcast generation job (`pg-6bcf412d`), it completed, but the completion notification's abstract showed bare filesystem paths in backticks instead of clickable URLs — no way to play or download the generated MP3 from the UI. Two-stage fix in one session: (1) build clickable Markdown links + switch artifacts to relative paths, (2) point Listen at canonical in-app player route after a brief detour through the raw-file API endpoint.
