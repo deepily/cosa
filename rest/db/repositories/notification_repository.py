@@ -390,6 +390,42 @@ class NotificationRepository( BaseRepository[Notification] ):
 
         return { row.sender_id: row.count for row in results }
 
+    def count_by_job_ids( self, job_ids: List[ str ] ) -> Dict[ str, int ]:
+        """
+        Bulk count of non-hidden notifications grouped by job_id.
+
+        Single batched query; used to populate `has_interactions` on done/history
+        endpoints without N+1 round-trips. Excludes soft-hidden rows for parity
+        with the lazy-load endpoint at /api/get-job-interactions/{job_id}.
+
+        Requires:
+            - job_ids: list of job_id strings (may be empty)
+
+        Ensures:
+            - Returns dict mapping each input job_id to its non-hidden notification count
+            - job_ids with zero notifications are present in the result with value 0
+            - Empty input returns an empty dict (no DB call)
+
+        Raises:
+            - SQLAlchemyError on database failure (caller's responsibility to handle)
+        """
+        if not job_ids:
+            return {}
+
+        results = self.session.query(
+            Notification.job_id,
+            func.count( Notification.id ).label( 'count' )
+        ).filter(
+            Notification.job_id.in_( job_ids ),
+            Notification.is_hidden == False
+        ).group_by(
+            Notification.job_id
+        ).all()
+
+        counts = { row.job_id: int( row.count ) for row in results }
+        # Ensure every input job_id is in the result, even with zero count
+        return { job_id: counts.get( job_id, 0 ) for job_id in job_ids }
+
     def delete_by_sender( self, sender_id: str, recipient_id: uuid.UUID ) -> int:
         """
         Delete all notifications from a sender for a recipient.

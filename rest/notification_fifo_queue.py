@@ -405,20 +405,37 @@ class NotificationFifoQueue( FifoQueue ):
         }
 
         if notification.user_id:
-            # Targeted notification - send only to specific user
-            self.websocket_mgr.emit_to_user_sync( notification.user_id, "notification_queue_update", event_data )
-            if self.debug: print( f"[NOTIFY-QUEUE] Emitted notification to user: {notification.user_id}" )
+            # Phase E migration (2026-04-27): targeted user + cc-listener
+            # cross-user delivery now goes through the canonical dispatch
+            # helper. CC listeners authenticate as a shared service-account
+            # user_id (different from notification.user_id), so the helper
+            # internally handles both the user emit and the listener emit.
+            self.websocket_mgr.emit_to_user_or_listener_sync(
+                user_id = notification.user_id,
+                job_id  = notification.job_id,
+                event   = "notification_queue_update",
+                data    = event_data,
+            )
+            if self.debug: print( f"[NOTIFY-QUEUE] Dispatched notification (user={notification.user_id}, job_id={notification.job_id})" )
         else:
-            # Broadcast notification - send to all connected clients
+            # Broadcast notification - send to all connected clients.
+            # Falls outside the helper's scope (helper is user-or-listener,
+            # not broadcast). Listener still gets it via the cc-listener
+            # session emit below if job_id is set.
             self.websocket_mgr.emit( "notification_queue_update", event_data )
             if self.debug: print( f"[NOTIFY-QUEUE] Broadcast notification to all users" )
 
-        # Cross-user delivery: CC listeners authenticate as a service account
-        # (different user_id), so emit_to_user_sync won't reach them. Target the
-        # listener session directly by its deterministic session ID.
-        if notification.job_id:
-            listener_sid = f"cc-listener-{notification.job_id}"
-            self.websocket_mgr.emit_to_session_sync( listener_sid, "notification_queue_update", event_data )
+            # Even on broadcast, route explicitly to cc-listener-{job_id}
+            # if applicable — the listener might not be matching on
+            # user_id-keyed broadcasts cleanly. Use the helper with
+            # user_id=None to get listener-only delivery.
+            if notification.job_id:
+                self.websocket_mgr.emit_to_user_or_listener_sync(
+                    user_id = None,
+                    job_id  = notification.job_id,
+                    event   = "notification_queue_update",
+                    data    = event_data,
+                )
 
     def _emit_queue_update( self ) -> None:
         """

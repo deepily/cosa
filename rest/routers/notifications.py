@@ -501,7 +501,85 @@ async def notify_user(
                 # Log but don't fail - FIFO queue is the primary delivery mechanism
                 print( f"[NOTIFY] ⚠️ Failed to persist to PostgreSQL (non-fatal): {db_error}" )
 
-            # 2. If user is offline, return immediately WITHOUT pushing to FIFO queue
+            # 2. If user is offline, attempt cross-user CC-listener fallback
+            #    BEFORE giving up. Delegates to the canonical helper
+            #    `WebSocketManager.emit_to_user_or_listener_sync` which
+            #    encapsulates the dispatch matrix (user-or-listener-or-both)
+            #    consistently across all 6 dispatch sites. See
+            #    `~/.claude/plans/dazzling-napping-frost.md` (2026-04-27).
+            #
+            #    Why this matters: CC notification listeners
+            #    (`cc-listener-{job_id}` sessions) authenticate as a SHARED
+            #    service-account user_id (`claude.code@lupin.deepily.ai`),
+            #    which is different from the email-resolved
+            #    `target_system_id`. So when a user sends a message from the
+            #    UI panel targeting another CC session like
+            #    `claude.code@lookml.deepily.ai`,
+            #    `is_user_connected(target_system_id)` returns False even
+            #    though a `cc-listener-{job_id}` session is right there in
+            #    `active_connections`. Bug filed 2026-04-27 by USER
+            #    (session b2ce9133).
+            #
+            #    user_id=None is intentional here: we already know the primary
+            #    target is offline (is_connected=False above), so re-checking
+            #    inside the helper is redundant. The helper just tries the
+            #    listener path.
+            if not is_connected and job_id:
+                dispatch_result = ws_manager.emit_to_user_or_listener_sync(
+                    user_id = None,
+                    job_id  = job_id,
+                    event   = "notification_queue_update",
+                    data    = {
+                        "notification": {
+                            "id"                : db_notification_id,
+                            "id_hash"           : db_notification_id,
+                            "type"              : type,
+                            "notification_type" : type,
+                            "message"           : message.strip(),
+                            "priority"          : priority,
+                            "job_id"            : job_id,
+                            "sender_id"         : resolved_sender_id,
+                            "title"             : title,
+                            "abstract"          : abstract,
+                            "timestamp"         : datetime.utcnow().isoformat(),
+                        },
+                    },
+                )
+                if dispatch_result[ "listener_delivered" ]:
+                    # Best-effort state update — non-fatal if it fails
+                    if db_notification_id:
+                        try:
+                            with get_db() as session:
+                                repo = NotificationRepository( session )
+                                repo.update_state( uuid.UUID( db_notification_id ), "delivered" )
+                        except Exception as state_err:
+                            print( f"[NOTIFY] ⚠️ State update to 'delivered' failed (non-fatal): {state_err}" )
+
+                    listener_sid = f"cc-listener-{job_id}"
+                    print( f"[NOTIFY] ✓ Delivered via cc-listener {listener_sid} (cross-user fallback)" )
+                    response_dict = {
+                        "status"             : "delivered_via_listener",
+                        "message"            : f"Notification delivered to CC listener for job {job_id}",
+                        "target_user"        : target_user,
+                        "target_system_id"   : target_system_id,
+                        "connection_count"   : 1,
+                        "delivery_path"      : "cc-listener",
+                        "listener_session"   : listener_sid,
+                    }
+                    # Cache for idempotency
+                    if idempotency_key:
+                        with _idempotency_lock:
+                            _idempotency_cache[ idempotency_key ] = ( response_dict, time_mod.time() )
+                            while len( _idempotency_cache ) > _IDEMPOTENCY_MAX:
+                                _idempotency_cache.popitem( last=False )
+                    return response_dict
+                # else: helper either had no listener to deliver to OR the
+                # emit failed (logged inside the helper). Fall through to
+                # user_not_available — DB row remains for forensic recovery.
+
+            # If we reach here, the user is offline AND no usable cc-listener
+            # fallback existed. Return user_not_available — DB row remains for
+            # forensic recovery.
             if not is_connected:
                 print( f"[NOTIFY] User {target_user} ({target_system_id}) is not connected - notification not delivered" )
                 response_dict = {
@@ -726,12 +804,18 @@ async def notify_user(
                     repo = NotificationRepository( session )
                     repo.mark_expired( uuid.UUID( notification_id ) )
 
-                # Task 7: Broadcast notification_expired WebSocket event
+                # Task 7: Broadcast notification_expired WebSocket event.
+                # Phase C migration (2026-04-27): use the canonical dispatch
+                # helper so CC listeners on the same job_id also receive the
+                # expiry event (they couldn't before — emit_to_user only
+                # reached the email-resolved user_id, missing the listener
+                # that was registered under a shared service-account user_id).
                 try:
-                    await ws_manager.emit_to_user(
-                        target_system_id,
-                        "notification_expired",
-                        {
+                    ws_manager.emit_to_user_or_listener_sync(
+                        user_id = target_system_id,
+                        job_id  = job_id,
+                        event   = "notification_expired",
+                        data    = {
                             "notification_id"  : notification_id,
                             "default_used"     : response_default,
                             "timeout"          : True,
@@ -890,8 +974,11 @@ async def submit_notification_response(
 
                 print(f"[NOTIFY] Accepting late response within grace period ({grace_period_seconds}s)")
 
-            # Capture recipient_id before session closes (for WebSocket broadcast)
-            recipient_id = str( notification.recipient_id )
+            # Capture recipient_id and job_id before session closes (for WebSocket broadcast).
+            # job_id is needed for the cross-user CC-listener fallback in the
+            # notification_responded broadcast below (Phase C migration 2026-04-27).
+            recipient_id    = str( notification.recipient_id )
+            notification_job_id = notification.job_id
 
             # Update database with response (pass dict, not JSON string)
             # Wrap in dict if response_value is a simple string like "yes" or "no"
@@ -939,12 +1026,18 @@ async def submit_notification_response(
         else:
             print(f"[NOTIFY] No SSE stream waiting for {notification_id} (may have already completed)")
 
-        # Task 7: Broadcast WebSocket event (notification_responded)
+        # Task 7: Broadcast WebSocket event (notification_responded).
+        # Phase C migration (2026-04-27): use the canonical dispatch helper
+        # so CC listeners on the same job_id also receive the response event
+        # (they couldn't before — emit_to_user only reached the email-resolved
+        # recipient_id, missing the listener registered under a shared
+        # service-account user_id).
         try:
-            await ws_manager.emit_to_user(
-                recipient_id,
-                "notification_responded",
-                {
+            ws_manager.emit_to_user_or_listener_sync(
+                user_id = recipient_id,
+                job_id  = notification_job_id,
+                event   = "notification_responded",
+                data    = {
                     "notification_id"  : notification_id,
                     "response_value"   : response_value,
                     "timestamp"        : datetime.utcnow().isoformat(),

@@ -621,6 +621,93 @@ class WebSocketManager:
         self.emit_to_user_sync( user_id, event, data )
         self.emit_to_admins_sync( event, data, exclude_user_id=user_id )
 
+    def emit_to_user_or_listener_sync(
+        self,
+        user_id: Optional[str],
+        job_id: Optional[str],
+        event: str,
+        data: dict
+    ) -> dict:
+        """
+        Canonical dual-emit for notifications that may target a CC listener.
+
+        Always tries the primary user emit (via emit_to_user_sync) when the
+        user has any active sessions. If `job_id` is provided AND a session
+        named `cc-listener-{job_id}` is active in active_connections
+        (regardless of which user_id owns it), ALSO emits to that session.
+        The two emits are independent — both fire if both targets are
+        reachable, neither blocks the other, errors are logged but never
+        raised.
+
+        Use this for ANY notification dispatch where:
+        - The primary target is identified by user_id (email-resolved or owner)
+        - The notification is associated with a specific agentic-job / CC
+          session via job_id, and a CC listener may need to receive it
+          cross-user (CC listeners authenticate as a shared service-account
+          user_id, so emit_to_user_sync alone won't reach them).
+
+        Use emit_to_user_sync directly only for events with no job_id concept
+        (auth lifecycle, system events). Use emit_to_user_and_admins_sync for
+        queue/job state events admins should see.
+
+        Background: Bug filed 2026-04-27 (session 49c27830) — 3 user-initiated
+        messages from the LookML CC notifications panel were dropped because
+        notify_user short-circuited on is_user_connected(target_system_id)=False
+        even though cc-listener-{job_id} was right there in active_connections
+        under a different shared service-account user_id. The narrow fix
+        added an inline fallback to one branch; this helper extracts the
+        pattern so all 6 dispatch sites can call it consistently.
+
+        Requires:
+            - user_id is None or a non-empty string (UUID for connected users)
+            - job_id is None or a non-empty string
+            - event is a non-empty event name string
+            - data is a JSON-serializable dict
+            - self.main_loop is set and running (matches sibling sync helpers)
+
+        Ensures:
+            - Returns dict {"user_delivered": bool, "listener_delivered": bool,
+                            "any_delivered": bool}
+            - user_delivered is True iff user_id had at least one active session
+              AND the underlying emit_to_user_sync did not fail
+            - listener_delivered is True iff job_id was provided AND
+              cc-listener-{job_id} was in active_connections AND the
+              underlying emit_to_session_sync did not fail
+            - any_delivered is True iff at least one of the two delivered
+            - Errors in either underlying call are caught, logged, and never
+              re-raised (consistent with sibling sync helpers)
+            - No-op (returns all-False) if main_loop is missing or stopped
+
+        Raises:
+            - None (consistent with sibling sync helpers)
+        """
+        result = {
+            "user_delivered"     : False,
+            "listener_delivered" : False,
+            "any_delivered"      : False,
+        }
+
+        # Try primary user emit (only if user_id is provided and connected)
+        if user_id and self.is_user_connected( user_id ):
+            try:
+                self.emit_to_user_sync( user_id, event, data )
+                result[ "user_delivered" ] = True
+            except Exception as user_err:
+                print( f"[WS-DISPATCH] emit_to_user_sync failed for user={user_id}: {user_err}" )
+
+        # Try cc-listener fallback (independent of primary success)
+        if job_id:
+            listener_sid = f"cc-listener-{job_id}"
+            if listener_sid in self.active_connections:
+                try:
+                    self.emit_to_session_sync( listener_sid, event, data )
+                    result[ "listener_delivered" ] = True
+                except Exception as listener_err:
+                    print( f"[WS-DISPATCH] emit_to_session_sync failed for {listener_sid}: {listener_err}" )
+
+        result[ "any_delivered" ] = result[ "user_delivered" ] or result[ "listener_delivered" ]
+        return result
+
     def is_user_connected( self, user_id: str ) -> bool:
         """
         Check if a specific user has any active WebSocket connections.

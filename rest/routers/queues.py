@@ -125,6 +125,38 @@ def get_notification_queue():
     import fastapi_app.main as main_module
     return main_module.jobs_notification_queue
 
+def _count_interactions_for_jobs( job_ids ):
+    """
+    Bulk-count non-hidden notifications grouped by job_id for the supplied list.
+
+    Used by the done- and dead-bucket handlers to populate `has_interactions`
+    accurately (replacing the old `bool(job.session_id)` proxy that gave false
+    positives whenever a job had a session but no notifications).
+
+    Single batched query against the indexed notifications.job_id column.
+
+    Requires:
+        - job_ids: list of job_id strings (may be empty)
+
+    Ensures:
+        - Returns dict mapping each input job_id to its non-hidden notification count
+        - Empty input returns {} without issuing a query
+        - Returns {} on database failure (logged) — caller treats as all-zero counts
+    """
+    if not job_ids:
+        return {}
+
+    try:
+        from cosa.rest.db.database import get_db
+        from cosa.rest.db.repositories.notification_repository import NotificationRepository
+
+        with get_db() as session:
+            repo = NotificationRepository( session )
+            return repo.count_by_job_ids( job_ids )
+    except Exception as e:
+        print( f"[WARN] _count_interactions_for_jobs failed: {e}" )
+        return {}
+
 @router.post(
     "/push",
     summary     = "Push job to queue",
@@ -456,6 +488,11 @@ async def get_queue(
 
     # Step 5: Handle done queue special case (metadata + HTML)
     if queue_name == "done":
+        # Bulk-count notifications for accurate has_interactions per job (single
+        # batched query against the indexed notifications.job_id column —
+        # replaces the bool(job.session_id) proxy that gave false positives).
+        notif_counts = _count_interactions_for_jobs( [ j.id_hash for j in jobs ] )
+
         # Extract structured job data from SolutionSnapshot or AgenticJobBase objects
         structured_jobs = []
         for job in jobs:
@@ -474,7 +511,7 @@ async def get_queue(
                 "user_email"      : job.user_email,
                 "session_id"      : job.session_id,  # For job-notification correlation
                 "agent_type"      : job.job_type,  # Unified property replaces getattr() chain
-                "has_interactions": bool( job.session_id ),  # True if can query notifications
+                "has_interactions": notif_counts.get( job.id_hash, 0 ) > 0,  # Real count from notifications table
                 "has_audio_cache" : False,  # Will be determined by frontend cache check
                 "is_cache_hit"    : job.is_cache_hit,  # For Time Saved Dashboard
                 # Phase 7: Agentic job artifacts for enhanced done cards
@@ -521,6 +558,9 @@ async def get_queue(
     # that wrote a Phase 2 plan had no way to surface it to the UI.
     # See: src/rnd/v0.1.6/2026.04.11-tfe-forensics-capture-plan.md (Fix 8b)
     if queue_name == "dead":
+        # Same bulk-count pattern as done bucket — accurate has_interactions
+        notif_counts = _count_interactions_for_jobs( [ j.id_hash for j in jobs ] )
+
         structured_jobs = []
         for job in jobs:
             is_agentic_job = isinstance( job, AgenticJobBase )
@@ -537,7 +577,7 @@ async def get_queue(
                 "completed_at"    : job.completed_at,
                 "error"           : job.error,
                 "is_cache_hit"    : False,
-                "has_interactions": bool( job.session_id ),
+                "has_interactions": notif_counts.get( job.id_hash, 0 ) > 0,
                 "scheduled_at"    : getattr( job, 'scheduled_at', None ),
                 "monopolize"      : getattr( job, 'monopolize', False ),
                 "paused"          : job.state == JobState.PAUSED,
@@ -923,8 +963,17 @@ async def send_job_message(
         import fastapi_app.main as main_module
         ws_manager = main_module.websocket_manager
 
-        ws_manager.emit_to_user_sync(
+        # Phase D migration (2026-04-27): use the canonical dispatch helper.
+        # Pre-migration this site had two separate emit calls — one
+        # emit_to_user_sync to deliver to the human's browser, plus a
+        # cross-user emit_to_session_sync to deliver to cc-listener-{job_id}.
+        # The helper unifies the pattern; both still fire when both targets
+        # are reachable. CC listeners authenticate as a shared service-account
+        # user_id, so they only receive cross-user delivery via the listener
+        # session-id branch — that's what the helper handles internally.
+        ws_manager.emit_to_user_or_listener_sync(
             user_id = user_id,
+            job_id  = job_id,
             event   = "notification_queue_update",
             data    = {
                 "notification": {
@@ -940,28 +989,6 @@ async def send_job_message(
                 },
             },
         )
-
-        # Cross-user delivery: CC listeners authenticate as a service account
-        # (different user_id), so emit_to_user_sync won't reach them.
-        if job_id:
-            listener_sid = f"cc-listener-{job_id}"
-            ws_manager.emit_to_session_sync(
-                session_id = listener_sid,
-                event      = "notification_queue_update",
-                data       = {
-                    "notification": {
-                        "id"                : notification_id,
-                        "id_hash"           : notification_id,
-                        "type"              : "user_initiated_message",
-                        "notification_type" : "user_initiated_message",
-                        "message"           : message_text,
-                        "priority"          : priority,
-                        "job_id"            : job_id,
-                        "sender_id"         : f"user@{current_user[ 'email' ]}",
-                        "timestamp"         : cu.get_current_datetime_iso(),
-                    },
-                },
-            )
 
         # Echo acknowledgment back to user as a progress notification
         # Persist to database so it appears in job interaction history

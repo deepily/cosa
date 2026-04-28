@@ -466,6 +466,17 @@ class RunningFifoQueue( FifoQueue ):
                 return
 
             formatted_output = future.result()
+
+            # Stalled terminal (Bug 11 2026-04-15, ported to pool path 2026-04-26):
+            # voice gate timed out and orchestrator saved a checkpoint. Route to
+            # Done with status=stalled so the UI badge + Resume button activate.
+            # Without this branch, _transition_to_done overwrites status='completed'
+            # and drops the checkpoint blob, breaking checkpoint-resume entirely.
+            # Mirrors the legacy serial path's stall check at line ~898.
+            if job.state == JobState.STALLED:
+                self._transition_to_stalled( job, formatted_output )
+                return
+
             self._transition_to_done( job, formatted_output )
 
         except BaseException as e:
@@ -572,6 +583,96 @@ class RunningFifoQueue( FifoQueue ):
             )
         except Exception as io_e:
             if self.debug: print( f"[AGENTIC-POOL] I/O table write skipped: {io_e}" )
+
+    def _transition_to_stalled( self, job: Any, formatted_output: Any = None ) -> None:
+        """
+        Stalled-terminal transition for agentic jobs that hit a voice-gate
+        timeout and saved a checkpoint. Routes the job to Done with
+        status='stalled' so the UI badge + Resume button activate; persistence
+        dispatch in queue_util.emit_job_state_transition routes
+        `to_state == JobState.STALLED` to persist_job_stalled_from_metadata,
+        which writes status='stalled' to job_history and preserves the
+        checkpoint blob in metadata_json for later resume.
+
+        Mirrors _transition_to_done's structure, but emits JobState.STALLED
+        with `checkpoint` + `plan_path` in the metadata blob, instead of
+        JobState.COMPLETED with no checkpoint.
+
+        Bug 11 (2026-04-15) added the equivalent stall handling in the legacy
+        serial path (_handle_agentic_job, ~line 898). Phase 2's pool refactor
+        moved agentic dispatch to _on_agentic_complete but did not port the
+        stall check, leaving status='completed' as the unconditional outcome
+        for ALL agentic jobs going through the pool — including TFE and BFE
+        voice-gate stalls. This helper closes that gap.
+
+        Order:
+          TTS (informational, not urgent) → build metadata WITH checkpoint →
+          emit RUNNING → STALLED → delete from running_queue → push to
+          done_queue → I/O table insert. Does NOT invoke the dead-queue /
+          auto-repair watchdog — the checkpoint IS the repair path; BFE would
+          just swallow it on its own DB lookup.
+        """
+        # TTS — informational tone (not urgent — this is a normal stall, not a crash)
+        self._notify( job.answer_conversational, job=job )
+
+        job_id       = job.id_hash
+        user_id      = job.user_id
+        completed_at = du.get_current_datetime_iso()
+        started_at   = job.started_at
+
+        duration_seconds = None
+        if started_at and completed_at:
+            try:
+                start = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
+                end   = datetime.fromisoformat( completed_at )
+                duration_seconds = ( end - start ).total_seconds()
+            except Exception:
+                pass
+
+        artifacts = getattr( job, "artifacts", None ) or { }
+        metadata  = {
+            "response_text"             : job.answer_conversational,
+            "abstract"                  : artifacts.get( "abstract" ),
+            "report_link"               : artifacts.get( "report_path" ),
+            "remediation_snapshot_path" : artifacts.get( "remediation_snapshot_path" ),
+            "yaml_path"                 : artifacts.get( "yaml_path" ),
+            "pptx_path"                 : artifacts.get( "pptx_path" ),
+            "cost_summary"              : artifacts.get( "cost_summary" ),
+            # Stall-specific fields (the missing piece pre-fix):
+            "checkpoint"                : artifacts.get( "checkpoint" ),
+            "plan_path"                 : artifacts.get( "plan_path" ),
+            "error"                     : None,
+            "question_text"             : job.last_question_asked,
+            "agent_type"                : job.job_type,
+            "timestamp"                 : job.created_date,
+            "status"                    : JobState.STALLED.value,
+            "has_interactions"          : bool( job.session_id ),
+            "is_cache_hit"              : False,
+            "user_email"                : job.user_email,
+            "started_at"                : started_at,
+            "completed_at"              : completed_at,
+            "duration_seconds"          : duration_seconds,
+        }
+        emit_job_state_transition(
+            self.websocket_mgr, job_id, JobState.RUNNING, JobState.STALLED, user_id, metadata
+        )
+
+        # Queue transition — same pattern as _transition_to_done but explicitly
+        # NOT firing the TFE auto-dispatch watchdog (stalled jobs are awaiting
+        # human review, not failed jobs needing repair).
+        self.delete_by_id_hash( job.id_hash )
+        self.jobs_done_queue.push( job )
+
+        # I/O table (non-fatal if unavailable)
+        try:
+            self.io_tbl.insert_io_row(
+                input_type   = job.routing_command,
+                input        = job.last_question_asked,
+                output_raw   = str( artifacts ) if artifacts else str( formatted_output ),
+                output_final = job.answer_conversational,
+            )
+        except Exception as io_e:
+            if self.debug: print( f"[AGENTIC-POOL] I/O table write skipped (stalled): {io_e}" )
 
     def _transition_to_dead( self, job: Any, cause: Any ) -> None:
         """

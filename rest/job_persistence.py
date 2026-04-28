@@ -564,6 +564,130 @@ def get_active_job_ids_by_user():
 # Query functions (for API endpoints)
 # ---------------------------------------------------------------------------
 
+def _count_notifications_for_jobs( session, job_ids ):
+    """
+    Bulk-count non-hidden notifications grouped by job_id, using the supplied
+    SQLAlchemy session. Single batched query — no N+1.
+
+    Defined here (rather than calling NotificationRepository.count_by_job_ids)
+    to reuse the active session and avoid pulling the repository class into a
+    pure persistence module's import surface.
+
+    Requires:
+        - session: active SQLAlchemy session
+        - job_ids: list of id_hash strings (may be empty)
+
+    Ensures:
+        - Returns dict mapping each input job_id to its count (0 if no rows)
+        - Empty input returns {} without issuing a query
+        - Returns {} on database failure (logged) — caller treats as all-zero counts
+    """
+    if not job_ids:
+        return {}
+
+    try:
+        from cosa.rest.postgres_models import Notification
+
+        rows = session.query(
+            Notification.job_id,
+            func.count( Notification.id ).label( 'count' )
+        ).filter(
+            Notification.job_id.in_( job_ids ),
+            Notification.is_hidden == False
+        ).group_by(
+            Notification.job_id
+        ).all()
+
+        counts = { row.job_id: int( row.count ) for row in rows }
+        return { job_id: counts.get( job_id, 0 ) for job_id in job_ids }
+    except Exception as e:
+        print( f"[WARN] _count_notifications_for_jobs failed: {e}" )
+        return {}
+
+
+def _unpack_metadata_json( md ):
+    """
+    Flatten the rich fields out of a JobHistory.metadata_json JSONB blob.
+
+    Mirrors the field set surfaced at the top level by `/api/get-queue/done`
+    (see routers/queues.py done-bucket handler) so /api/job-history can return
+    the same shape.
+
+    Requires:
+        - md: dict (from row.metadata_json) or None / falsy
+
+    Ensures:
+        - Returns dict with all rich fields present (None / False defaults)
+        - Aliases legacy `report_link` → `report_path` for naming alignment
+        - Reads `response_text` falling back to legacy `answer_conversational`
+    """
+    md = md or {}
+    return {
+        "response_text"             : md.get( "response_text" ) or md.get( "answer_conversational" ),
+        "abstract"                  : md.get( "abstract" ),
+        "report_path"               : md.get( "report_path" ) or md.get( "report_link" ),
+        "remediation_snapshot_path" : md.get( "remediation_snapshot_path" ),
+        "yaml_path"                 : md.get( "yaml_path" ),
+        "pptx_path"                 : md.get( "pptx_path" ),
+        "cost_summary"              : md.get( "cost_summary" ),
+        "scheduled_at"              : md.get( "scheduled_at" ),
+        "monopolize"                : bool( md.get( "monopolize", False ) )
+    }
+
+
+def _build_history_row( row, has_interactions ):
+    """
+    Convert a JobHistory ORM row into the flat dict shape returned by
+    /api/job-history, matching the field set returned by /api/get-queue/done.
+
+    `metadata_json` is retained in the response as an additive backward-compat
+    measure so any code still reading from it continues to work; new top-level
+    fields are the canonical source going forward.
+
+    Requires:
+        - row: JobHistory ORM instance
+        - has_interactions: bool (computed once-per-page via bulk count)
+
+    Ensures:
+        - Returns dict with all top-level fields used by the frontend renderer
+        - paused is always False (history is terminal)
+        - report_link in metadata_json (legacy) surfaces as report_path
+    """
+    flat_md = _unpack_metadata_json( row.metadata_json )
+    return {
+        # Identity / column fields
+        "id_hash"          : row.id_hash,
+        "job_id"           : row.id_hash,    # Alias for parity with /api/get-queue/done
+        "job_type"         : row.job_type,
+        "agent_type"       : row.job_type,   # Alias for parity (frontend reads agent_type)
+        "user_id"          : row.user_id,
+        "user_email"       : row.user_email,
+        "session_id"       : row.session_id,
+        "routing_command"  : row.routing_command,
+        "status"           : row.status,
+        "question_text"    : row.question_text,
+        "error"            : row.error,
+        "is_cache_hit"     : row.is_cache_hit,
+        "duration_seconds" : row.duration_seconds,
+        "created_at"       : row.created_at.isoformat()   if row.created_at   else None,
+        "started_at"       : row.started_at.isoformat()   if row.started_at   else None,
+        "completed_at"     : row.completed_at.isoformat() if row.completed_at else None,
+        "updated_at"       : row.updated_at.isoformat()   if row.updated_at   else None,
+        "timestamp"        : ( row.completed_at or row.created_at ).isoformat() if ( row.completed_at or row.created_at ) else None,
+
+        # Flattened metadata_json fields (top-level for parity with /api/get-queue/done)
+        **flat_md,
+
+        # Computed / phase-specific
+        "has_interactions" : has_interactions,
+        "has_audio_cache"  : False,
+        "paused"           : False,   # History is terminal
+
+        # Backward-compat: keep raw metadata_json in the response
+        "metadata_json"    : row.metadata_json,
+    }
+
+
 def query_job_history( user_id=None, status=None, job_type=None,
                        limit=20, offset=0, days=None, exclude_ids=None ):
     """
@@ -615,26 +739,17 @@ def query_job_history( user_id=None, status=None, job_type=None,
                 .offset( offset )
             ).scalars().all()
 
+            # Bulk-count notifications for accurate has_interactions per row.
+            # Single batched query against the indexed notifications.job_id column.
+            row_ids       = [ row.id_hash for row in rows ]
+            notif_counts  = _count_notifications_for_jobs( session, row_ids )
+
             jobs = []
             for row in rows:
-                jobs.append( {
-                    "id_hash"          : row.id_hash,
-                    "job_type"         : row.job_type,
-                    "user_id"          : row.user_id,
-                    "user_email"       : row.user_email,
-                    "session_id"       : row.session_id,
-                    "routing_command"  : row.routing_command,
-                    "status"           : row.status,
-                    "question_text"    : row.question_text,
-                    "error"            : row.error,
-                    "is_cache_hit"     : row.is_cache_hit,
-                    "duration_seconds" : row.duration_seconds,
-                    "metadata_json"    : row.metadata_json,
-                    "created_at"       : row.created_at.isoformat() if row.created_at else None,
-                    "started_at"       : row.started_at.isoformat() if row.started_at else None,
-                    "completed_at"     : row.completed_at.isoformat() if row.completed_at else None,
-                    "updated_at"       : row.updated_at.isoformat() if row.updated_at else None,
-                } )
+                jobs.append( _build_history_row(
+                    row,
+                    has_interactions=notif_counts.get( row.id_hash, 0 ) > 0
+                ) )
 
             return { "jobs": jobs, "total": total }
 
