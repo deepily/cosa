@@ -105,6 +105,18 @@ class RunningFifoQueue( FifoQueue ):
             name   = "GhostJobSweeper",
         )
         self._ghost_job_sweeper_thread.start()
+
+        # WG-8 (2026-04-28): consumer-thread heartbeat.
+        # Updated by queue_consumer.consumer_worker at the top of each loop
+        # iteration so /api/queue/pool-status can report seconds_since_heartbeat
+        # for stall detection. None = consumer hasn't ticked yet.
+        self.last_consumer_heartbeat_at = None
+        if config_mgr is not None:
+            self._consumer_stall_threshold_seconds = config_mgr.get(
+                "cj flow consumer stall threshold seconds", default=120, return_type="int"
+            )
+        else:
+            self._consumer_stall_threshold_seconds = 120
     
     
     def enter_running_loop( self ) -> None:
@@ -260,9 +272,26 @@ class RunningFifoQueue( FifoQueue ):
             print( f"[RUNNING] Full stack trace:" )
             traceback.print_exc()
 
-            # Get job info BEFORE popping (head is still in queue)
-            failed_job = self.head()
+            # OOS-4 Part A hotfix (2026-04-28): use the `job` parameter explicitly,
+            # NOT self.head(). Phase 2 introduced the agentic pool — the running
+            # queue can hold multiple in-flight jobs (one per pool worker + any
+            # fast-lane job currently being processed). self.head() returns the
+            # OLDEST running job, which during a fast-lane crash is the agentic
+            # pool job (e.g. test_suite) running async, NOT the fast-lane job
+            # (e.g. Calculator) that just raised. Mis-attribution dead-letters
+            # the WRONG job. Fix mirrors the happy-path correction at line 203
+            # ('running_job = job') that landed for Bug 2A/2B but missed this
+            # exception branch. Repro: 2026-04-28 ts-1c41e064 killed at 17:53.
+            failed_job = job
             if failed_job:
+                # OOS-4 Part B hotfix (2026-04-28): persist error on the job
+                # object BEFORE pushing to dead. Without this, dead-queue
+                # listings show error=null and post-mortem callers
+                # (TFE/BFE watchdogs, the user's UI) can't tell why the job
+                # died. The metadata dict below carries the error to the
+                # WebSocket emit but never lands on failed_job.error.
+                failed_job.error = str( e )
+
                 job_id  = failed_job.id_hash
                 user_id = failed_job.user_id
 
@@ -824,6 +853,25 @@ class RunningFifoQueue( FifoQueue ):
             "max_agentic_workers"   : self._pool_max_workers,
             "pending_in_pool"       : pending,
         }
+
+        # WG-8 (2026-04-28): consumer-thread heartbeat for stall detection.
+        # `last_consumer_heartbeat_at` is set by the consumer worker at the
+        # top of each loop iteration. None = consumer has never ticked
+        # (server just started or consumer never launched). seconds_since
+        # is computed against datetime.now() so callers can compare against
+        # `consumer_stall_threshold_seconds` to detect a frozen consumer.
+        from datetime import datetime as _dt
+        hb_at = self.last_consumer_heartbeat_at
+        if hb_at is not None:
+            seconds_since = ( _dt.now() - hb_at ).total_seconds()
+        else:
+            seconds_since = None
+        payload[ "last_consumer_heartbeat_at" ]    = hb_at.isoformat() if hb_at else None
+        payload[ "seconds_since_heartbeat" ]       = seconds_since
+        payload[ "consumer_stall_threshold_secs" ] = self._consumer_stall_threshold_seconds
+        payload[ "consumer_stalled" ] = (
+            seconds_since is not None and seconds_since > self._consumer_stall_threshold_seconds
+        )
 
         # Phase 3: enrich with ApiResourceManager state (per-provider contention)
         try:

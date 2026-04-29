@@ -45,6 +45,16 @@ def start_todo_producer_run_consumer_thread( todo_queue: Any, running_queue: Any
         todo_queue.consumer_running = True
 
         while todo_queue.consumer_running:
+            # WG-8 (2026-04-28): heartbeat at top of loop. /api/queue/pool-status
+            # reports seconds_since_heartbeat so stall detection can flag a
+            # frozen consumer (suspenders to the ghost-job sweeper's belt).
+            try:
+                running_queue.last_consumer_heartbeat_at = datetime.now()
+            except AttributeError:
+                # running_queue may be a Mock in unit tests, or an older
+                # implementation without the attribute — never fatal.
+                pass
+
             try:
                 # Wait for eligible jobs using condition variable + dynamic timeout
                 with todo_queue.condition:

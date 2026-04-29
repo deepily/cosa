@@ -846,21 +846,50 @@ class SolutionSnapshot( RunnableCode ):
 
     def run_code( self, debug: bool=False, verbose: bool=False ) -> dict:
         """
-        Execute stored code.
-        
+        Execute stored code, OR replay a codeless agent's cached answer.
+
+        Most agents (MathAgent, CrudForDataFramesAgent, etc.) generate Python at
+        first-run time and save it on the snapshot's `code` field; replay then
+        re-executes that code. CalculatorAgent and similar deterministic-dispatch
+        agents have no Python to save — their `run_code()` dispatches a parsed
+        intent struct to pure-Python helpers — so their snapshots persist with
+        `code = ['']` BY DESIGN. On replay, those snapshots' answers come from
+        the cached `self.answer` field, not from re-execution.
+
+        2026-04-28 fix: prior to this, replay of a codeless-agent snapshot raised
+        ValueError on the empty-code guard, which the consumer thread caught and
+        dead-lettered. The fix mirrors the existing CalculatorAgent special-case
+        in run_formatter() (lines 943-953 of this file).
+
         Requires:
-            - code, code_example, code_returns are populated
+            - code, code_example, code_returns are populated for code-generating agents
+            - For codeless agents (CalculatorAgent): answer is populated
             - routing_command determines data file path
-            
+
         Ensures:
-            - Executes code using code runner
-            - Updates answer with output
+            - For codeless agents: returns synthesized code_response_dict from cached answer
+            - For code-generating agents: executes code via code runner, updates answer
             - Returns code response dictionary
-            
+
         Raises:
-            - Code execution errors propagated
+            - ValueError if both code and answer are empty (truly broken snapshot)
+            - Code execution errors propagated for code-generating agents
         """
-        # Guard: Reject empty code lists — nothing to execute
+        # Codeless agent replay: CalculatorAgent (and any future deterministic-dispatch
+        # agent) saves snapshots with empty code by design — its answer was computed by
+        # pure-Python helpers, not Python source we can re-run. Short-circuit to return
+        # the cached answer in the code_response_dict shape that downstream code expects.
+        if self.agent_class_name == "CalculatorAgent":
+            if self.answer:
+                self.code_response_dict = { "return_code": 0, "output": self.answer }
+                return self.code_response_dict
+            # CalculatorAgent snapshot with neither code nor answer: data corruption.
+            raise ValueError(
+                f"CalculatorAgent snapshot has no answer — corrupted snapshot: "
+                f"id_hash={getattr( self, 'id_hash', '?' )}"
+            )
+
+        # Guard: Reject empty code lists — nothing to execute (and not a known codeless agent)
         if not self.code or all( line.strip() == "" for line in self.code ):
             raise ValueError( "Cannot execute empty code list — snapshot has no executable code" )
 
