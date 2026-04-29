@@ -1,5 +1,80 @@
 # COSA Development History
 
+### 2026.04.28 - Session 9dd6631b | CoSA-side wrap of Lupin Sessions ba7138c4 (Test-Suite Anomaly Remediation WG-2..9) + c7333045 (Conversation Mode v1.1 + EmbeddingProvider HTTP-routing) + 30072c25 (Voice Personas) + ba53b0d2 (Conv-mode ack receipt — docs only)
+
+**Context**: Session-end commit bundle for the CoSA-side work accumulated across **four** Lupin-parent sessions on 2026-04-28, on branch `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Five clearly-scoped thematic commits per `feedback_lupin_only_never_cosa.md` cross-repo separation, each mapping to a named body of work documented in the parent Lupin `history.md` for unambiguous attribution.
+
+**Body 1 — Voice Personas: per-session voice allocation** (Lupin parent: Session 30072c25)
+
+NEW feature so multiple parallel Claude Code sessions can be told apart audibly + visually. 6-persona pool (Nora, Quentin, Rachel, Adam, Domi, Arnold) with random allocation; deterministic hash-modulo borrow on pool exhaustion. Sam reserved as the system-wide TTS default for any request lacking a `voice_id` — NOT in the allocatable pool.
+
+- **`rest/voice_persona_helpers.py` (NEW)** — pure-function module: `load_pool` (reads INI [Voice Personas]), `pick_unallocated` (random.choice from pool − occupied), `borrowed_for_sid` (deterministic hash-modulo when pool exhausted), `allocate` (composes the prior three).
+- **`rest/routers/voice_persona.py` (NEW)** — JWT/API-key gated endpoint set under `/api/cosa-voice/voice-persona/{session_id}`: `GET /pool` (returns full 6-persona pool with metadata), `GET /{sid}` (current allocation by session_id), `POST /{sid}/allocate` (atomic via `asyncio.Lock` so concurrent SessionStart hooks don't race), `POST /{sid}/release` (frees slot at SessionEnd).
+- **`rest/notification_fifo_queue.py`** — `NotificationItem.voice_persona` field added; `to_dict()` includes it; `push_notification` accepts it as a kwarg so the persona rides the outbound WS envelope.
+- **`rest/routers/notifications.py`** — `_voice_persona_for_sender_id` resolver looks up the bridge file (via the persona endpoint flow) for the sender_id on every notification dispatch. Three callsite injections: queued path (`notify_user`), response-required path, cc-listener inline broadcast.
+
+**Body 2 — Conversation Mode v1.1: mutex auto-displace + Bug A WS dispatch dedup** (Lupin parent: Session c7333045)
+
+Two CoSA-side changes layered on top of the v1 conversation-mode router from Session aabece5e (committed `2081452` last cycle).
+
+- **`rest/routers/conversation_mode.py`** — Phase 2 of the mutex plan (`~/.claude/plans/drifting-skipping-porcupine.md`). The activate POST takes a module-level `asyncio.Lock`, scans bridge files for other active conversation-mode sessions via `find_active_conversation_sessions()` (parent Lupin helper), deactivates each + broadcasts `conversation_mode_changed {session_id, active=false, displaced=true, displaced_by=<sid>}`, then activates ours and broadcasts. Response gains `displaced_sessions` array. Mutual exclusion across CC sessions: only one session can monopolize the mic at a time. (Multi-worker uvicorn note — module-level `asyncio.Lock` only serializes within one process; Redis or DB advisory lock would be needed if `--workers N` is ever introduced.)
+- **`rest/websocket_manager.py`** — Bug A fix: duplicate "Received:" echo on every voice message. `emit_to_user_or_listener_sync` was double-emitting when the cc-listener authenticated as the same user as the sender — the listener session was already in `user_sessions[user_id]` so `emit_to_user_sync` reached it via fan-out, and then `emit_to_session_sync` delivered the same envelope a second time. Added a `listener_in_user_fanout` check that skips the targeted listener emit when the session is already covered by user fan-out. Verified live: every voice message now produces exactly one `_handle_event` invocation in the listener log instead of two.
+
+**Body 3 — EmbeddingProvider: process-aware HTTP routing + dynamic LUPIN_APP_SERVER_URL** (Lupin parent: Session c7333045 21:00 EDT checkpoint)
+
+Architectural enforcement that eliminates accidental GPU loads from non-FastAPI processes. Before this change, `SolutionSnapshot.__init__()` called `generate_embedding()` up to 5 times per construction (question/code/solution/thoughts), and with config `embedding provider = local` + `local embedding device = cuda:0`, the first such call lazy-loaded `nomic-embed-text-v1.5` + `nomic-ai/CodeRankEmbed` onto cuda:0 — a non-FastAPI process holding a duplicate GPU model. The canonical path is the FastAPI `/api/embeddings/{generate,batch}` endpoints that already use the in-process singleton.
+
+- **`memory/embedding_provider.py`** (+232 lines):
+  - New `_is_in_process_engine_owner` class flag (default False).
+  - `declare_in_process_engine_owner()` classmethod flipped True only by FastAPI startup after engines load (parent Lupin wires this in `src/fastapi_app/main.py` immediately after `prose_engine` warmup).
+  - `generate_embedding()` and `generate_embeddings_batch()` route locally only when flag=True; otherwise HTTP-route to `/api/embeddings/generate` or `/api/embeddings/batch` via X-API-Key auth (mirrors `prediction_engine._generate_embedding_via_http` pattern). HTTP failures raise clear `RuntimeError` with URL + cause — fail-fast beats silent GPU grab.
+  - `_resolve_server_url()` reads `LUPIN_APP_SERVER_URL` env var at every call (NOT module load). A test running on `:8000` can `export LUPIN_APP_SERVER_URL=http://localhost:8000` and route there mid-process without restarting Python. Default `http://localhost:7999`.
+  - `SolutionSnapshot.__init__()` requires zero changes — same `generate_embedding()` calls; routing is now context-aware automatically.
+
+**Body 4 — CJ Flow pool hardening: OOS-4 dead-letter fix + WG-8b consumer heartbeat + CalculatorAgent codeless replay** (Lupin parent: Session ba7138c4)
+
+Three pool-related fixes from the morning checkpoint `bb9298c` + 19:35 EDT checkpoint `892652c`.
+
+- **`rest/running_fifo_queue.py`** — Two changes:
+  - **(WG-8b)** consumer-thread heartbeat field: new `last_consumer_heartbeat_at` updated by `consumer_worker` at the top of each loop iteration. `/api/queue/pool-status` now reports `last_consumer_heartbeat_at`, `seconds_since_heartbeat`, `consumer_stall_threshold_secs`, `consumer_stalled`. Stalled consumer is now observable for operators (or future watchdogs) without requiring runtime instrumentation.
+  - **(OOS-4 hotfix Parts A + B)** dead-letter mis-attribution at line 276/294 area: consumer's bare-exception handler had `failed_job = self.head()` which mis-attributed Calculator crashes to whatever `test_suite_job` was sitting in the agentic pool, dead-lettering the wrong job. Part A: `failed_job = job` (use the parameter, mirror happy-path fix already in place at line 203). Part B: added `failed_job.error = str(e)` so dead-queue listings have populated error fields (was empty for the 8 reaped Calc jobs in the 22:35 baseline). Verified via `:8000 ts-976bdc44` re-run (test_suite_job survived 5 calc dead-letters with proper error fields populated).
+- **`rest/queue_consumer.py`** — WG-8b heartbeat write at consumer-loop top. Wrapped in `try/except AttributeError` so unit-test Mocks and older `running_queue` implementations are never fatal.
+- **`memory/solution_snapshot.py`** — CalculatorAgent codeless replay short-circuit in `run_code()`. CalculatorAgent dispatches CalcIntent to pure-Python helpers — no Python source to save — so its snapshots persist with `code = ['']` BY DESIGN. Replay path's empty-code guard was raising on this legitimate state, dead-lettering the job. Fix mirrors the existing CalculatorAgent special-case in `run_formatter()` at lines 943-953: synthesize `code_response_dict = {"return_code": 0, "output": self.answer}` when `agent_class_name == "CalculatorAgent"`.
+
+**Body 5 — Test-suite anomaly remediation WG-4/7/9: peft guard + websocket parser fallback + voice-gate timeout policy** (Lupin parent: Session ba7138c4)
+
+Four CoSA-side changes from the postmortem of the 2026-04-27 22:35 EDT scheduled `:8000` run `ts-90890bae` (4422 P / 23 F / 19 E / 47 S, 1 orphaned Calculator job in `run`, 8 reaped Calc jobs in `dead`, stalled downstream TFE). Working-group docs at `src/rnd/v0.1.7/2026.04.28-test-suite-anomaly-remediation/`.
+
+- **`training/peft_trainer.py`** — **WG-4**: optional `peft` import guard. Wrapped the `from peft import LoraConfig, prepare_model_for_kbit_training, PeftModel` line in `try/except ImportError` with a `PEFT_AVAILABLE` flag + None fallbacks (matches the `claude-agent-sdk` pattern in `dispatcher.py`). Effect: 3 `test_lora_env_update_smoke` collection-time failures resolved when `peft` is not installed in the test container.
+- **`agents/test_suite/job.py`** — **WG-7**: websocket false-FAIL parser fix. The websocket runner emits `[INFO] Total Tests: N / Passed: X / Failed: Y / ALL SMOKE TESTS PASSED!` rather than JUnit XML, so `_parse_junit_xml(None)` returned zero-counts and the suite was classified FAIL despite passing. Added `_parse_non_pytest_stdout(suite_type, stdout)` called as a fallback. Effect: the 22:35 websocket suite (which logged 50/50 PASS) now classifies PASS instead of 0/0/0/0 FAIL. `ts-976bdc44` re-run confirmed websocket: 0/0/0/0 FAIL → 50P PASS.
+- **`agents/test_fix_expediter/config.py`** — **WG-9**: voice-gate timeout policy config. Two new fields: `voice_gate_timeout_policy` (one of `stall|top_1|top_n|none`) and `voice_gate_auto_ratify_top_n`. Two new INI keys in the key map. Default policy = `"stall"` preserves prior production behavior.
+- **`agents/test_fix_expediter/orchestrator.py`** — **WG-9**: timeout-policy branch + `_delegate_to_predictor` stub. On `VoiceGateTimeoutError` the orchestrator branches via `_apply_voice_gate_timeout_policy(proposals)` — sorts by confidence (input order tiebreak), returns 0/1/N proposals or re-raises per policy. After-hours autonomous TFE runs can now opt into auto-ratifying the highest-confidence proposal instead of stalling and discarding all proposals. Plus `_delegate_to_predictor()` forward-compat stub raising `NotImplementedError` with a pointer to the design doc at `05-voice-gate-policy-evolution.md` (UPE online-learning integration is ~2 dev branches out per user).
+
+#### Verification
+
+| Layer | Result |
+|---|---|
+| py_compile (all 14 modified/new .py files) | ✅ all 14/14 OK |
+| Lupin parent verification (Session 30072c25 voice personas) | ✅ 102/102 PASS in 0.80s — 25 new unit + 7 new live :7999 smoke + 70 regression |
+| Lupin parent verification (Session c7333045 conv-mode v1.1) | ✅ 130/130 PASS across 5 test files (22 net new tests) |
+| Lupin parent verification (Session c7333045 EmbeddingProvider) | ✅ 56/56 (40 prior + 16 new). Full conv-mode + embedding sweep: 192/192 |
+| Lupin parent verification (Session ba7138c4 morning + 19:35) | ✅ 23 new + 147 regression PASS. ts-976bdc44 :8000 re-run: 4524P / 15F / 12E / 54S |
+
+#### Commits Landed
+
+- `2116566` — Commit A (Voice Personas) — 4 files, +604/−6
+- `f9bc577` — Commit B (Conv Mode v1.1 mutex + Bug A WS dedup) — 2 files, +74/−8
+- `e7b3df2` — Commit C (EmbeddingProvider HTTP-routing) — 1 file, +232/−12
+- `e90cb3d` — Commit D (CJ Flow pool hardening) — 3 files, +98/−11
+- `6e99494` — Commit E (Test-suite WG-4/7/9) — 4 files, +197/−3
+- (Commit F session-end docs pending this commit)
+
+#### Cross-repo separation
+
+Per `CLAUDE.md` and memory `feedback_verify_repo_before_commit.md` / `feedback_lupin_only_never_cosa.md`: this CoSA-context session ONLY commits files inside `src/cosa/`. The Lupin-parent commits are owned by the parent context and not amended here. CoSA history mirrors the corresponding Lupin entries per CoSA `CLAUDE.md` cross-repo duplication mandate.
+
+---
+
 ### 2026.04.27 - Session c2b5912f | CoSA-side wrap of Lupin Sessions aabece5e (Conversation Mode) + 49c27830 (Notification Dispatch Unification + CJ Flow card-rendering wrap) + deferred 2026-04-26 podcast tuning
 
 **Context**: Session-end commit bundle for the CoSA-side work from three Lupin-parent commits, on branch `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Three clearly-scoped commits per `feedback_lupin_only_never_cosa.md` cross-repo separation, each mapping unambiguously to a named parent commit.
