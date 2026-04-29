@@ -9,7 +9,16 @@ import threading
 import requests
 import torch, os, multiprocessing
 from typing import Optional, Union, List, Dict, Tuple, Any, Iterable
-from peft import LoraConfig, prepare_model_for_kbit_training, PeftModel
+
+try:
+    from peft import LoraConfig, prepare_model_for_kbit_training, PeftModel
+    PEFT_AVAILABLE = True
+except ImportError:
+    PEFT_AVAILABLE = False
+    LoraConfig = None
+    prepare_model_for_kbit_training = None
+    PeftModel = None
+
 from torch.ao.quantization import quantize
 from torch.utils.benchmark import timer
 
