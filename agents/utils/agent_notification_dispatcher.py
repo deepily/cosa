@@ -24,6 +24,7 @@ For role-aware agents (SWE Team):
 import asyncio
 import json
 import logging
+from contextvars import ContextVar
 from typing import Optional
 
 from lupin_cli.notifications.notification_models import (
@@ -40,6 +41,33 @@ from cosa.utils.notification_utils import format_questions_for_tts, convert_ques
 from cosa.agents.utils.sender_id import build_sender_id
 
 logger = logging.getLogger( __name__ )
+
+
+# =============================================================================
+# Per-task dispatch context (concurrent-job isolation, OOS Phase 4 backlog #1)
+# =============================================================================
+#
+# ContextVars carry per-asyncio-task / per-thread state so concurrent agentic
+# jobs of the same type don't clobber each other's sender_id / target_user /
+# session_name when emitting notifications. Each pool worker's `asyncio.run()`
+# creates an isolated context; jobs set these vars at execution start and the
+# dispatcher reads them in priority over `self.*` instance state.
+#
+# Without these, the legacy "module-global SENDER_ID + shared dispatcher
+# instance" pattern races: two concurrent DR jobs both write
+# `cosa_interface.SENDER_ID`, and the most-recently-launched job's value
+# leaks onto the earlier still-running job's notifications. Symptom seen in
+# 2026-04-28 RUN 2 logs: dr-de05b9d0's notifications carried dr-d5e4408a's
+# sender_id.
+#
+# Reset semantics: callers should use `.set(value)` and store the returned
+# token, then `.reset(token)` at job end to restore the prior context. In
+# practice agentic jobs run in fresh asyncio.run() contexts per worker
+# thread, so the reset is mostly cosmetic — but explicit cleanup is good
+# practice and prevents leaks if the same thread runs multiple jobs.
+ctx_sender_id    : ContextVar[ Optional[ str ] ] = ContextVar( "agent_dispatcher_sender_id",    default=None )
+ctx_target_user  : ContextVar[ Optional[ str ] ] = ContextVar( "agent_dispatcher_target_user",  default=None )
+ctx_session_name : ContextVar[ Optional[ str ] ] = ContextVar( "agent_dispatcher_session_name", default=None )
 
 
 def _prepend_operator_routing( abstract: Optional[ str ], original_target: str ) -> str:
@@ -122,8 +150,15 @@ class AgentNotificationDispatcher:
         """
         Resolve the sender_id for a notification call.
 
-        For role-aware agents, constructs a role-specific sender_id.
-        For standard agents, returns self.sender_id.
+        Priority order:
+          1. Role-aware agents with a role parameter — build role-specific sender_id
+          2. ContextVar `ctx_sender_id` — per-task isolation, set by job execution
+          3. self.sender_id — instance default (CLI / single-job paths)
+
+        Role-aware path is checked first because it constructs a role-suffixed
+        ID that's orthogonal to the per-job sender. ContextVar takes priority
+        over instance state so concurrent agentic-pool jobs don't see each
+        other's sender_id leaking through the shared dispatcher instance.
 
         Args:
             role: Optional role name for role-aware agents
@@ -137,7 +172,38 @@ class AgentNotificationDispatcher:
                 # Strip user-scope suffix (::user_id) — only the base hash is needed
                 suffix = self.session_id.split( "::" )[ 0 ] if "::" in self.session_id else self.session_id
             return build_sender_id( f"{self.agent_type}.{role}", suffix=suffix )
+        ctx_value = ctx_sender_id.get()
+        if ctx_value is not None:
+            return ctx_value
         return self.sender_id
+
+    def _resolve_target_user( self ) -> Optional[ str ]:
+        """
+        Resolve the target_user for a notification call.
+
+        Priority: ContextVar > self.target_user > None. ContextVar set by
+        agentic jobs at execution start; self.target_user is the legacy
+        instance attribute mutated by single-job CLI / non-pool callers.
+        """
+        ctx_value = ctx_target_user.get()
+        if ctx_value is not None:
+            return ctx_value
+        return self.target_user
+
+    def _resolve_session_name( self, override: Optional[ str ] = None ) -> Optional[ str ]:
+        """
+        Resolve session_name for a notification call.
+
+        Priority: explicit override arg > ContextVar > self.session_name.
+        Per-call override wins (callers that want a one-off session name);
+        ContextVar wins over instance state for per-task isolation.
+        """
+        if override is not None:
+            return override
+        ctx_value = ctx_session_name.get()
+        if ctx_value is not None:
+            return ctx_value
+        return self.session_name
 
     def _resolve_routing( self, target_user: Optional[ str ] ) -> tuple:
         """
@@ -218,16 +284,14 @@ class AgentNotificationDispatcher:
             role: Optional agent role (for role-aware dispatchers)
         """
         try:
-            resolved_session_name = session_name if session_name is not None else self.session_name
-
             request = AsyncNotificationRequest(
                 message           = message,
                 notification_type = NotificationType.PROGRESS,
                 priority          = NotificationPriority( priority or self.default_priority ),
                 sender_id         = self._resolve_sender_id( role ),
-                target_user       = self.target_user,
+                target_user       = self._resolve_target_user(),
                 abstract          = abstract,
-                session_name      = resolved_session_name,
+                session_name      = self._resolve_session_name( session_name ),
                 job_id            = job_id,
                 queue_name        = queue_name,
                 progress_group_id = progress_group_id,
@@ -264,7 +328,7 @@ class AgentNotificationDispatcher:
             bool: True if user said yes, False otherwise
         """
         try:
-            effective_target, was_redirected, original_target = self._resolve_routing( self.target_user )
+            effective_target, was_redirected, original_target = self._resolve_routing( self._resolve_target_user() )
             if was_redirected:
                 abstract = _prepend_operator_routing( abstract, original_target )
             request = NotificationRequest(
@@ -358,7 +422,7 @@ class AgentNotificationDispatcher:
             str or None: User's transcribed voice response
         """
         try:
-            effective_target, was_redirected, _original_target = self._resolve_routing( self.target_user )
+            effective_target, was_redirected, _original_target = self._resolve_routing( self._resolve_target_user() )
             request = NotificationRequest(
                 message           = prompt,
                 response_type     = ResponseType.OPEN_ENDED,
@@ -449,7 +513,7 @@ class AgentNotificationDispatcher:
             dict: {"answers": {...}} with selections keyed by header
         """
         try:
-            effective_target, was_redirected, original_target = self._resolve_routing( self.target_user )
+            effective_target, was_redirected, original_target = self._resolve_routing( self._resolve_target_user() )
             if was_redirected:
                 abstract = _prepend_operator_routing( abstract, original_target )
 
