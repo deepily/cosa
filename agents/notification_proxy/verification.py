@@ -136,26 +136,36 @@ class LlmAnswerVerifier:
         if self.debug and self.verbose:
             print( f"[AnswerVerifier] Prompt length: {len( prompt )} chars" )
 
-        # Send to LLM
-        try:
-            response_text = self._client.run( prompt )
-            if self.debug: print( f"[AnswerVerifier] Raw response: {response_text[ :200 ]}" )
+        # Send to LLM. One retry on transient empty/malformed-XML failures —
+        # vLLM occasionally returns whitespace or truncated XML under load,
+        # and a single retry absorbs the transient without inflating cost.
+        # System-boundary retry policy, not defensive cargo.
+        last_error = None
+        for attempt in ( 1, 2 ):
+            try:
+                response_text = self._client.run( prompt )
+                if self.debug: print( f"[AnswerVerifier] Raw response (attempt {attempt}): {response_text[ :200 ]}" )
 
-            parsed = VerificationResponse.from_xml( response_text )
+                parsed = VerificationResponse.from_xml( response_text )
 
-            if self.debug:
-                print( f"[AnswerVerifier] match={parsed.match}, confidence={parsed.confidence}, "
-                       f"reasoning={parsed.reasoning[ :80 ]}" )
+                if self.debug:
+                    print( f"[AnswerVerifier] match={parsed.match}, confidence={parsed.confidence}, "
+                           f"reasoning={parsed.reasoning[ :80 ]}" )
 
-            return parsed
+                return parsed
 
-        except Exception as e:
-            print( f"[AnswerVerifier] LLM error: {e}" )
-            return VerificationResponse(
-                match      = "false",
-                confidence = "0.0",
-                reasoning  = f"LLM error: {e}"
-            )
+            except Exception as e:
+                last_error = e
+                if attempt == 1:
+                    print( f"[AnswerVerifier] LLM transient on attempt 1, retrying once: {e}" )
+                    continue
+                print( f"[AnswerVerifier] LLM error after retry: {e}" )
+
+        return VerificationResponse(
+            match      = "false",
+            confidence = "0.0",
+            reasoning  = f"LLM error after retry: {last_error}"
+        )
 
     def verify_batch( self, pairs, context="" ):
         """

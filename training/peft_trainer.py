@@ -29,8 +29,22 @@ from transformers import (
 )
 from datasets import Dataset
 from datasets.formatting.formatting import LazyBatch
-from trl import SFTTrainer, SFTConfig
-from auto_round import AutoRoundConfig
+
+try:
+    from trl import SFTTrainer, SFTConfig
+    TRL_AVAILABLE = True
+except ImportError:
+    TRL_AVAILABLE = False
+    SFTTrainer = None
+    SFTConfig = None
+
+try:
+    from auto_round import AutoRoundConfig
+    AUTO_ROUND_AVAILABLE = True
+except ImportError:
+    AUTO_ROUND_AVAILABLE = False
+    AutoRoundConfig = None
+
 from huggingface_hub import login
 
 # Import the model configuration loader
