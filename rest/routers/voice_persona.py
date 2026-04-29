@@ -34,11 +34,11 @@ from fastapi          import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 from ..middleware.api_key_auth import require_api_key_or_jwt
-from ..websocket_manager       import WebSocketManager
+from ..notification_fifo_queue import NotificationFifoQueue
 
 from lupin_cli.claude_code.hooks.lib.session_bridge import (
     get_voice_persona, set_voice_persona, find_active_voice_persona_sessions,
-    find_session_path_by_id
+    find_session_path_by_id, build_sender_id_for_cc
 )
 
 from ..voice_persona_helpers import (
@@ -57,10 +57,10 @@ _voice_persona_lock = asyncio.Lock()
 
 # ── Dependency injection ─────────────────────────────────────────────────────
 
-def get_websocket_manager():
-    """Dependency to get the global WebSocketManager from main module."""
+def get_notification_queue():
+    """Dependency to get the singleton NotificationFifoQueue from main module."""
     import fastapi_app.main as main_module
-    return main_module.websocket_manager
+    return main_module.jobs_notification_queue
 
 
 def get_config_manager():
@@ -135,7 +135,7 @@ async def get_voice_persona_endpoint(
 async def allocate_voice_persona_endpoint(
     session_id           : str,
     authenticated_user_id: Annotated[ str, Depends( require_api_key_or_jwt ) ],
-    ws_manager           : WebSocketManager = Depends( get_websocket_manager ),
+    notification_queue   : NotificationFifoQueue = Depends( get_notification_queue ),
     config_mgr           = Depends( get_config_manager )
 ) -> JSONResponse:
     """
@@ -181,19 +181,27 @@ async def allocate_voice_persona_endpoint(
         if not ok:
             raise HTTPException( status_code=500, detail=f"Bridge write failed for session_id={session_id}" )
 
+    # Route through the canonical notification subsystem with a custom type value
+    # rather than inventing a new top-level WS event. The notification arrives at
+    # the client as `notification_queue_update` carrying notification.type =
+    # "voice_persona_assigned"; the client dispatches inside handleNotificationUpdate.
+    # See: src/rnd/v0.1.7/2026.04.29-ws-event-cleanup-to-custom-notification-types/01-design.md
     broadcast_delivered = False
     try:
-        broadcast_delivered = await ws_manager.emit_to_user(
-            authenticated_user_id,
-            "voice_persona_assigned",
-            {
-                "session_id"    : session_id,
-                "voice_persona" : persona
-            }
+        notification_queue.push_notification(
+            message            = "",
+            type               = "voice_persona_assigned",
+            user_id            = authenticated_user_id,
+            sender_id          = build_sender_id_for_cc( session_id ),
+            voice_persona      = persona,
+            suppress_ding      = True,
+            response_requested = False,
+            payload            = { "session_id": session_id }
         )
+        broadcast_delivered = True
     except Exception as ws_err:
         # Log but do not fail — bridge write succeeded; broadcast is best-effort
-        print( f"[VOICE-PERSONA] ⚠️ WS broadcast failed for session {session_id}: {ws_err}" )
+        print( f"[VOICE-PERSONA] ⚠️ Notification push failed for session {session_id}: {ws_err}" )
 
     return JSONResponse( content={
         "session_id"          : session_id,
@@ -211,7 +219,7 @@ async def allocate_voice_persona_endpoint(
 async def release_voice_persona_endpoint(
     session_id           : str,
     authenticated_user_id: Annotated[ str, Depends( require_api_key_or_jwt ) ],
-    ws_manager           : WebSocketManager = Depends( get_websocket_manager )
+    notification_queue   : NotificationFifoQueue = Depends( get_notification_queue )
 ) -> JSONResponse:
     """
     Release the persona for the given session (clear bridge field).
@@ -233,18 +241,23 @@ async def release_voice_persona_endpoint(
     if not ok:
         raise HTTPException( status_code=500, detail=f"Bridge write failed for session_id={session_id}" )
 
+    # Route through the canonical notification subsystem with a custom type value.
+    # See: src/rnd/v0.1.7/2026.04.29-ws-event-cleanup-to-custom-notification-types/01-design.md
     broadcast_delivered = False
     try:
-        broadcast_delivered = await ws_manager.emit_to_user(
-            authenticated_user_id,
-            "voice_persona_released",
-            {
-                "session_id"             : session_id,
-                "released_persona_name"  : existing.get( "name" )
-            }
+        notification_queue.push_notification(
+            message            = "",
+            type               = "voice_persona_released",
+            user_id            = authenticated_user_id,
+            sender_id          = build_sender_id_for_cc( session_id ),
+            voice_persona      = { "name": existing.get( "name" ), "released": True },
+            suppress_ding      = True,
+            response_requested = False,
+            payload            = { "session_id": session_id }
         )
+        broadcast_delivered = True
     except Exception as ws_err:
-        print( f"[VOICE-PERSONA] ⚠️ WS release-broadcast failed for session {session_id}: {ws_err}" )
+        print( f"[VOICE-PERSONA] ⚠️ Notification push failed for session {session_id}: {ws_err}" )
 
     return JSONResponse( content={
         "session_id"          : session_id,

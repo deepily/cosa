@@ -339,7 +339,14 @@ async def notify_user(
     # authenticated_user_id contains the validated user ID
 
     # Validate notification type
-    valid_types = ["task", "progress", "alert", "custom", "user_initiated_message", "session_topic"]
+    # Custom state-update types ("voice_persona_assigned", "voice_persona_released",
+    # "conversation_mode_changed") are server-internal events routed through this
+    # subsystem rather than as ad-hoc top-level WS events. See:
+    # src/rnd/v0.1.7/2026.04.29-ws-event-cleanup-to-custom-notification-types/01-design.md
+    valid_types = [
+        "task", "progress", "alert", "custom", "user_initiated_message", "session_topic",
+        "voice_persona_assigned", "voice_persona_released", "conversation_mode_changed"
+    ]
     if type not in valid_types:
         raise HTTPException(
             status_code=400,
@@ -2073,10 +2080,16 @@ async def get_visible_senders(
                     if a["last_activity"] >= cutoff
                 ]
 
-            # Convert datetime to ISO string for JSON serialization
+            # Convert datetime to ISO string for JSON serialization, and stamp
+            # the per-session voice persona on each sender so the UI can render
+            # the persona badge on first paint after a force-refresh — without
+            # this, senderPersonaMap is empty until the first live notification
+            # arrives, and the card renders without a badge.
+            # See: src/rnd/v0.1.7/2026.04.29-ws-event-cleanup-to-custom-notification-types/01-design.md §10 (Layer B)
             for activity in activities:
                 if activity["last_activity"]:
                     activity["last_activity"] = activity["last_activity"].isoformat()
+                activity["voice_persona"] = _voice_persona_for_sender_id( activity.get( "sender_id" ) )
 
             filter_label = " (excluding own jobs)" if exclude_own_jobs else ""
             print( f"[NOTIFY] Returning {len( activities )} visible senders for {user_email}{filter_label}" )

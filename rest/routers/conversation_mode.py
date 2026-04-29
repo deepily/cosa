@@ -28,13 +28,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ..middleware.api_key_auth import require_api_key_or_jwt
-from ..websocket_manager import WebSocketManager
+from ..notification_fifo_queue import NotificationFifoQueue
 
 # Bridge helpers live in the parent Lupin tree, but importing them is fine
 # (only git ops on src/cosa/ are restricted from parent context — imports are not).
 from lupin_cli.claude_code.hooks.lib.session_bridge import (
     get_conversation_mode, set_conversation_mode, find_session_path_by_id,
-    find_active_conversation_sessions
+    find_active_conversation_sessions, build_sender_id_for_cc
 )
 
 
@@ -52,16 +52,16 @@ _conversation_mode_lock = asyncio.Lock()
 
 # ── Dependency injection (mirrors notifications.router pattern) ──────────────
 
-def get_websocket_manager():
+def get_notification_queue():
     """
-    Dependency to get the global WebSocketManager from main module.
+    Dependency to get the singleton NotificationFifoQueue from main module.
 
     Ensures:
-        - Returns the singleton WebSocketManager instance
+        - Returns the singleton NotificationFifoQueue instance
         - Raises ImportError if main module not yet initialized
     """
     import fastapi_app.main as main_module
-    return main_module.websocket_manager
+    return main_module.jobs_notification_queue
 
 
 # ── Models ───────────────────────────────────────────────────────────────────
@@ -122,7 +122,7 @@ async def set_conversation_mode_endpoint(
     session_id: str,
     body: ConversationModeBody,
     authenticated_user_id: Annotated[ str, Depends( require_api_key_or_jwt ) ],
-    ws_manager: WebSocketManager = Depends( get_websocket_manager )
+    notification_queue: NotificationFifoQueue = Depends( get_notification_queue )
 ) -> JSONResponse:
     """
     Flip conversation_mode_active for the given session_id and broadcast.
@@ -171,20 +171,26 @@ async def set_conversation_mode_endpoint(
                 displaced_sessions.append( other_sid )
                 # Broadcast displaced event so the affected session's tabs flip
                 # their toggle, unpin the card, and pause any in-flight TTS.
+                # Routed through the canonical notification subsystem with a
+                # custom type value (see 2026.04.29 ws-event-cleanup R&D doc).
                 try:
-                    await ws_manager.emit_to_user(
-                        authenticated_user_id,
-                        "conversation_mode_changed",
-                        {
-                            "session_id"               : other_sid,
-                            "conversation_mode_active" : False,
-                            "displaced"                : True,
-                            "displaced_by"             : session_id
+                    notification_queue.push_notification(
+                        message            = "",
+                        type               = "conversation_mode_changed",
+                        user_id            = authenticated_user_id,
+                        sender_id          = build_sender_id_for_cc( other_sid ),
+                        suppress_ding      = True,
+                        response_requested = False,
+                        payload            = {
+                            "session_id"   : other_sid,
+                            "active"       : False,
+                            "displaced"    : True,
+                            "displaced_by" : session_id
                         }
                     )
                 except Exception as ws_err:
                     # Bridge write succeeded; broadcast is best-effort
-                    print( f"[CONVERSATION-MODE] ⚠️ WS displace-broadcast failed for {other_sid}: {ws_err}" )
+                    print( f"[CONVERSATION-MODE] ⚠️ Displace-notify push failed for {other_sid}: {ws_err}" )
 
             # Now activate ours inside the same critical section so no parallel
             # request can sneak in between displace and activate.
@@ -196,19 +202,26 @@ async def set_conversation_mode_endpoint(
         if not ok:
             raise HTTPException( status_code=500, detail=f"Bridge write failed for session_id={session_id}" )
 
+    # Route through the canonical notification subsystem with a custom type value.
+    # See: src/rnd/v0.1.7/2026.04.29-ws-event-cleanup-to-custom-notification-types/01-design.md
     broadcast_delivered = False
     try:
-        broadcast_delivered = await ws_manager.emit_to_user(
-            authenticated_user_id,
-            "conversation_mode_changed",
-            {
-                "session_id"               : session_id,
-                "conversation_mode_active" : body.active
+        notification_queue.push_notification(
+            message            = "",
+            type               = "conversation_mode_changed",
+            user_id            = authenticated_user_id,
+            sender_id          = build_sender_id_for_cc( session_id ),
+            suppress_ding      = True,
+            response_requested = False,
+            payload            = {
+                "session_id" : session_id,
+                "active"     : body.active
             }
         )
+        broadcast_delivered = True
     except Exception as ws_err:
         # Log but do not fail — bridge write succeeded; broadcast is best-effort
-        print( f"[CONVERSATION-MODE] ⚠️ WS broadcast failed for session {session_id}: {ws_err}" )
+        print( f"[CONVERSATION-MODE] ⚠️ Notification push failed for session {session_id}: {ws_err}" )
 
     return JSONResponse( content={
         "session_id"          : session_id,
