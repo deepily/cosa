@@ -23,7 +23,8 @@ class NotificationItem:
                  progress_group_id: Optional[str] = None,
                  prediction_hint: Optional[dict] = None,
                  display_qualifier_widget: bool = False,
-                 session_name: Optional[str] = None ) -> None:
+                 session_name: Optional[str] = None,
+                 voice_persona: Optional[dict] = None ) -> None:
         """
         Initialize a notification item.
 
@@ -91,6 +92,12 @@ class NotificationItem:
 
         # Human-readable session name for UI header display
         self.session_name = session_name
+
+        # Per-session voice persona (allocated at SessionStart by the
+        # voice_persona router). When non-null, the UI passes this voice_id
+        # to the TTS endpoint so each session speaks with its own voice.
+        # See: src/rnd/v0.1.7/2026.04.28-per-session-voice-personas/01-design.md
+        self.voice_persona = voice_persona
 
     def _get_local_timestamp( self ) -> str:
         """Get timezone-aware timestamp using configured timezone from ConfigurationManager"""
@@ -177,7 +184,9 @@ class NotificationItem:
             # Display qualifier widget expanded by default
             "display_qualifier_widget"   : self.display_qualifier_widget,
             # Human-readable session name for UI header display
-            "session_name"               : self.session_name
+            "session_name"               : self.session_name,
+            # Per-session voice persona (None when no persona allocated → server uses Sam default)
+            "voice_persona"              : self.voice_persona
         }
 
 
@@ -256,7 +265,8 @@ class NotificationFifoQueue( FifoQueue ):
                          progress_group_id: Optional[str] = None,
                          prediction_hint: Optional[dict] = None,
                  display_qualifier_widget: bool = False,
-                         session_name: Optional[str] = None ) -> NotificationItem:
+                         session_name: Optional[str] = None,
+                         voice_persona: Optional[dict] = None ) -> NotificationItem:
         """
         Push a notification with priority handling and io_tbl logging.
 
@@ -299,7 +309,8 @@ class NotificationFifoQueue( FifoQueue ):
             progress_group_id        = progress_group_id,
             prediction_hint          = prediction_hint,
             display_qualifier_widget = display_qualifier_widget,
-            session_name             = session_name
+            session_name             = session_name,
+            voice_persona            = voice_persona
         )
         
         # Priority handling - urgent/high go to front, but after other urgent/high

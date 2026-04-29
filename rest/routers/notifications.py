@@ -25,6 +25,35 @@ from ..middleware.api_key_auth import require_api_key, require_api_key_or_jwt
 from ..db.database import get_db
 from ..db.repositories.notification_repository import NotificationRepository
 
+# Per-session voice persona lookup (see Phase 7 of voice persona R&D)
+# Bridge file is canonical state; lookup is best-effort and fail-soft.
+try:
+    from lupin_cli.claude_code.hooks.lib.session_bridge import get_voice_persona as _bridge_get_voice_persona
+except ImportError:
+    _bridge_get_voice_persona = None
+
+
+def _voice_persona_for_sender_id( resolved_sender_id ):
+    """
+    Resolve a sender_id (e.g., 'claude.code@lupin.deepily.ai#c7333045') to a
+    voice persona dict by reading the session bridge file. Returns None on
+    any failure (sender_id missing #suffix, bridge missing, persona not set,
+    or session_bridge module not importable).
+
+    The 8-char prefix after '#' is matched against bridge files via
+    find_session_path_by_id (which already understands the prefix-or-full
+    form), so we can pass it directly to get_voice_persona.
+    """
+    if _bridge_get_voice_persona is None or not resolved_sender_id or "#" not in resolved_sender_id:
+        return None
+    sid_suffix = resolved_sender_id.split( "#", 1 )[ 1 ].strip()
+    if not sid_suffix:
+        return None
+    try:
+        return _bridge_get_voice_persona( sid_suffix )
+    except Exception:
+        return None
+
 router = APIRouter(prefix="/api", tags=["notifications"])
 
 # Global variables that will be injected via dependencies (temporary)
@@ -542,6 +571,7 @@ async def notify_user(
                             "title"             : title,
                             "abstract"          : abstract,
                             "timestamp"         : datetime.utcnow().isoformat(),
+                            "voice_persona"     : _voice_persona_for_sender_id( resolved_sender_id ),
                         },
                     },
                 )
@@ -598,6 +628,7 @@ async def notify_user(
                 return response_dict
 
             # 3. User is connected — push to FIFO queue for live WebSocket delivery
+            voice_persona_payload = _voice_persona_for_sender_id( resolved_sender_id )
             notification_item = notification_queue.push_notification(
                 message                 = message.strip(),
                 type                    = type,
@@ -612,7 +643,8 @@ async def notify_user(
                 queue_name              = queue_name,
                 progress_group_id       = progress_group_id,
                 display_qualifier_widget = display_qualifier_widget,
-                session_name             = session_name
+                session_name             = session_name,
+                voice_persona            = voice_persona_payload
             )
 
             print( f"[NOTIFY] ✓ Notification queued for {target_user} ({target_system_id}) - {connection_count} connection(s)" )
@@ -750,6 +782,7 @@ async def notify_user(
         # ---- End Prediction Engine Hook ----
 
         # Push notification to WebSocket for UI rendering (Phase 2.2 with full fields)
+        voice_persona_payload = _voice_persona_for_sender_id( resolved_sender_id )
         notification_item = notification_queue.push_notification(
             message                  = message.strip(),
             type                     = type,
@@ -770,7 +803,8 @@ async def notify_user(
             queue_name               = queue_name,  # Queue for provisional job card registration
             progress_group_id        = progress_group_id,  # In-place DOM update grouping
             prediction_hint          = prediction_hint,  # Prediction hint (override or engine-generated)
-            display_qualifier_widget = display_qualifier_widget  # Expanded comment widget
+            display_qualifier_widget = display_qualifier_widget,  # Expanded comment widget
+            voice_persona            = voice_persona_payload  # Per-session voice (None → server default)
         )
 
         # DEBUG: Log the notification_item after creation
