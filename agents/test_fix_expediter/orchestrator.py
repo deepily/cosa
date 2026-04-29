@@ -43,8 +43,8 @@ from cosa.agents.test_fix_expediter.prompts.diagnosis import (
     build_diagnosis_prompt,
 )
 from cosa.agents.test_fix_expediter.prompts.proposal import (
-    PROPOSAL_SYSTEM_PROMPT,
     build_proposal_prompt,
+    build_proposal_system_prompt,
 )
 # Importing prompts.fix for its side-effect: registers TFE's coder/tester/
 # fix/verify/redelegate builders into shared FIX_PROMPT_BUILDERS["tfe"].
@@ -750,7 +750,12 @@ class TFEOrchestrator:
 
         Never raises — returns empty list on any error.
         """
-        prompt = build_proposal_prompt( cluster, diagnosis, self.remediation_context )
+        prompt = build_proposal_prompt(
+            cluster,
+            diagnosis,
+            self.remediation_context,
+            max_proposals = self.config.max_proposals_per_cluster,
+        )
         raw = await self._delegate_to_lead_proposal( prompt )
 
         if raw is None:
@@ -802,7 +807,9 @@ class TFEOrchestrator:
         """Build ClaudeAgentOptions for the TFE proposal Lead agent."""
         return ClaudeAgentOptions(
             model           = self.config.lead_model,
-            system_prompt   = PROPOSAL_SYSTEM_PROMPT,
+            system_prompt   = build_proposal_system_prompt(
+                max_proposals = self.config.max_proposals_per_cluster,
+            ),
             tools           = [ "Read", "Glob", "Grep" ],
             cwd             = cu.get_project_root(),
             permission_mode = "plan",

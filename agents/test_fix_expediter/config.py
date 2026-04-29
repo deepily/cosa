@@ -56,6 +56,11 @@ class TestFixExpediterConfig:
     # === Fix limits ===
     max_fix_attempts              : int   = 2
 
+    # === Phase 2 proposal cap (OOS-1B, 2026-04-29) ===
+    # Maximum proposals the Lead may emit per failure cluster. Default 1
+    # favours voice-gate convergence; legacy behavior was "1 to 3" (set to 3).
+    max_proposals_per_cluster     : int   = 1
+
     # === Phase 3 Coder turn budget (Option A — auto-tiered, 2026-04-18) ===
     # Orchestrator picks tier per proposal (small/medium/large) based on
     # fix_type + affected-files count; max_turns for the Coder sdk_query is
@@ -133,6 +138,7 @@ class TestFixExpediterConfig:
             "max_diagnosis_iterations"    : "test fix expediter max diagnosis iterations",
             "min_diagnosis_confidence"    : "test fix expediter min diagnosis confidence",
             "max_fix_attempts"            : "test fix expediter max fix attempts",
+            "max_proposals_per_cluster"   : "test fix expediter max proposals per cluster",
             "coder_budget_small_turns"    : "test fix expediter coder budget small turns",
             "coder_budget_medium_turns"   : "test fix expediter coder budget medium turns",
             "coder_budget_large_turns"    : "test fix expediter coder budget large turns",
