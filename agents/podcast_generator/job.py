@@ -175,15 +175,16 @@ class PodcastGeneratorJob( AgenticJobBase ):
             self.state        = JobState.FAILED
             self.completed_at = cu.get_current_datetime_iso()
             self.error        = str( e )
+            self.answer_conversational = f"Podcast generation failed: {str( e )}"
 
             if self.debug:
                 print( f"[PodcastGeneratorJob] Failed: {e}" )
                 import traceback
                 traceback.print_exc()
 
-            # Return error message as conversational answer
-            self.answer_conversational = f"Podcast generation failed: {str( e )}"
-            return self.answer_conversational
+            # Re-raise so the agentic-pool Future captures the exception.
+            # Backlog item 5 (2026-04-29): canonical Future contract.
+            raise
 
     async def _execute( self ) -> str:
         """

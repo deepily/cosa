@@ -176,11 +176,10 @@ class BugFixExpediterJob( AgenticJobBase ):
             self.state        = JobState.FAILED
             self.completed_at = cu.get_current_datetime_iso()
             self.error        = f"{e}\n\n{tb_str}"
+            self.answer_conversational = f"Bug fix failed: {str( e )}"
 
             print( f"[BugFixExpediterJob] Failed: {e}" )
             print( tb_str )
-
-            self.answer_conversational = f"Bug fix failed: {str( e )}"
 
             # Preserve the failure as a comprehensive final report so the user
             # has a surface to investigate what blew up. Stash the traceback in
@@ -192,7 +191,9 @@ class BugFixExpediterJob( AgenticJobBase ):
                 summary_line = self.answer_conversational,
             )
 
-            return self.answer_conversational
+            # Re-raise so the agentic-pool Future captures the exception.
+            # Backlog item 5 (2026-04-29): canonical Future contract.
+            raise
 
     async def _execute( self ) -> str:
         """

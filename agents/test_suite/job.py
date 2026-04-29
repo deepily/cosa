@@ -307,15 +307,17 @@ class TestSuiteJob( AgenticJobBase ):
             self.state        = JobState.FAILED
             self.completed_at = cu.get_current_datetime_iso()
             self.error        = f"{type( e ).__name__}: {e}\n\n{tb_str}"
-
-            print( f"[TestSuiteJob] Failed: {e}" )
-            print( tb_str )
-
             self.answer_conversational = (
                 f"Test suite run failed: **{type( e ).__name__}**: {e}\n\n"
                 f"```\n{tb_str}\n```"
             )
-            return self.answer_conversational
+
+            print( f"[TestSuiteJob] Failed: {e}" )
+            print( tb_str )
+
+            # Re-raise so the agentic-pool Future captures the exception.
+            # Backlog item 5 (2026-04-29): canonical Future contract.
+            raise
 
     async def _execute( self ) -> str:
         """

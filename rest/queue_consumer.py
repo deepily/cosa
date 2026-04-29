@@ -44,10 +44,25 @@ def start_todo_producer_run_consumer_thread( todo_queue: Any, running_queue: Any
         print( "[CONSUMER] Starting queue consumer thread..." )
         todo_queue.consumer_running = True
 
-        while todo_queue.consumer_running:
-            # WG-8 (2026-04-28): heartbeat at top of loop. /api/queue/pool-status
-            # reports seconds_since_heartbeat so stall detection can flag a
-            # frozen consumer (suspenders to the ghost-job sweeper's belt).
+        # Idle-wake interval: bound otherwise-indefinite condition.wait()
+        # calls so the heartbeat refreshes even when the queue is empty.
+        # Backlog item 2 (2026-04-29): without this, the consumer thread
+        # blocks in wait() indefinitely after a test_suite job completes,
+        # heartbeat goes stale, and /api/queue/pool-status flags
+        # consumer_stalled=true even though the consumer is healthy-but-idle.
+        # Derived from the running_queue's stall threshold so it's self-
+        # consistent with stall detection (4 ticks per stall window).
+        try:
+            stall_threshold_secs = int( getattr(
+                running_queue, "_consumer_stall_threshold_seconds", 120
+            ) )
+        except ( TypeError, ValueError ):
+            # Mock running_queue in unit tests, or a non-numeric override.
+            stall_threshold_secs = 120
+        idle_wake_interval_secs = max( 5, stall_threshold_secs // 4 )
+
+        def _tick_heartbeat() -> None:
+            """Refresh the consumer heartbeat. Tolerates Mock running_queue."""
             try:
                 running_queue.last_consumer_heartbeat_at = datetime.now()
             except AttributeError:
@@ -55,11 +70,22 @@ def start_todo_producer_run_consumer_thread( todo_queue: Any, running_queue: Any
                 # implementation without the attribute — never fatal.
                 pass
 
+        while todo_queue.consumer_running:
+            # WG-8 (2026-04-28): heartbeat at top of loop. /api/queue/pool-status
+            # reports seconds_since_heartbeat so stall detection can flag a
+            # frozen consumer (suspenders to the ghost-job sweeper's belt).
+            _tick_heartbeat()
+
             try:
                 # Wait for eligible jobs using condition variable + dynamic timeout
                 with todo_queue.condition:
                     job = None
                     while todo_queue.consumer_running:
+                        # Per-iteration heartbeat: even while waiting for a
+                        # job, every wait() return ticks this. Ensures a
+                        # bounded idle wait keeps the heartbeat fresh.
+                        _tick_heartbeat()
+
                         now = datetime.now()
                         job = todo_queue.pop_next_eligible( now )
 
@@ -67,20 +93,30 @@ def start_todo_producer_run_consumer_thread( todo_queue: Any, running_queue: Any
                             break  # Got an eligible job
 
                         if todo_queue.is_empty():
-                            # Queue completely empty — wait indefinitely for a push
-                            if todo_queue.debug: print( "[CONSUMER] Queue empty, waiting for jobs..." )
-                            todo_queue.condition.wait()
+                            # Queue empty — wait, but with a bounded timeout so
+                            # the heartbeat refreshes periodically. Without the
+                            # bound, indefinite wait() blocks the heartbeat
+                            # update path and stall detection mis-flags a
+                            # healthy idle consumer.
+                            if todo_queue.debug: print( f"[CONSUMER] Queue empty, waiting up to {idle_wake_interval_secs}s for jobs..." )
+                            todo_queue.condition.wait( timeout=idle_wake_interval_secs )
                         else:
                             # Queue has items but none are eligible yet (all paused or future-scheduled)
                             earliest = todo_queue.earliest_scheduled_at()
                             if earliest is not None:
-                                timeout = max( 0.1, ( earliest - datetime.now() ).total_seconds() )
-                                if todo_queue.debug: print( f"[CONSUMER] Sleeping {timeout:.1f}s until next scheduled job" )
+                                # Cap at idle_wake_interval so the heartbeat
+                                # ticks at least every wake-interval seconds
+                                # even if the next scheduled job is far away.
+                                until_scheduled = max( 0.1, ( earliest - datetime.now() ).total_seconds() )
+                                timeout         = min( until_scheduled, idle_wake_interval_secs )
+                                if todo_queue.debug: print( f"[CONSUMER] Sleeping {timeout:.1f}s (next scheduled in {until_scheduled:.1f}s)" )
                                 todo_queue.condition.wait( timeout=timeout )
                             else:
-                                # All jobs are paused (no scheduled times) — wait for a resume/push notify
-                                if todo_queue.debug: print( "[CONSUMER] All jobs paused, waiting for resume..." )
-                                todo_queue.condition.wait()
+                                # All jobs are paused (no scheduled times) —
+                                # wait for a resume/push notify, but bounded
+                                # so the heartbeat keeps ticking.
+                                if todo_queue.debug: print( f"[CONSUMER] All jobs paused, waiting up to {idle_wake_interval_secs}s for resume..." )
+                                todo_queue.condition.wait( timeout=idle_wake_interval_secs )
 
                     if not todo_queue.consumer_running:
                         break

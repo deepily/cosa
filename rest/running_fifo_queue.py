@@ -284,51 +284,16 @@ class RunningFifoQueue( FifoQueue ):
             # exception branch. Repro: 2026-04-28 ts-1c41e064 killed at 17:53.
             failed_job = job
             if failed_job:
-                # OOS-4 Part B hotfix (2026-04-28): persist error on the job
-                # object BEFORE pushing to dead. Without this, dead-queue
-                # listings show error=null and post-mortem callers
-                # (TFE/BFE watchdogs, the user's UI) can't tell why the job
-                # died. The metadata dict below carries the error to the
-                # WebSocket emit but never lands on failed_job.error.
-                failed_job.error = str( e )
-
-                job_id  = failed_job.id_hash
-                user_id = failed_job.user_id
-
-                # TTS notification for the error
-                self._notify( f"Job failed: {e}", job=failed_job, priority="urgent" )
-
-                # Build metadata matching _handle_error_case pattern
-                completed_at     = du.get_current_datetime_iso()
-                started_at       = failed_job.started_at
-                duration_seconds = None
-                if started_at:
-                    try:
-                        start            = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
-                        end              = datetime.fromisoformat( completed_at )
-                        duration_seconds = ( end - start ).total_seconds()
-                    except Exception:
-                        pass
-
-                metadata = {
-                    'error'           : str( e ),
-                    'question_text'   : failed_job.last_question_asked,
-                    'agent_type'      : failed_job.job_type,
-                    'timestamp'       : failed_job.created_date,
-                    'status'          : JobState.FAILED.value,
-                    'has_interactions' : bool( failed_job.session_id ),
-                    'is_cache_hit'    : False,
-                    'user_email'      : failed_job.user_email,
-                    'started_at'      : started_at,
-                    'completed_at'    : completed_at,
-                    'duration_seconds': duration_seconds
-                }
-                emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.FAILED, user_id, metadata )
-
-                # Phase 2: id_hash-based delete — fast-lane runs concurrently with
-                # pool callbacks, so "head of running_queue" is no longer deterministic.
-                self.delete_by_id_hash( failed_job.id_hash )
-                self.jobs_dead_queue.push( failed_job )
+                # OOS-4 Finding C (2026-04-29 Phase 4): route through the
+                # canonical `_transition_to_dead` primitive instead of the
+                # ~50-line inline duplicate that was here pre-refactor. The
+                # canonical primitive sets job.error, builds metadata, emits
+                # the WS state transition, deletes from running_queue, pushes
+                # to dead_queue, and runs the auto-fix watchdog — exactly
+                # what the inline copy did, minus the drift risk. The OOS-4
+                # Part B hotfix (failed_job.error = str(e)) is now subsumed
+                # by `_transition_to_dead`'s normalization at line 729-734.
+                self._transition_to_dead( failed_job, e )
     
     def _handle_error_case( self, response: dict, running_job: Any, truncated_question: str, error_message: str=None ) -> Any:
         """
@@ -341,58 +306,26 @@ class RunningFifoQueue( FifoQueue ):
             - error_message is an optional string with a specific error description
 
         Ensures:
-            - Moves job from running to dead queue
-            - Emits specific error_message if provided, otherwise generic fallback
-            - Updates socket connections
-            - Returns the job instance
+            - Logs the failure banner + captured stdout
+            - Delegates to the canonical `_transition_to_dead` primitive,
+              which handles: TTS notify, error persistence on the job,
+              metadata build, WS emit, queue delete + dead-queue push,
+              and auto-fix watchdog evaluation
+            - Returns the job instance (preserved for back-compat with
+              callers at lines _handle_base_agent error fallback and
+              _format_cached_result error fallback)
 
         Raises:
             - None (handles errors gracefully)
         """
         du.print_banner( f"Error running code for [{truncated_question}]", prepend_nl=True )
-        
+
         for line in response[ "output" ].split( "\n" ): print( line )
 
-        # Phase 2: id_hash-based delete (see header comment on line 252-region)
-        self.delete_by_id_hash( running_job.id_hash )
-
-        # TTS Migration (Session 97): Use notification service instead of _emit_speech
+        # OOS-4 Finding C (2026-04-29 Phase 4): canonical dead-queue path.
+        # Pre-refactor this method had ~60 lines duplicating _transition_to_dead.
         notification_msg = error_message if error_message else "I'm sorry Dave, I'm afraid I can't do that. Please check your logs"
-        self._notify( notification_msg, job=running_job, priority="urgent" )
-
-        running_job.error = notification_msg
-
-        # Emit job state transition (run -> dead) with error metadata
-        job_id  = running_job.id_hash
-        user_id = running_job.user_id
-
-        completed_at = du.get_current_datetime_iso()
-        started_at   = running_job.started_at
-        duration_seconds = None
-        if started_at:
-            try:
-                start = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
-                end   = datetime.fromisoformat( completed_at )
-                duration_seconds = ( end - start ).total_seconds()
-            except Exception:
-                pass
-
-        metadata = {
-            'error'           : notification_msg,
-            'question_text'   : running_job.last_question_asked,
-            'agent_type'      : running_job.job_type,
-            'timestamp'       : running_job.created_date,
-            'status'          : JobState.FAILED.value,
-            'has_interactions': bool( running_job.session_id ),
-            'is_cache_hit'    : False,
-            'user_email'      : running_job.user_email,
-            'started_at'      : started_at,
-            'completed_at'    : completed_at,
-            'duration_seconds': duration_seconds
-        }
-        emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.FAILED, user_id, metadata )
-
-        self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
+        self._transition_to_dead( running_job, notification_msg )
 
         return running_job
 
@@ -504,6 +437,18 @@ class RunningFifoQueue( FifoQueue ):
             # Mirrors the legacy serial path's stall check at line ~898.
             if job.state == JobState.STALLED:
                 self._transition_to_stalled( job, formatted_output )
+                return
+
+            # Failed terminal: agentic do_all() may catch its own exception, set
+            # state=FAILED, and RETURN the error string rather than re-raise.
+            # In that case future.exception() is None but the job is genuinely
+            # failed and belongs in the dead queue. Without this branch the job
+            # gets pushed to done_queue with status=failed (and BFE auto-fix
+            # never fires because _evaluate_for_auto_fix runs only from the dead
+            # path). Symmetric to the STALLED branch above.
+            if job.state == JobState.FAILED:
+                cause = job.error or formatted_output or "Job reported FAILED with no error message"
+                self._transition_to_dead( job, cause )
                 return
 
             self._transition_to_done( job, formatted_output )
@@ -1169,57 +1114,16 @@ class RunningFifoQueue( FifoQueue ):
                     if self.debug: print( f"[AGENTIC] I/O table write skipped: {io_e}" )
 
             else:
-                # Job reported failure via status
-                error_msg = running_job.error or "Unknown error"
-                du.print_banner( f"AgenticJob failed: {error_msg}", prepend_nl=True )
-
-                # TTS Migration (Session 97): Use notification service instead of _emit_speech
-                self._notify(
-                    f"The {running_job.JOB_TYPE} job encountered an error: {error_msg[ :100 ]}",
-                    job=running_job,
-                    priority="urgent"
-                )
-
-                # Emit job state transition (run -> dead) with error metadata
-                job_id  = running_job.id_hash
-                user_id = running_job.user_id
-
-                # Calculate timestamps for error case
-                completed_at = du.get_current_datetime_iso()
-                started_at   = running_job.started_at
-                duration_seconds = None
-                if started_at:
-                    try:
-                        start = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
-                        end   = datetime.fromisoformat( completed_at )
-                        duration_seconds = ( end - start ).total_seconds()
-                    except Exception:
-                        pass
-
-                metadata = {
-                    'error'           : error_msg,
-                    'stack_trace'     : running_job.error,  # Job-reported error (no Python traceback)
-                    # Phase 6.2: Card-rendering fields for client-side card creation
-                    'question_text'   : running_job.last_question_asked,
-                    'agent_type'      : running_job.job_type,
-                    'timestamp'       : running_job.created_date,
-                    # Session 107: Fix field parity between WebSocket and server-fetched cards
-                    'status'          : JobState.FAILED.value,
-                    'has_interactions': bool( running_job.session_id ),
-                    'is_cache_hit'    : False,
-                    'user_email'      : running_job.user_email,
-                    'started_at'      : started_at,
-                    'completed_at'    : completed_at,
-                    'duration_seconds': duration_seconds
-                }
-                emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.FAILED, user_id, metadata )
-
-                # Phase 2: id_hash-based delete
-                self.delete_by_id_hash( running_job.id_hash )
-                self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
-
-                # Phase 6A: Evaluate for automated repair
-                self._evaluate_for_auto_fix( running_job )
+                # OOS-4 Finding C (2026-04-29 Phase 4): canonical dead-queue
+                # path replacing ~50 lines of inline duplicate. _transition_to_dead
+                # accepts a string OR exception cause and handles all the same
+                # work (notify, error persistence, metadata, WS emit, queue
+                # mutations, auto-fix watchdog).
+                # Note: this entire `_handle_agentic_job` method is dead code
+                # post-Phase 2 (the agentic pool callback `_on_agentic_complete`
+                # replaced it). Kept refactored anyway so any reactivation
+                # picks up the canonical path.
+                self._transition_to_dead( running_job, running_job.error or "Unknown error" )
 
         except Exception as e:
             # Unexpected exception during execution
@@ -1233,54 +1137,8 @@ class RunningFifoQueue( FifoQueue ):
             running_job.state = JobState.FAILED
             running_job.error  = str( e )
 
-            # TTS Migration (Session 97): Use notification service instead of _emit_speech
-            self._notify(
-                f"The {running_job.JOB_TYPE} job crashed unexpectedly. Please check the logs.",
-                job=running_job,
-                priority="urgent"
-            )
-
-            # Emit job state transition (run -> dead) with error metadata
-            # Emit job state transition (run -> dead) with error metadata
-            job_id  = running_job.id_hash
-            user_id = running_job.user_id
-
-            # Calculate timestamps for crash case
-            completed_at = du.get_current_datetime_iso()
-            started_at   = running_job.started_at
-            duration_seconds = None
-            if started_at:
-                try:
-                    start = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
-                    end   = datetime.fromisoformat( completed_at )
-                    duration_seconds = ( end - start ).total_seconds()
-                except Exception:
-                    pass
-
-            metadata = {
-                'error'           : str( e ),
-                'stack_trace'     : traceback.format_exc(),
-                # Phase 6.2: Card-rendering fields for client-side card creation
-                'question_text'   : running_job.last_question_asked,
-                'agent_type'      : running_job.job_type,
-                'timestamp'       : running_job.created_date,
-                # Session 107: Fix field parity between WebSocket and server-fetched cards
-                'status'          : JobState.FAILED.value,
-                'has_interactions': bool( running_job.session_id ),
-                'is_cache_hit'    : False,
-                'user_email'      : running_job.user_email,
-                'started_at'      : started_at,
-                'completed_at'    : completed_at,
-                'duration_seconds': duration_seconds
-            }
-            emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.FAILED, user_id, metadata )
-
-            # Phase 2: id_hash-based delete
-            self.delete_by_id_hash( running_job.id_hash )
-            self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
-
-            # Phase 6A: Evaluate for automated repair
-            self._evaluate_for_auto_fix( running_job )
+            # OOS-4 Finding C: canonical dead-queue path (see comment above).
+            self._transition_to_dead( running_job, e )
 
         return running_job
 
