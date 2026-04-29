@@ -20,6 +20,7 @@ WebSocket event broadcast on POST.
 Generated on: 2026-04-27
 """
 
+import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -32,11 +33,21 @@ from ..websocket_manager import WebSocketManager
 # Bridge helpers live in the parent Lupin tree, but importing them is fine
 # (only git ops on src/cosa/ are restricted from parent context — imports are not).
 from lupin_cli.claude_code.hooks.lib.session_bridge import (
-    get_conversation_mode, set_conversation_mode, find_session_path_by_id
+    get_conversation_mode, set_conversation_mode, find_session_path_by_id,
+    find_active_conversation_sessions
 )
 
 
 router = APIRouter( prefix="/api/cosa-voice", tags=[ "cosa-voice" ] )
+
+# Module-level lock serializes activate-POSTs so the scan + displace + activate
+# sequence is atomic within this process. If two tabs POST concurrently to
+# activate different sessions, the lock ensures one fully completes (including
+# displacing the other's previously-active session) before the second runs.
+# Single-process uvicorn assumed — see "Risks / gotchas" #7 in the design doc
+# addendum at src/rnd/v0.1.7/2026.04.27-conversation-mode-design.md §11 for
+# the multi-worker caveat.
+_conversation_mode_lock = asyncio.Lock()
 
 
 # ── Dependency injection (mirrors notifications.router pattern) ──────────────
@@ -143,9 +154,47 @@ async def set_conversation_mode_endpoint(
     if not find_session_path_by_id( session_id ):
         raise HTTPException( status_code=404, detail=f"No active session bridge found for session_id={session_id}" )
 
-    ok = set_conversation_mode( session_id, body.active )
-    if not ok:
-        raise HTTPException( status_code=500, detail=f"Bridge write failed for session_id={session_id}" )
+    # Mutual exclusion: when activating, scan for any OTHER session currently
+    # holding conversation mode and displace them atomically. The lock makes
+    # the scan + displace + activate sequence indivisible so two parallel
+    # POSTs can't both end up "active." On deactivate (active=false), there's
+    # nothing to coordinate, so we skip the lock to avoid needless contention.
+    displaced_sessions = []
+
+    if body.active:
+        async with _conversation_mode_lock:
+            others = find_active_conversation_sessions( exclude_session_id=session_id )
+            for _other_path, other_sid in others:
+                if not set_conversation_mode( other_sid, False ):
+                    print( f"[CONVERSATION-MODE] ⚠️ Failed to displace session {other_sid} (bridge write failed)" )
+                    continue
+                displaced_sessions.append( other_sid )
+                # Broadcast displaced event so the affected session's tabs flip
+                # their toggle, unpin the card, and pause any in-flight TTS.
+                try:
+                    await ws_manager.emit_to_user(
+                        authenticated_user_id,
+                        "conversation_mode_changed",
+                        {
+                            "session_id"               : other_sid,
+                            "conversation_mode_active" : False,
+                            "displaced"                : True,
+                            "displaced_by"             : session_id
+                        }
+                    )
+                except Exception as ws_err:
+                    # Bridge write succeeded; broadcast is best-effort
+                    print( f"[CONVERSATION-MODE] ⚠️ WS displace-broadcast failed for {other_sid}: {ws_err}" )
+
+            # Now activate ours inside the same critical section so no parallel
+            # request can sneak in between displace and activate.
+            ok = set_conversation_mode( session_id, body.active )
+            if not ok:
+                raise HTTPException( status_code=500, detail=f"Bridge write failed for session_id={session_id}" )
+    else:
+        ok = set_conversation_mode( session_id, body.active )
+        if not ok:
+            raise HTTPException( status_code=500, detail=f"Bridge write failed for session_id={session_id}" )
 
     broadcast_delivered = False
     try:
@@ -164,5 +213,6 @@ async def set_conversation_mode_endpoint(
     return JSONResponse( content={
         "session_id"          : session_id,
         "active"              : body.active,
-        "broadcast_delivered" : broadcast_delivered
+        "broadcast_delivered" : broadcast_delivered,
+        "displaced_sessions"  : displaced_sessions
     } )

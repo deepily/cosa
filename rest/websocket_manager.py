@@ -687,17 +687,33 @@ class WebSocketManager:
             "any_delivered"      : False,
         }
 
+        listener_sid           = f"cc-listener-{job_id}" if job_id else None
+        listener_in_user_fanout = False
+
         # Try primary user emit (only if user_id is provided and connected)
         if user_id and self.is_user_connected( user_id ):
+            # Detect listener-already-covered BEFORE emitting so we can decide
+            # whether the listener-targeted emit below would be a duplicate.
+            # When the cc-listener authenticates with the same credentials as
+            # the human user (the typical local-dev case), its session_id sits
+            # in user_sessions[user_id] and emit_to_user_sync already reaches
+            # it — a follow-on emit_to_session_sync is a duplicate dispatch
+            # and produces the symptom: every voice message echoed back as
+            # two "Received: ..." notifications + double tmux injection.
+            if listener_sid and listener_sid in self.user_sessions.get( user_id, [] ):
+                listener_in_user_fanout = True
             try:
                 self.emit_to_user_sync( user_id, event, data )
                 result[ "user_delivered" ] = True
+                if listener_in_user_fanout:
+                    # User fan-out reached the listener too — count it.
+                    result[ "listener_delivered" ] = True
             except Exception as user_err:
                 print( f"[WS-DISPATCH] emit_to_user_sync failed for user={user_id}: {user_err}" )
 
-        # Try cc-listener fallback (independent of primary success)
-        if job_id:
-            listener_sid = f"cc-listener-{job_id}"
+        # Listener-targeted fallback (independent of primary success), but ONLY
+        # if the listener session was NOT already covered by the user fan-out.
+        if listener_sid and not listener_in_user_fanout:
             if listener_sid in self.active_connections:
                 try:
                     self.emit_to_session_sync( listener_sid, event, data )
