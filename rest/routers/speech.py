@@ -497,7 +497,11 @@ async def get_tts_audio_elevenlabs(
         
         session_id = request_data.get("session_id")
         msg = request_data.get("text")
-        voice_id = request_data.get("voice_id", "21m00Tcm4TlvDq8ikWAM")  # Default Rachel voice
+        # voice_id absent → None sentinel (server-side fallback applies in stream_tts_elevenlabs).
+        # Do NOT default to Rachel's voice_id (21m00Tcm4TlvDq8ikWAM) here — it's now an
+        # allocatable per-session persona voice, and using it as a "missing" placeholder
+        # caused the server to override Rachel sessions back to Sam (bug fixed 2026-04-29).
+        voice_id = request_data.get("voice_id")
         model_id = request_data.get("model_id", "eleven_turbo_v2_5")
         stability = request_data.get("stability", 0.5)
         similarity_boost = request_data.get("similarity_boost", 0.8)
@@ -785,10 +789,10 @@ async def stream_tts_hybrid(session_id: str, msg: str, ws_manager: WebSocketMana
                 pass  # Connection might be lost
 
 async def stream_tts_elevenlabs(
-    session_id: str, 
-    msg: str, 
+    session_id: str,
+    msg: str,
     ws_manager: WebSocketManager,
-    voice_id: str = "21m00Tcm4TlvDq8ikWAM",
+    voice_id: str = None,
     model_id: str = "eleven_turbo_v2_5",
     stability: float = 0.5,
     similarity_boost: float = 0.8,
@@ -850,12 +854,20 @@ async def stream_tts_elevenlabs(
             use_speaker_boost = config_mgr.get( f"{profile_prefix} use speaker boost", default=use_speaker_boost, return_type="boolean" )
             speed = config_mgr.get( f"{profile_prefix} speed", default=speed, return_type="float" )
         
-        # Fall back to default config values if still using original defaults and config_mgr available
+        # Fall back to configured default voice when caller didn't specify a voice_id.
+        # Using None as the "absent" sentinel — previously this special-cased
+        # voice_id == "21m00Tcm4TlvDq8ikWAM" which collided with the now-allocatable
+        # Rachel persona voice and caused her sessions to play as Sam (fixed 2026-04-29).
         if config_mgr:
-            if voice_id == "21m00Tcm4TlvDq8ikWAM":  # Check if still using default
-                voice_id = config_mgr.get( "elevenlabs tts default voice id", default=voice_id )
+            if voice_id is None:
+                voice_id = config_mgr.get( "elevenlabs tts default voice id", default="G7ILShrCNLfmS0A37SXS" )
             if model_id == "eleven_turbo_v2_5" and quality_profile == "balanced":  # Check if still default and no profile applied
                 model_id = config_mgr.get( "elevenlabs tts default model", default=model_id )
+
+        # Last-resort safety net: if voice_id is still None (no config_mgr or key missing),
+        # fall back to ElevenLabs Sam so the WS URL stays valid.
+        if voice_id is None:
+            voice_id = "G7ILShrCNLfmS0A37SXS"
         
         # Get ElevenLabs API key using COSA utility
         api_key = du.get_api_key("eleven11")
