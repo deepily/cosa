@@ -1,5 +1,80 @@
 # COSA Development History
 
+### 2026.04.29 - Session 613652e0 | CoSA-side wrap of Lupin Sessions ba7138c4-cont (Test-Suite Phase 1+2) + d34f2f74 (TFE Phase 3 + Phase 4 backlog) + 78abd1aa (bcrypt pin) + 9977a1ba (WS-event cleanup + Rachel TTS sentinel)
+
+**Context**: Session-end commit bundle for the CoSA-side work accumulated across **four** Lupin-parent sessions on 2026-04-29, on branch `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Seven clearly-scoped thematic commits per `feedback_lupin_only_never_cosa.md` cross-repo separation, each mapping to a named body of work in the parent Lupin `history.md`. **Note**: CoSA `history.md` was at 92.7% of the 25k token limit going into this session-end — entry kept terse + archive deferred to a dedicated future session (TODO captured in feedback memory).
+
+**Body 1 — Test-suite remediation Phase 1+2 cluster fixes** (Lupin parent: Session ba7138c4-cont, commit `7df56e3`)
+
+Five fix clusters from the post-RUN-2 triage (14 surviving smoke FAILs across 9 issue clusters per `07-final-execution-plan.md`).
+
+- **`agents/test_fix_expediter/job.py`** — **cluster 2.1 OOS-1A**: TFE cluster-count typo at line 549 (`getattr(c, "failure_count", len(getattr(c, "failures", []) or []))` → `len(c.failure_indices)`); plus full-block defensive-programming cleanup (lines 540-565) — removed redundant `try/except` wrappers, dead `getattr` fallbacks, dead `summary` field (replaced with `c.shared_error_signature`). **Also Phase 4 #5**: `do_all` exception handler re-raises after persisting state/error.
+- **`agents/notification_proxy/verification.py`** — **cluster 2.4**: single retry on `Exception` from `from_xml` parse in `AnswerVerifier.verify` to absorb vLLM transient empty-XML responses.
+- **`agents/runtime_argument_expeditor/agent_registry.py`** — **cluster 2.8**: early-return guard on `cli_module=None` in `get_cli_help` and `get_user_visible_args` (test_suite intentionally has no CLI; expediter caller already handles `help_text=None`).
+- **`training/peft_trainer.py`** — **cluster 2.1 LoRA env update**: extended the existing WG-4 `peft` import guard pattern to also wrap `trl` and `auto_round` imports.
+
+**Body 2 — TFE Phase 3: INI proposal-cap (OOS-1B)** (Lupin parent: Session d34f2f74, commit `7e8be00`)
+
+Cap on TFE proposal generation via INI knob, addressing OOS-1B's "unbounded proposal storms when failure cluster count is high".
+
+- **`agents/test_fix_expediter/config.py`** — new `proposal_cap` field + INI key map entry.
+- **`agents/test_fix_expediter/orchestrator.py`** — `_apply_proposal_cap()` truncates proposals to the configured cap before voice-gate.
+- **`agents/test_fix_expediter/prompts/proposal.py`** — prompt updates referencing the cap.
+
+**Body 3 — Cross-job sender_id ContextVar isolation** (Lupin parent: Session d34f2f74, Phase 4 backlog #1)
+
+Concurrent DR jobs in the agentic pool were sharing `cosa_interface.SENDER_ID` (module global) and `_dispatcher.sender_id` (shared instance attribute), so the most-recently-launched job's sender leaked onto earlier still-running jobs' notifications.
+
+- **`agents/utils/agent_notification_dispatcher.py`** — added `ContextVar`s for sender_id / target_user / session_name. Resolver methods prefer ContextVar over `self.*`. ContextVars are asyncio-task-local AND thread-local so the agentic pool's per-worker `asyncio.run()` contexts are naturally isolated.
+- **`agents/deep_research/cosa_interface.py`** — `set_dispatch_context()` helper exposed.
+- **`agents/deep_research/job.py`** — calls `set_dispatch_context()` at execution start; **also Phase 4 #5**: `do_all` re-raises after persisting state.
+
+**Body 4 — Agentic pool error path + do_all re-raise across 8 subclasses** (Lupin parent: Session d34f2f74, Phase 4 backlog #2 + #4 + #5)
+
+Three converging changes that make the agentic pool's error path canonical and observable.
+
+- **`rest/running_fifo_queue.py`** — **Phase 4 #4**: refactored 4 non-canonical dead-queue write paths (`_process_job` exception handler, `_handle_error_case`, two paths in legacy `_handle_agentic_job`) to delegate to canonical `_transition_to_dead`. ~150 lines of duplicate metadata-build / WS-emit / queue-push logic collapsed to ~5 one-line calls. Only one `jobs_dead_queue.push` site remains. Plus **cluster 2.3** FAILED-state branch in `_on_agentic_complete` retained as defensive belt.
+- **`rest/queue_consumer.py`** — **Phase 4 #2**: bound previously-indefinite `condition.wait()` to `idle_wake_interval_secs` (= `stall_threshold // 4` = 30s default); heartbeat ticked at top of EACH inner loop iteration. Healthy idle consumer now refreshes heartbeat at least every 30s instead of going stale on empty queue.
+- **`agents/{podcast_generator,presentation_generator,deep_research_to_podcast,deep_research_to_presentation,swe_team,test_suite,bug_fix_expediter,claude_code}/job.py`** — **Phase 4 #5**: re-raise from `do_all` exception handler after persisting state/error/answer_conversational. `Future.exception()` now correctly carries the real exception; pool callback's exception branch fires directly. (`test_fix_expediter/job.py` and `deep_research/job.py` got the same change in Body 1 and Body 3 above.)
+
+**Body 5 — bcrypt pin to 4.3.0** (Lupin parent: Session 78abd1aa, Lupin commit `093b7ca`)
+
+- **`requirements.txt`** — `bcrypt==5.0.0` → `bcrypt==4.3.0`. Resolves passlib 1.7.4 + bcrypt 5.0.0 incompatibility (passlib reads `bcrypt.__about__.__version__`; bcrypt 5.0.0 removed `__about__`). Lupin Docker build resolves from `pyproject.toml` + `uv.lock` (already correctly pinned to 4.3.0); CoSA `requirements.txt` change is informational/parity. Per pyca/bcrypt issue [#1079](https://github.com/pyca/bcrypt/issues/1079).
+
+**Body 6 — WS-event cleanup migration to push_notification subsystem** (Lupin parent: Session 9977a1ba, Lupin commit `70959c5`)
+
+Four ad-hoc `ws_manager.emit_to_user(...)` callsites migrated to the canonical `push_notification(type=..., payload={...})` subsystem.
+
+- **`rest/notification_fifo_queue.py`** — `NotificationItem.payload: Optional[dict]` field added; `to_dict()` includes it; `push_notification` accepts it as a kwarg.
+- **`rest/routers/notifications.py`** — `valid_types` extended for `voice_persona_assigned` / `voice_persona_released` / `conversation_mode_changed`. Senders-visible response carries `voice_persona` for refresh-survival (Layer B persona hydration).
+- **`rest/routers/voice_persona.py`** — allocate/release migrated from `emit_to_user` to `push_notification(type="voice_persona_assigned"/"voice_persona_released", payload={...})`.
+- **`rest/routers/conversation_mode.py`** — `conversation_mode_changed` (including displaced-by payload) migrated to `push_notification`.
+
+**Body 7 — Rachel voice-id sentinel fix** (Lupin parent: Session 9977a1ba)
+
+- **`rest/routers/speech.py`** — legacy code special-cased Rachel's `voice_id 21m00Tcm4TlvDq8ikWAM` as the "no voice specified" sentinel, overriding it with the configured default (Sam) — so Rachel sessions silently spoke as Sam despite badges showing Rachel. Replaced with `None` sentinel; explicit voice_ids pass through unchanged.
+
+#### Verification
+
+Per-body verification was driven from Lupin parent — see Lupin `history.md` Sessions ba7138c4-cont / d34f2f74 / 78abd1aa / 9977a1ba for full test counts. Local `py_compile` clean 25/25 across all modified `.py` files in this CoSA-context wrap.
+
+#### Commits Landed
+
+- `64b05bc` — Commit A (Test-suite Phase 1+2 cluster fixes) — 4 files, +71/−47
+- `70d44bc` — Commit B (TFE Phase 3 INI proposal-cap) — 3 files, +72/−24
+- `de34182` — Commit C (sender_id ContextVar isolation) — 3 files, +180/−20
+- `e7f27b5` — Commit D (Agentic pool error path + heartbeat + re-raise×8) — 10 files, +129/−225
+- `5ad369b` — Commit E (bcrypt 4.3.0 pin) — 1 file, +1/−1
+- `466ad30` — Commit F (WS-event cleanup migration to push_notification) — 4 files, +103/−52
+- `7fa685f` — Commit G (Rachel TTS sentinel fix) — 1 file, +19/−7
+- (Commit H session-end docs pending this commit)
+
+#### Cross-repo separation
+
+Per `CLAUDE.md` and memory `feedback_verify_repo_before_commit.md` / `feedback_lupin_only_never_cosa.md`: this CoSA-context session ONLY commits files inside `src/cosa/`. The Lupin-parent commits (`7df56e3`, `7e8be00`, `093b7ca`, `70959c5`, etc.) are owned by the parent context and not amended here. CoSA history mirrors the corresponding Lupin entries per CoSA `CLAUDE.md` cross-repo duplication mandate.
+
+---
+
 ### 2026.04.28 - Session 9dd6631b | CoSA-side wrap of Lupin Sessions ba7138c4 (Test-Suite Anomaly Remediation WG-2..9) + c7333045 (Conversation Mode v1.1 + EmbeddingProvider HTTP-routing) + 30072c25 (Voice Personas) + ba53b0d2 (Conv-mode ack receipt — docs only)
 
 **Context**: Session-end commit bundle for the CoSA-side work accumulated across **four** Lupin-parent sessions on 2026-04-28, on branch `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Five clearly-scoped thematic commits per `feedback_lupin_only_never_cosa.md` cross-repo separation, each mapping to a named body of work documented in the parent Lupin `history.md` for unambiguous attribution.
