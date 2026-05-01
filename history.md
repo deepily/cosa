@@ -1,5 +1,49 @@
 # COSA Development History
 
+### 2026.05.01 - Session d05e50fb | CoSA-side wrap of Lupin Sessions 31172845 (Post-mortem remediation 2026.04.30 22:15-EDT) + 911b1cdc (display_name helper + conv-mode exit-reminder push) + 5b732efe (María override)
+
+**Context**: Session-end commit bundle for the CoSA-side work accumulated across **three** Lupin-parent sessions on 2026-05-01, on branch `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Two clearly-scoped thematic commits per `feedback_lupin_only_never_cosa.md` cross-repo separation, each mapping to a named body of work in the parent Lupin `history.md`.
+
+**Commits Landed** (this session-end ritual): `5eff28b` (A), `08e6c1b` (B). Commit C (session-end docs) pending.
+
+**Body 1 — Persona `display_name` plumbing + cross-session conv-mode exit-reminder action push** (Lupin parents: Session 911b1cdc commit `449e06c` + Session 5b732efe commit `044c5ff`, CoSA commit `5eff28b`)
+
+Three files cover the persona-rename + cross-session conversation-mode work that landed parent-side under two Lupin sessions but maps to one tightly-coupled CoSA thematic commit (the helper, its overrides table, and the resolver consumers all touch the same display-name pipeline).
+
+- **`rest/voice_persona_helpers.py`** — New `display_name_for(pool_name)` helper with `_HONORIFIC_TOKENS = {mr, mrs, ms, dr, prof, sr, jr, st}` (converts pool key form `mr radio` → display `Mr. Radio`) and `_DISPLAY_OVERRIDES = {"maria": "María"}` map for diacritics/punctuation that the lowercase-no-punctuation INI key convention strips. Whole-string overrides win over per-token rendering. `display_name` field stamped at all three persona-dict construction sites: `load_persona_pool_from_config` returns it directly; `borrowed_persona_for_sid` and `pick_unallocated_persona` use `base.get("display_name") or display_name_for(base["name"])` for safety on legacy pool dicts.
+- **`rest/routers/notifications.py`** — `_voice_persona_for_sender_id` defensively stamps `display_name` on the returned dict if the bridge file predates the lowercase-key rename (legacy bridges have only `name`). Imports `display_name_for` lazily via try/except so old call paths still work if the helper module is missing.
+- **`rest/routers/conversation_mode.py`** — At displacement time inside the activate critical-section, pushes a parallel `user_initiated_message` with `title="action:exit_conversation_mode"` + `job_id=other_sid[:8]` after the broadcast push. Best-effort try/except: action push failure does NOT block the activate path. The Lupin-side listener (`cc_notification_listener._handle_action`) routes it to inject a `<system-reminder>` block into the displaced session's tmux pane, correcting the model's stale in-context assumption that conversation mode is still active even after the bridge has flipped.
+
+**Body 2 — Post-mortem 2026.04.30 22:15-EDT remediation: clusters B + D + G + C** (Lupin parent: Session 31172845 commit `431690b`, CoSA commit `08e6c1b`)
+
+Four CoSA files covering four post-mortem clusters from the 2026-04-30 22:15-EDT all-suite run (9 smoke failures, 4732 passed, 51 skipped). Each cluster fix is independently verifiable; bundling preserves the post-mortem narrative on the CoSA side.
+
+- **`rest/todo_fifo_queue.py`** — **Phase 2 / Cluster D defensive fix**: reordered `get_user_mode` branches so AGENTIC_MODE_MAP is checked BEFORE MODE_TO_AGENT. Several mode keys (`test_suite`, `deep_research`, `podcast`, `research_to_podcast`, `claude_code`, `swe_team`, `presentation`, `research_to_presentation`) appear in BOTH dicts. The original ordering hit MODE_TO_AGENT first and produced `f"agent router go to {user_mode}"` with an underscore form (e.g. `"agent router go to test_suite"`) that doesn't match any registered command — landing in the else branch downstream and triggering HTTP 500 with `'NoneType' .split`. AGENTIC_MODE_MAP holds the canonical space-form (`"agent router go to test suite"`). NOTE: this is a defensive belt; the real `NoneType.split()` source was not identified upstream — filed for follow-up.
+- **`rest/routers/mock_job.py`** — **Phase 3 / Cluster G presentation keyword fallback**: in `_handle_expeditor_test`, partial-match cascade reordered specific (compound) → general (single token). Presentation cases now come BEFORE the bare "research" elif, otherwise `"research and present it"` would match `"agent router go to deep research"` instead of `"agent router go to research to presentation"`. Two new branches added: `"presentation" + "research"` → `"agent router go to research to presentation"`; bare `"presentation"` → `"agent router go to presentation generator"`.
+- **`agents/test_suite/job.py`** — **Phase 6 / Cluster B INI-driven per-suite extra pytest_args**: best-effort ConfigurationManager read of `test suite {suite_type} extra pytest args` after the `--bg` strip step. The smoke suite needs `--auto-proxy` + `--cost-cap-usd` to satisfy the `pre_run_hook` of the two `live_smoke` tests (presentation + R2P); other suites are empty by default. Failure to load INI is logged and continues with caller-supplied args only — the augmentation is best-effort. `src/tests/smoke/conftest.py` registers the corresponding flags (`--auto-proxy`, `--cost-cap-usd`, `--no-confirm`, `--group`, `--scenario-id`) so pytest accepts them without erroring.
+- **`rest/routers/test_suite.py`** — **Phase 7 / Cluster C preflight surrogate (doc-only)**: docstring addendum on `submit_test_suite` documenting the architectural blocker — the canonical safeguard `src/scripts/preflight-test-container.sh` CANNOT be invoked from this endpoint because the FastAPI server runs INSIDE the test container and the docker daemon is not reachable. Until a server-side surrogate (e.g. a `/api/preflight` endpoint that checks fixture presence + bind-mount paths from within the container) lands, callers MUST run preflight on the host BEFORE submitting an `all` or live-smoke schedule. Tracked as a follow-up bug in parent Lupin's `bug-fix-queue.md`.
+
+#### Verification
+
+| Layer | Result |
+|---|---|
+| `py_compile` (all 7 modified .py files) | ✅ all 7/7 OK |
+| Per-cluster details | See parent Lupin `history.md` Sessions 31172845, 911b1cdc, 5b732efe (33 new unit tests, 1 smoke red→green, 5 follow-up bugs filed) |
+
+#### Cross-repo separation
+
+Per `CLAUDE.md` and memories `feedback_verify_repo_before_commit` / `feedback_lupin_only_never_cosa`: this CoSA-context session ONLY commits files inside `src/cosa/`. The Lupin-parent commits (`431690b`, `449e06c`, `044c5ff`) are owned by the parent context and not amended here. CoSA history mirrors the corresponding Lupin entries per CoSA `CLAUDE.md` cross-repo duplication mandate.
+
+#### Open follow-ups (carried by parent Lupin TODO.md + bug-fix-queue.md)
+
+- Cluster D real `NoneType.split()` source — current fix is defensive only; a separate code path may still produce the original symptom under different conditions (filed in parent Lupin `bug-fix-queue.md` Queued).
+- Cluster A 503 cascade design conversation — `/api/notify` returns 503 when offline + no `response_default`; expediter `_batch_collect_args` doesn't set one (4 fix options documented; user-facing decision pending).
+- Cluster C preflight surrogate — server-side `/api/preflight` endpoint (3 design options filed).
+- `claude-agent-sdk` install state — separately filed.
+- Smoke harness label improvement — separately filed.
+
+---
+
 ### 2026.04.30 - Session 9ae7718a | CoSA-side wrap of Lupin Session b195a160 PM (Postmortem clusters B + F + J + K + slow-test)
 
 **Context**: Single CoSA-context session-end commit mirroring the afternoon arc of Lupin-parent Session **b195a160** (2026-04-30). Parent ran a postmortem of the 2026-04-29 :8000 all-test-run (15 failures) and closed Tier-1+2 follow-ups across 8 CoSA files. Per `feedback_lupin_only_never_cosa`, the parent committed only Lupin-side files (test rewrites, fixtures, postmortem + slow-test R&D docs, history.md); these 8 CoSA files were deliberately deferred to this CoSA-context session. Branch: `wip-v0.1.7-2026.04.23-tracking-lupin-work`.
