@@ -1,5 +1,55 @@
 # COSA Development History
 
+### 2026.04.30 - Session 9ae7718a | CoSA-side wrap of Lupin Session b195a160 PM (Postmortem clusters B + F + J + K + slow-test)
+
+**Context**: Single CoSA-context session-end commit mirroring the afternoon arc of Lupin-parent Session **b195a160** (2026-04-30). Parent ran a postmortem of the 2026-04-29 :8000 all-test-run (15 failures) and closed Tier-1+2 follow-ups across 8 CoSA files. Per `feedback_lupin_only_never_cosa`, the parent committed only Lupin-side files (test rewrites, fixtures, postmortem + slow-test R&D docs, history.md); these 8 CoSA files were deliberately deferred to this CoSA-context session. Branch: `wip-v0.1.7-2026.04.23-tracking-lupin-work`.
+
+**Single thematic commit** — all 8 files map to one afternoon arc; bundling preserves traceability without splitting across artificial boundaries.
+
+**Cluster B — `auto_round` import gate** (1 file, closes 3 smoke fails)
+
+- `training/quantizer.py` — line 8 un-gated `from auto_round import AutoRound` replaced with try/except + `AUTO_ROUND_AVAILABLE` flag (mirrors `training/peft_trainer.py` pattern). `quantize_model()` now raises a clear `RuntimeError` if called without `auto_round` installed.
+
+**Cluster F — `slide_count` propagation** (4 files, Path 1 — formal field through state machine, NOT dict-passthrough hack)
+
+- `agents/presentation_generator/job.py` — `self.artifacts["slide_count"] = presentation.total_slides` written in LIVE branch (line 290); sentinel `0` in dry-run branch.
+- `agents/deep_research_to_presentation/state.py` — added `slide_count: Optional[int] = None` field to `ChainedResult`.
+- `agents/deep_research_to_presentation/agent.py` — orchestrator at line 214 reads `pg_artifacts.get("slide_count")` into `self.result.slide_count`.
+- `agents/deep_research_to_presentation/job.py` — line 256 writes `self.artifacts["slide_count"] = result.slide_count` (LIVE + dry-run branches).
+
+**Cluster J — runtime-arg expediter `'NoneType' object has no attribute 'split'`** (1 file, +8 regression tests in parent Lupin)
+
+- `agents/runtime_argument_expeditor/expeditor.py` — extracted `_resolve_display_name(agent_entry)` static method with proper short-circuit (display_name → cli_module derivation → "agent" sentinel). Fixed eager `dict.get` default evaluation that ran `None.split(".")` for the `test_suite` registry entry where `cli_module=None` by design. Both call sites (lines 340 + 588) now use the helper. Parent Lupin added `TestResolveDisplayName` (8 tests) covering the registry shape; full expediter unit suite 155/0 fail (was 147 → +8).
+
+**Cluster K — verifier 3-attempt retry with gentle backoff** (1 file)
+
+- `agents/notification_proxy/verification.py` — verification loop bumped from 2-attempt to 3-attempt with `time.sleep(0.5 * attempt)` between attempts (0.5s, then 1.0s). Insurance against transient vLLM empty-XML responses (yesterday's `FUZZY_BUDGET_2` failure pattern). Worst-case adds 1.5s for triply-flaky scenarios.
+
+**Slow-test rewrite — `test_swe_team_orchestrator.py::TestDryRunRegression` 196s → 0.58s** (1 CoSA file + parent test rewrite)
+
+- `agents/swe_team/mock_clients.py` — added `DELAY_MULTIPLIER = 1.0` class constant on `MockAgentSDKSession`. Test fixtures in parent Lupin's rewritten `TestDryRunRegression` (now 7 small tests + class-autouse fixture) zero this multiplier so mock async calls collapse to ~0ms.
+- Parent diagnosed the original test was a covert end-to-end test that hit the real `cosa_interface.notify_progress` dispatcher: 7 breadcrumbs × ~28s under load ≈ 196s. **~1700× speedup** for that test cluster. Parent also authored a Tier-2 smoke at `src/tests/smoke/test_swe_team_dry_run_e2e.py` (`:8000`-scheduled, 240s budget) that retains real-dispatcher coverage.
+- Plan doc (parent): `src/rnd/v0.1.7/2026.04.30-swe-team-orchestrator-test-perf-fix.md`.
+
+#### Verification
+
+| Layer | Result |
+|---|---|
+| `py_compile` (all 8 modified .py files) | ✅ all 8/8 OK |
+| Per-cluster details | See parent Lupin `history.md` Session b195a160 PM entry (8 unit tests for swe_team in 0.58s, 22/22 swe_team_job, 155/0 expediter unit suite) |
+
+#### Cross-repo separation
+
+Per `CLAUDE.md` and memories `feedback_verify_repo_before_commit` / `feedback_lupin_only_never_cosa`: this CoSA-context session ONLY commits files inside `src/cosa/`. Parent Lupin commit (Session b195a160 PM, 9 Lupin-side files including test fixtures + R&D docs + history.md) is owned by the parent context. CoSA history mirrors the corresponding parent Lupin entry per CoSA `CLAUDE.md` cross-repo duplication mandate.
+
+#### Open follow-ups (carried by parent Lupin TODO.md)
+
+- Cluster I config audit — verify after tonight's `ts-0fb8e488` :8000 all-test-run (scheduled 21:30 EDT) whether `EXP_PRES_MISSING` still returns "Could not match voice command".
+- Adjacent dev infra: investigate why dev `:7999` cannot reach `192.168.1.21:3001` (vLLM for runtime-arg expediter); test `:8000` could reach it yesterday.
+- Architectural: per-test-file `pytest_args` declarations the scheduler could merge (so `test_presentation_live*` always get `--auto-proxy --cost-cap-usd N` without manual repetition).
+
+---
+
 ### 2026.04.29 - Session 613652e0 | CoSA-side wrap of Lupin Sessions ba7138c4-cont (Test-Suite Phase 1+2) + d34f2f74 (TFE Phase 3 + Phase 4 backlog) + 78abd1aa (bcrypt pin) + 9977a1ba (WS-event cleanup + Rachel TTS sentinel)
 
 **Context**: Session-end commit bundle for the CoSA-side work accumulated across **four** Lupin-parent sessions on 2026-04-29, on branch `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Seven clearly-scoped thematic commits per `feedback_lupin_only_never_cosa.md` cross-repo separation, each mapping to a named body of work in the parent Lupin `history.md`. **Note**: CoSA `history.md` was at 92.7% of the 25k token limit going into this session-end — entry kept terse + archive deferred to a dedicated future session (TODO captured in feedback memory).

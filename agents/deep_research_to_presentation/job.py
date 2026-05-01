@@ -253,6 +253,7 @@ class DeepResearchToPresentationJob( AgenticJobBase ):
             self.artifacts[ "research_abstract" ] = result.research_abstract
             self.artifacts[ "yaml_path" ]         = result.yaml_path
             self.artifacts[ "marp_path" ]         = result.marp_path
+            self.artifacts[ "slide_count" ]       = result.slide_count
 
             # Build cost summary
             self.cost_summary = {
@@ -342,6 +343,7 @@ class DeepResearchToPresentationJob( AgenticJobBase ):
         self.artifacts[ "research_abstract" ] = "Mock abstract from dry-run mode."
         self.artifacts[ "yaml_path" ]         = self.yaml_path
         self.artifacts[ "marp_path" ]         = self.marp_path
+        self.artifacts[ "slide_count" ]       = 0   # dry-run: no real presentation built
 
         # Mock cost summary
         self.cost_summary = {

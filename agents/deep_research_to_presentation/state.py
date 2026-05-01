@@ -33,6 +33,7 @@ class ChainedResult:
         research_abstract: Brief summary of the research
         yaml_path: Path to the generated YAML intermediate file
         marp_path: Path to the generated Marp Markdown presentation
+        slide_count: Number of slides in the generated presentation
         total_cost: Combined cost from both agents (USD)
         dr_cost: Cost from Deep Research (USD)
         pg_cost: Cost from Presentation Generator (USD)
@@ -50,6 +51,7 @@ class ChainedResult:
     research_abstract: Optional[ str ] = None
     yaml_path        : Optional[ str ] = None
     marp_path        : Optional[ str ] = None
+    slide_count      : Optional[ int ] = None
 
     # Cost tracking
     total_cost       : float = 0.0

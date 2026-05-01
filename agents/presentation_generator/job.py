@@ -287,6 +287,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
             self.artifacts[ "marp_path" ]        = self.marp_path
             self.artifacts[ "pptx_path" ]        = self.pptx_path
             self.artifacts[ "presentation_id" ]  = agent.presentation_id
+            self.artifacts[ "slide_count" ]      = presentation.total_slides
 
             # Build cost summary from API client
             cost_est = agent.api_client.cost_estimate if agent._api_client else None
@@ -418,6 +419,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
             self.artifacts[ "yaml_path" ]        = self.yaml_path
             self.artifacts[ "marp_path" ]        = self.marp_path
             self.artifacts[ "presentation_id" ]  = f"dry-run-{self.id_hash}"
+            self.artifacts[ "slide_count" ]      = 0   # dry-run: no real presentation built
 
             # Mock cost summary
             self.cost_summary = {
