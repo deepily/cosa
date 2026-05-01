@@ -705,6 +705,40 @@ class TestSuiteJob( AgenticJobBase ):
         if len( sanitized_args ) < len( self.pytest_args ):
             print( f"[TestSuiteJob] WARNING: Stripped --bg flag from pytest_args (harmful for subprocess-tracked runs)" )
 
+        # Append per-suite extra pytest args from INI (Phase 6 / Cluster B fix
+        # for 2026-04-30 post-mortem). The smoke suite needs --auto-proxy +
+        # --cost-cap-usd to satisfy the pre_run_hook of the two live_smoke
+        # tests (test_presentation_live_smoke, test_research_to_presentation_
+        # live_smoke); other suites are empty by default. The INI key shape is
+        # "test suite {suite_type} extra pytest args" — empty / missing is OK.
+        # `src/tests/smoke/conftest.py` registers --auto-proxy / --cost-cap-usd
+        # / --no-confirm / --group / --scenario-id so pytest accepts the flags
+        # without erroring; the actual flag values are consumed by each test's
+        # own argparse (see live_pipeline_base.py:619).
+        try:
+            from cosa.config.configuration_manager import ConfigurationManager
+            extra_args_cfg = ConfigurationManager(
+                env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS"
+            )
+            extra_args_raw = extra_args_cfg.get(
+                f"test suite {suite_type} extra pytest args",
+                default="",
+                return_type="string"
+            )
+            if extra_args_raw:
+                extra_args = [ a for a in extra_args_raw.split() if a.strip() ]
+                if extra_args:
+                    sanitized_args = sanitized_args + extra_args
+                    if self.debug:
+                        print( f"[TestSuiteJob] Appended per-suite extra args for "
+                               f"'{suite_type}': {extra_args}" )
+        except Exception as e:
+            # ConfigurationManager unavailable — log and continue with the
+            # caller-supplied args only. This is a best-effort augmentation;
+            # failure to read the INI must not block the suite.
+            print( f"[TestSuiteJob] WARNING: Could not load extra pytest args "
+                   f"for '{suite_type}' suite from INI: {e}" )
+
         # Inject --junit-xml for structured result parsing (no brittle regex).
         # Gated by SUITES_SUPPORTING_JUNIT_XML — non-pytest runners (e.g. the
         # websocket async orchestrator) will error at arg-parse if this flag

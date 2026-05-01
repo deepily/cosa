@@ -631,20 +631,30 @@ class TodoFifoQueue( FifoQueue ):
             # NEW: Check user mode BEFORE LLM routing
             user_mode = self.get_user_mode( user_id )
 
-            if user_mode and user_mode in MODE_TO_AGENT:
-                # Direct routing - bypass LLM router when user is in agent mode
-                command = f"agent router go to {user_mode}"
-                args = ""
-                if self.debug:
-                    print( f"[MODE] User {user_id} in '{user_mode}' mode - bypassing LLM router" )
-                    print( f"[MODE] Direct routing to: {command}" )
-            elif user_mode and user_mode in AGENTIC_MODE_MAP:
+            # NOTE: AGENTIC_MODE_MAP MUST be checked BEFORE MODE_TO_AGENT.
+            # Agentic mode keys (test_suite, deep_research, podcast,
+            # research_to_podcast, claude_code, swe_team, presentation,
+            # research_to_presentation) appear in BOTH dicts. The f-string
+            # synthesis below produces e.g. "agent router go to test_suite"
+            # (with underscore), which doesn't match any registered command —
+            # AGENTIC_MODE_MAP holds the canonical "agent router go to test
+            # suite" (with space). Reversed order would land in the else
+            # branch downstream and trigger HTTP 500 with 'NoneType' .split.
+            if user_mode and user_mode in AGENTIC_MODE_MAP:
                 # Agentic mode - bypass LLM router, produce agentic routing command
                 command = AGENTIC_MODE_MAP[ user_mode ]
                 args = ""
                 if self.debug:
                     print( f"[MODE] User {user_id} in '{user_mode}' agentic mode - bypassing LLM router" )
                     print( f"[MODE] Agentic routing to: {command}" )
+            elif user_mode and user_mode in MODE_TO_AGENT:
+                # Direct routing - bypass LLM router when user is in agent mode
+                # (single-token modes: calculator, todo, calendar, weather, datetime)
+                command = f"agent router go to {user_mode}"
+                args = ""
+                if self.debug:
+                    print( f"[MODE] User {user_id} in '{user_mode}' mode - bypassing LLM router" )
+                    print( f"[MODE] Direct routing to: {command}" )
             else:
                 # Normal LLM-based routing (system mode)
                 # We're going to give the routing function maximum information, hence including the salutation with the question
