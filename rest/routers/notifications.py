@@ -32,6 +32,11 @@ try:
 except ImportError:
     _bridge_get_voice_persona = None
 
+try:
+    from cosa.rest.voice_persona_helpers import display_name_for as _display_name_for
+except ImportError:
+    _display_name_for = None
+
 
 def _voice_persona_for_sender_id( resolved_sender_id ):
     """
@@ -43,6 +48,11 @@ def _voice_persona_for_sender_id( resolved_sender_id ):
     The 8-char prefix after '#' is matched against bridge files via
     find_session_path_by_id (which already understands the prefix-or-full
     form), so we can pass it directly to get_voice_persona.
+
+    Defensively stamps `display_name` on the returned dict if the bridge
+    file predates the lowercase-key rename (legacy bridges have only `name`).
+    Pool names are stored lowercase no-punctuation per project key convention;
+    `display_name` is the proper-noun form for UI rendering.
     """
     if _bridge_get_voice_persona is None or not resolved_sender_id or "#" not in resolved_sender_id:
         return None
@@ -50,9 +60,12 @@ def _voice_persona_for_sender_id( resolved_sender_id ):
     if not sid_suffix:
         return None
     try:
-        return _bridge_get_voice_persona( sid_suffix )
+        persona = _bridge_get_voice_persona( sid_suffix )
     except Exception:
         return None
+    if persona and "display_name" not in persona and _display_name_for is not None:
+        persona = { **persona, "display_name": _display_name_for( persona.get( "name", "" ) ) }
+    return persona
 
 router = APIRouter(prefix="/api", tags=["notifications"])
 

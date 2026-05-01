@@ -32,6 +32,67 @@ from typing    import List, Optional, Set, Dict, Any
 PoolPersona = Dict[ str, Any ]
 
 
+# Title tokens that take a trailing period in display form ("mr" → "Mr.").
+# Per project key convention, pool names are stored lowercase with no
+# punctuation; this set maps the lowercase honorific tokens back to their
+# display form when the persona name is rendered in the UI badge, tooltip,
+# or any other user-facing surface.
+_HONORIFIC_TOKENS = { "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st" }
+
+# Display-form overrides keyed by the lowercase pool key. Used for personas
+# whose display name carries diacritics or punctuation that the INI key
+# convention strips ("maria" → "María"). Looked up BEFORE the generic
+# title-case path so a single override entry is enough to override the
+# whole-string rendering.
+_DISPLAY_OVERRIDES = {
+    "maria" : "María",
+}
+
+
+def display_name_for( pool_name: str ) -> str:
+    """
+    Convert pool key form (lowercase, no punctuation) to display form.
+
+    Pool names are stored lowercase with no punctuation per project convention
+    so that they double as ConfigParser-safe key fragments. Anywhere the name
+    is shown to the user — badge label, tooltip, debug print — call this
+    helper to produce the proper-noun display string.
+
+    Requires:
+        - pool_name is a string (may be empty, may already be capitalized)
+
+    Ensures:
+        - Returns "" when pool_name is empty or None
+        - Whole-string overrides in _DISPLAY_OVERRIDES (matched on lowercase)
+          win over the per-token rendering — used for diacritics/punctuation
+          the INI key form cannot carry ("maria" → "María")
+        - Honorific tokens (mr, mrs, ms, dr, prof, sr, jr, st) become
+          "Mr.", "Dr.", etc. with a trailing period
+        - Non-honorific tokens are .capitalize()-d (first letter upper, rest
+          lower); already-capitalized inputs round-trip unchanged
+        - Whitespace between tokens is collapsed to a single space
+
+    Examples:
+        "mr radio" → "Mr. Radio"
+        "maria"    → "María"
+        "rachel"   → "Rachel"
+        "dr who"   → "Dr. Who"
+    """
+    if not pool_name:
+        return ""
+    override = _DISPLAY_OVERRIDES.get( pool_name.lower() )
+    if override is not None:
+        return override
+    out = []
+    for tok in pool_name.split():
+        low = tok.lower()
+        if low in _HONORIFIC_TOKENS:
+            out.append( low.capitalize() + "." )
+        else:
+            out.append( tok.capitalize() )
+    return " ".join( out )
+
+
 def load_persona_pool_from_config( config_mgr ) -> List[ PoolPersona ]:
     """
     Read the [Voice Personas] INI block and return the allocatable pool.
@@ -44,7 +105,9 @@ def load_persona_pool_from_config( config_mgr ) -> List[ PoolPersona ]:
 
     Ensures:
         - Returns a list of persona dicts in the order specified by the pool key
-        - Each dict has keys: name, voice_id, icon, color, profile
+        - Each dict has keys: name, display_name, voice_id, icon, color, profile
+        - `name` is the lowercase no-punctuation key form; `display_name` is
+          the proper-noun rendering for UI surfaces (see display_name_for)
         - Personas with missing or empty voice_id are skipped (logged via
           ConfigurationManager's silent=False default)
         - Returns an empty list if the pool key is missing or empty
@@ -75,11 +138,12 @@ def load_persona_pool_from_config( config_mgr ) -> List[ PoolPersona ]:
             continue
 
         pool.append( {
-            "name"     : name,
-            "voice_id" : voice_id,
-            "icon"     : icon,
-            "color"    : color,
-            "profile"  : profile
+            "name"         : name,
+            "display_name" : display_name_for( name ),
+            "voice_id"     : voice_id,
+            "icon"         : icon,
+            "color"        : color,
+            "profile"      : profile
         } )
 
     return pool
@@ -125,12 +189,13 @@ def borrowed_persona_for_sid(
     base         = pool[ idx ]
 
     return {
-        "name"     : base[ "name" ],
-        "voice_id" : base[ "voice_id" ],
-        "icon"     : base[ "icon" ],
-        "color"    : base[ "color" ],
-        "profile"  : base[ "profile" ],
-        "borrowed" : True
+        "name"         : base[ "name" ],
+        "display_name" : base.get( "display_name" ) or display_name_for( base[ "name" ] ),
+        "voice_id"     : base[ "voice_id" ],
+        "icon"         : base[ "icon" ],
+        "color"        : base[ "color" ],
+        "profile"      : base[ "profile" ],
+        "borrowed"     : True
     }
 
 
@@ -174,12 +239,13 @@ def pick_unallocated_persona(
     chosen = random.choice( free )
 
     return {
-        "name"     : chosen[ "name" ],
-        "voice_id" : chosen[ "voice_id" ],
-        "icon"     : chosen[ "icon" ],
-        "color"    : chosen[ "color" ],
-        "profile"  : chosen[ "profile" ],
-        "borrowed" : False
+        "name"         : chosen[ "name" ],
+        "display_name" : chosen.get( "display_name" ) or display_name_for( chosen[ "name" ] ),
+        "voice_id"     : chosen[ "voice_id" ],
+        "icon"         : chosen[ "icon" ],
+        "color"        : chosen[ "color" ],
+        "profile"      : chosen[ "profile" ],
+        "borrowed"     : False
     }
 
 

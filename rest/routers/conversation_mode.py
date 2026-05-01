@@ -192,6 +192,32 @@ async def set_conversation_mode_endpoint(
                     # Bridge write succeeded; broadcast is best-effort
                     print( f"[CONVERSATION-MODE] ⚠️ Displace-notify push failed for {other_sid}: {ws_err}" )
 
+                # Action push: nudge the displaced session's listener to
+                # inject the conversation-mode-exit system-reminder into
+                # tmux. This corrects the model's in-context assumption
+                # that conversation mode is still active — the bridge
+                # flip alone is silent to the model. The listener filters
+                # by 8-char job_id; cc_notification_listener._handle_action
+                # routes title="action:exit_conversation_mode" through
+                # _inject_exit_conversation_reminder which calls
+                # hook_common.conv_mode_exit_reminder for the body.
+                try:
+                    notification_queue.push_notification(
+                        message            = "",
+                        type               = "user_initiated_message",
+                        title              = "action:exit_conversation_mode",
+                        user_id            = authenticated_user_id,
+                        sender_id          = build_sender_id_for_cc( other_sid ),
+                        job_id             = other_sid[:8],
+                        suppress_ding      = True,
+                        response_requested = False,
+                    )
+                except Exception as action_err:
+                    # Listener push is best-effort; if it fails, the next
+                    # user prompt will still hydrate correctly via the
+                    # UserPromptSubmit hook reading the (now-false) bridge.
+                    print( f"[CONVERSATION-MODE] ⚠️ Exit-action push failed for {other_sid}: {action_err}" )
+
             # Now activate ours inside the same critical section so no parallel
             # request can sneak in between displace and activate.
             ok = set_conversation_mode( session_id, body.active )
