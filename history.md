@@ -4,7 +4,7 @@
 
 **Context**: Session-end commit bundle for the CoSA-side work accumulated across **three** Lupin-parent sessions on 2026-05-01, on branch `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Two clearly-scoped thematic commits per `feedback_lupin_only_never_cosa.md` cross-repo separation, each mapping to a named body of work in the parent Lupin `history.md`.
 
-**Commits Landed** (this session-end ritual): `5eff28b` (A), `08e6c1b` (B). Commit C (session-end docs) pending.
+**Commits Landed** (this session-end ritual): `5eff28b` (A), `08e6c1b` (B), `f161e23` (C session-end docs).
 
 **Body 1 — Persona `display_name` plumbing + cross-session conv-mode exit-reminder action push** (Lupin parents: Session 911b1cdc commit `449e06c` + Session 5b732efe commit `044c5ff`, CoSA commit `5eff28b`)
 
