@@ -28,10 +28,14 @@ See: src/rnd/v0.1.7/2026.04.28-per-session-voice-personas/01-design.md
 """
 
 import asyncio
-from typing import Annotated
+from typing import Annotated, Optional
 
-from fastapi          import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse
+import httpx
+from fastapi          import APIRouter, Body, Depends, HTTPException
+from fastapi.responses import JSONResponse, Response
+from pydantic         import BaseModel
+
+import cosa.utils.util as du
 
 from ..middleware.api_key_auth import require_api_key_or_jwt
 from ..notification_fifo_queue import NotificationFifoQueue
@@ -265,3 +269,112 @@ async def release_voice_persona_endpoint(
         "released_persona"    : existing,
         "broadcast_delivered" : broadcast_delivered
     } )
+
+
+# ── Voice sample endpoint (reference page) ───────────────────────────────────
+
+class VoicePersonaSampleRequest( BaseModel ):
+    voice_id: str
+    text    : str
+
+
+@router.post(
+    "/voice-persona/sample",
+    summary     = "Synthesize a voice sample for the persona-reference page",
+    description = "Returns audio/mpeg bytes inline. The voice_id MUST belong to the configured persona pool — arbitrary voice_ids are rejected so this endpoint cannot be used as a general-purpose TTS oracle.",
+    responses   = {
+        200: { "content": { "audio/mpeg": {} } },
+        400: { "description": "voice_id is not in the configured persona pool" },
+        503: { "description": "ElevenLabs API unavailable or returned an error" }
+    }
+)
+async def voice_persona_sample(
+    authenticated_user_id: Annotated[ str, Depends( require_api_key_or_jwt ) ],
+    body                 : VoicePersonaSampleRequest = Body( ... ),
+    config_mgr           = Depends( get_config_manager )
+) -> Response:
+    """
+    Synthesize a short voice sample for the dev-tools persona-reference page.
+
+    Why a separate endpoint (vs. /api/get-speech-elevenlabs): the existing
+    streaming TTS path delivers PCM chunks over WebSocket and requires an
+    open audio session — appropriate for the live notification UI but heavy
+    for a static reference page that just needs to play six sample clips.
+    This endpoint calls the ElevenLabs HTTP TTS API and returns the audio
+    as a single response body, so the page can `<audio>.src = blobURL` it.
+
+    Pool-membership check: the voice_id must match an entry in the
+    configured persona pool (`cc session voice persona pool` in
+    lupin-app.ini). This prevents the endpoint from being used to burn
+    ElevenLabs quota on arbitrary voice_ids.
+
+    Requires:
+        - body.voice_id is a non-empty string
+        - body.text is a non-empty string
+        - voice_id matches an entry in load_persona_pool_from_config(config_mgr)
+        - ElevenLabs API key is reachable via du.get_api_key("eleven11")
+
+    Ensures:
+        - Returns 200 + audio/mpeg bytes on success
+        - Returns 400 if voice_id is not in pool
+        - Returns 503 if ElevenLabs upstream fails
+        - Never raises (all paths return Response or JSONResponse)
+    """
+    if not body.voice_id or not body.text:
+        raise HTTPException( status_code=400, detail="voice_id and text are both required" )
+
+    pool      = load_persona_pool_from_config( config_mgr )
+    pool_ids  = { p[ "voice_id" ] for p in pool if p.get( "voice_id" ) }
+    if body.voice_id not in pool_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=f"voice_id {body.voice_id!r} is not in the configured persona pool. Allowed: {sorted( pool_ids )}"
+        )
+
+    api_key = du.get_api_key( "eleven11" )
+    if not api_key:
+        raise HTTPException( status_code=503, detail="ElevenLabs API key not available on server" )
+
+    # Match the streaming path's defaults so the reference samples sound
+    # representative of what the live notification UI plays. Profile keys
+    # mirror the "balanced" profile from speech.py:846-855.
+    model_id          = config_mgr.get( "elevenlabs tts default model",          default="eleven_turbo_v2_5", silent=True )
+    stability         = config_mgr.get( "elevenlabs tts profile balanced stability",         default=0.5, return_type="float", silent=True )
+    similarity_boost  = config_mgr.get( "elevenlabs tts profile balanced similarity boost",  default=0.8, return_type="float", silent=True )
+
+    url     = f"https://api.elevenlabs.io/v1/text-to-speech/{body.voice_id}"
+    headers = {
+        "xi-api-key"   : api_key,
+        "accept"       : "audio/mpeg",
+        "Content-Type" : "application/json"
+    }
+    payload = {
+        "text"           : body.text,
+        "model_id"       : model_id,
+        "voice_settings" : {
+            "stability"        : stability,
+            "similarity_boost" : similarity_boost
+        }
+    }
+
+    try:
+        async with httpx.AsyncClient( timeout=30.0 ) as client:
+            r = await client.post( url, headers=headers, json=payload )
+    except httpx.HTTPError as e:
+        raise HTTPException( status_code=503, detail=f"ElevenLabs request failed: {e}" )
+
+    if r.status_code != 200:
+        # Surface a redacted snippet of the upstream body so the user can
+        # diagnose (e.g., quota exceeded, voice not found) without exposing
+        # internal headers.
+        snippet = r.text[ :200 ] if r.text else "(empty)"
+        raise HTTPException(
+            status_code=503,
+            detail=f"ElevenLabs returned {r.status_code}: {snippet}"
+        )
+
+    return Response(
+        content    = r.content,
+        media_type = "audio/mpeg",
+        headers    = { "Cache-Control": "no-store" }
+    )
