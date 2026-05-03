@@ -1,5 +1,44 @@
 # COSA Development History
 
+### 2026.05.02 - Session d29fb192 | CoSA-side wrap of Lupin Sessions 0022baba (WS reconnect circuit-breaker Phase 5 — server close codes) + 4ede5bad-AM (dev-tools voice-persona-reference page /sample endpoint)
+
+**Context**: CoSA-context session-end commit bundle for two distinct bodies of work whose CoSA-side files were deliberately deferred by their parent Lupin sessions per `feedback_lupin_only_never_cosa.md`. Branch: `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Two clearly-scoped thematic commits, each mapping to a named body of work in the parent Lupin `history.md` / `TODO.md`.
+
+**Commits Landed** (this session-end ritual): `0cc4ee8` (Body 1 voice-persona /sample), `3551ed3` (Body 2 WS Phase 5 close codes).
+
+**Body 1 — Voice-persona `/sample` endpoint for dev-tools persona-reference page** (Lupin parent: Session 4ede5bad morning arc; Lupin-side files committed separately by parent context — `dev-tools.html`, `voice-persona-reference.html`)
+
+One CoSA file delivers the server-side counterpart of the new dev-tools page that lets an admin audition each persona voice without spinning up a live notification session.
+
+- **`rest/routers/voice_persona.py`** — New `POST /api/cosa-voice/voice-persona/sample` endpoint. JWT-gated via `require_api_key_or_jwt`. Pool-membership check rejects out-of-pool `voice_id` with HTTP 400 — prevents the endpoint being repurposed as a general-purpose TTS oracle that burns ElevenLabs quota on arbitrary voice ids. Calls the ElevenLabs HTTP TTS API directly (vs. the streaming `/api/get-speech-elevenlabs` WS path which requires an open audio session and is heavier than this static-page use case warrants). Returns `audio/mpeg` bytes inline so the page can `<audio>.src = blobURL` it. Profile defaults (`stability=0.5`, `similarity_boost=0.8`, `model_id=eleven_turbo_v2_5`) mirror the streaming path's "balanced" profile so reference samples sound representative. Upstream errors surface as HTTP 503 with a redacted snippet of the ElevenLabs response body. New imports: `httpx`, `Body`, `Response`, `BaseModel`, `cosa.utils.util as du` (for `du.get_api_key("eleven11")`). `VoicePersonaSampleRequest` Pydantic model declares the request shape.
+
+**Body 2 — WS reconnect circuit-breaker Phase 5: server close codes 4001/4002** (Lupin parent: Session 0022baba commit `1a9e3e0`, CoSA commits this session)
+
+Two CoSA files implement the server side of the close-code semantics that the parent Lupin client (`ws-channel.js` PERMANENT_CLOSE_CODES + `notifications.js` banner-reason differentiation + Layer-2/3 close-code tests) consumes. RFC 6455 §7.4.2 application range 4000-4999 reserved for Lupin auth semantics.
+
+- **`rest/routers/websocket.py`** — Top-of-file constants `CLOSE_CODE_AUTH_INVALID_TOKEN=4001`, `CLOSE_CODE_AUTH_SESSION_CONFLICT=4002`, `CLOSE_CODE_AUTH_SUBSCRIPTION_DENIED=4003` with comment block reserving the 4000-4999 application range and documenting per-code semantics (4001 = invalid/expired/missing token, client treats as PERMANENT and tries token refresh first; 4002 = session conflict, client shows "Another session has taken over"; 4003 = RBAC reject, reserved for future enforcement). Replaced 10 generic `await websocket.close()` calls in the queue auth path (lines 367-499 in modified file) with `await websocket.close(code=4001, reason=<specific>)`. Reason strings used: `invalid_auth_request_json`, `invalid_auth_request`, `invalid_auth_request_shape`, `auth_protocol_violation`, `missing_token`, `invalid_token_type`, `empty_token`, `token_expired` (×2 — body + outer except), `invalid_token`, `auth_error`. Audio path (`:249-254`) was deliberately left as-is — it doesn't close on auth failure today.
+- **`rest/websocket_manager.py:147`** — Single-session-per-user displaced socket close changed from `code=1000, reason="New session opened"` to `code=4002, reason="session_conflict_displaced"`. The displaced client now recognizes the close as PERMANENT (browser-side `ws-channel.js` PERMANENT_CLOSE_CODES set) and does NOT auto-retry. Pre-fix, the client treated the 1000 as a normal close and entered exponential-backoff reconnect — exactly the flapping we wanted to prevent.
+
+#### Verification
+
+| Layer | Result |
+|---|---|
+| `py_compile` (all 3 modified .py files) | ✅ 3/3 OK |
+| End-to-end coverage of close codes | ✅ Parent Lupin `src/tests/websocket_smoke/core/test_close_codes.py::test_invalid_token_close_code` connects to live `:7999` with junk token, asserts server closes with code=4001. Layer-3 browser tests (`src/tests/ws_channel_browser/test_ws_close_codes.py`, 4 tests) verify client-side state machine + banner copy + token-refresh path triggered by 4001. |
+| Voice-persona `/sample` smoke | ✅ Hand-verified via parent Lupin's `voice-persona-reference.html` page during Session 4ede5bad morning arc (per parent `TODO.md` "MORNING FINISHED — 2026.05.02" ✅ entries: page renders six persona tiles, ▶ Play sample button per tile, "Play all in sequence" toolbar). |
+| Per-cluster details | See parent Lupin `history.md` Session 0022baba (5-phase WS circuit-breaker milestone, 85 tests + 1 conditional skip) and `TODO.md` "MORNING FINISHED — 2026.05.02" (voice-persona-reference page deliverables). |
+
+#### Cross-repo separation
+
+Per `CLAUDE.md` and memories `feedback_verify_repo_before_commit` / `feedback_lupin_only_never_cosa`: this CoSA-context session ONLY commits files inside `src/cosa/`. The Lupin-parent commit `1a9e3e0` (WS Phase 5) explicitly excludes these two CoSA files in its commit body and TODO.md morning-of-2026.05.03 item #1 names them as the pending CoSA-context commit work. The voice-persona-reference page Lupin-side files (`dev-tools.html`, `voice-persona-reference.html`) are committed separately by the parent context. CoSA history mirrors the corresponding Lupin entries per CoSA `CLAUDE.md` cross-repo duplication mandate.
+
+#### Open follow-ups (carried by parent Lupin TODO.md + bug-fix-queue.md)
+
+- Voice-persona `/clear` preservation fix — design + execution-log scaffold at `src/rnd/v0.1.7/2026.05.02-voice-persona-clear-preservation/` (parent Lupin TODO morning-of-2026.05.03 item #3). Three server-side fixes scoped to `register_session.py`; this session's `voice_persona.py` change is unrelated to that work — it's the dev-tools page support, not the preservation fix.
+- WS reconnect circuit-breaker E2E visual snapshot on `:8000` — already established + verified per parent Lupin Session 0022baba summary table (commits `27bcacd` + `92da8e2`).
+
+---
+
 ### 2026.05.01 - Session d05e50fb | CoSA-side wrap of Lupin Sessions 31172845 (Post-mortem remediation 2026.04.30 22:15-EDT) + 911b1cdc (display_name helper + conv-mode exit-reminder push) + 5b732efe (María override)
 
 **Context**: Session-end commit bundle for the CoSA-side work accumulated across **three** Lupin-parent sessions on 2026-05-01, on branch `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Two clearly-scoped thematic commits per `feedback_lupin_only_never_cosa.md` cross-repo separation, each mapping to a named body of work in the parent Lupin `history.md`.
