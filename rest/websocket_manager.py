@@ -135,10 +135,15 @@ class WebSocketManager:
                         # Close the old WebSocket connection
                         old_ws = self.active_connections[old_session_id]
                         try:
-                            # Schedule close on the event loop if we have one
+                            # Schedule close on the event loop if we have one.
+                            # Phase 5 of WS reconnect circuit-breaker milestone: use
+                            # close code 4002 (auth: session conflict) instead of the
+                            # normal-close 1000, so the displaced client recognizes
+                            # this as PERMANENT and does NOT auto-retry. Browser-side
+                            # `ws-channel.js` PERMANENT_CLOSE_CODES handles this.
                             if self.main_loop and self.main_loop.is_running():
                                 asyncio.run_coroutine_threadsafe(
-                                    old_ws.close( code=1000, reason="New session opened" ),
+                                    old_ws.close( code=4002, reason="session_conflict_displaced" ),
                                     self.main_loop
                                 )
                             print( f"[WS] Closed old session {old_session_id} for user {user_id}" )
