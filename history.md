@@ -1,5 +1,53 @@
 # COSA Development History
 
+### 2026.05.04 - Session 05cf78c4 | CoSA-side wrap of three Lupin parent bodies of work (Multiplexer Phase 1 page route + Voice-persona /clear preservation Phase 3 + docs viewer scope=docs endpoint)
+
+**Context**: CoSA-context session-end commit bundle for three distinct CoSA-side bodies of work whose Lupin-parent counterparts already landed across earlier parent-context sessions on 2026-05-02 through 2026-05-04. Branch: `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Three clearly-scoped thematic commits per `feedback_lupin_only_never_cosa.md` cross-repo separation, each mapping to a named body of work in the parent Lupin `history.md` / `TODO.md` / `bug-fix-queue.md`.
+
+**Commits Landed** (this session-end ritual): `fc86e17` (Commit A — pages.py Multiplexer Phase 1 page route), `6100372` (Commit B — voice_persona.py /clear preservation Phase 3), `e9db3e2` (Commit C — docs_files.py NEW docs viewer scope=docs endpoints), Commit D (this session-end docs commit) — hash backfilled into manifest below.
+
+**Body 1 — Multiplexer Phase 1 page route** (Lupin parent: Multiplexer spine bundle Phase 1; reference in parent TODO.md "FIRST THING IN THE MORNING — 2026.05.05" item #1)
+
+One CoSA file delivers the `/app/multiplexer` page route required for the parent Lupin Multiplexer rebuild to be accessible in deployment. Without this CoSA-side commit, the parent's `multiplexer.html` + multiplexer JS modules (Phases 1-4 already shipped on the parent side per parent `history.md` Session ec746144) cannot be served.
+
+- **`rest/routers/pages.py`** — Adds `"/app/multiplexer" : "html/multiplexer.html"` to `_ROUTE_TABLE` (mirroring the `/app/notifications` line at row 26) and `page_multiplexer()` async handler (mirroring `page_notifications()` at lines 69-71). Both follow the existing `include_in_schema=False` + `_serve_file` pattern. Verified via `py_compile` + GET 200 against the live `:7999` server during parent Phase 1 implementation.
+
+**Body 2 — Voice-persona /clear preservation Phase 3 server side** (Lupin parent: Session aacd24b4 morning of 2026-05-03; reference in parent TODO.md "FIRST THING IN THE MORNING — 2026.05.03" item #4 / Phase 3 "✅ landed Session aacd24b4")
+
+One CoSA file delivers the server-side counterpart of Phase 3 of the voice-persona /clear preservation fix (parent-side: changes in `register_session.py` to thread the previous persona name from the SessionStart hook into the allocate URL via URL-encoded query string).
+
+- **`rest/routers/voice_persona.py`** — Adds `previous_persona_name: Optional[str] = None` query parameter to `allocate_voice_persona_endpoint`. When this parameter is supplied AND a new persona is actually allocated (`newly_allocated=True`), an additional "Voice re-assigned: X → Y" notification is pushed via `notification_queue.push_notification(...)` so the user hears the handoff spoken in the new voice. Used by the SessionStart hook on `/clear-with-overwrite` to make voice changes audible rather than silent. Best-effort try/except: a push failure logs a warning and falls through to the standard JSON response (the bridge write already succeeded; the announcement is purely cosmetic). New optional `Optional` import already imported. Companion to parent Lupin's unit-test suite at `src/tests/unit/test_register_session_preservation.py` (8 passed + 1 xfailed).
+
+**Body 3 — Document viewer scope=docs endpoint** (Lupin parent: Session 2c732075, 2026-05-04 PM; reference in parent `history.md` "2026.05.04 PM - Session 2c732075 | Notification abstract popup auto-sizing + document viewer scope expansion (`scope=docs`)")
+
+One NEW CoSA file delivers the `/api/docs/file` and `/api/docs/health` endpoints serving project source-tree documentation files. Sibling to existing `io_files.py`. Without this CoSA-side commit, the parent Lupin's startup import (`from cosa.rest.routers import ... docs_files, ...` in `main.py`) fails — parent commit ALREADY landed the `app.include_router(docs_files.router)` line + the document-viewer.html scope dispatch + smoke test `src/tests/smoke/test_docs_files_endpoint.py` (7 :7999-eligible tests).
+
+- **`rest/routers/docs_files.py`** (NEW, 176 lines) — Two endpoints:
+  - `GET /api/docs/file?path=<relative_path>` — Serves text documents with whitelist + traversal protection. Whitelist enforces exact-match against `ALLOWED_FILES = {history.md, CLAUDE.md, TODO.md, README.md, bug-fix-queue.md}` OR prefix-match against `ALLOWED_PREFIXES = [src/docs/, src/rnd/, src/workflow/]`. URL-decodes the input via `unquote()`. Path normalization via `os.path.normpath()` blocks `..` traversal; resolved path must `startswith( project_root + os.sep )` to stay inside the project root. Allowed extensions in `MEDIA_TYPES`: `.md → text/markdown`, `.txt → text/plain`, `.json → application/json`, `.yaml/.yml → text/yaml`. Returns `PlainTextResponse` with the appropriate media type. Error matrix: 400 (empty path / not whitelisted / traversal / unsupported ext), 404 (file missing on disk), 500 (read failure).
+  - `GET /api/docs/health` — Returns `{status, project_root, allowed_files, allowed_prefixes, media_types}` with per-entry `os.path.isfile`/`os.path.isdir` flags so the parent's smoke test can detect (and skip the root-level test cases for) container deployments where the project root isn't bind-mounted.
+  - Uses `cu.get_project_root()` per CoSA path-management mandate (no `Path(__file__).parent` chains).
+
+#### Verification
+
+| Layer | Result |
+|---|---|
+| `py_compile` (all 3 modified .py files) | ✅ 3/3 OK (POST-EDIT VERIFICATION mandate satisfied before staging) |
+| Multiplexer page route end-to-end | ✅ Parent Lupin Phase 1 implementation already verified `GET /app/multiplexer → 200` against live `:7999` (per parent `history.md` Multiplexer Phase 1 entry); CoSA-side commit lands the route the parent verified against. |
+| Voice-persona `/clear` preservation Phase 3 | ✅ Parent Lupin unit-test suite `src/tests/unit/test_register_session_preservation.py` shows 8 passed + 1 xfailed; the xfail represents the legacy `session_ids[]` case pinned to Phase 1.3 which is still pending (parent TODO.md item carries it forward). |
+| Docs viewer `/api/docs/file` + `/api/docs/health` | ✅ Parent Lupin smoke test `src/tests/smoke/test_docs_files_endpoint.py` shows 6 passed + 1 skipped (root-level mount unavailable in :7999 container — health endpoint signals + test correctly skips); covers health-shape, src/docs prefix happy-path, root-level mount-aware skip, whitelist-rejection, traversal-block, unsupported-extension reject, missing-file 404. |
+
+#### Cross-repo separation
+
+Per `CLAUDE.md` and memories `feedback_verify_repo_before_commit` / `feedback_lupin_only_never_cosa`: this CoSA-context session ONLY commits files inside `src/cosa/`. The Lupin-parent commits (Multiplexer Phase 1 spine + Session aacd24b4 Phase 3 + Session 2c732075) are owned by the parent context and not amended here. CoSA history mirrors the corresponding parent Lupin entries per CoSA `CLAUDE.md` cross-repo duplication mandate. Parent Lupin `history.md` already documents Session 2c732075's "Files modified (CoSA subrepo — separate commit required)" caveat naming `docs_files.py`; parent does NOT need an update for this CoSA-context wrap.
+
+#### Open follow-ups (carried by parent Lupin TODO.md + bug-fix-queue.md)
+
+- **Voice-persona /clear preservation Phase 1.2/1.3/1.4 still pending** (parent TODO.md morning-of-2026.05.03 item #4): user must do one /clear on a planning session so the new diagnostics in `register_session.py` can identify which gate failed; then a minimal patch + sweep of `register_session.py:699-703` (idle backoff carry-forward) lands and the xfail flips. Frontend stale-badge propagation (Fix 4) remains PARKED.
+- **Multiplexer Phase 5 + post-Phase-4 Q2 promotion to Option A or B** (parent TODO.md): if reload-UX during Phase 4-9 dogfooding produces "I lost notifications on reload" feedback, evaluate Option A (server-side replay buffer in `cosa/rest/websocket_manager.py`) or Option B (full-list persistence in `NotificationStore`). Otherwise Option C stands permanently.
+- **`/api/claude-code/ws/{task_id}` endpoint cluster of bugs** (parent `bug-fix-queue.md` "🔥 Top of Queue — IMMEDIATE", filed 2026-05-04 Session ec746144 — 4 distinct bugs catalogued: URL mismatch / no-WS-auth / module-level state / parallel pre-cj-flow path) — user has explicitly promoted to top of queue for tomorrow morning's elimination; affects `src/cosa/rest/routers/claude_code.py`. Multiplexer Phase 4+ has CC out of scope per D1 A-extended ratification 2026-05-04 PM.
+
+---
+
 ### 2026.05.02 - Session d29fb192 | CoSA-side wrap of Lupin Sessions 0022baba (WS reconnect circuit-breaker Phase 5 — server close codes) + 4ede5bad-AM (dev-tools voice-persona-reference page /sample endpoint)
 
 **Context**: CoSA-context session-end commit bundle for two distinct bodies of work whose CoSA-side files were deliberately deferred by their parent Lupin sessions per `feedback_lupin_only_never_cosa.md`. Branch: `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Two clearly-scoped thematic commits, each mapping to a named body of work in the parent Lupin `history.md` / `TODO.md`.
