@@ -24,6 +24,7 @@ _static_dir = os.path.normpath( _static_dir )
 _ROUTE_TABLE = {
     "/app"                       : "html/landing.html",
     "/app/notifications"         : "html/notifications.html",
+    "/app/multiplexer"           : "html/multiplexer.html",
     "/app/auth/login"            : "html/auth/login.html",
     "/app/auth/register"         : "html/auth/register.html",
     "/app/auth/profile"          : "html/auth/profile.html",
@@ -69,6 +70,10 @@ async def page_app():
 @router.get( "/app/notifications", include_in_schema=False )
 async def page_notifications():
     return _serve_file( _ROUTE_TABLE[ "/app/notifications" ] )
+
+@router.get( "/app/multiplexer", include_in_schema=False )
+async def page_multiplexer():
+    return _serve_file( _ROUTE_TABLE[ "/app/multiplexer" ] )
 
 @router.get( "/app/auth/login", include_in_schema=False )
 async def page_auth_login():
