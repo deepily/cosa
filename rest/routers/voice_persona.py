@@ -139,6 +139,7 @@ async def get_voice_persona_endpoint(
 async def allocate_voice_persona_endpoint(
     session_id           : str,
     authenticated_user_id: Annotated[ str, Depends( require_api_key_or_jwt ) ],
+    previous_persona_name: Optional[ str ] = None,
     notification_queue   : NotificationFifoQueue = Depends( get_notification_queue ),
     config_mgr           = Depends( get_config_manager )
 ) -> JSONResponse:
@@ -148,6 +149,12 @@ async def allocate_voice_persona_endpoint(
     Idempotency: if the bridge already has a non-null voice_persona, return
     it as-is (no re-allocation, no broadcast). This is the SessionStart hook
     contract — calling /allocate is safe to repeat across hook invocations.
+
+    When `previous_persona_name` is supplied AND a new persona is actually
+    allocated (newly_allocated=True), an additional "Voice re-assigned: X → Y"
+    notification is pushed so the user hears the handoff spoken in the new
+    voice. Used by the SessionStart hook on /clear-with-overwrite to make
+    voice changes audible rather than silent.
     """
     if not find_session_path_by_id( session_id ):
         raise HTTPException( status_code=404, detail=f"No active session bridge found for session_id={session_id}" )
@@ -206,6 +213,24 @@ async def allocate_voice_persona_endpoint(
     except Exception as ws_err:
         # Log but do not fail — bridge write succeeded; broadcast is best-effort
         print( f"[VOICE-PERSONA] ⚠️ Notification push failed for session {session_id}: {ws_err}" )
+
+    # When the SessionStart hook detected an unpreserved persona handoff, push
+    # a user-facing announcement so the voice change is audible — pre-empts
+    # the "wait, why does this sound different?" confusion. Best-effort.
+    if previous_persona_name:
+        try:
+            notification_queue.push_notification(
+                message            = f"Voice re-assigned: {previous_persona_name} → {persona[ 'display_name' ]}",
+                type               = "task",
+                priority           = "medium",
+                user_id            = authenticated_user_id,
+                sender_id          = build_sender_id_for_cc( session_id ),
+                voice_persona      = persona,
+                suppress_ding      = False,
+                response_requested = False
+            )
+        except Exception as ws_err:
+            print( f"[VOICE-PERSONA] ⚠️ Re-assigned announcement push failed for session {session_id}: {ws_err}" )
 
     return JSONResponse( content={
         "session_id"          : session_id,
