@@ -2,8 +2,14 @@
 Claude Code Queue Submission Router.
 
 Provides endpoint for submitting Claude Code tasks to CJ Flow (COSA Job Flow)
-for background execution. Unlike the direct /api/claude-code/dispatch endpoint,
-queued tasks run asynchronously through the queue system with full job tracking.
+for background execution. Queued tasks run asynchronously through the queue
+system with full job tracking.
+
+This is the SOLE Claude Code submission path as of 2026-05-05; the legacy direct
+dispatch endpoint cluster (`/api/claude-code/dispatch` + `/{task_id}/inject` +
+`/{task_id}/interrupt` + `/{task_id}/end` + `/{task_id}/status` + `/ws/{task_id}`)
+was eliminated due to four catalogued structural defects. See
+`src/rnd/v0.1.7/2026.05.05-claude-code-dispatch-retirement/01-plan.md`.
 
 Endpoints:
     POST /api/claude-code/queue/submit - Submit task to CJF queue
@@ -90,9 +96,9 @@ async def submit_claude_code_to_queue(
     """
     Submit a Claude Code task to CJ Flow queue for background execution.
 
-    Unlike /api/claude-code/dispatch (direct execution with WebSocket streaming),
-    this endpoint queues the task for background processing through the CJF system.
-    The job will:
+    This endpoint queues the task for background processing through the CJF system.
+    (Direct-dispatch + per-turn WS streaming was retired 2026-05-05 — see module
+    docstring above.) The job will:
     - Appear in the CJF Todo queue
     - Transition to Running queue when executed
     - Move to Done/Dead queue on completion/failure
