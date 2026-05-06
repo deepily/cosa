@@ -1,5 +1,48 @@
 # COSA Development History
 
+### 2026.05.05 - Session 6c453af9 | CoSA-side wrap of Lupin Sessions 1a8900ee (Claude Code dispatch endpoint cluster retirement) + 05da2b39 (Conversation-mode self-exit signal gap fix)
+
+**Context**: CoSA-context session-end commit bundle for two distinct CoSA-side bodies of work whose Lupin-parent counterparts already landed earlier on 2026-05-05. Branch: `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Two clearly-scoped thematic commits per `feedback_lupin_only_never_cosa.md` cross-repo separation, each mapping to a named body of work documented in the parent Lupin `history.md` / `bug-fix-queue.md`.
+
+**Commits Landed** (this session-end ritual): `3f71f76` (Commit A — CC dispatch retirement: delete `claude_code.py` + `claude_code_queue.py` docstring refresh), `7ec3335` (Commit B — conversation-mode self-exit signal gap fix: symmetric `action:exit_conversation_mode` push), Commit C (this session-end docs commit) — hash backfilled into manifest below.
+
+**Body 1 — Claude Code dispatch endpoint cluster retirement** (Lupin parent: Session 1a8900ee, 2026-05-05 AM; reference in parent `bug-fix-queue.md` "Recently Completed (was 🔥 IMMEDIATE)" entry)
+
+The legacy `/api/claude-code/dispatch` + `/api/claude-code/ws/{task_id}` endpoint cluster — six endpoints, ~620 lines, four catalogued structural defects (URL contract mismatch / no auth / module-level state / parallel pre-cj-flow path) — was a pre-CJ-Flow, pre-auth-mode-jwt, pre-WebSocketManager-canonicalization fossil that no convention-conformant work could be built on top of. The cj-flow-integrated sibling `POST /api/claude-code/queue/submit` already existed with full convention compliance. Per user directive 2026-05-04 PM ("do not implement [Multiplexer ClaudeCodeTransport] against it, log this bug for immediate elimination"), parent Lupin Session 1a8900ee shipped full retirement. Multiplexer Phase 4 D1 ratification UNBLOCKED.
+
+- **`rest/routers/claude_code.py`** — DELETED entirely (~620 lines). All six endpoints retired: `POST /api/claude-code/dispatch`, `POST /api/claude-code/{task_id}/inject`, `POST /api/claude-code/{task_id}/interrupt`, `POST /api/claude-code/{task_id}/end`, `GET /api/claude-code/{task_id}/status`, `WS /api/claude-code/ws/{task_id}`. Live :7999 probes confirm all six 404 post-retirement. Parent Lupin's `src/fastapi_app/main.py` already removed the `claude_code` router import + `app.include_router(claude_code.router)` line in commit `73bee1b`; this CoSA-context commit lands the source-side deletion. The shared `cosa.orchestration` module (used by `ClaudeCodeJob` cj-flow path) is preserved untouched.
+- **`rest/routers/claude_code_queue.py`** — Module + endpoint docstring cleanup (~16/-5 lines). Drops the now-stale "Unlike the direct /api/claude-code/dispatch endpoint" comparison clauses. Replaces with a forward-pointer block naming the retirement plan doc (`src/rnd/v0.1.7/2026.05.05-claude-code-dispatch-retirement/01-plan.md`) and explicitly identifying this router as the SOLE Claude Code submission path as of 2026-05-05. No behavioral change; documentation only.
+
+**Body 2 — Conversation-mode self-exit signal gap fix** (Lupin parent: Session 05da2b39, 2026-05-05 PM, Lupin commit `ca20526`; reference in parent `history.md` "Session 05da2b39 | Bug fix: conversation-mode self-exit signal gap")
+
+When conversation mode was deactivated via a same-session transition (UI toggle button, MCP `exit_conversation_mode()`, voice phrase, slash command), the bridge file flipped to `false` but no in-context counter-signal reached the model. The model continued honoring the conversation-mode contract from prior `<system-reminder>` blocks resident in its context window — wrapping replies in voice-message format, calling `notify()` after every turn — until those reminders scrolled out. The deactivation-reminder infrastructure already existed and worked correctly for the displace transition (Session A active → Session B activates → A receives `action:exit_conversation_mode` action push and the listener injects `conv_mode_exit_reminder()` into A's tmux pane, landed in Session 911b1cdc 2026-05-01); the router's deactivate branch never fired the same per-session action push for the self-exit case.
+
+- **`rest/routers/conversation_mode.py`** — Adds a new conditional block (28 lines) AFTER the existing `conversation_mode_changed` UI-sync push, gated on `not body.active`. Pushes `user_initiated_message` with `title="action:exit_conversation_mode"`, `job_id=session_id[:8]`, `payload={"session_id": session_id, "reason": "self"}`. Mirror of the displace branch's per-session action push (same router, search for `title="action:exit_conversation_mode"` in the activate path). Self-exit transition now triggers the listener's `_inject_exit_conversation_reminder()` path the same way displace does. Best-effort try/except: a push failure logs a warning and falls through (the bridge flip is canonical; the next prompt will still hydrate correctly via the gated layers `conv_mode_wrap` + `conv_mode_reminder_block` that read the now-false bridge). Companion to parent Lupin's `conv_mode_exit_reminder()` body made reason-agnostic in `hook_common.py` (drops the displace-specific parenthetical) plus updated unit tests `test_conversation_mode_router.py::test_deactivate_pushes_ui_sync_and_self_action` (call_count 1 → 2 + four second-push assertions) + `test_conv_mode_wrap.py::test_body_announces_deactivation`.
+
+#### Verification
+
+| Layer | Result |
+|---|---|
+| `py_compile` (both modified .py files) | ✅ 2/2 OK (`claude_code_queue.py`, `conversation_mode.py`); `claude_code.py` deletion needs no compile check |
+| Server-side residue grep (post-deletion) | ✅ Zero non-comment hits for the six retired endpoints (per parent Lupin Session 1a8900ee verification) |
+| Live `:7999` probes | ✅ All 6 retired endpoints return 404; survivor `POST /api/claude-code/queue/submit` returns 401 (auth-required, route registered) |
+| Parent Lupin unit regression (`pytest src/tests/unit/`) | ✅ 3950 passed, 2 xfailed (130s) — covers Body 2 `test_conversation_mode_router.py` 13/13 + `test_conv_mode_wrap.py` 41/41 + `test_cosa_voice_mcp_conversation_mode.py` 10/10 |
+| Parent Lupin WS smoke (`run-websocket-smoke-tests.sh`) | ✅ 50/50 (44.6s) |
+| Parent Lupin `ClaudeCodeJob` import (`from cosa.agents.claude_code.job import ClaudeCodeJob`) | ✅ OK (orchestration module preserved) |
+
+#### Cross-repo separation
+
+Per `CLAUDE.md` and memories `feedback_verify_repo_before_commit` / `feedback_lupin_only_never_cosa`: this CoSA-context session ONLY commits files inside `src/cosa/`. The Lupin-parent commits (Session 1a8900ee router de-wiring + frontend dispatcher card retirement banners + docs regeneration; Session 05da2b39 commit `ca20526` for `hook_common.py` + Lupin-side unit tests + R&D doc + execution log) are owned by the parent context and not amended here. CoSA history mirrors the corresponding parent Lupin entries per CoSA `CLAUDE.md` cross-repo duplication mandate. Parent Lupin Session 05da2b39 wrap explicitly noted "CoSA commit pending in separate context" — this session IS that context.
+
+#### Open follow-ups (carried by parent Lupin TODO.md + bug-fix-queue.md)
+
+- **Restore Claude Code INTERACTIVE controls on the cj-flow path** (parent TODO.md "🪦 CC DISPATCH RETIREMENT — Follow-ups"): when `ClaudeCodeJob` (`agents/claude_code/job.py`) gains `inject(message)` / `interrupt()` / `end_session()` methods + corresponding REST endpoints on `claude_code_queue.py`, un-disable the four UI stubs in parent `notifications.html` and restore the `INTERACTIVE` option in `#cc-task-type`. Plan: `src/rnd/v0.1.7/2026.05.05-claude-code-dispatch-retirement/01-plan.md`.
+- **Per-turn streaming on the cj-flow path** (parent TODO.md, optional): legacy WS streamed `text` / `tool_use` / `tool_result` per turn; cj-flow path currently emits only coarse start/complete/fail notifications. Add `notify_progress` calls inside `ClaudeCodeJob._execute()` keyed by job_id only if user-facing demand surfaces.
+- **Mobile migration** (parent TODO.md, [LUPIN-MOBILE]): `lib/features/claude_code/data/claude_code_repository.dart:18` still POSTs to retired `/api/claude-code/dispatch`; mobile feature 404s until ported in a separate mobile session. Loud breadcrumbs already filed in two `lupin-mobile/src/rnd/v0.1.6-migration/*.md` files.
+- **Conversation-mode E2E UI verification on `:8000`** (parent Lupin Session 05da2b39 wrap): submit `src/tests/e2e_ui/test_conversation_mode.py` via `POST /api/test-suite/submit` with confirmed `scheduled_at` slot when convenient. Out-of-plan scope per `:8000` monopolize-mode rule. Manual live verification of the self-exit signal also deferred (would disrupt active conv-mode dialogue — surfaces naturally on next user-initiated off→on cycle).
+
+---
+
 ### 2026.05.04 - Session 05cf78c4 | CoSA-side wrap of three Lupin parent bodies of work (Multiplexer Phase 1 page route + Voice-persona /clear preservation Phase 3 + docs viewer scope=docs endpoint)
 
 **Context**: CoSA-context session-end commit bundle for three distinct CoSA-side bodies of work whose Lupin-parent counterparts already landed across earlier parent-context sessions on 2026-05-02 through 2026-05-04. Branch: `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Three clearly-scoped thematic commits per `feedback_lupin_only_never_cosa.md` cross-repo separation, each mapping to a named body of work in the parent Lupin `history.md` / `TODO.md` / `bug-fix-queue.md`.
