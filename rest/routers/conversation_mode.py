@@ -249,6 +249,34 @@ async def set_conversation_mode_endpoint(
         # Log but do not fail — bridge write succeeded; broadcast is best-effort
         print( f"[CONVERSATION-MODE] ⚠️ Notification push failed for session {session_id}: {ws_err}" )
 
+    # Self-exit symmetry: when deactivating, also push the listener-targeted
+    # action so the model's in-context state catches up to the bridge flip.
+    # Mirror of the displace branch's per-session action push above (search
+    # for title="action:exit_conversation_mode" in the activate path); the
+    # listener filters by job_id matching the 8-char session hash, then
+    # cc_notification_listener._handle_action routes the title through
+    # _inject_exit_conversation_reminder which calls
+    # hook_common.conv_mode_exit_reminder for the body.
+    # See: src/rnd/v0.1.7/2026.05.05-conv-mode-self-exit-signal-gap/01-design.md
+    if not body.active:
+        try:
+            notification_queue.push_notification(
+                message            = "",
+                type               = "user_initiated_message",
+                title              = "action:exit_conversation_mode",
+                user_id            = authenticated_user_id,
+                sender_id          = build_sender_id_for_cc( session_id ),
+                job_id             = session_id[:8],
+                suppress_ding      = True,
+                response_requested = False,
+                payload            = { "session_id": session_id, "reason": "self" }
+            )
+        except Exception as action_err:
+            # Best-effort — bridge flip is canonical; the next prompt will
+            # still hydrate correctly via the gated layers (conv_mode_wrap,
+            # conv_mode_reminder_block) that read the now-false bridge.
+            print( f"[CONVERSATION-MODE] ⚠️ Self-exit action push failed for {session_id}: {action_err}" )
+
     return JSONResponse( content={
         "session_id"          : session_id,
         "active"              : body.active,
