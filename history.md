@@ -1,5 +1,38 @@
 # COSA Development History
 
+### 2026.05.06 - Session c679a433 | CoSA-side wrap of Lupin Session 5ced4868 PM/eve (Multiplexer Phase 6a — jobs surface — Phase 1 server-side dependency)
+
+**Context**: CoSA-context session-end commit for the single CoSA-side file produced by parent Lupin Session 5ced4868's Phase 6a code-writing cycle (2026-05-06 PM/eve, Lupin parent commit `362fa5d` covering Phases 0+1). Branch: `wip-v0.1.7-2026.04.23-tracking-lupin-work`. One thematic commit per `feedback_lupin_only_never_cosa.md` cross-repo separation, mapping to the body of work documented in parent Lupin `history.md` § "Phase 6a code-writing cycle — all 7 phases shipped" and `TODO.md` § "FIRST THING IN THE MORNING — 2026.05.07 / Pending — Multiplexer Phase 6a follow-ups".
+
+**Commits Landed** (this session-end ritual): `87ffef4` (Commit A — multiplexer_config.py NEW endpoint), Commit B (this session-end docs commit) — hash backfilled into manifest below.
+
+**Body 1 — Multiplexer Phase 6a (jobs surface) Phase 1 server-side dependency** (Lupin parent: Session 5ced4868 PM/eve, 2026-05-06, Lupin commit `362fa5d`; reference in parent `history.md` § "Phase 6a code-writing cycle — all 7 phases shipped (8 commits, c8 100%, AC1-AC10d ✓)" + parent `TODO.md` § "FIRST THING IN THE MORNING — 2026.05.07 / Pending — Multiplexer Phase 6a follow-ups" first bullet)
+
+The multiplexer's `boot.ts` fetches a small client-config payload at startup to thread server-tuned display values into the renderer (chiefly the `safeStringifyMeta` byte cap that bounds expanded job-card meta payloads). Per Phase 6a Pass 1 Fitness finding **F20** the cap was hardcoded into the bundle; F20 ratification + Phase 1 design doc decision moved the cap into `ConfigurationManager` INI so ops can tune it without rebuilding the front-end. Parent Lupin commit `362fa5d` shipped the supporting INI key (`multiplexer max meta display bytes = 256000` in `lupin-app.ini` `[Lupin: Baseline]` + matching splainer entry), the `main.py` register, and the `src/docs/rest-api-reference.md` §24 row. This CoSA-context commit lands the matching router source — kept in CoSA per the established all-routers-in-CoSA convention.
+
+- **`rest/routers/multiplexer_config.py`** — NEW (~114 lines). Single endpoint `GET /api/multiplexer/config` returning `{multiplexer_max_meta_display_bytes: int}`. JWT not required (no PII, no state — display-tuning values only); pydantic `MultiplexerConfigResponse` model gives `/docs` schema; `ConfigurationManager.get( "multiplexer max meta display bytes", default=256000, return_type="int" )` sources the value with sane fallback so the endpoint stays green during INI rollouts. Includes `quick_smoke_test()` per CoSA module convention. Live `:7999` probe by parent Lupin session via `urllib.request` confirmed `200 OK` with the expected JSON shape (parent Lupin Phase 6a execution log subsection records the probe).
+
+#### Verification
+
+| Layer | Result |
+|---|---|
+| `py_compile` (`rest/routers/multiplexer_config.py`) | ✅ OK |
+| Live `:7999` probe (`GET /api/multiplexer/config`) | ✅ 200 OK with `{multiplexer_max_meta_display_bytes: 256000}` (per parent Lupin Session 5ced4868 Phase 1 verification) |
+| Parent Lupin Phase 6a sweep (tsc + eslint + Phase 1 calc smoke + WS smoke 50/50 + 470/470 multiplexer unit + AC6 c8 100% on 3 new render files + AC10b 324 LOC + stylelint clean + 5/5 Phase 6a smoke) | ✅ All green on `:7999` per parent commit `ac273e5` Phase 6 cross-phase verification |
+
+#### Cross-repo separation
+
+Per `CLAUDE.md` and memories `feedback_verify_repo_before_commit` / `feedback_lupin_only_never_cosa`: this CoSA-context session ONLY commits files inside `src/cosa/`. The Lupin-parent commits — `362fa5d` (Phases 0+1: tracking docs + INI key + splainer + main.py register + rest-api-reference.md row + this CoSA file's existence-noted entry), `1bf7ce9` (Phase 2: formatDuration), `597455d` (Phase 3: jobCard/jobBucket templates), `4c9d207` (Phase 4: JobsPaneRenderer), `70a29ff` (Phase 5: CSS + page shell + boot wiring), `ac273e5` (Phase 6: smoke + cross-phase verification), `5cd8b20` (Phase 7: E2E test authored), `744b6dd` (tracking-doc backfill) — are owned by the parent context and not amended here. CoSA history mirrors the corresponding parent Lupin Phase 6a entry per CoSA `CLAUDE.md` cross-repo duplication mandate. Parent Lupin Session 5ced4868 history entry explicitly noted "(CoSA file uncommitted on the CoSA side per `feedback_lupin_only_never_cosa` — user handles that commit separately.)" — this session IS that separate commit context.
+
+#### Open follow-ups (carried by parent Lupin TODO.md)
+
+- **Schedule Phase 6a AC11a Run #1 (visual baseline capture)** ([LUPIN], parent TODO.md "FIRST THING IN THE MORNING — 2026.05.07"): submit `src/tests/e2e_ui/test_multiplexer_phase6a_visual.py` via `POST /api/test-suite/submit` with `--update-snapshots -k multiplexer_phase6a` and a confirmed non-overlapping `:8000` `scheduled_at` slot. Out-of-plan scope per `:8000` monopolize-mode rule.
+- **Schedule Phase 6a AC11b Run #2 (regression check)** ([LUPIN]): same submission body minus `--update-snapshots`, scheduled AFTER Run #1's baseline lands. Pass criterion: `e2e: 1 passed, 0 errors`.
+- **Open Phase 6b** ([LUPIN]) when AC11a/AC11b close. Phase 6b scope per `07-phase6-slicing-manifest.md`: TTS chrome + action-required interactive widgets + delete-button handler (Q-A6 wires the disabled `×` from 6a). Phase 6c (voice-persona modal + audio recorder + focus tray + conversation-mode UI pin) follows.
+- **history.md archival** ([LUPIN], optional per parent TODO.md): parent file at 19,719 tokens (CRITICAL threshold per session-end workflow). User deferred archival; consider invoking `/plan-history-management mode=archive` early in next parent-Lupin session before adding new content.
+
+---
+
 ### 2026.05.05 - Session 6c453af9 | CoSA-side wrap of Lupin Sessions 1a8900ee (Claude Code dispatch endpoint cluster retirement) + 05da2b39 (Conversation-mode self-exit signal gap fix)
 
 **Context**: CoSA-context session-end commit bundle for two distinct CoSA-side bodies of work whose Lupin-parent counterparts already landed earlier on 2026-05-05. Branch: `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Two clearly-scoped thematic commits per `feedback_lupin_only_never_cosa.md` cross-repo separation, each mapping to a named body of work documented in the parent Lupin `history.md` / `bug-fix-queue.md`.
