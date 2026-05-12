@@ -358,7 +358,8 @@ async def notify_user(
     # src/rnd/v0.1.7/2026.04.29-ws-event-cleanup-to-custom-notification-types/01-design.md
     valid_types = [
         "task", "progress", "alert", "custom", "user_initiated_message", "session_topic",
-        "voice_persona_assigned", "voice_persona_released", "conversation_mode_changed"
+        "voice_persona_assigned", "voice_persona_released", "conversation_mode_changed",
+        "commons_broadcast_ack"
     ]
     if type not in valid_types:
         raise HTTPException(
