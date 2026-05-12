@@ -214,26 +214,28 @@ def convert_open_ended_batch_for_api( questions: list ) -> dict:
 
 def extract_qualifier_comment( response_value ):
     """
-    Extract qualifier comment from a yes/no response value.
+    Extract qualifier comment from a yes/no/neither response value.
 
     Requires:
         - response_value is a string or None
 
     Ensures:
         - Returns ( answer, qualifier ) tuple
-        - answer is "yes" or "no" (lowercase), or None if empty
+        - answer is "yes", "no", or "neither" (lowercase), or None if empty
         - qualifier is the comment text or None
 
     Examples:
-        "yes [comment: fix the tests]" -> ( "yes", "fix the tests" )
-        "no [comment: not ready]"      -> ( "no", "not ready" )
-        "yes"                          -> ( "yes", None )
-        "no"                           -> ( "no", None )
+        "yes [comment: fix the tests]"         -> ( "yes", "fix the tests" )
+        "no [comment: not ready]"              -> ( "no", "not ready" )
+        "neither [comment: re-frame please]"   -> ( "neither", "re-frame please" )
+        "yes"                                  -> ( "yes", None )
+        "no"                                   -> ( "no", None )
+        "neither"                              -> ( "neither", None )
     """
     if not response_value:
         return ( None, None )
 
-    match = re.match( r'^(yes|no)\s*(?:\[comment:\s*(.+)\])?$', response_value.strip(), re.IGNORECASE )
+    match = re.match( r'^(yes|no|neither)\s*(?:\[comment:\s*(.+)\])?$', response_value.strip(), re.IGNORECASE )
     if match:
         return ( match.group( 1 ).lower(), match.group( 2 ) )
 
@@ -243,15 +245,25 @@ def extract_qualifier_comment( response_value ):
 
 def format_qualified_response( answer, qualifier ):
     """
-    Format a yes/no answer with qualifier into an enriched string that Claude will act on.
+    Format a yes/no/neither answer with qualifier into an enriched string that Claude will act on.
 
     Requires:
-        - answer is "yes" or "no"
+        - answer is "yes", "no", or "neither"
         - qualifier is a non-empty string
 
     Ensures:
         - Returns a multi-line string with explicit instructions for Claude
+        - "neither" answers get re-framed copy signaling the question needs revision
     """
+    if answer == "neither":
+        return (
+            f"{answer}\n\n"
+            f"IMPORTANT — The user signaled the question itself needs re-framing and attached a comment:\n"
+            f'"{qualifier}"\n\n'
+            "You MUST treat this as a direct instruction to re-frame the question, not as a soft yes or no. "
+            "Read the comment, then ask a clearer follow-up that addresses what they actually want to decide."
+        )
+
     return (
         f"{answer}\n\n"
         f"IMPORTANT — The user attached a comment to their {answer} response:\n"
@@ -374,6 +386,16 @@ def quick_smoke_test():
         answer, qualifier = extract_qualifier_comment( None )
         assert answer is None
         assert qualifier is None
+        # Neither parse cases
+        answer, qualifier = extract_qualifier_comment( "neither" )
+        assert answer == "neither"
+        assert qualifier is None
+        answer, qualifier = extract_qualifier_comment( "neither [comment: re-frame please]" )
+        assert answer == "neither"
+        assert qualifier == "re-frame please"
+        answer, qualifier = extract_qualifier_comment( "NEITHER" )
+        assert answer == "neither"
+        assert qualifier is None
         print( "✓ extract_qualifier_comment works correctly" )
 
         # Test 10: format_qualified_response
@@ -383,6 +405,12 @@ def quick_smoke_test():
         assert "MUST act" in result
         assert "fix the import" in result
         assert "Do NOT ignore" in result
+        # Neither format case — uses re-framed copy
+        result = format_qualified_response( "neither", "the question is malformed" )
+        assert result.startswith( "neither\n" )
+        assert "re-framing" in result
+        assert "the question is malformed" in result
+        assert "soft yes or no" in result
         print( "✓ format_qualified_response works correctly" )
 
         # Test 11: is_known_project (known projects)
