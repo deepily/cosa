@@ -287,12 +287,13 @@ class ClaudeCodeJob( AgenticJobBase ):
             }
 
             self.artifacts = {
-                "cost_usd"    : self.cost_usd,
-                "output_text" : self.output_text[ :500 ] if self.output_text else "",
-                "task_type"   : self.task_type,
-                "project"     : self.project,
-                "session_id"  : result.session_id,
-                "duration_ms" : result.duration_ms
+                "cost_usd"     : self.cost_usd,
+                "cost_summary" : self.cost_summary,
+                "output_text"  : self.output_text[ :500 ] if self.output_text else "",
+                "task_type"    : self.task_type,
+                "project"      : self.project,
+                "session_id"   : result.session_id,
+                "duration_ms"  : result.duration_ms
             }
 
             # Format completion message
