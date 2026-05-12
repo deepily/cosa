@@ -12,12 +12,19 @@ was eliminated due to four catalogued structural defects. See
 `src/rnd/v0.1.7/2026.05.05-claude-code-dispatch-retirement/01-plan.md`.
 
 Endpoints:
-    POST /api/claude-code/queue/submit - Submit task to CJF queue
+    POST /api/claude-code/submit        - CANONICAL: submit task to CJF queue
+    POST /api/claude-code/queue/submit  - DEPRECATED alias for one release cycle;
+                                          identical behavior; logs deprecation
+                                          warning per-request. Marked
+                                          `deprecated=True` in OpenAPI schema.
+                                          Remove once mobile + integration tests
+                                          have migrated. See
+                                          `src/rnd/v0.1.7/2026.05.09-cc-card-normalization/01-design.md` Q1.
 
-Generated on: 2026-01-27
+Generated on: 2026-01-27; URL canonicalized 2026-05-11 (session 658ea35d).
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -82,13 +89,21 @@ def get_user_job_tracker():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @router.post(
-    "/api/claude-code/queue/submit",
+    "/api/claude-code/submit",
     response_model = ClaudeCodeQueueResponse,
     summary        = "Submit Claude Code queue job",
     description    = "Submit a Claude Agent SDK task to the CJ Flow queue in BOUNDED or INTERACTIVE mode."
 )
+@router.post(
+    "/api/claude-code/queue/submit",
+    response_model = ClaudeCodeQueueResponse,
+    deprecated     = True,
+    summary        = "DEPRECATED: use /api/claude-code/submit",
+    description    = "Alias for /api/claude-code/submit. Removed after one release cycle. See src/rnd/v0.1.7/2026.05.09-cc-card-normalization/01-design.md Q1."
+)
 async def submit_claude_code_to_queue(
     request_body: ClaudeCodeQueueRequest,
+    request: Request,
     current_user: dict = Depends( get_current_user ),
     todo_queue = Depends( get_todo_queue ),
     user_job_tracker = Depends( get_user_job_tracker )
@@ -128,6 +143,12 @@ async def submit_claude_code_to_queue(
         HTTPException 400: Invalid request parameters
         HTTPException 500: Queue push failed
     """
+    # Deprecation log for legacy alias path; mobile + smoke tests should migrate
+    # to /api/claude-code/submit. Alias retires after one release cycle (Q1 FROZEN
+    # 2026-05-09; see src/rnd/v0.1.7/2026.05.09-cc-card-normalization/01-design.md).
+    if request.url.path == "/api/claude-code/queue/submit":
+        print( f"[DEPRECATED] /api/claude-code/queue/submit hit by {current_user.get( 'email', '<unknown>' )} — migrate to /api/claude-code/submit" )
+
     # Get user ID and email from token (canonical source - don't trust client)
     user_id    = current_user.get( "uid" )
     user_email = current_user.get( "email" )
@@ -212,11 +233,21 @@ def quick_smoke_test():
     cu.print_banner( "Claude Code Queue Router Smoke Test", prepend_nl=True )
 
     try:
-        # Test 1: Router exists
+        # Test 1: Router exists + BOTH routes registered (canonical + deprecated alias).
+        # Phase 5.3 Q8 verdict gate (2026-05-09 CC card normalization R&D).
         print( "Testing router configuration..." )
         assert router is not None
         assert "claude-code-queue" in router.tags
-        print( "✓ Router configured correctly" )
+
+        registered_paths = { route.path for route in router.routes }
+        assert "/api/claude-code/submit" in registered_paths, (
+            f"Canonical /api/claude-code/submit not registered; got {registered_paths}"
+        )
+        assert "/api/claude-code/queue/submit" in registered_paths, (
+            f"Deprecated alias /api/claude-code/queue/submit not registered (Q8 verdict = FALLBACK); "
+            f"got {registered_paths}"
+        )
+        print( "✓ Router configured correctly (both canonical + deprecated alias registered — Q8 verdict = PRIMARY)" )
 
         # Test 2: Models work
         print( "Testing Pydantic models..." )
