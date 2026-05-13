@@ -62,7 +62,7 @@ R&D doc set at parent `src/rnd/v0.1.7/2026.05.11-tts-interaction-mode-solo-choru
 
 **Files**: 14 (3 NEW: `commons_topic_watcher.py` + `_dir_listing.py` + `_scope_registry.py` + `speakerphone.py`; 8 MOD; 1 DELETED `conversation_mode.py`)
 
-**Commits**: `e053df2` Commit A, `bbdd7de` Commit B, `e420ec0` Commit C, `<D-hash>` Commit D (this), Commit E (post-wrap hash backfill)
+**Commits**: `e053df2` Commit A, `bbdd7de` Commit B, `e420ec0` Commit C, `8737f81` Commit D, Commit E (this — manifest hash backfill)
 
 ---
 
