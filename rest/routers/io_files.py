@@ -18,10 +18,13 @@ Generated on: 2026-01-20
 import os
 from urllib.parse import unquote
 
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
 import cosa.utils.util as cu
+from cosa.rest.auth import get_current_user
+from cosa.rest.routers._dir_listing import list_directory
+from cosa.rest.routers._scope_registry import _is_secrets_path
 
 router = APIRouter( tags=[ "io-files" ] )
 
@@ -37,6 +40,21 @@ MEDIA_TYPES = {
     ".pdf"  : "application/pdf",
     ".json" : "application/json",
     ".pptx" : "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".png"  : "image/png",
+    ".jpg"  : "image/jpeg",
+    ".jpeg" : "image/jpeg",
+    ".gif"  : "image/gif",
+    ".webp" : "image/webp",
+}
+
+# Types the browser can render/play inline (browser-native viewers exist).
+# These get `Content-Disposition: inline`; everything else defaults to attachment.
+# `?download=true` always overrides to attachment regardless of type.
+# NOTE: .svg intentionally excluded — SVG can carry script and is a separate decision.
+INLINE_TYPES = {
+    ".pdf",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp",
+    ".mp3", ".wav",
 }
 
 
@@ -46,8 +64,9 @@ MEDIA_TYPES = {
     description = "Serve files from the io/ directory with extension validation and traversal protection."
 )
 async def get_io_file(
-    path: str = Query( ..., description="Relative path within io/ directory" ),
-    download: bool = Query( False, description="Force download with Content-Disposition: attachment" )
+    path        : str  = Query( ..., description="Relative path within io/ directory" ),
+    download    : bool = Query( False, description="Force download with Content-Disposition: attachment" ),
+    current_user: dict = Depends( get_current_user ),
 ):
     """
     Serve files from the io/ directory with security validation.
@@ -109,6 +128,29 @@ async def get_io_file(
             detail      = "Invalid path: must be within io/ directory"
         )
 
+    # Secrets blocklist — applies even to io/ paths (defense-in-depth).
+    # Filename-pattern match; runs after traversal block.
+    if _is_secrets_path( decoded_path ):
+        raise HTTPException(
+            status_code = 400,
+            detail      = "Path matches secrets blocklist"
+        )
+
+    # Directory branch (polymorphic response) — must come before isfile check
+    if os.path.isdir( full_path ):
+        # Compute relative-to-io path (the path callers expect for io scope)
+        rel_to_io = os.path.relpath( full_path, io_base )
+        if rel_to_io == ".":
+            rel_to_io = ""  # at io root
+        listing = list_directory(
+            abs_dir          = full_path,
+            rel_dir          = rel_to_io,
+            scope            = "io",
+            allowed_exts     = set( MEDIA_TYPES.keys() ),
+            parent_validator = lambda p: bool( p ),
+        )
+        return JSONResponse( content=listing )
+
     # Check if file exists
     if not os.path.isfile( full_path ):
         raise HTTPException(
@@ -159,15 +201,21 @@ async def get_io_file(
                 detail      = f"Error reading file: {str( e )}"
             )
 
-    # For binary files (audio, pdf), use FileResponse
+    # For binary files (audio, pdf, images), use FileResponse
     else:
         try:
-            # Extract filename for Content-Disposition header
             filename = os.path.basename( full_path )
+            # Inline-renderable types (pdf, png/jpg/gif/webp, mp3/wav) get
+            # Content-Disposition: inline so the browser renders/plays them
+            # in place. Other binary types (.pptx, etc.) default to attachment
+            # so they download. `?download=true` is handled above and always
+            # forces attachment regardless of type.
+            disposition = "inline" if ext in INLINE_TYPES else "attachment"
             return FileResponse(
-                path       = full_path,
-                media_type = media_type,
-                filename   = filename
+                path                     = full_path,
+                media_type               = media_type,
+                filename                 = filename,
+                content_disposition_type = disposition,
             )
         except Exception as e:
             raise HTTPException(
