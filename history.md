@@ -1,5 +1,71 @@
 # COSA Development History
 
+### 2026.05.13 - Session 1fb80a1c (María 🌸) | CoSA-side wrap of 3 thematic Lupin sessions: 6a054460 + 02e5cd9d + 83ba1e51
+
+**Context**: CoSA-context session-end commit bundle wrapping three distinct bodies of CoSA-side work produced by parent Lupin sessions on 2026-05-12 → 2026-05-13. Persona: María 🌸 (`kcQkGnn0HAT2JRDQ4Ljp`, #F06292 — warm, inquisitive female). Branch: `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Three thematic commits + session-end docs commit + manifest hash-backfill commit per `feedback_lupin_only_never_cosa.md` cross-repo separation, mirroring the prior Session 19d3ce48 pattern. Commit basis identified by reading parent `history.md`, `TODO.md`, and `bug-fix-queue.md` per user direction at session start.
+
+**Commits Landed** (this session-end ritual): `e053df2` (Commit A — Commons Phase 3 Step 1 base/subclass refactor), `bbdd7de` (Commit B — Doc Viewer dir listing + multi-repo scope registry), `e420ec0` (Commit C — Speakerphone solo/chorus refactor CoSA-side mirrors), `<D-hash>` (Commit D — session-end docs), Commit E (this hash backfill commit).
+
+**Body 1 — Inter-Session Commons Phase 3 Step 1 (Q1 base/subclass refactor)** (Lupin parent: Session 6a054460 Tiberius 🌑, Late Evening 2026-05-12; reference in parent `history.md` § "Inter-Session Commons Phase 3 — Pass 1 + Pydantic retrofit + Pass 2 closed + Steps 1-2 implementation" Step 1 paragraph + parent `TODO.md` § "FIRST THING NEXT SESSION — Phase 3 Steps 3-9 implementation barrel-through" file-location cheatsheet)
+
+Per the Q1 ratification in `src/rnd/v0.1.7/2026.05.09-inter-session-commons/04-phase3-push-mode-and-llm-fallback-design.md`, the Phase 2 ack-watcher daemon's lifecycle scaffolding was extracted into a reusable abstract base so the upcoming Phase 3 question-watcher can subclass it. Step 1 is the load-bearing refactor pre-flight before Steps 3-9 (`CommonsQuestionWatcher` + AC16-AC20 unit tests) begin in the next session. Parent verification: 26/26 ack-watcher tests GREEN (AC8 satisfied) in 0.56s.
+
+- **`rest/commons_topic_watcher.py` (NEW, ~150 LOC abstract base)** — owns lifecycle scaffolding (`start` / `stop` / `_run_loop`), `threading.Lock`, `_in_flight` dict, protected `_register(record_id, record)` (atomic insert-or-raise via dict membership probe under lock), protected `_unregister(record_id)` (silent pop), `_prune_expired_locked(now)` for TTL eviction (records must expose `expires_at_monotonic`), abstract `_initialize_last_seen_ts()` and `tick()` for subclass implementation. Domain-named public methods stay on subclasses per F13-fit template-method pattern.
+
+- **`rest/commons_ack_watcher.py` (REFACTORED)** — now subclasses `CommonsTopicWatcher`. Preserves Phase 2 public API exactly: `register_broadcast(broadcast_id, ...)` / `unregister_broadcast(broadcast_id)` / `is_in_flight(broadcast_id)` continue to work for the existing 26 Phase 2 tests. Re-raises base `ValueError` from `_register()` with domain-specific `"broadcast_id collision"` message string for Phase 2 26-test compat.
+
+R&D doc set at parent `src/rnd/v0.1.7/2026.05.09-inter-session-commons/`. Parent design doc + 10 INI keys (Step 2) already landed in parent commit-pending state.
+
+**Body 2 — Doc Viewer evolution: directory listing + multi-repo scope registry** (Lupin parent: Session 02e5cd9d Arnold 🪨, both PM checkpoints 2026-05-12; references in parent `history.md` § "Doc Viewer Directory Listing Extension — backend polymorphic dispatch + scope=docs/io parity + inline image rendering" + § "Multi-Repo Doc Viewer — N-scope INI registry + JWT gate + secrets blocklist + source-code rendering"; parent Lupin commit `9e1869e` for dir listing + multi-repo follow-on already landed Lupin-side)
+
+Two thematically-adjacent parent-Lupin checkpoints folded into one CoSA-side commit because both edit the same `docs_files.py` + `io_files.py`. The directory listing extension turned `/app/docs?path=...&scope=...` into a single polymorphic surface returning text/markdown OR JSON `{kind, scope, path, parent, entries[]}` depending on whether `path` resolves to a file or directory. Per-extension `view_url` routing built server-side so the frontend stays dumb. The multi-repo extension then layered N-scope INI-driven registry support on top — browsing across lupin / planning-is-prompting / lupin-mobile / lookml / par-pacific / claude-plans + cosa-voice (when present) — plus universal JWT gate (was previously anonymous), pattern-based secrets blocklist applied to all scopes, MEDIA_TYPES expanded to source-code extensions rendered as plain `<pre>`. Parent verification: 27 unit + 14 :7999 smoke + 30 dir-listing unit + 13 io-files smoke + 6 :8000 E2E (multi-repo) + 8 :8000 E2E (dir listing) + 6/7 container preflight all GREEN.
+
+- **`rest/routers/_dir_listing.py` (NEW, ~130 LOC)** — single source of truth for `list_directory()` and `_build_view_url()`. Per-extension routing table: directories + .md/.txt/.json/.yaml/.yml → `/app/docs`, .mp3/.wav → `/app/audio`, .pdf → `/api/io/file` (inline), .pptx → `&download=true`, images → `/api/io/file` (inline). Multi-repo extension: imports `_is_secrets_path` and filters blocklist-matching entries at scandir time so the listing never enumerates secrets/credentials files into the response.
+
+- **`rest/routers/_scope_registry.py` (NEW, ~310 LOC including inline `quick_smoke_test()`)** — `ScopeConfig` frozen dataclass + `build_scope_registry()` lazy-loaded from INI + `_is_secrets_path()` with word-boundary regex (`\bsecrets?\b` / `\bcredentials?\b`) so `secretive_methods.py` and `credentialism.txt` aren't false-positive-blocked. `_is_whitelisted_in_scope()` per-scope path filtering. `resolve_in_scope()` composes whitelist + secrets-blocklist + traversal-block. The smoke test self-caught the naive substring regex during initial run and was fixed in-loop (good test-ownership signal).
+
+- **`rest/routers/docs_files.py` (MOD)** — gained `?scope=` query parameter, `Depends(get_current_user)` JWT gate, lazy `_get_scope_registry()`, expanded MEDIA_TYPES (source-code extensions like `.py` `.ts` `.tsx` `.js` `.sh` `.yaml` rendered as `text/plain` so `<pre>` shows them), secrets-blocklist call, bare-prefix-root whitelist tweak (`src/rnd` AND `src/rnd/` both list), isdir branch returning JSON instead of text/markdown.
+
+- **`rest/routers/io_files.py` (MOD)** — parallel isdir branch, `INLINE_TYPES` set (PDF, images, audio render inline; .pptx still attaches), `content_disposition_type` argument to `FileResponse`, image MEDIA_TYPES additions (PNG, JPG, JPEG, GIF, WebP), JWT gate, secrets-blocklist call.
+
+R&D doc set at parent `src/rnd/v0.1.7/2026.05.12-doc-viewer-directory-listing.md` + `src/rnd/v0.1.7/2026.05.12-multi-repo-doc-viewer.md`.
+
+**Body 3 — Speakerphone solo/chorus refactor: CoSA-side mirrors (Phases 1+2/3+5b)** (Lupin parent: Session 83ba1e51 Rio ⚡ Evening 2026-05-12 + earlier speakerphone-phase sessions; references in parent `history.md` § "Speakerphone refactor — Phases 5b / 6 / 7 landed on disk" + parent `TODO.md` § "🔧 Speakerphone (solo/chorus) — Phases 5b/6/7 done on disk, uncommitted" status table; Lupin parent commits `c82ee04` Phase 1, `8a8c31c` Phase 2/3, `9ba4db5` Phase 4, `e17d7d7` Phase 5)
+
+The parent canonical plan at `src/rnd/v0.1.7/2026.05.11-tts-interaction-mode-solo-chorus/00-index.md` reframed the May-11 hard-cut "conversation mode" exclusivity model around `tts interaction mode = solo | chorus` with parallel preservation. CoSA-side mirrors of Phases 1 (INI helper), 2/3 (router rename + bridge field rename), and 5b (3 comment-only edits) were left modified-but-uncommitted by the parent sessions per `feedback_lupin_only_never_cosa`. This commit lands all three CoSA-side fragments together since they share the same theme and would be confusing to split.
+
+- **`rest/routers/conversation_mode.py` (DELETED) + `rest/routers/speakerphone.py` (NEW)** — Phase 2/3 server router rename (parent commit `8a8c31c`). The 285-LOC router migrated wholesale. Router prefix `/api/cosa-voice` preserved; `_speakerphone_lock` (renamed from `_conversation_mode_lock`) and module-level state migrated. All endpoints under the renamed surface continue to serve their existing contracts; the rename is path-only at the file level (the routes themselves were already renamed in Phase 2/3 before this CoSA wrap).
+
+- **`utils/util.py` (MOD — Phase 1 helper)** — NEW `get_tts_interaction_mode()` reads `"tts interaction mode"` from `ConfigurationManager` and returns `"solo"` or `"chorus"`. Fail-closed to `"chorus"` on (a) missing INI key, (b) invalid value, (c) any exception during config-manager init or read. The "chorus" default reflects the operational decision per 2026-05-12: parallel preservation means both modes are first-class permanent paths, not a feature-flag with a sunset. Verified locally: `get_tts_interaction_mode()` returns `'chorus'` on this host.
+
+- **`rest/routers/notifications.py` (MOD — Phase 3)** — `valid_types` list rename `conversation_mode_changed` → `speakerphone_changed`. Comment block above the list updated to reflect the new state-update event name. R&D doc reference in the comment unchanged.
+
+- **`rest/routers/commons.py` (MOD — Phase 3)** — template-comment ref `conversation_mode.py` → `speakerphone.py` per F4 REUSE; `project_session_response()` field rename `conversation_mode_active` → `speakerphone_on` so the active-sessions chip-row API matches the rest of the codebase. Bridge-file field key updated to match (`bridge.get("speakerphone_on", False)`).
+
+- **`rest/notification_fifo_queue.py` (MOD — Phase 3)** — comment-only rename in `NotificationItem.payload` docstring (`conversation_mode_changed` → `speakerphone_changed`); behavior unchanged.
+
+- **`rest/commons_rate_limiter.py` (MOD — Phase 5b comment fix)** — module docstring single-line ref to `conversation_mode.py:48 _conversation_mode_lock` updated to `speakerphone.py _speakerphone_lock`. Multi-worker-deployment caveat language preserved.
+
+- **`rest/routers/voice_persona.py` (MOD — Phase 5b doc/comment fixes)** — module docstring "mirrors `conversation_mode.py` structurally" → "mirrors `speakerphone.py` structurally"; orthogonality framing rewritten ("Orthogonal to speakerphone mode (Phase 3 of solo/chorus refactor): a session can have a persona regardless of `speakerphone_on` state, and solo-mode's displacement scan does NOT touch the `voice_persona` field"); `_voice_persona_lock` comment ref updated similarly.
+
+R&D doc set at parent `src/rnd/v0.1.7/2026.05.11-tts-interaction-mode-solo-chorus/`.
+
+**Cross-repo separation**: per `CLAUDE.md` and memory `feedback_lupin_only_never_cosa`, this CoSA-context session ONLY commits files inside `src/cosa/`. The parent Lupin work for all three bodies — Body 1 design doc + INI keys + smoke test scaffolding; Body 2 design docs + 4 unit/smoke/e2e test files + INI external-repo block + docker-compose mounts + document-viewer.html auth/dispatch + parent README; Body 3 hook_common rider matrix + ~/.claude/CLAUDE.md slim + multiplexer rename + bridge field rename + 17 parent-Lupin files across Phases 1+2/3+5b/6/7 — is owned by the parent Lupin context and not amended here.
+
+**Pre-commit verification** (this CoSA wrap):
+- `py_compile` on all 13 Python files (12 modified + 1 from 2 new): ✅ 13/13 OK
+- Import-chain check via cosa venv: ✅ `CommonsAckWatcher` MRO = `[CommonsAckWatcher, CommonsTopicWatcher, object]` (Body 1 subclass refactor verified); `get_tts_interaction_mode()` → `'chorus'` (Body 3 helper verified); speakerphone router prefix `/api/cosa-voice` preserved (Body 3 router rename verified)
+- `git diff --stat HEAD` at session start: ✅ 10 modified + 4 untracked match parent attribution
+- Parent-side test coverage already documented per body (no CoSA-side test runs needed at this wrap)
+
+#### Checkpoint | 2026.05.13 | Session-end ritual + 3 thematic commits (María 🌸)
+
+**Files**: 14 (3 NEW: `commons_topic_watcher.py` + `_dir_listing.py` + `_scope_registry.py` + `speakerphone.py`; 8 MOD; 1 DELETED `conversation_mode.py`)
+
+**Commits**: `e053df2` Commit A, `bbdd7de` Commit B, `e420ec0` Commit C, `<D-hash>` Commit D (this), Commit E (post-wrap hash backfill)
+
+---
+
 ### 2026.05.11 → 2026.05.12 AM - Session 19d3ce48 (Rio ⚡) | CoSA-side wrap of 4 thematic Lupin sessions: 6d544991 + 658ea35d + 77e1bb27 + 9a4a601d
 
 **Context**: CoSA-context session-end commit bundle wrapping four distinct bodies of CoSA-side work produced by parent Lupin sessions on 2026-05-11 → 2026-05-12 AM. Persona: Rio ⚡ (`AZnzlk1XvdvUeBnXmlld`, #880E4F — freshly renamed from "Domi" earlier today by parent session 77e1bb27 per Lupin-app.ini pool list). Branch: `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Four clearly-scoped thematic commits + session-end docs commit + manifest hash-backfill commit per `feedback_lupin_only_never_cosa.md` cross-repo separation, each mapping to a named body of work documented in the parent Lupin `history.md` / `TODO.md` for unambiguous attribution. Commit basis identified by reading parent `history.md`, `TODO.md`, and `bug-fix-queue.md` per user voice direction at session start.
