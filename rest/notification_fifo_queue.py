@@ -102,7 +102,7 @@ class NotificationItem:
 
         # Generic structured payload for custom-typed state-update notifications
         # whose data shape doesn't fit existing typed fields. Carries event-specific
-        # dicts for types like "conversation_mode_changed" without polluting the
+        # dicts for types like "speakerphone_changed" without polluting the
         # schema with one-off fields. None on standard notifications (skipped in to_dict).
         # See: src/rnd/v0.1.7/2026.04.29-ws-event-cleanup-to-custom-notification-types/01-design.md §6.1
         self.payload = payload

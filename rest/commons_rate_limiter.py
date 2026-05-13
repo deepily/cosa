@@ -13,7 +13,7 @@ broadcast use case needs a different shape: in-process sliding-window per-user
 process-local dict guarded by a `threading.Lock`. If Lupin is ever deployed
 with multiple uvicorn workers, this rate limiter ceases to be a global enforcer
 (each worker has its own state). Lupin currently runs single-worker per
-container — same assumption as `conversation_mode.py:48` `_conversation_mode_lock`.
+container — same assumption as `speakerphone.py` `_speakerphone_lock`.
 Phase 4 (Postgres-backed commons) is the natural upgrade path if multi-worker
 becomes a need.
 """

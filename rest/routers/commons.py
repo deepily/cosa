@@ -4,7 +4,7 @@ Commons broadcast endpoints.
 Per AC1 + AC2 + AC3 + AC4 + AC5 + AC14 of
 src/rnd/v0.1.7/2026.05.09-inter-session-commons/03-phase2-user-broadcast-design.md.
 
-**Template**: `src/cosa/rest/routers/conversation_mode.py` (per F4 REUSE).
+**Template**: `src/cosa/rest/routers/speakerphone.py` (per F4 REUSE).
 
 Two endpoints:
 - `GET /api/commons/active-sessions` — recipient-preview chip-row data
@@ -160,16 +160,16 @@ def project_session_response(
 
     **NEVER includes the bridge Path or any filesystem-derived field.**
     Only these fields are exposed: session_id, persona_name, persona_icon,
-    persona_color, last_seen_iso, conversation_mode_active.
+    persona_color, last_seen_iso, speakerphone_on.
     """
     last_seen_iso = bridge.get( "last_activity_iso" ) or bridge.get( "updated_at_iso" )
     return {
-        "session_id"               : session_id,
-        "persona_name"             : persona.get( "name" ),
-        "persona_icon"             : persona.get( "icon" ),
-        "persona_color"            : persona.get( "color" ),
-        "last_seen_iso"            : last_seen_iso,
-        "conversation_mode_active" : bool( bridge.get( "conversation_mode_active", False ) ),
+        "session_id"      : session_id,
+        "persona_name"    : persona.get( "name" ),
+        "persona_icon"    : persona.get( "icon" ),
+        "persona_color"   : persona.get( "color" ),
+        "last_seen_iso"   : last_seen_iso,
+        "speakerphone_on" : bool( bridge.get( "speakerphone_on", False ) ),
     }
 
 

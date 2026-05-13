@@ -654,6 +654,36 @@ def get_project_root() -> str:
         return path
 
 
+def get_tts_interaction_mode() -> str:
+    """
+    Get the global TTS interaction mode from configuration.
+
+    Requires:
+        - ConfigurationManager is importable
+        - "tts interaction mode" key may or may not be set in lupin-app.ini
+        - LUPIN_CONFIG_MGR_CLI_ARGS env var is set on first singleton init (subsequent
+          calls reuse the existing instance and the kwarg is ignored)
+
+    Ensures:
+        - returns "solo" or "chorus" (string)
+        - returns "chorus" if key is absent (the operational default per 2026-05-12)
+        - returns "chorus" if key is present but has an invalid value (fail-closed to default)
+        - never raises (config errors fall back to "chorus")
+
+    Raises:
+        - never
+    """
+    from cosa.config.configuration_manager import ConfigurationManager
+    try:
+        config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+        mode       = config_mgr.get( "tts interaction mode", default="chorus", return_type="string" )
+    except Exception:
+        return "chorus"
+    if mode not in ( "solo", "chorus" ):
+        return "chorus"
+    return mode
+
+
 def get_api_key(key_name: str, project_root: str = None) -> Optional[str]:
     """
     Get an API key from the configuration directory.

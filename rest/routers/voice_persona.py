@@ -8,7 +8,7 @@ global ElevenLabs default) is reserved as the system-wide TTS default voice
 and is NOT in the allocatable pool.
 
 The bridge file at ~/.claude/sessions/cc-{PPID}.json is the canonical state.
-This module mirrors `conversation_mode.py` structurally:
+This module mirrors `speakerphone.py` structurally:
     - module-level asyncio.Lock for atomic scan→pick→write
     - dependency-injected ConfigurationManager + WebSocketManager
     - bridge file is ground truth, WS broadcast is best-effort confirmation
@@ -20,9 +20,9 @@ Endpoints:
     POST /api/cosa-voice/voice-persona/{session_id}/release    — clear bridge field
     GET  /api/cosa-voice/voice-persona/pool                    — diagnostics snapshot
 
-Orthogonal to conversation mode v1.1: a session can have a persona
-regardless of conversation_mode_active state, and conversation mode's
-mutex-1 displacement does NOT touch the voice_persona field.
+Orthogonal to speakerphone mode (Phase 3 of solo/chorus refactor): a session
+can have a persona regardless of speakerphone_on state, and solo-mode's
+displacement scan does NOT touch the voice_persona field.
 
 See: src/rnd/v0.1.7/2026.04.28-per-session-voice-personas/01-design.md
 """
@@ -54,7 +54,7 @@ router = APIRouter( prefix="/api/cosa-voice", tags=[ "cosa-voice" ] )
 
 # Module-level lock serializes scan→pick→write so two parallel /allocate
 # calls can't both pick the same persona. Single-process uvicorn assumed
-# (same caveat as conversation_mode addendum §11). On /release there is
+# (same caveat as `speakerphone.py` `_speakerphone_lock`). On /release there is
 # nothing to coordinate, so we skip the lock for that path.
 _voice_persona_lock = asyncio.Lock()
 
