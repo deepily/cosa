@@ -19,6 +19,7 @@ from cosa.config.configuration_manager import ConfigurationManager
 trans_mode_text_raw           = "multimodal text raw"
 trans_mode_text_email         = "multimodal text email"
 trans_mode_text_punctuation   = "multimodal text punctuation"
+trans_mode_text_broadcast     = "multimodal text broadcast"
 trans_mode_text_proofread     = "multimodal text proofread"
 trans_mode_text_contact       = "multimodal contact information"
 trans_mode_sql_punctuation    = "multimodal sql punctuation"
@@ -38,6 +39,7 @@ modes_to_methods_dict = {
     trans_mode_text_raw          : "munge_text_raw",
     trans_mode_text_email        : "munge_text_email",
     trans_mode_text_punctuation  : "munge_text_punctuation",
+    trans_mode_text_broadcast    : "munge_text_broadcast",
     trans_mode_text_proofread    : "munge_text_proofread",
     trans_mode_text_contact      : "munge_text_contact",
     trans_mode_python_punctuation: "munge_python_punctuation",
@@ -765,7 +767,146 @@ class MultiModalMunger:
         prose = self._remove_dashed_spellings( prose )
 
         return prose, mode
-    
+
+    def munge_text_broadcast( self, raw_transcription: str, mode: str ) -> tuple[str, str]:
+        """
+        Process broadcast-context speech while preserving @-mention syntax.
+
+        Mirrors munge_text_punctuation's tokenize-and-lookup pipeline but:
+          - Phrase-preprocesses literal "at sign" → "@" BEFORE tokenization
+            (the per-token tokenizer cannot match the multi-token map entry)
+          - OMITS the comma/period strip that munge_text_punctuation applies
+            (broadcast preserves '.' and ',' so URLs, versions, decimals, and
+             @user.name patterns survive intact)
+
+        Requires:
+            - raw_transcription is a string
+            - mode is a valid mode string
+            - Punctuation, number, and domain dictionaries are loaded
+
+        Ensures:
+            - Returns tuple of (prose, mode)
+            - Literal "at sign" (case-insensitive, word-boundaried) is replaced
+              with "@" before tokenization
+            - Single-token punctuation lookups still fire ("dot" → ".",
+              "underscore" → "_", "hash" → "#", "period" → ".", etc.)
+            - "." and "," characters in the output are preserved (not stripped)
+            - Bare "at" not followed by "sign" stays as the English word
+              (preserves "look at this", "we'll meet at noon")
+
+        Raises:
+            - None
+
+        Design notes (2026-05-13):
+            Decision Q2 (verbose) explicitly limits @-conversion to the literal
+            phrase "at sign". Whisper produces this phrase reliably when the
+            user dictates the symbol; bare "at" is ambiguous and would break
+            ordinary English in non-mention contexts.
+
+            The line-757 [,.] strip in munge_text_punctuation is intentionally
+            absent here. That strip is a separate prose-mode bug filed under
+            its own TODO entry — fixing it in this mode is out of scope and
+            would risk regressing the default punctuation path.
+        """
+
+        prose = raw_transcription
+
+        # Phrase-preprocess passes for multi-token map entries.
+        # The tokenizer (see _tokenize) is per-token, so multi-word map keys like
+        # "at sign = @" / "question mark = ?" / "exclamation point = !" cannot
+        # match downstream via the per-token lookup. We substitute the spoken
+        # phrases to their target symbols BEFORE tokenization.
+        #
+        # Whitespace handling diverges by symbol semantics:
+        #   - "at sign" is a JOINING char (binds to following identifier), so
+        #     \s* consumes the trailing space → "at sign you" → "@you"
+        #   - "question mark" / "exclamation point" are TERMINAL chars (natural
+        #     space after them), so we DO NOT consume trailing whitespace; the
+        #     existing _remove_spaces_around_punctuation pass collapses any
+        #     " ?" / " !" leading-space afterwards.
+        prose = re.sub( r"\bat sign\s*",         "@", prose, flags=re.IGNORECASE )
+        prose = re.sub( r"\bquestion mark\b",    "?", prose, flags=re.IGNORECASE )
+        prose = re.sub( r"\bexclamation point\b", "!", prose, flags=re.IGNORECASE )
+
+        # Remove URL protocols (mirror munge_text_punctuation)
+        prose = self._remove_protocols( prose )
+
+        # Build case-insensitive lookup dictionaries (strip spaces from keys)
+        domain_lookup = { k.strip().lower(): v for k, v in self.domain_names.items() if k.strip() }
+        punct_lookup  = { k.strip().lower(): v for k, v in self.punctuation.items()  if k.strip() }
+        number_lookup = { k.strip().lower(): v for k, v in self.numbers.items()      if k.strip() }
+
+        # Tokenize: split into words, spaces, and punctuation
+        tokens = self._tokenize( prose )
+
+        # Identifier-joining punctuation: when a spoken word maps to one of these
+        # symbols, treat the conversion as a glue point — drop the surrounding
+        # spaces so "file underscore name" → "file_name" and "1 dot 0" → "1.0".
+        # Other punctuation (comma, colon, semicolon, etc.) keeps natural spacing.
+        joining_chars = { ".", "_", "#" }
+
+        # Replace tokens with explicit space-handling for joining punctuation.
+        result = []
+        i      = 0
+        while i < len( tokens ):
+            token       = tokens[ i ]
+            token_lower = token.lower()
+
+            if token_lower in domain_lookup:
+                # Domain replacements (e.g., ".com") are themselves joining —
+                # pull off any trailing whitespace from result so "example .com"
+                # stays "example.com".
+                if result and result[ -1 ].isspace():
+                    result.pop()
+                result.append( domain_lookup[ token_lower ] )
+                i += 1
+            elif token_lower in punct_lookup and punct_lookup[ token_lower ] in joining_chars:
+                # Joining punctuation: drop a trailing space from result and the
+                # next leading space from tokens so the symbol glues neighbors.
+                if result and result[ -1 ].isspace():
+                    result.pop()
+                result.append( punct_lookup[ token_lower ] )
+                if i + 1 < len( tokens ) and tokens[ i + 1 ].isspace():
+                    i += 2
+                else:
+                    i += 1
+            elif token_lower in punct_lookup:
+                # Non-joining punctuation: append verbatim, preserve spacing.
+                result.append( punct_lookup[ token_lower ] )
+                i += 1
+            elif token_lower in number_lookup:
+                result.append( number_lookup[ token_lower ] )
+                i += 1
+            else:
+                result.append( token )  # Keep original (preserves case)
+                i += 1
+
+        prose = "".join( result )
+
+        # NB: line 757 [,.] strip is intentionally OMITTED here — broadcast
+        # mode preserves periods and commas. See Q4 in design doc.
+
+        # Remove extra spaces around punctuation (e.g., "@ you" → "@you")
+        prose = self._remove_spaces_around_punctuation( prose )
+
+        # Remove dashed spellings (e.g., "t-h-i-s" → "this")
+        prose = self._remove_dashed_spellings( prose )
+
+        # Ad-hoc cleanup of gratuitous Whisper-emitted punctuation runs
+        # (broadcast-specific, added 2026-05-13 per Rick's voice request).
+        # Whisper occasionally emits ",,," or ",!" around emphatic dictation;
+        # broadcast preserves all punctuation by default but these specific
+        # patterns are objectively redundant and degrade readability:
+        #   - Multiple commas in a row → single comma
+        #   - Comma immediately before "!" → drop the comma
+        #   - Period immediately after "!" → drop the period
+        # Apply in order so cascades work (e.g., ",,!" → ",!" → "!").
+        prose = re.sub( r",+", ",", prose )
+        prose = prose.replace( ",!", "!" )
+        prose = prose.replace( "!.", "!" )
+
+        return prose, mode
+
     def munge_text_contact( self, raw_transcription: str, mode: str, extra_words: str="" ) -> tuple[str, str]:
         """
         Process contact information requests.
@@ -1325,9 +1466,9 @@ class MultiModalMunger:
 def quick_smoke_test():
     """Quick smoke test to validate MultiModalMunger functionality."""
     import cosa.utils.util as du
-    
+
     du.print_banner( "MultiModalMunger Smoke Test", prepend_nl=True )
-    
+
     # Test different types of multimodal input
     test_cases = [
         {
@@ -1346,18 +1487,67 @@ def quick_smoke_test():
             "description": "Email address dictation"
         }
     ]
-    
+
     for i, test_case in enumerate( test_cases, 1 ):
         print( f"\nTest {i}: {test_case['description']}" )
         print( f"Input: '{test_case['transcription']}'" )
-        
+
         try:
             munger = MultiModalMunger( test_case["transcription"], prefix=test_case["prefix"], debug=False )
             result = munger.get_json()
             print( f"✓ Successfully processed: {result.get('mode', 'unknown mode')}" )
         except Exception as e:
             print( f"✗ Error processing: {e}" )
-    
+
+    # ── Broadcast-mode coverage (added 2026-05-13 by Arnold) ──────────────────
+    # Asserts EXACT output values for the new munge_text_broadcast method.
+    # See src/rnd/v0.1.7/2026.05.13-broadcast-munger-mode-design.md §5.1.
+    du.print_banner( "Broadcast Mode Coverage", prepend_nl=True )
+    broadcast_cases = [
+        ( "at sign you",                       "@you",                "single @-mention" ),
+        ( "hello at noon",                     "hello at noon",       "bare 'at' preserved as English" ),
+        ( "at sign you at sign me",            "@you @me",            "multiple @-mentions, inter-word space preserved" ),
+        ( "AT SIGN you",                       "@you",                "case-insensitive phrase match" ),
+        ( "file_name dot py",                  "file_name.py",        "underscore + dot both preserved (no line-757 strip)" ),
+        ( "version 1 dot 0 dot 5",             "version 1.0.5",       "decimals survive (no line-757 strip)" ),
+        ( "the URL is example dot com",        "the URL is example.com", "URLs survive (domain lookup + no strip)" ),
+        # ── Punctuation coverage (added 2026-05-13 per Rick's voice request) ──
+        ( "How are you question mark",         "How are you?",        "'?' via 'question mark' phrase preprocess" ),
+        ( "Wow exclamation point",             "Wow!",                "'!' via 'exclamation point' phrase preprocess" ),
+        ( "Hi comma friend",                   "Hi, friend",          "',' via single-token 'comma' lookup" ),
+        ( "Title colon text",                  "Title: text",         "':' via single-token 'colon' lookup" ),
+        ( "yes semicolon thanks",              "yes; thanks",         "';' via single-token 'semicolon' lookup" ),
+        ( "Hello period world",                "Hello.world",         "'.' joins identifiers (broadcast intent)" ),
+        ( "Wow bang",                          "Wow!",                "'!' via single-token 'bang' lookup" ),
+        # ── Ad-hoc cleanup rules (added 2026-05-13 per Rick's voice request) ──
+        ( "I am so,,, excited",                "I am so, excited",     "triple-comma run collapses to single comma" ),
+        ( "I am so,, excited",                 "I am so, excited",     "double-comma run collapses to single comma" ),
+        ( "I am so,,, excited,!.",             "I am so, excited!",    "triple-comma collapse + drop ',!' + drop '!.' cascade" ),
+        ( "Wow,!",                             "Wow!",                 "comma-before-bang dropped" ),
+        ( "Wow!.",                             "Wow!",                 "period-after-bang dropped" ),
+        ( "I am so comma comma comma excited", "I am so, excited",     "spoken-word triple comma also collapses" ),
+    ]
+    broadcast_pass = 0
+    broadcast_fail = 0
+    for i, ( transcription, expected, description ) in enumerate( broadcast_cases, 1 ):
+        print( f"\nBroadcast {i}: {description}" )
+        print( f"  Input:    '{transcription}'" )
+        print( f"  Expected: '{expected}'" )
+        try:
+            munger = MultiModalMunger( transcription, prefix="multimodal text broadcast", debug=False )
+            actual = munger.transcription
+            print( f"  Actual:   '{actual}'" )
+            if actual == expected:
+                print( "  ✓ PASS" )
+                broadcast_pass += 1
+            else:
+                print( "  ✗ FAIL" )
+                broadcast_fail += 1
+        except Exception as e:
+            print( f"  ✗ ERROR: {e}" )
+            broadcast_fail += 1
+    print( f"\nBroadcast summary: {broadcast_pass} passed, {broadcast_fail} failed" )
+
     print( "\n✓ MultiModalMunger smoke test completed" )
 
 
