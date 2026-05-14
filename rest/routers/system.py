@@ -649,6 +649,25 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
         default=False, return_type="boolean"
     )
 
+    # TTS preview-and-pause cost-reduction feature (2026-05-13)
+    # See src/rnd/v0.1.7/2026.05.13-tts-preview-and-pause-design.md
+    tts_preview_enabled = config_mgr.get(
+        "tts preview enabled",
+        default=True, return_type="boolean"
+    )
+    tts_preview_fraction = config_mgr.get(
+        "tts preview fraction",
+        default=0.25, return_type="float"
+    )
+    tts_preview_min_chars = config_mgr.get(
+        "tts preview min chars",
+        default=100, return_type="int"
+    )
+    tts_preview_include_semicolons = config_mgr.get(
+        "tts preview include semicolons",
+        default=False, return_type="boolean"
+    )
+
     lupin_env = os.environ.get( "LUPIN_ENV", "" ).lower()
     if lupin_env in [ "test", "testing" ]:
         env_label = "TEST"
@@ -675,7 +694,16 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
 
         # TestFixExpediter auto-fix INI default — drives initial state of the
         # "auto-fix on failure" checkbox in the test runner submission card
-        "test_fix_expediter_auto_fix_enabled": bool( tfe_auto_fix_enabled )
+        "test_fix_expediter_auto_fix_enabled": bool( tfe_auto_fix_enabled ),
+
+        # TTS preview-and-pause feature flags (2026-05-13)
+        # When enabled, every TTS message gets split into sentences client-side
+        # and only the first <fraction> portion is synthesized. Saves TTS
+        # provider character costs because providers charge at request-time.
+        "tts_preview_enabled"            : bool( tts_preview_enabled ),
+        "tts_preview_fraction"           : float( tts_preview_fraction ),
+        "tts_preview_min_chars"          : int( tts_preview_min_chars ),
+        "tts_preview_include_semicolons" : bool( tts_preview_include_semicolons )
     }
 
 
