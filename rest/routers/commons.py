@@ -27,11 +27,16 @@ import time
 import uuid
 from typing import Annotated, Any, Callable, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from cosa.rest.commons_ack_watcher import CommonsAckWatcher
+from cosa.rest.commons_question_watcher import (
+    CapExceededError,
+    CommonsQuestionWatcher,
+    QuestionNotFound,
+)
 from cosa.rest.commons_rate_limiter import CommonsBroadcastRateLimiter
 from cosa.rest.middleware.api_key_auth import require_api_key_or_jwt
 from lupin_cli.claude_code.hooks.lib.session_bridge import (
@@ -45,9 +50,10 @@ router = APIRouter( prefix="/api/commons", tags=[ "commons" ] )
 
 # ─── Module-level state — initialized at FastAPI startup (step 8) ───────────
 
-_commons_store        : Optional[ CommonsStore ]                  = None
-_commons_rate_limiter : Optional[ CommonsBroadcastRateLimiter ]   = None
-_commons_ack_watcher  : Optional[ CommonsAckWatcher ]             = None
+_commons_store         : Optional[ CommonsStore ]                  = None
+_commons_rate_limiter  : Optional[ CommonsBroadcastRateLimiter ]   = None
+_commons_ack_watcher   : Optional[ CommonsAckWatcher ]             = None
+_commons_question_watcher : Optional[ CommonsQuestionWatcher ]     = None  # Phase 3 step 6
 # Threshold for "active enough to receive a broadcast" — set at startup from INI.
 _active_session_threshold_seconds : float = 600.0
 
@@ -57,12 +63,20 @@ def init_commons_state(
     rate_limiter                       : CommonsBroadcastRateLimiter,
     ack_watcher                        : CommonsAckWatcher,
     active_session_threshold_seconds   : float,
+    question_watcher                   : Optional[ CommonsQuestionWatcher ] = None,
 ) -> None:
-    """Wire singletons at FastAPI startup. Idempotent for testing."""
-    global _commons_store, _commons_rate_limiter, _commons_ack_watcher, _active_session_threshold_seconds
+    """Wire singletons at FastAPI startup. Idempotent for testing.
+
+    `question_watcher` is Optional only to preserve backward compatibility
+    with Phase 2 callers in `main.py` lifespan — Step 9 extends the
+    lifespan to construct + start it and pass it in.
+    """
+    global _commons_store, _commons_rate_limiter, _commons_ack_watcher, _commons_question_watcher
+    global _active_session_threshold_seconds
     _commons_store                    = store
     _commons_rate_limiter             = rate_limiter
     _commons_ack_watcher              = ack_watcher
+    _commons_question_watcher         = question_watcher
     _active_session_threshold_seconds = float( active_session_threshold_seconds )
 
 
@@ -75,6 +89,50 @@ class BroadcastRequestBody( BaseModel ):
     broadcast_id       : Optional[ str ] = None
     require_ack        : bool            = True
     include_originator : bool            = True
+
+
+# AC1 Pydantic-native validation per `feedback_pydantic_native_validation`.
+# Field constraints declared HERE; FastAPI returns 422 on validation failure.
+# Topic + question_id share the same charset/length contract (T1 compatibility).
+_TOPIC_OR_QID_PATTERN = r"^[A-Za-z0-9_-]+$"
+_QID_TOPIC_MIN        = 1
+_QID_TOPIC_MAX        = 64
+_TTL_MIN_SECONDS      = 1
+_TTL_MAX_SECONDS      = 604800   # 7 days — the absolute upper bound (per Q4 envelope)
+_TTL_DEFAULT_SECONDS  = 3600     # 1h (Q4 ratified default)
+
+
+class RegisterQuestionRequest( BaseModel ):
+    """
+    POST /register-question request body — Phase 3 push-mode `ask_async`
+    cross-process registration primitive (per C3 Q2 sub-question resolution).
+
+    Pydantic-native validation per `feedback_pydantic_native_validation`:
+    - `topic`            — free-form commons topic; T1 charset + ≤64 chars
+    - `question_id`      — asker-supplied unique id; T1 charset + ≤64 chars
+    - `asker_session_id` — the CC session that owns the question; used in
+                           inject_fn closure for sender_id routing.
+                           Loosely constrained: must be a non-empty string.
+    - `ttl_seconds`      — Q4 1h default, 1..604800 (7d cap)
+    """
+    topic            : str = Field(
+        ...,
+        min_length = _QID_TOPIC_MIN,
+        max_length = _QID_TOPIC_MAX,
+        pattern    = _TOPIC_OR_QID_PATTERN,
+    )
+    question_id      : str = Field(
+        ...,
+        min_length = _QID_TOPIC_MIN,
+        max_length = _QID_TOPIC_MAX,
+        pattern    = _TOPIC_OR_QID_PATTERN,
+    )
+    asker_session_id : str = Field( ..., min_length=1, max_length=128 )
+    ttl_seconds      : int = Field(
+        default = _TTL_DEFAULT_SECONDS,
+        gt      = 0,
+        le      = _TTL_MAX_SECONDS,
+    )
 
 
 # ─── Pure-logic helpers (in 100% coverage gate) ─────────────────────────────
@@ -142,11 +200,35 @@ def _bridge_last_activity_epoch( bridge: Dict[ str, Any ] ) -> Optional[ float ]
     """
     Extract the bridge's last-activity epoch seconds. Tries common field names;
     returns None if unparseable. Defensive against schema drift.
+
+    2026-05-13 fix (per `src/rnd/v0.1.7/2026.05.13-broadcast-stale-bridge-phantom.md`):
+    falls back to the nested `idle_detection.last_interaction_at` ISO string
+    that the real bridge writer (`set_idle_detection_field` in
+    `session_bridge.py:1055-1103`) actually populates. The previous lookup at
+    top-level `last_activity_epoch` / `last_activity` / `updated_at` matched
+    NONE of the fields the writer produces — `_bridge_last_activity_epoch`
+    returned None for every bridge and the activity-age filter became a no-op,
+    letting dead-PID phantoms through (inside Docker where the host-PID
+    liveness check is disabled).
     """
+    # Numeric epoch fields — checked first for back-compat with any future
+    # writer that adds them.
     for field in ( "last_activity_epoch", "last_activity", "updated_at" ):
         val = bridge.get( field )
         if isinstance( val, ( int, float ) ):
             return float( val )
+    # Fallback: ISO string under idle_detection (the field the writer actually uses).
+    # Defensive against `idle_detection` being None / list / string (schema drift).
+    idle = bridge.get( "idle_detection" )
+    if not isinstance( idle, dict ):
+        return None
+    iso = idle.get( "last_interaction_at" )
+    if isinstance( iso, str ) and iso:
+        try:
+            from datetime import datetime
+            return datetime.fromisoformat( iso ).timestamp()
+        except ValueError:
+            return None
     return None
 
 
@@ -162,7 +244,18 @@ def project_session_response(
     Only these fields are exposed: session_id, persona_name, persona_icon,
     persona_color, last_seen_iso, speakerphone_on.
     """
-    last_seen_iso = bridge.get( "last_activity_iso" ) or bridge.get( "updated_at_iso" )
+    # 2026-05-13 fix: same projection mismatch as `_bridge_last_activity_epoch`.
+    # Fall back to `idle_detection.last_interaction_at` so the API returns a real
+    # ISO string instead of always-None. Per
+    # `src/rnd/v0.1.7/2026.05.13-broadcast-stale-bridge-phantom.md`.
+    # Defensive: `idle_detection` may be None / list / string under schema drift.
+    idle_block = bridge.get( "idle_detection" )
+    idle_iso   = idle_block.get( "last_interaction_at" ) if isinstance( idle_block, dict ) else None
+    last_seen_iso = (
+        bridge.get( "last_activity_iso" )
+        or bridge.get( "updated_at_iso" )
+        or idle_iso
+    )
     return {
         "session_id"      : session_id,
         "persona_name"    : persona.get( "name" ),
@@ -186,7 +279,14 @@ def filter_and_project_sessions(
     Apply all AC2 filters + T7 + T8 projection to the raw 3-tuple list.
 
     1. Open each bridge via `bridge_loader` — skip on parse fail
-    2. Filter by `user_id == authenticated_user_id` (T7 + Q9 same-user scoping)
+    2. Filter by `user_id == authenticated_user_id` (T7 + Q9 same-user scoping).
+       **Graceful degradation (2026-05-13 fix)**: bridges that LACK a `user_id`
+       field pass through. Phase 2 specified the same-user check but never
+       landed bridge-side stamping; legacy bridges therefore have `user_id ==
+       None`. Skipping them produced the "no active sessions" UX bug. Pairs
+       with Option 2 in `src/rnd/v0.1.7/2026.05.13-broadcast-ui-no-active-sessions-bug.md`
+       — once the listener starts stamping user_id at startup, the equality
+       branch tightens automatically with zero code change.
     3. Filter by last-activity age (newer than threshold)
     4. Optionally exclude originator's session (when `include_originator=False`)
     5. Project to response shape via `project_session_response` (T8 — no Path leak)
@@ -196,7 +296,12 @@ def filter_and_project_sessions(
         bridge = bridge_loader( path )
         if bridge is None:
             continue
-        if bridge.get( "user_id" ) != authenticated_user_id:
+        bridge_user_id = bridge.get( "user_id" )
+        # Graceful: include sessions whose bridge has NO user_id field (legacy /
+        # un-stamped). Reject only when the bridge has a user_id AND it doesn't
+        # match the caller. Once Option 2 stamps every new bridge, this check
+        # naturally tightens to strict cross-user isolation.
+        if bridge_user_id is not None and bridge_user_id != authenticated_user_id:
             continue
         last_epoch = _bridge_last_activity_epoch( bridge )
         if last_epoch is not None and ( now_epoch - last_epoch ) > active_session_threshold_seconds:
@@ -364,6 +469,123 @@ def execute_broadcast(
     }
 
 
+# ─── Step 6: register-question pure-logic helpers ───────────────────────────
+
+
+def make_question_inject_fn(
+    notification_queue : Any,
+    user_id            : str,
+    question_id        : str,
+    asker_session_id   : str,
+    build_sender_id    : Callable[ [ str ], Optional[ str ] ],
+) -> Callable[ [ Dict[ str, Any ] ], None ]:
+    """
+    Build the per-question `inject_fn` closure that the watcher fires on
+    answer-detection. Pushes a `user_initiated_message` notification with
+    `title="action:commons_answer_received"` so the asker's CC listener
+    (Step 8) injects a `<system-reminder>` into the tmux pane.
+
+    Per Q3 framing — the stamped `persona_name` on the answer entry is
+    read by the listener (F9-fit immutability principle, NOT a live lookup).
+
+    Per T8 isolation — exceptions are caught and re-raised; the watcher's
+    `_tick_one_question()` wraps the inject_fn call in its own try/except.
+    """
+    def _inject( entry: Dict[ str, Any ] ) -> None:
+        notification_queue.push_notification(
+            message            = "",
+            type               = "user_initiated_message",
+            title              = "action:commons_answer_received",
+            sender_id          = build_sender_id( asker_session_id ),
+            job_id             = asker_session_id[ :8 ],
+            user_id            = user_id,
+            suppress_ding      = True,
+            response_requested = False,
+            payload            = {
+                "question_id"     : question_id,
+                "body"            : entry.get( "body", "" ),
+                "persona_name"    : entry.get( "persona_name" ),
+                "persona_icon"    : entry.get( "persona_icon" ),
+                "persona_color"   : entry.get( "persona_color" ),
+                "answerer_session": entry.get( "sender_session_id" ),
+                "answer_ts"       : entry.get( "ts" ),
+            },
+        )
+    return _inject
+
+
+def execute_register_question(
+    *,
+    authenticated_user_id : str,
+    body                  : "RegisterQuestionRequest",
+    question_watcher      : CommonsQuestionWatcher,
+    notification_queue    : Any,
+    build_sender_id       : Callable[ [ str ], Optional[ str ] ],
+) -> Dict[ str, Any ]:
+    """
+    Pure-logic core for POST /api/commons/register-question.
+
+    Returns a dict with one of these shapes (route handler translates to FastAPI):
+      {"http_status": 201, "question_id": "...", "ttl_seconds": int}
+      {"http_status": 409, "detail": "question_id collision"}
+      {"http_status": 429, "detail": "tracker cap reached", "retry_after": None}
+
+    Body-level field validation already happened at Pydantic instantiation
+    (FastAPI auto-422'd before this helper was called).
+
+    T3: per-user + global caps enforced by the watcher (`CapExceededError`).
+    T9: question_id collision raises `ValueError` from `_register()`.
+    """
+    inject_fn = make_question_inject_fn(
+        notification_queue = notification_queue,
+        user_id            = authenticated_user_id,
+        question_id        = body.question_id,
+        asker_session_id   = body.asker_session_id,
+        build_sender_id    = build_sender_id,
+    )
+    try:
+        question_watcher.register_question(
+            question_id  = body.question_id,
+            user_id      = authenticated_user_id,
+            topic        = body.topic,
+            inject_fn    = inject_fn,
+            ttl_seconds  = float( body.ttl_seconds ),
+        )
+    except CapExceededError as e:
+        return { "http_status": 429, "detail": "question tracker cap reached", "reason": str( e ) }
+    except ValueError:
+        return { "http_status": 409, "detail": "question_id collision" }
+    return {
+        "http_status" : 201,
+        "question_id" : body.question_id,
+        "ttl_seconds" : int( body.ttl_seconds ),
+    }
+
+
+def execute_unregister_question(
+    *,
+    authenticated_user_id : str,
+    question_id           : str,
+    question_watcher      : CommonsQuestionWatcher,
+) -> Dict[ str, Any ]:
+    """
+    Pure-logic core for DELETE /api/commons/register-question/{question_id}.
+
+    T5 — uniform 404 for both unknown ids AND wrong-owner ids via single
+    internal path (`CommonsQuestionWatcher.unregister_question` raises
+    `QuestionNotFound` either way). No log differentiation.
+
+    Returns:
+      {"http_status": 204}
+      {"http_status": 404, "detail": "question_id not found or not owned by caller"}
+    """
+    try:
+        question_watcher.unregister_question( question_id, authenticated_user_id )
+    except QuestionNotFound:
+        return { "http_status": 404, "detail": "question_id not found or not owned by caller" }
+    return { "http_status": 204 }
+
+
 # ─── Dependency-injection accessors ─────────────────────────────────────────
 
 
@@ -377,6 +599,12 @@ def _require_initialized():   # pragma: no cover
     """Raise if commons singletons not yet wired (step 8 wires them at app startup)."""
     if _commons_store is None or _commons_rate_limiter is None or _commons_ack_watcher is None:
         raise HTTPException( status_code=503, detail="commons subsystem not initialized" )
+
+
+def _require_question_watcher():   # pragma: no cover
+    """Raise if the Phase 3 question watcher hasn't been wired yet."""
+    if _commons_question_watcher is None:
+        raise HTTPException( status_code=503, detail="commons question watcher not initialized" )
 
 
 # ─── Route handlers (thin — # pragma: no cover) ─────────────────────────────
@@ -437,3 +665,52 @@ async def post_broadcast_to_cc_sessions(   # pragma: no cover
     if http_status >= 400:
         raise HTTPException( status_code=http_status, detail=result[ "detail" ] )
     return JSONResponse( status_code=200, content=result )
+
+
+# ─── Step 6: register-question endpoints (Phase 3 push-mode) ────────────────
+
+
+@router.post(
+    "/register-question",
+    summary     = "Register an outstanding `ask_async` question for push-mode answer dispatch",
+    description = "Phase 3 push-mode. The MCP-side `ask_async()` calls this endpoint to register a (topic, question_id, asker_session_id) tracker entry. The server-side CommonsQuestionWatcher then tails the topic and pushes a `commons_answer_received` notification when a matching `in_reply_to` answer appears. Returns 201 on success, 409 on collision, 429 on cap-hit. FastAPI auto-422s on Pydantic validation failure.",
+)
+async def post_register_question(   # pragma: no cover
+    body: RegisterQuestionRequest,
+    authenticated_user_id: Annotated[ str, Depends( require_api_key_or_jwt ) ],
+    notification_queue=Depends( get_notification_queue ),
+) -> JSONResponse:
+    _require_question_watcher()
+    result = execute_register_question(
+        authenticated_user_id = authenticated_user_id,
+        body                  = body,
+        question_watcher      = _commons_question_watcher,
+        notification_queue    = notification_queue,
+        build_sender_id       = build_sender_id_for_cc,
+    )
+    http_status = result.pop( "http_status" )
+    if http_status >= 400:
+        raise HTTPException( status_code=http_status, detail=result[ "detail" ] )
+    return JSONResponse( status_code=http_status, content=result )
+
+
+@router.delete(
+    "/register-question/{question_id}",
+    summary     = "Unregister an outstanding question (asker-side cleanup or cancellation)",
+    description = "T5 uniform 404 for both unknown question_ids AND known-but-not-owned. Returns 204 on success.",
+)
+async def delete_register_question(   # pragma: no cover
+    authenticated_user_id : Annotated[ str, Depends( require_api_key_or_jwt ) ],
+    question_id           : str = Path( ..., min_length=_QID_TOPIC_MIN, max_length=_QID_TOPIC_MAX, pattern=_TOPIC_OR_QID_PATTERN ),
+) -> JSONResponse:
+    _require_question_watcher()
+    result = execute_unregister_question(
+        authenticated_user_id = authenticated_user_id,
+        question_id           = question_id,
+        question_watcher      = _commons_question_watcher,
+    )
+    http_status = result.pop( "http_status" )
+    if http_status == 404:
+        raise HTTPException( status_code=404, detail=result[ "detail" ] )
+    # 204 No Content
+    return JSONResponse( status_code=204, content=None )
