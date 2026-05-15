@@ -25,12 +25,14 @@ import json
 import re
 import time
 import uuid
-from typing import Annotated, Any, Callable, Dict, List, Optional, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import Annotated, Any, Callable, Dict, List, Optional, Set, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from cosa.config.configuration_manager import ConfigurationManager
 from cosa.rest.commons_ack_watcher import CommonsAckWatcher
 from cosa.rest.commons_question_watcher import (
     CapExceededError,
@@ -279,14 +281,24 @@ def filter_and_project_sessions(
     Apply all AC2 filters + T7 + T8 projection to the raw 3-tuple list.
 
     1. Open each bridge via `bridge_loader` — skip on parse fail
-    2. Filter by `user_id == authenticated_user_id` (T7 + Q9 same-user scoping).
-       **Graceful degradation (2026-05-13 fix)**: bridges that LACK a `user_id`
-       field pass through. Phase 2 specified the same-user check but never
-       landed bridge-side stamping; legacy bridges therefore have `user_id ==
-       None`. Skipping them produced the "no active sessions" UX bug. Pairs
-       with Option 2 in `src/rnd/v0.1.7/2026.05.13-broadcast-ui-no-active-sessions-bug.md`
-       — once the listener starts stamping user_id at startup, the equality
-       branch tightens automatically with zero code change.
+    2. Filter by `owner_user_id == authenticated_user_id` (T7 + Q9 same-user scoping).
+       **Graceful degradation (2026-05-13 fix carried forward to 2026-05-14)**:
+       bridges that LACK an `owner_user_id` field pass through. The original
+       2026-05-13 fix scoped on the listener's `user_id`, but that turned out
+       to be the service-account identity (e.g. `claude.code@<repo>.deepily.ai`),
+       NOT the human owner. For any human caller, every stamped bridge was
+       therefore rejected — same UX symptom in reverse. Per
+       `src/rnd/v0.1.7/2026.05.14-broadcast-listener-stamps-wrong-user-id.md`
+       (Option C), scoping now reads a NEW `owner_user_id` field that the
+       listener will eventually stamp with the HUMAN OWNER's UUID. Until the
+       writer-side change (`_stamp_owner_user_id_on_bridge`) lands, every
+       bridge hits the graceful branch and passes through — restoring the
+       user's reported symptom from "1 of 4 visible" to "all 4 visible".
+       Once the writer lands, the equality branch tightens automatically
+       with zero code change here.
+       (The legacy `user_id` field is preserved on the bridge for telemetry —
+       it identifies the listener service account that wrote the bridge — but
+       is no longer used for scoping.)
     3. Filter by last-activity age (newer than threshold)
     4. Optionally exclude originator's session (when `include_originator=False`)
     5. Project to response shape via `project_session_response` (T8 — no Path leak)
@@ -296,12 +308,13 @@ def filter_and_project_sessions(
         bridge = bridge_loader( path )
         if bridge is None:
             continue
-        bridge_user_id = bridge.get( "user_id" )
-        # Graceful: include sessions whose bridge has NO user_id field (legacy /
-        # un-stamped). Reject only when the bridge has a user_id AND it doesn't
-        # match the caller. Once Option 2 stamps every new bridge, this check
-        # naturally tightens to strict cross-user isolation.
-        if bridge_user_id is not None and bridge_user_id != authenticated_user_id:
+        bridge_owner_user_id = bridge.get( "owner_user_id" )
+        # Graceful: include sessions whose bridge has NO owner_user_id field
+        # (legacy / un-stamped). Reject only when the bridge has an
+        # owner_user_id AND it doesn't match the caller. Once
+        # `_stamp_owner_user_id_on_bridge` lands listener-side, the equality
+        # branch tightens to strict cross-user isolation.
+        if bridge_owner_user_id is not None and bridge_owner_user_id != authenticated_user_id:
             continue
         last_epoch = _bridge_last_activity_epoch( bridge )
         if last_epoch is not None and ( now_epoch - last_epoch ) > active_session_threshold_seconds:
@@ -466,6 +479,171 @@ def execute_broadcast(
         "recipients"        : successful,
         "failed_recipients" : failed_recipients,
         "status"            : "queued",
+    }
+
+
+# ─── Phase 2.5/3.5 Step 2: broadcast-history aggregator helpers ─────────────
+# Per src/rnd/v0.1.7/2026.05.14-commons-traffic-visibility-design.md (AC1 + AC4-AC6).
+
+
+_RESERVED_TOPICS = { "broadcasts", "broadcast-acks", "presence", "system-events" }
+
+
+def _entry_passes_same_user_scoping(
+    entry                 : Dict[ str, Any ],
+    authenticated_user_id : str,
+    user_session_ids      : Set[ str ],
+    bridge_owner_lookup   : Callable[ [ str ], Optional[ str ] ],
+) -> bool:
+    """
+    Per-entry same-user scoping check.
+
+    Mirrors the graceful-degradation pattern from `filter_and_project_sessions`
+    (broadcast filter — Q1 of `2026.05.14-broadcast-listener-stamps-wrong-user-id.md`).
+
+    Returns True iff at least one is satisfied:
+      1. `entry.metadata.sender_user_id == authenticated_user_id` (direct attribution —
+         e.g. `broadcasts` topic where `perform_fanout` stamps the sender's UUID per AC4
+         of the Phase 2 broadcast design)
+      2. `entry.metadata.target_session_id` is in `user_session_ids` (you-as-recipient —
+         e.g. per-recipient `broadcasts` fanout entries OR broadcast-acks targeting you)
+      3. `bridge_owner_lookup(entry.sender_session_id)` matches the caller, OR the lookup
+         returns `None` (graceful fallback — bridges lacking `owner_user_id` pass through,
+         same pattern as the broadcast-recipient filter; tightens to strict isolation
+         once every listener bridge stamps `owner_user_id`)
+    """
+    md = entry.get( "metadata" ) or { }
+    # Branch 1: direct sender-user attribution
+    if md.get( "sender_user_id" ) == authenticated_user_id:
+        return True
+    # Branch 2: target-session attribution
+    target_sid = md.get( "target_session_id" )
+    if target_sid and target_sid in user_session_ids:
+        return True
+    # Branch 3: bridge-owner attribution (graceful fallback for un-stamped bridges)
+    sender_sid = entry.get( "sender_session_id" )
+    if sender_sid:
+        owner = bridge_owner_lookup( sender_sid )
+        if owner is None:
+            return True
+        if owner == authenticated_user_id:
+            return True
+    return False
+
+
+def _project_history_entry( entry: Dict[ str, Any ], topic: str ) -> Dict[ str, Any ]:
+    """
+    Build the response shape for one history entry.
+
+    Per AC1 + AC5 + AC6: includes `topic` + `topic_kind` so the frontend can render
+    the topic-chip-prefix for free-form topics (Q2 ratified — non-reserved get a chip).
+    """
+    return {
+        "ts"                : entry.get( "ts" ),
+        "topic"             : topic,
+        "topic_kind"        : "reserved" if topic in _RESERVED_TOPICS else "free-form",
+        "sender_session_id" : entry.get( "sender_session_id" ),
+        "persona_name"      : entry.get( "persona_name" ),
+        "persona_icon"      : entry.get( "persona_icon" ),
+        "persona_color"     : entry.get( "persona_color" ),
+        "body"              : entry.get( "body" ),
+        "metadata"          : entry.get( "metadata" ) or { },
+    }
+
+
+def _resolve_since_cutoff(
+    since_iso  : Optional[ str ],
+    hours      : Optional[ float ],
+    now_iso_fn : Callable[ [ ], str ],
+) -> Optional[ str ]:
+    """
+    Resolve the effective `since` cutoff from caller-supplied parameters.
+
+    - If `since_iso` is supplied, use it directly.
+    - Else if `hours` is supplied, compute (now - hours) and return its ISO form.
+    - Else return None (no cutoff — return all retained entries).
+
+    `now_iso_fn` is injected for testability.
+    """
+    if since_iso:
+        return since_iso
+    if hours is not None:
+        now_dt = datetime.fromisoformat( now_iso_fn().replace( "Z", "+00:00" ) )
+        return ( now_dt - timedelta( hours=hours ) ).isoformat()
+    return None
+
+
+def execute_broadcast_history(
+    *,
+    authenticated_user_id : str,
+    store                 : Any,                                          # CommonsStore
+    since_iso             : Optional[ str ],
+    hours                 : Optional[ float ],
+    limit                 : int,
+    excluded_topics       : List[ str ],
+    max_entries_ceiling   : int,
+    user_session_ids_fn   : Callable[ [ ], Set[ str ] ],
+    bridge_owner_lookup   : Callable[ [ str ], Optional[ str ] ],
+    now_iso_fn            : Callable[ [ ], str ] = lambda: datetime.now( timezone.utc ).isoformat( timespec="microseconds" ),
+) -> Dict[ str, Any ]:
+    """
+    Aggregate commons entries across topics for the broadcast-card Recent Activity stream.
+
+    Per `src/rnd/v0.1.7/2026.05.14-commons-traffic-visibility-design.md` (AC1, AC4, AC5,
+    AC6, AC9). Ratifications:
+      Q2 — topic chips for free-form topics (kept in projection via `topic_kind`)
+      Q5 — `presence` + `system-events` excluded by default (caller-supplied
+            `excluded_topics` enforces this)
+      Q6 — `hours` window mirrors the existing history-window dropdown semantics
+      Q7 — flat reverse-chronological (sorted by `ts` DESC across topics)
+
+    Pipeline:
+      1. Resolve effective `since` cutoff from (`since_iso`, `hours`).
+      2. Enumerate active topics via `store._all_topic_names()`, drop excluded.
+      3. For each topic, fetch entries via `store.read(t, since=cutoff, limit=max_ceiling)`.
+      4. Apply per-entry same-user scoping via `_entry_passes_same_user_scoping`.
+      5. Merge across topics, sort newest-first.
+      6. Cap to `min(limit, max_entries_ceiling)`.
+      7. Project to the response shape via `_project_history_entry`.
+
+    Returns:
+        {
+            "entries"     : [ ...projected entries, newest first... ],
+            "since_used"  : "<iso>" | None,
+            "next_cursor" : None,    # v1 — pagination deferred per design "Open follow-ups"
+        }
+    """
+    cutoff_iso = _resolve_since_cutoff( since_iso, hours, now_iso_fn )
+
+    all_topics       = store._all_topic_names()
+    excluded_set     = set( excluded_topics )
+    included_topics  = [ t for t in all_topics if t not in excluded_set ]
+
+    user_session_ids = user_session_ids_fn()
+
+    merged: List[ Tuple[ str, Dict[ str, Any ] ] ] = [ ]
+    for t in included_topics:
+        try:
+            raw_entries = store.read( t, since=cutoff_iso, limit=max_entries_ceiling )
+        except FileNotFoundError:
+            continue
+        for e in raw_entries:
+            if _entry_passes_same_user_scoping( e, authenticated_user_id, user_session_ids, bridge_owner_lookup ):
+                merged.append( ( t, e ) )
+
+    # Sort by ts DESC across all topics (commons store sorts per-topic but ASC when `since` supplied —
+    # we need a single global reverse-chrono ordering after merge).
+    merged.sort( key=lambda pair: pair[ 1 ].get( "ts" ) or "", reverse=True )
+
+    effective_limit = min( limit, max_entries_ceiling )
+    merged          = merged[ :effective_limit ]
+
+    entries = [ _project_history_entry( e, t ) for ( t, e ) in merged ]
+
+    return {
+        "entries"     : entries,
+        "since_used"  : cutoff_iso,
+        "next_cursor" : None,
     }
 
 
@@ -668,6 +846,71 @@ async def post_broadcast_to_cc_sessions(   # pragma: no cover
 
 
 # ─── Step 6: register-question endpoints (Phase 3 push-mode) ────────────────
+
+
+@router.get(
+    "/broadcast-history",
+    summary     = "List recent commons traffic for the broadcast-card Recent Activity surface",
+    description = "Aggregates entries across all commons topics (excluding the configurable blacklist — defaults to presence + system-events) and returns them newest-first, scoped to the authenticated user. Powers the broadcast-card Recent Activity stream. Per src/rnd/v0.1.7/2026.05.14-commons-traffic-visibility-design.md (AC1, AC4-AC6).",
+)
+async def get_broadcast_history(   # pragma: no cover
+    authenticated_user_id: Annotated[ str, Depends( require_api_key_or_jwt ) ],
+    since                : Optional[ str ]   = None,
+    hours                : Optional[ float ] = None,
+    limit                : int               = 200,
+) -> JSONResponse:
+    _require_initialized()
+    config_mgr = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+
+    # AC2 — INI feature flag (default True per Q9; flip to False for kill-switch)
+    if not config_mgr.get( "commons traffic visibility enabled", return_type="boolean" ):
+        return JSONResponse( content={
+            "entries"     : [ ],
+            "since_used"  : None,
+            "next_cursor" : None,
+            "disabled"    : True,
+        } )
+
+    excluded_topics_raw = config_mgr.get( "commons traffic visibility exclude topics" ) or ""
+    excluded_topics     = [ t.strip() for t in excluded_topics_raw.split( "," ) if t.strip() ]
+    max_entries_ceiling = int( config_mgr.get( "commons traffic visibility max entries per response", return_type="int" ) )
+
+    # One-pass bridge enumeration: session_id → owner_user_id map. Used by BOTH
+    # the user-session resolver (for target_session_id attribution) AND the
+    # per-entry bridge_owner_lookup. Avoids walking the bridge dir twice.
+    bridge_owner_map: Dict[ str, Optional[ str ] ] = { }
+    for path, sid, _persona in find_active_voice_persona_sessions():
+        bridge = _load_bridge_fields( path )
+        if bridge is not None:
+            bridge_owner_map[ sid ] = bridge.get( "owner_user_id" )
+
+    def _user_session_ids():
+        # Same graceful-degradation pattern as filter_and_project_sessions:
+        # bridges with owner_user_id=None are treated as belonging to ANY user
+        # (un-stamped legacy bridges pass through).
+        return {
+            sid for sid, owner in bridge_owner_map.items()
+            if owner is None or owner == authenticated_user_id
+        }
+
+    def _bridge_owner_lookup( session_id ):
+        # Returns the bridge's owner_user_id, or None for both
+        # "session not in map" and "bridge has no owner_user_id".
+        return bridge_owner_map.get( session_id )
+
+    result = execute_broadcast_history(
+        authenticated_user_id = authenticated_user_id,
+        store                 = _commons_store,
+        since_iso             = since,
+        hours                 = hours,
+        limit                 = limit,
+        excluded_topics       = excluded_topics,
+        max_entries_ceiling   = max_entries_ceiling,
+        user_session_ids_fn   = _user_session_ids,
+        bridge_owner_lookup   = _bridge_owner_lookup,
+    )
+
+    return JSONResponse( content=result )
 
 
 @router.post(

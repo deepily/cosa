@@ -359,7 +359,7 @@ async def notify_user(
     valid_types = [
         "task", "progress", "alert", "custom", "user_initiated_message", "session_topic",
         "voice_persona_assigned", "voice_persona_released", "speakerphone_changed",
-        "commons_broadcast_ack", "commons_answer_received"
+        "commons_broadcast_ack", "commons_answer_received", "commons_activity"
     ]
     if type not in valid_types:
         raise HTTPException(

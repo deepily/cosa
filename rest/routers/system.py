@@ -668,6 +668,17 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
         default=False, return_type="boolean"
     )
 
+    # Commons Traffic Visibility — broadcast-card Recent Activity feature flag (2026-05-14)
+    # See src/rnd/v0.1.7/2026.05.14-commons-traffic-visibility-design.md (Q9 — default True)
+    commons_traffic_visibility_enabled = config_mgr.get(
+        "commons traffic visibility enabled",
+        default=True, return_type="boolean"
+    )
+    commons_traffic_visibility_default_hours_window = config_mgr.get(
+        "commons traffic visibility default hours window",
+        default="today"
+    )
+
     lupin_env = os.environ.get( "LUPIN_ENV", "" ).lower()
     if lupin_env in [ "test", "testing" ]:
         env_label = "TEST"
@@ -703,7 +714,19 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
         "tts_preview_enabled"            : bool( tts_preview_enabled ),
         "tts_preview_fraction"           : float( tts_preview_fraction ),
         "tts_preview_min_chars"          : int( tts_preview_min_chars ),
-        "tts_preview_include_semicolons" : bool( tts_preview_include_semicolons )
+        "tts_preview_include_semicolons" : bool( tts_preview_include_semicolons ),
+
+        # TTS interaction mode (chorus / solo) — drives mode-conditional icon
+        # rendering for the per-session DND toggle on each sender card. Added
+        # 2026-05-14 evening per src/rnd/v0.1.7/2026.05.14-per-session-dnd-toggle-and-slider-move.md
+        "tts_interaction_mode"           : config_mgr.get( "tts interaction mode", default="chorus" ),
+
+        # Commons Traffic Visibility (2026-05-14) — feature flag for the broadcast-card
+        # Recent Activity stream. JS-side reads this at constructor time to gate the
+        # render block + WS subscription. Default True per Q9 ratification.
+        # See src/rnd/v0.1.7/2026.05.14-commons-traffic-visibility-design.md
+        "commons_traffic_visibility_enabled"              : bool( commons_traffic_visibility_enabled ),
+        "commons_traffic_visibility_default_hours_window" : commons_traffic_visibility_default_hours_window,
     }
 
 
