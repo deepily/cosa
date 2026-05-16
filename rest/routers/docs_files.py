@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 import cosa.utils.util as cu
+from cosa.config.cache_registry import register_invalidator
 from cosa.config.configuration_manager import ConfigurationManager
 from cosa.rest.auth import get_current_user
 from cosa.rest.routers._dir_listing import list_directory
@@ -41,22 +42,6 @@ from cosa.rest.routers._scope_registry import (
 
 router = APIRouter( tags=[ "docs-files" ] )
 
-
-# Whitelist of allowed root-level files (exact-match) for legacy scope=docs
-ALLOWED_FILES = {
-    "history.md",
-    "CLAUDE.md",
-    "TODO.md",
-    "README.md",
-    "bug-fix-queue.md",
-}
-
-# Whitelist of allowed directory prefixes (must end with /) for legacy scope=docs
-ALLOWED_PREFIXES = [
-    "src/docs/",
-    "src/rnd/",
-    "src/workflow/",
-]
 
 # Allowed extensions:
 #   - Markdown / text-renderable docs (handled as text/markdown in the viewer)
@@ -99,6 +84,7 @@ def _get_scope_registry() -> dict:
     Ensures:
         - Returns a dict (possibly empty if no external repos configured)
         - Built exactly once per process via build_scope_registry(config_mgr)
+        - Cleared by _invalidate_scope_registry(); next call rebuilds
     """
     global _SCOPE_REGISTRY
     if _SCOPE_REGISTRY is None:
@@ -107,74 +93,75 @@ def _get_scope_registry() -> dict:
     return _SCOPE_REGISTRY
 
 
-def _is_whitelisted_legacy_docs( relative_path: str ) -> bool:
+def _invalidate_scope_registry() -> None:
     """
-    Legacy whitelist for scope=docs — preserves existing behavior unchanged.
+    Drop the cached registry so the next `_get_scope_registry()` call rebuilds.
 
-    Requires:
-        - relative_path is a non-empty project-relative string with no leading slash
-
-    Ensures:
-        - returns True iff path matches ALLOWED_FILES exactly, OR starts with an
-          ALLOWED_PREFIXES entry, OR equals a bare prefix root (Q2 resolution
-          from the doc-viewer-directory-listing design)
-        - returns False otherwise
+    Registered with `cosa.config.cache_registry` at import time. Called by
+    `/api/init` (via `invalidate_all()`) after `config_mgr.init()` so any
+    INI changes to `external repo *` keys take effect without a restart.
+    Resolves Mr. Radio's `/api/init` invalidation bug (filed 2026-05-15).
     """
-    if relative_path in ALLOWED_FILES:
-        return True
-    for prefix in ALLOWED_PREFIXES:
-        if relative_path.startswith( prefix ):
-            return True
-        if relative_path == prefix.rstrip( "/" ):
-            return True
-    return False
+    global _SCOPE_REGISTRY
+    _SCOPE_REGISTRY = None
+
+
+register_invalidator( "scope_registry", _invalidate_scope_registry )
 
 
 @router.get(
     "/api/docs/file",
-    summary     = "Serve project documentation file or directory listing (multi-scope)",
-    description = "Polymorphic file/directory endpoint. `scope=docs` (default) preserves the legacy narrow whitelist under the project root. Other scope values are resolved via SCOPE_REGISTRY built from [Lupin: Baseline] INI keys. JWT auth required on every request."
+    summary     = "Serve a project documentation file or directory listing via the unified scope registry",
+    description = "Polymorphic file/directory endpoint. The `path` query parameter MUST be `<project>/<rel>` — the first segment names a registered project (see /api/docs/scopes); the remainder is resolved under that project's root, subject to the project's `.docview.yml` whitelist (if present) plus the universal secrets blocklist floor. The legacy `?scope=` query parameter is IGNORED (retired by Q-R2). JWT auth required."
 )
 async def get_docs_file(
-    path        : str  = Query( ..., description="Scope-relative path; URL-decoded automatically" ),
-    scope       : str  = Query( "docs", description="Scope name — defaults to 'docs' for back-compat" ),
+    path        : str  = Query( ..., description="Path of the form `<project>/<rel>`; URL-decoded automatically. First segment names the registered project." ),
+    scope       : str  = Query( None, description="DEPRECATED — ignored. Use `path=<project>/<rel>` form instead. Retired per Q-R2 of 2026-05-15 doc-viewer scope unification." ),
     current_user: dict = Depends( get_current_user ),
 ):
     """
-    Serve a documentation file OR directory listing with per-scope whitelist + traversal protection.
+    Serve a documentation file OR directory listing via the unified scope registry.
+
+    URL format: `?path=<project>/<rel>` where the first path segment names a
+    registered project (see GET /api/docs/scopes). The remainder is resolved
+    under that project's root subject to:
+      (a) the universal secrets blocklist floor (~46 patterns covering
+          credentials, dev artifacts, IDE files, personal config)
+      (b) the project's `.docview.yml` whitelist if present (otherwise
+          wildcard semantics per Q2-C); plus any `extra_blocklist`
+          regex patterns declared in the manifest
 
     Polymorphic by resolved path type:
-    - File → PlainTextResponse with appropriate media type
-    - Directory → JSONResponse with {kind, scope, path, parent, entries}
+        - File → PlainTextResponse with appropriate media type
+        - Directory → JSONResponse with {kind, scope, path, parent, entries}
 
     Requires:
         - JWT bearer token in Authorization header (enforced by get_current_user)
-        - path is a scope-relative path (no leading slash); URL-decoded automatically
-        - For scope='docs' (legacy): resolves under project root, path matches legacy whitelist
-        - For other scopes: scope must exist in SCOPE_REGISTRY; path resolves under scope root,
-          path matches the scope's allowed_prefixes (empty = wildcard)
+        - path is `<project>/<rel>` form; URL-decoded automatically; leading slashes stripped
         - File extension must be in MEDIA_TYPES (for file branch)
-        - Resolved path must not match the secrets blocklist (filename pattern)
 
     Ensures:
-        - file path → PlainTextResponse with appropriate text media type
-        - directory path → JSONResponse with listing
+        - 200 + appropriate response on success
         - 401 if missing/invalid auth (raised by get_current_user)
-        - 400 for unknown scope, paths outside the whitelist, traversal artifacts,
-          unsupported extensions, or secrets-blocklist matches
+        - 400 for missing project prefix, unknown project, paths outside the whitelist,
+          traversal artifacts, unsupported extensions, or secrets-blocklist matches
         - 404 if the resolved path does not exist on disk
 
     Raises:
         - HTTPException 401: invalid/missing auth (from get_current_user)
-        - HTTPException 400: invalid/unsafe path, unknown scope, unsupported extension,
+        - HTTPException 400: invalid/unsafe path, unknown project, unsupported extension,
                              or secrets blocklist match
         - HTTPException 404: file or directory not found
         - HTTPException 500: read failure
     """
     decoded_path = unquote( path ).lstrip( "/" )
 
-    # Secrets blocklist applies to ALL scopes BEFORE per-scope resolution —
-    # if the path itself names a secret, never even attempt to resolve it.
+    # Empty path early-fail (must come before split-at-first-slash).
+    if not decoded_path:
+        raise HTTPException( status_code=400, detail="Empty path" )
+
+    # Universal floor blocklist applies BEFORE project resolution — if the
+    # path itself names a secret, never even attempt to look up the project.
     if _is_secrets_path( decoded_path ):
         raise HTTPException(
             status_code = 400,
@@ -182,49 +169,48 @@ async def get_docs_file(
         )
 
     # ---------------------------------------------------------------------
-    # Branch A: legacy scope=docs — preserves all existing behavior
+    # Phase 4b — path-prefix routing. The `scope=` query param is IGNORED.
     # ---------------------------------------------------------------------
-    if scope == "docs":
-        if not decoded_path:
-            raise HTTPException( status_code=400, detail="Empty path" )
+    if "/" not in decoded_path:
+        raise HTTPException(
+            status_code = 400,
+            detail      = "Missing project prefix; URL format: `?path=<project>/<rel>`"
+        )
 
-        if not _is_whitelisted_legacy_docs( decoded_path ):
-            raise HTTPException(
-                status_code = 400,
-                detail      = f"Path not in docs whitelist: {decoded_path}"
-            )
+    project_name, rel_path = decoded_path.split( "/", 1 )
 
-        project_root = cu.get_project_root()
-        full_path    = os.path.normpath( os.path.join( project_root, decoded_path ) )
+    if not project_name:
+        raise HTTPException(
+            status_code = 400,
+            detail      = "Empty project prefix"
+        )
 
-        if not full_path.startswith( project_root + os.sep ) and full_path != project_root:
-            raise HTTPException(
-                status_code = 400,
-                detail      = "Invalid path: must be within project root"
-            )
-
-        return _serve( full_path, decoded_path, scope="docs", parent_validator=_is_whitelisted_legacy_docs )
-
-    # ---------------------------------------------------------------------
-    # Branch B: external scope — registry lookup
-    # ---------------------------------------------------------------------
     registry  = _get_scope_registry()
-    scope_cfg = registry.get( scope )
+    scope_cfg = registry.get( project_name )
 
     if scope_cfg is None:
         raise HTTPException(
             status_code = 400,
-            detail      = f"Unknown scope: {scope!r}"
+            detail      = f"Unknown project: {project_name!r}"
         )
 
-    if not _is_whitelisted_in_scope( scope_cfg, decoded_path ):
+    if not _is_whitelisted_in_scope( scope_cfg, rel_path ):
         raise HTTPException(
             status_code = 400,
-            detail      = f"Path not in scope whitelist: {decoded_path}"
+            detail      = f"Path not in scope whitelist: {rel_path}"
         )
 
+    # Phase 3 — per-scope extra_blocklist from .docview.yml (additive to floor)
+    if scope_cfg.extra_blocklist_patterns:
+        from cosa.rest.routers._scope_registry import _is_secrets_path_for_scope
+        if _is_secrets_path_for_scope( scope_cfg, rel_path ):
+            raise HTTPException(
+                status_code = 400,
+                detail      = "Path matches secrets blocklist (per-scope)"
+            )
+
     try:
-        full_path = resolve_in_scope( scope_cfg, decoded_path )
+        full_path = resolve_in_scope( scope_cfg, rel_path )
     except ValueError as e:
         raise HTTPException( status_code=400, detail=str( e ) )
 
@@ -232,10 +218,57 @@ async def get_docs_file(
     # "parent" field uses per-scope whitelist logic.
     return _serve(
         full_path,
-        decoded_path,
-        scope            = scope,
+        rel_path,
+        scope            = project_name,
         parent_validator = lambda p, _cfg=scope_cfg: _is_whitelisted_in_scope( _cfg, p ),
     )
+
+
+@router.get(
+    "/api/docs/scopes",
+    summary     = "List registered doc-viewer scopes (admin / debugging utility)",
+    description = "Returns the unified scope registry as a JSON object. Each entry shows scope name, root path, allowed_prefixes, allowed_root_files (from manifest if present), and a source marker ('manifest' vs 'ini-only'). Phase 3 of doc-viewer scope unification; consumed primarily by cosa-voice MCP integration for runtime scope discovery."
+)
+async def get_scopes( current_user: dict = Depends( get_current_user ) ):
+    """
+    Return a snapshot of the active scope registry.
+
+    Requires:
+        - JWT bearer token (enforced by get_current_user)
+
+    Ensures:
+        - returns JSON `{scopes: [...]}` where each entry has fields:
+            name              : scope identifier
+            root              : in-container absolute path
+            allowed_prefixes  : list[str] (manifest's authoritative list if
+                                manifest present; else INI fallback)
+            allowed_root_files: list[str] (manifest only; empty when no manifest)
+            extra_blocklist   : list[str] (manifest only; empty when no manifest)
+            source            : "manifest" | "ini-only"
+    """
+    registry = _get_scope_registry()
+    scopes_payload = []
+    for name, cfg in sorted( registry.items() ):
+        if cfg.manifest is not None:
+            scopes_payload.append( {
+                "name"               : name,
+                "root"               : cfg.root,
+                "allowed_prefixes"   : list( cfg.manifest.allowed_prefixes ),
+                "allowed_root_files" : list( cfg.manifest.allowed_root_files ),
+                "extra_blocklist"    : list( cfg.manifest.extra_blocklist ),
+                "source"             : "manifest",
+            } )
+        else:
+            scopes_payload.append( {
+                "name"               : name,
+                "root"               : cfg.root,
+                "allowed_prefixes"   : list( cfg.allowed_prefixes ),
+                "allowed_root_files" : [],
+                "extra_blocklist"    : [],
+                "source"             : "ini-only",
+            } )
+
+    return JSONResponse( content={ "scopes": scopes_payload } )
 
 
 def _serve( full_path: str, rel_path: str, scope: str, parent_validator ) -> JSONResponse | PlainTextResponse:

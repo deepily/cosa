@@ -22,9 +22,11 @@ Generated on: 2026-05-12
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Optional, Tuple
 
 import cosa.utils.util as du
+from cosa.config.docview_manifest import DocviewManifest, load_manifest_for_scope
 
 
 # ---------------------------------------------------------------------------
@@ -40,13 +42,25 @@ class ScopeConfig:
         name             : Short scope name (used in `?scope=<name>`).
         root             : Absolute filesystem path inside the container.
         allowed_prefixes : Tuple of path prefixes (relative to root). Empty tuple
-                           means "all paths under root are reachable" (subject to
-                           MEDIA_TYPES and secrets blocklist).
+                           AND no manifest → wildcard ("all paths under root are
+                           reachable" subject to MEDIA_TYPES + secrets blocklist).
+                           When a manifest is present, the manifest's
+                           `allowed_prefixes` is authoritative; this field is
+                           treated as the fallback for repos that ship neither.
+        manifest         : Optional `DocviewManifest` loaded from
+                           `<root>/.docview.yml` at build time. When present,
+                           the manifest's allowed_prefixes, allowed_root_files,
+                           and extra_blocklist are the authority for this scope.
+        extra_blocklist_patterns: Pre-compiled regex patterns derived from
+                           manifest.extra_blocklist (if any). Empty tuple
+                           when no manifest or no extras.
     """
 
-    name             : str
-    root             : str
-    allowed_prefixes : tuple
+    name                     : str
+    root                     : str
+    allowed_prefixes         : tuple
+    manifest                 : Optional[ DocviewManifest ] = None
+    extra_blocklist_patterns : tuple                       = ()
 
 
 # ---------------------------------------------------------------------------
@@ -54,28 +68,70 @@ class ScopeConfig:
 # ---------------------------------------------------------------------------
 
 SECRETS_BLOCKLIST_PATTERNS = (
+    # ----- Credentials (pre-existing + extensions) -----
     # Dotfiles known to carry secrets
     re.compile( r"^\.env(\.|$)" ),
     re.compile( r"^\.netrc$" ),
     re.compile( r"^\.pgpass$" ),
+    re.compile( r"^\.credentials" ),                              # F4/F5: any .credentials*
 
     # Common credential-bearing names (word-boundary anchored to avoid
     # false-positives on substrings like "secretive_methods" or
     # "credentialism" — both legitimate filenames that should NOT be blocked).
     re.compile( r"\bcredentials?\b", re.IGNORECASE ),
-    re.compile( r"\bsecrets?\b", re.IGNORECASE ),
+    re.compile( r"\bsecrets?\b",     re.IGNORECASE ),
+    re.compile( r"\bpassword\b",     re.IGNORECASE ),             # F4 add
 
     # Key/cert file extensions
     re.compile( r"\.pem$", re.IGNORECASE ),
     re.compile( r"\.key$", re.IGNORECASE ),
     re.compile( r"\.pfx$", re.IGNORECASE ),
     re.compile( r"\.p12$", re.IGNORECASE ),
+    re.compile( r"\.gpg$", re.IGNORECASE ),                       # F4 add
+    re.compile( r"\.asc$", re.IGNORECASE ),                       # F4 add
 
     # SSH key filenames
-    re.compile( r"id_rsa", re.IGNORECASE ),
+    re.compile( r"id_rsa",     re.IGNORECASE ),
     re.compile( r"id_ed25519", re.IGNORECASE ),
-    re.compile( r"id_dsa", re.IGNORECASE ),
-    re.compile( r"id_ecdsa", re.IGNORECASE ),
+    re.compile( r"id_dsa",     re.IGNORECASE ),
+    re.compile( r"id_ecdsa",   re.IGNORECASE ),
+
+    # ----- Local config (F4: never expose per-user / per-host overrides) -----
+    re.compile( r"^CLAUDE\.local\.md$" ),
+    re.compile( r"\.local\.md$",   re.IGNORECASE ),
+    re.compile( r"\.local\.json$", re.IGNORECASE ),
+    re.compile( r"\.local\.ya?ml$", re.IGNORECASE ),
+    re.compile( r"^\.gitconfig-local$" ),
+
+    # ----- Dev artifacts (F4 + F5 case-insensitive) -----
+    re.compile( r"^\.venv$",         re.IGNORECASE ),
+    re.compile( r"^node_modules$",   re.IGNORECASE ),
+    re.compile( r"^__pycache__$",    re.IGNORECASE ),
+    re.compile( r"\.pyc$",           re.IGNORECASE ),
+    re.compile( r"\.pyo$",           re.IGNORECASE ),
+    re.compile( r"^dist$",           re.IGNORECASE ),
+    re.compile( r"^build$",          re.IGNORECASE ),
+    re.compile( r"^target$",         re.IGNORECASE ),
+    re.compile( r"^\.coverage$",     re.IGNORECASE ),
+    re.compile( r"^coverage$",       re.IGNORECASE ),
+    re.compile( r"^\.pytest_cache$", re.IGNORECASE ),
+    re.compile( r"^\.tox$",          re.IGNORECASE ),
+
+    # ----- IDE / editor (F4 + F5 case-insensitive) -----
+    re.compile( r"^\.idea$",     re.IGNORECASE ),
+    re.compile( r"^\.vscode$",   re.IGNORECASE ),
+    re.compile( r"^\.DS_Store$", re.IGNORECASE ),
+    re.compile( r"\.swp$",       re.IGNORECASE ),
+    re.compile( r"\.swo$",       re.IGNORECASE ),
+    re.compile( r"^Thumbs\.db$", re.IGNORECASE ),
+
+    # ----- Personal config / cloud (F4 + F5 case-insensitive) -----
+    re.compile( r"^\.bash_history$", re.IGNORECASE ),
+    re.compile( r"^\.ssh$",          re.IGNORECASE ),
+    re.compile( r"^\.aws$",          re.IGNORECASE ),
+    re.compile( r"^\.gnupg$",        re.IGNORECASE ),
+    re.compile( r"^\.kube$",         re.IGNORECASE ),
+    re.compile( r"^\.docker$",       re.IGNORECASE ),
 )
 
 
@@ -111,34 +167,76 @@ def _is_secrets_path( relative_path: str ) -> bool:
 
 def _is_whitelisted_in_scope( scope_cfg: ScopeConfig, relative_path: str ) -> bool:
     """
-    Return True iff `relative_path` is permitted by the scope's `allowed_prefixes`.
+    Return True iff `relative_path` is permitted by the scope's whitelist.
+
+    Resolution order (Phase 3 manifest extension):
+        1. If `scope_cfg.manifest` is set, the manifest's `allowed_prefixes` +
+           `allowed_root_files` is the authority for this scope. Empty manifest
+           lists mean "no paths permitted" (explicit-opt-in semantics).
+        2. If no manifest, fall back to the INI-derived
+           `scope_cfg.allowed_prefixes`. Empty → wildcard (per Q2-C
+           missing-manifest semantics).
+        3. Bare scope-root listing (empty relative_path) is always allowed so
+           directory listings work.
 
     Requires:
         - scope_cfg is a ScopeConfig instance
         - relative_path is a project-relative path string with no leading slash
 
     Ensures:
-        - empty allowed_prefixes → returns True (wildcard — every path reachable
-          subject to MEDIA_TYPES + secrets blocklist applied elsewhere)
-        - non-empty allowed_prefixes → returns True iff `relative_path`:
-            * startswith one of the prefixes, OR
-            * equals a prefix with its trailing slash stripped (e.g., "src"
-              matches the "src/" prefix — Q2 resolution from doc-viewer-directory-listing)
-        - returns False otherwise
-        - empty relative_path returns True (the scope root itself is always
-          listable; this lets `/app/docs?path=&scope=<name>` show the root)
+        - returns True when the path passes the active whitelist (manifest or
+          INI prefixes), False otherwise
+        - empty relative_path returns True (root listing affordance)
     """
-    if not scope_cfg.allowed_prefixes:
-        return True
     if not relative_path:
-        # Bare scope-root listing — always allowed; the per-entry filter handles
-        # whether individual entries surface.
+        return True
+
+    # Manifest authority (Q2-C / Q3-A): when present, use it.
+    if scope_cfg.manifest is not None:
+        m = scope_cfg.manifest
+        # Root-file whitelist: exact-match check (only for top-level files).
+        if "/" not in relative_path and relative_path in m.allowed_root_files:
+            return True
+        # Prefix whitelist
+        for prefix in m.allowed_prefixes:
+            if relative_path.startswith( prefix ):
+                return True
+            if relative_path == prefix.rstrip( "/" ):
+                return True
+        return False
+
+    # No manifest — INI-derived behavior (wildcard if empty).
+    if not scope_cfg.allowed_prefixes:
         return True
     for prefix in scope_cfg.allowed_prefixes:
         if relative_path.startswith( prefix ):
             return True
         if relative_path == prefix.rstrip( "/" ):
             return True
+    return False
+
+
+def _is_secrets_path_for_scope( scope_cfg: ScopeConfig, relative_path: str ) -> bool:
+    """
+    Combined floor + per-scope extra blocklist check.
+
+    The universal floor (`SECRETS_BLOCKLIST_PATTERNS`) is checked first. If
+    no floor pattern matches, the scope's `extra_blocklist_patterns` (from
+    `manifest.extra_blocklist`, if any) are checked. Per Q4-B repos can only
+    ADD patterns; they cannot remove floor patterns.
+    """
+    if _is_secrets_path( relative_path ):
+        return True
+
+    if not scope_cfg.extra_blocklist_patterns:
+        return False
+
+    for part in relative_path.split( "/" ):
+        if not part:
+            continue
+        for pattern in scope_cfg.extra_blocklist_patterns:
+            if pattern.search( part ):
+                return True
     return False
 
 
@@ -226,10 +324,24 @@ def build_scope_registry( config_mgr ) -> dict:
 
         prefixes = tuple( p.strip() for p in prefixes_raw if p and p.strip() )
 
+        # Phase 3: load `<root>/.docview.yml` if present. Failures fall back
+        # to None (caller treats None as wildcard per Q2-C).
+        manifest = load_manifest_for_scope( root )
+
+        extra_blocklist_patterns: tuple
+        if manifest is not None and manifest.extra_blocklist:
+            extra_blocklist_patterns = tuple(
+                re.compile( pat ) for pat in manifest.extra_blocklist
+            )
+        else:
+            extra_blocklist_patterns = ()
+
         registry[ name ] = ScopeConfig(
-            name             = name,
-            root             = root,
-            allowed_prefixes = prefixes,
+            name                     = name,
+            root                     = root,
+            allowed_prefixes         = prefixes,
+            manifest                 = manifest,
+            extra_blocklist_patterns = extra_blocklist_patterns,
         )
 
     print( f"[scope_registry] registered {len( registry )} external scope(s): {sorted( registry )}" )

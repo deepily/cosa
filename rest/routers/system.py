@@ -208,25 +208,30 @@ async def init( config_block_id: Optional[ str ] = None ):
 
         config_mgr.print_configuration( brackets=True )
 
-        # Reload snapshots using the global snapshot manager
-        if hasattr( main_module, 'snapshot_mgr' ) and main_module.snapshot_mgr:
-            print( "Reloading solution snapshots..." )
-            main_module.snapshot_mgr.reload()
+        # Flush every registered cache uniformly. Each cache module
+        # (snapshot_mgr in main.py, prediction_engine, scope_registry,
+        # any future cache) self-registers an invalidator at import time
+        # via cosa.config.cache_registry; /api/init no longer needs to
+        # know about each cache explicitly. Resolves Mr. Radio's
+        # /api/init invalidation bug (filed 2026-05-15, session ea85fd64).
+        from cosa.config.cache_registry import invalidate_all
+        caches_invalidated = invalidate_all()
 
-        # Reset PredictionEngine singleton so it re-reads config (e.g., test LanceDB table)
+        # Eagerly rebuild PredictionEngine after reset so the first request
+        # hitting the engine doesn't pay the cold-start cost.
         try:
-            from cosa.agents.prediction_engine.prediction_engine import PredictionEngine, get_prediction_engine
-            PredictionEngine.reset()
+            from cosa.agents.prediction_engine.prediction_engine import get_prediction_engine
             get_prediction_engine( config_mgr=config_mgr )
         except Exception as pe:
-            print( f"[INIT] PredictionEngine reset note: {pe}" )
+            print( f"[INIT] PredictionEngine eager-rebuild note: {pe}" )
 
         return {
-            "status"          : "success",
-            "config_block_id" : config_mgr.config_block_id,
-            "database_url"    : new_db_url,
-            "environment"     : os.environ.get( "LUPIN_ENV", "development" ),
-            "timestamp"       : du.get_current_datetime_iso()
+            "status"             : "success",
+            "config_block_id"    : config_mgr.config_block_id,
+            "database_url"       : new_db_url,
+            "environment"        : os.environ.get( "LUPIN_ENV", "development" ),
+            "caches_invalidated" : caches_invalidated,
+            "timestamp"          : du.get_current_datetime_iso()
         }
     except Exception as e:
         return {
