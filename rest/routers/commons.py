@@ -45,6 +45,7 @@ from lupin_cli.claude_code.hooks.lib.session_bridge import (
     build_sender_id_for_cc,
     find_active_voice_persona_sessions,
 )
+from lupin_mcp.commons_persona_matcher import match_persona
 from lupin_mcp.commons_store import CommonsStore
 
 router = APIRouter( prefix="/api/commons", tags=[ "commons" ] )
@@ -116,6 +117,18 @@ class RegisterQuestionRequest( BaseModel ):
                            inject_fn closure for sender_id routing.
                            Loosely constrained: must be a non-empty string.
     - `ttl_seconds`      — Q4 1h default, 1..604800 (7d cap)
+
+    Inter-Session DM extension (2026-05-15 design Phase 0 §14):
+    - `recipient_session_id` — if set, dispatch `commons_question_received`
+                               to this session's listener at register time.
+                               Precedence over `recipient_persona` if both supplied.
+    - `recipient_persona`    — if set (and session_id NOT set), resolve to
+                               session_id via the persona resolution chain
+                               (exact → case-insensitive → punct-tolerant →
+                               PHI-4 LLM disambiguator). Unicode-tolerant.
+    - `expect_reply`         — when False, sender does NOT need the asker-side
+                               watcher push (fire-and-forget DM); when True
+                               (default), Phase 3 watcher tracks for replies.
     """
     topic            : str = Field(
         ...,
@@ -135,6 +148,33 @@ class RegisterQuestionRequest( BaseModel ):
         gt      = 0,
         le      = _TTL_MAX_SECONDS,
     )
+    recipient_session_id : Optional[ str ] = Field( default=None, min_length=1, max_length=128 )
+    recipient_persona    : Optional[ str ] = Field( default=None, min_length=1, max_length=64 )
+    expect_reply         : bool            = Field( default=True )
+
+
+class RecipientResolutionError( BaseModel ):
+    """
+    422 response body when recipient resolution fails for an inter-session DM
+    register-question call (per Phase 0 Q3-rev amendment 2026-05-15).
+
+    Surfaces actionable feedback so the AI caller can self-correct without
+    involving the human user. Fields:
+    - `error`                      — categorical failure mode (Literal)
+    - `supplied_persona`           — original input echoed back
+    - `supplied_session_id`        — original input echoed back
+    - `resolution_chain_attempted` — which resolution levels were tried
+    - `candidate_alternatives`     — currently-active sessions the AI could
+                                     try instead (sourced from commons_who()
+                                     output at the moment of failure)
+    - `suggested_next_action`      — one-sentence guidance string
+    """
+    error                       : str       = Field( ..., min_length=1 )
+    supplied_persona            : Optional[ str ] = Field( default=None )
+    supplied_session_id         : Optional[ str ] = Field( default=None )
+    resolution_chain_attempted  : List[ str ]              = Field( default_factory=list )
+    candidate_alternatives      : List[ Dict[ str, str ] ] = Field( default_factory=list )
+    suggested_next_action       : str       = Field( ..., min_length=1 )
 
 
 # ─── Pure-logic helpers (in 100% coverage gate) ─────────────────────────────
@@ -573,6 +613,107 @@ def _resolve_since_cutoff(
     return None
 
 
+def _dedupe_broadcasts_by_id(
+    merged: List[ Tuple[ str, Dict[ str, Any ] ] ],
+) -> List[ Tuple[ str, Dict[ str, Any ] ] ]:
+    """
+    Collapse per-recipient `broadcasts`-topic fanout rows into one row per
+    `metadata.broadcast_id`, keeping the first occurrence (newest after the
+    DESC sort upstream).
+
+    Required by the Recent Activity surface
+    (`src/rnd/v0.1.7/2026.05.14-commons-traffic-visibility-design.md`):
+    Phase 2's `perform_fanout` (this module, line ~348) writes ONE `broadcasts`
+    row per recipient by design — supports the `target_session_id` branch of
+    `_entry_passes_same_user_scoping`. For an admin-overview stream those N
+    rows are noise; the admin wants "one broadcast = one row".
+
+    Mutation contract: input list is read-only. The kept entry is shallow-copied
+    with `target_session_id` stripped from its `metadata` — the dedup'd row
+    represents the broadcast as a whole, not any one recipient slice.
+
+    Non-`broadcasts` topics pass through unchanged (e.g. `broadcast-acks`
+    per-recipient rows are the intended chip-row UX). Broadcasts-topic entries
+    missing `metadata.broadcast_id` pass through unchanged (defensive — a
+    malformed entry shouldn't disappear silently).
+    """
+    seen_broadcast_ids : Set[ str ]                              = set()
+    out                : List[ Tuple[ str, Dict[ str, Any ] ] ] = [ ]
+    for ( topic, entry ) in merged:
+        if topic != "broadcasts":
+            out.append( ( topic, entry ) )
+            continue
+        md  = entry.get( "metadata" ) or { }
+        bid = md.get( "broadcast_id" )
+        if not isinstance( bid, str ):
+            out.append( ( topic, entry ) )
+            continue
+        if bid in seen_broadcast_ids:
+            continue
+        seen_broadcast_ids.add( bid )
+        new_md             = { k: v for k, v in md.items() if k != "target_session_id" }
+        new_entry          = dict( entry )
+        new_entry[ "metadata" ] = new_md
+        out.append( ( topic, new_entry ) )
+    return out
+
+
+def _dedupe_broadcast_acks_by_recipient(
+    merged: List[ Tuple[ str, Dict[ str, Any ] ] ],
+) -> List[ Tuple[ str, Dict[ str, Any ] ] ]:
+    """
+    Collapse `broadcast-acks`-topic rows that share `(broadcast_id,
+    sender_session_id, metadata.status)` down to a single row, keeping the
+    first occurrence (newest after the DESC sort upstream).
+
+    Symptom case: a single recipient session writes the same ack 3-4× within
+    milliseconds (e.g. status="completed" for the same broadcast_id from the
+    same sender_session_id). Observed in production
+    `io/commons/broadcast-acks.md` on 2026-05-15 around 15:16:43Z, where one
+    recipient logged three identical `status="completed"` rows for broadcast
+    `adedc24b…` at .852328 / .852596 / .854790 — bodies and metadata
+    bit-identical.
+
+    Sister to `_dedupe_broadcasts_by_id` — same shape, different key. The
+    underlying write-side multiplicity (something is causing N
+    `notification_queue_update` deliveries → N `_handle_broadcast_received`
+    → N `_post_ack` calls in `src/lupin_mcp/broadcast_handler.py`) is a
+    SEPARATE investigation; this consumer-side filter is the agreed-upon
+    shipping fix per Rick's voice direction (2026-05-15 evening, session
+    06aba5f7 Arnold 🪨), following the precedent set by the broadcasts-topic
+    dedupe (`_dedupe_broadcasts_by_id`) that landed earlier the same day in
+    session c4139ece (María 🌸). Bug filing in `bug-fix-queue.md` rev
+    2026-05-15 captures the four ranked plausible causes for the write-side
+    multiplicity that next investigation should run with.
+
+    Mutation contract: input list is read-only. Only `broadcast-acks` topic
+    entries with all three keys present are subject to dedup. Defensive
+    passthrough on any missing/non-string key (a malformed entry shouldn't
+    disappear silently).
+
+    Non-`broadcast-acks` topics pass through unchanged.
+    """
+    seen_keys : Set[ Tuple[ str, str, str ] ]            = set()
+    out       : List[ Tuple[ str, Dict[ str, Any ] ] ]   = [ ]
+    for ( topic, entry ) in merged:
+        if topic != "broadcast-acks":
+            out.append( ( topic, entry ) )
+            continue
+        md  = entry.get( "metadata" ) or { }
+        bid = md.get( "broadcast_id" )
+        sid = entry.get( "sender_session_id" )
+        st  = md.get( "status" )
+        if not ( isinstance( bid, str ) and isinstance( sid, str ) and isinstance( st, str ) ):
+            out.append( ( topic, entry ) )
+            continue
+        key = ( bid, sid, st )
+        if key in seen_keys:
+            continue
+        seen_keys.add( key )
+        out.append( ( topic, entry ) )
+    return out
+
+
 def execute_broadcast_history(
     *,
     authenticated_user_id : str,
@@ -635,6 +776,16 @@ def execute_broadcast_history(
     # we need a single global reverse-chrono ordering after merge).
     merged.sort( key=lambda pair: pair[ 1 ].get( "ts" ) or "", reverse=True )
 
+    # Collapse per-recipient `broadcasts` fanout rows: one admin-overview row per broadcast_id.
+    # Must precede the limit cap or a small limit truncates within a single broadcast's fanout set.
+    merged = _dedupe_broadcasts_by_id( merged )
+
+    # Collapse same-recipient repeated `broadcast-acks` rows: 3-4× write-side multiplicity
+    # observed in production (see `_dedupe_broadcast_acks_by_recipient` docstring for the
+    # 2026-05-15 forensic data + the ranked write-side root-cause candidates that the next
+    # bug-fix-queue cycle should run with).
+    merged = _dedupe_broadcast_acks_by_recipient( merged )
+
     effective_limit = min( limit, max_entries_ceiling )
     merged          = merged[ :effective_limit ]
 
@@ -692,6 +843,158 @@ def make_question_inject_fn(
     return _inject
 
 
+def _resolve_dm_recipient(
+    *,
+    recipient_session_id  : Optional[ str ],
+    recipient_persona     : Optional[ str ],
+    authenticated_user_id : str,
+    raw_sessions_fn       : Callable[ [ ], List[ Tuple[ Any, str, Dict[ str, Any ] ] ] ],
+    bridge_loader         : Callable[ [ Any ], Optional[ Dict[ str, Any ] ] ],
+    active_session_threshold_seconds : float,
+    now_epoch_fn          : Callable[ [ ], float ] = time.time,
+) -> Dict[ str, Any ]:
+    """
+    Resolve an inter-session DM recipient to a concrete session_id + persona_name.
+
+    Per Phase 0 Q3-rev (2026-05-15 ratified):
+    - session_id takes precedence over persona when both supplied
+    - persona resolution chain: exact → case-insensitive → punct/whitespace-tolerant
+      (PHI-4 LLM disambiguator stubbed for v1; can be wired in v1.1)
+    - Failures return 422 with rich `RecipientResolutionError` body so the AI
+      caller can self-correct (Rick's amendment).
+
+    Same-user scoping via `filter_and_project_sessions` (Phase 2 T7 inheritance).
+
+    Returns:
+      {"http_status": 200, "session_id": str, "persona_name": str | None}
+      {"http_status": 422, "detail": <RecipientResolutionError model_dump>}
+    """
+    active_sessions = filter_and_project_sessions(
+        raw_sessions                     = raw_sessions_fn(),
+        authenticated_user_id            = authenticated_user_id,
+        active_session_threshold_seconds = active_session_threshold_seconds,
+        now_epoch                        = now_epoch_fn(),
+        bridge_loader                    = bridge_loader,
+        originator_session_id            = None,
+        include_originator               = True,
+    )
+
+    candidate_alternatives = [
+        {
+            "persona"      : str( s.get( "persona_name" ) or "" ),
+            "session_id"   : str( s.get( "session_id" ) or "" ),
+            "active_since" : str( s.get( "last_seen_iso" ) or "" ),
+        }
+        for s in active_sessions
+    ]
+
+    if recipient_session_id is not None:
+        match = next( ( s for s in active_sessions if s.get( "session_id" ) == recipient_session_id ), None )
+        if match is None:
+            err = RecipientResolutionError(
+                error                      = "recipient_inactive",
+                supplied_persona           = recipient_persona,
+                supplied_session_id        = recipient_session_id,
+                resolution_chain_attempted = [ "session_id_direct" ],
+                candidate_alternatives     = candidate_alternatives,
+                suggested_next_action      = "Call commons_who() to enumerate currently-active sessions; the supplied recipient_session_id is not present (or owned by a different user).",
+            )
+            return { "http_status": 422, "detail": err.model_dump() }
+        return {
+            "http_status"  : 200,
+            "session_id"   : recipient_session_id,
+            "persona_name" : match.get( "persona_name" ),
+        }
+
+    if recipient_persona is not None:
+        candidate_personas = [ s.get( "persona_name", "" ) for s in active_sessions if s.get( "persona_name" ) ]
+        # T7-style isolation: `match_persona` can hit the LLM disambiguator chain
+        # (Phase 3 wiring) which may raise on PHI-4 model unavailability, network
+        # failures, or Haiku stub NotImplementedError. Treat any disambiguator
+        # exception as "could not resolve" and fall through to the 422 path so
+        # the AI caller gets a clean error contract instead of a 500.
+        try:
+            matched_persona = match_persona( recipient_persona, candidate_personas )
+        except Exception:
+            matched_persona = None
+        if matched_persona is None:
+            err = RecipientResolutionError(
+                error                      = "recipient_not_found",
+                supplied_persona           = recipient_persona,
+                supplied_session_id        = None,
+                resolution_chain_attempted = [ "exact", "case_insensitive", "punct_tolerant" ],
+                candidate_alternatives     = candidate_alternatives,
+                suggested_next_action      = "No active session matched the persona. Call commons_who() to list active personas, or supply recipient_session_id directly.",
+            )
+            return { "http_status": 422, "detail": err.model_dump() }
+        match = next( ( s for s in active_sessions if s.get( "persona_name" ) == matched_persona ), None )
+        if match is None:
+            err = RecipientResolutionError(
+                error                      = "recipient_not_found",
+                supplied_persona           = recipient_persona,
+                supplied_session_id        = None,
+                resolution_chain_attempted = [ "exact", "case_insensitive", "punct_tolerant" ],
+                candidate_alternatives     = candidate_alternatives,
+                suggested_next_action      = "Internal: persona matched but session lookup failed. Retry shortly.",
+            )
+            return { "http_status": 422, "detail": err.model_dump() }
+        return {
+            "http_status"  : 200,
+            "session_id"   : str( match.get( "session_id" ) ),
+            "persona_name" : matched_persona,
+        }
+
+    err = RecipientResolutionError(
+        error                      = "recipient_required",
+        supplied_persona           = None,
+        supplied_session_id        = None,
+        resolution_chain_attempted = [ ],
+        candidate_alternatives     = candidate_alternatives,
+        suggested_next_action      = "Supply either recipient_session_id or recipient_persona on the request body.",
+    )
+    return { "http_status": 422, "detail": err.model_dump() }
+
+
+def _dispatch_commons_question_received(
+    *,
+    notification_queue    : Any,
+    target_session_id     : str,
+    target_persona        : Optional[ str ],
+    question_id           : str,
+    topic                 : str,
+    asker_session_id      : str,
+    authenticated_user_id : str,
+    build_sender_id       : Callable[ [ str ], Optional[ str ] ],
+) -> bool:
+    """
+    Fire-and-forget dispatch of a `commons_question_received` notification to
+    the recipient session's listener. Per Phase 0 Q2-rev + T7 isolation:
+    dispatch failures log + return False; sender's register-question call is
+    NOT undone.
+    """
+    try:
+        notification_queue.push_notification(
+            message            = "",
+            type               = "user_initiated_message",
+            title              = "action:commons_question_received",
+            sender_id          = build_sender_id( target_session_id ),
+            job_id             = target_session_id[ :8 ],
+            user_id            = authenticated_user_id,
+            suppress_ding      = True,
+            response_requested = False,
+            payload            = {
+                "question_id"       : question_id,
+                "topic"             : topic,
+                "asker_session"     : asker_session_id,
+                "recipient_persona" : target_persona,
+                "recipient_session" : target_session_id,
+            },
+        )
+        return True
+    except Exception:
+        return False
+
+
 def execute_register_question(
     *,
     authenticated_user_id : str,
@@ -699,20 +1002,39 @@ def execute_register_question(
     question_watcher      : CommonsQuestionWatcher,
     notification_queue    : Any,
     build_sender_id       : Callable[ [ str ], Optional[ str ] ],
+    raw_sessions_fn       : Optional[ Callable[ [ ], List[ Tuple[ Any, str, Dict[ str, Any ] ] ] ] ] = None,
+    bridge_loader         : Optional[ Callable[ [ Any ], Optional[ Dict[ str, Any ] ] ] ]            = None,
+    active_session_threshold_seconds : float = 600.0,
+    now_epoch_fn          : Callable[ [ ], float ] = time.time,
 ) -> Dict[ str, Any ]:
     """
     Pure-logic core for POST /api/commons/register-question.
 
     Returns a dict with one of these shapes (route handler translates to FastAPI):
-      {"http_status": 201, "question_id": "...", "ttl_seconds": int}
+      {"http_status": 201, "question_id": "...", "ttl_seconds": int, "dm_dispatched": bool | None}
       {"http_status": 409, "detail": "question_id collision"}
       {"http_status": 429, "detail": "tracker cap reached", "retry_after": None}
+      {"http_status": 422, "detail": <RecipientResolutionError model_dump>}
 
     Body-level field validation already happened at Pydantic instantiation
     (FastAPI auto-422'd before this helper was called).
 
     T3: per-user + global caps enforced by the watcher (`CapExceededError`).
     T9: question_id collision raises `ValueError` from `_register()`.
+
+    Inter-Session DM extension (Phase 0 §14 2026-05-15):
+    - If `body.recipient_session_id` OR `body.recipient_persona` set AND
+      resolver callables wired:
+        1. Resolve recipient via `_resolve_dm_recipient` (same-user scoped).
+        2. On 422: unregister the question (undo Phase 3 reservation) +
+           return the 422 error body so the AI caller can rectify per
+           Rick's Q3-rev amendment.
+        3. On success: dispatch `commons_question_received` via
+           `notification_queue.push_notification` (fire-and-forget per
+           Q2-rev, T7-isolated). Set `dm_dispatched` on the 201 body.
+    - When resolver callables are None (Phase-3 unit-test injection
+      ergonomics), DM resolution is silently skipped — preserves
+      backward compat for non-DM Phase-3 callers.
     """
     inject_fn = make_question_inject_fn(
         notification_queue = notification_queue,
@@ -733,10 +1055,42 @@ def execute_register_question(
         return { "http_status": 429, "detail": "question tracker cap reached", "reason": str( e ) }
     except ValueError:
         return { "http_status": 409, "detail": "question_id collision" }
+
+    dm_dispatched : Optional[ bool ] = None
+    if ( body.recipient_session_id is not None or body.recipient_persona is not None ) \
+       and raw_sessions_fn is not None and bridge_loader is not None:
+        resolution = _resolve_dm_recipient(
+            recipient_session_id             = body.recipient_session_id,
+            recipient_persona                = body.recipient_persona,
+            authenticated_user_id            = authenticated_user_id,
+            raw_sessions_fn                  = raw_sessions_fn,
+            bridge_loader                    = bridge_loader,
+            active_session_threshold_seconds = active_session_threshold_seconds,
+            now_epoch_fn                     = now_epoch_fn,
+        )
+        if resolution.get( "http_status" ) == 422:
+            try:
+                question_watcher.unregister_question( body.question_id, authenticated_user_id )
+            except QuestionNotFound:
+                pass
+            return resolution
+
+        dm_dispatched = _dispatch_commons_question_received(
+            notification_queue    = notification_queue,
+            target_session_id     = resolution[ "session_id" ],
+            target_persona        = resolution.get( "persona_name" ),
+            question_id           = body.question_id,
+            topic                 = body.topic,
+            asker_session_id      = body.asker_session_id,
+            authenticated_user_id = authenticated_user_id,
+            build_sender_id       = build_sender_id,
+        )
+
     return {
-        "http_status" : 201,
-        "question_id" : body.question_id,
-        "ttl_seconds" : int( body.ttl_seconds ),
+        "http_status"   : 201,
+        "question_id"   : body.question_id,
+        "ttl_seconds"   : int( body.ttl_seconds ),
+        "dm_dispatched" : dm_dispatched,
     }
 
 
@@ -925,11 +1279,14 @@ async def post_register_question(   # pragma: no cover
 ) -> JSONResponse:
     _require_question_watcher()
     result = execute_register_question(
-        authenticated_user_id = authenticated_user_id,
-        body                  = body,
-        question_watcher      = _commons_question_watcher,
-        notification_queue    = notification_queue,
-        build_sender_id       = build_sender_id_for_cc,
+        authenticated_user_id            = authenticated_user_id,
+        body                             = body,
+        question_watcher                 = _commons_question_watcher,
+        notification_queue               = notification_queue,
+        build_sender_id                  = build_sender_id_for_cc,
+        raw_sessions_fn                  = find_active_voice_persona_sessions,
+        bridge_loader                    = _load_bridge_fields,
+        active_session_threshold_seconds = _active_session_threshold_seconds,
     )
     http_status = result.pop( "http_status" )
     if http_status >= 400:
