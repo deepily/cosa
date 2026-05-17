@@ -10,13 +10,17 @@ endpoints stay honest. Frontend consumes `view_url` as-is — no JS-side
 extension sniffing.
 
 Extended 2026-05-12 (multi-repo doc viewer): `scope` may now be any
-registered external scope name (lupin, cosa-voice, claude-plans, etc.);
-all non-`io` scopes route to /api/docs/file?scope=<name>. Secrets-blocklist
-filtering applied per-entry inside list_directory.
+registered external scope name (lupin, cosa-voice, claude-plans, etc.).
+Updated 2026-05-16 for path-prefix routing per the 2026-05-15 unification
+(Q-R2): `/app/docs` URLs now carry the project name as the first segment
+of `path`; the legacy `?scope=` query param is retired server-side. The
+/api/io/file and /app/audio endpoints continue to accept io-relative
+paths without a project prefix.
 
 Design docs:
 - src/rnd/v0.1.7/2026.05.12-doc-viewer-directory-listing.md (original)
 - src/rnd/v0.1.7/2026.05.12-multi-repo-doc-viewer.md (multi-repo extension)
+- src/rnd/v0.1.7/2026.05.15-doc-viewer-scope-unification.md (path-prefix routing)
 """
 
 import os
@@ -30,35 +34,38 @@ def _build_view_url( rel_path: str, scope: str, kind: str, ext: str ) -> str:
     """
     Build the viewer/player/download URL for a directory entry.
 
-    Single source of truth for the per-extension routing table (§3.4a):
-    - directory → /app/docs?path=...&scope=<scope>
-    - .md/.txt/.json/.yaml/.yml → /app/docs?path=...&scope=<scope>
-    - source-code extensions (.py/.ts/.tsx/.js/.jsx/.css/.html/.sh/.sql/.toml/
-      .ini/.cfg/.xml) → /app/docs?path=...&scope=<scope> (plain <pre> in viewer)
-    - .mp3/.wav (io only) → /app/audio?path=... (player page, NOT download)
-    - .pdf (io only) → /api/io/file?path=... (browser renders inline)
-    - .pptx (io only) → /api/io/file?path=...&download=true
+    Single source of truth for the per-extension routing table. Per the
+    2026-05-15 unification (Q-R2), `/app/docs?path=` URLs are now project-
+    prefixed (path-prefix routing); the `?scope=` query param is retired
+    server-side. The /api/io/file and /app/audio endpoints continue to
+    accept io-relative paths without a project prefix.
+
+    Routing table:
+    - directory → /app/docs?path=<scope>/<rel> (project-prefixed)
+    - .md/.txt/.json/.yaml/.yml → /app/docs?path=<scope>/<rel> (project-prefixed)
+    - source-code extensions → /app/docs?path=<scope>/<rel> (plain <pre> in viewer)
+    - .mp3/.wav (io only) → /app/audio?path=<rel> (io-relative; player page)
+    - .pdf, images (io only) → /api/io/file?path=<rel> (io-relative; inline)
+    - .pptx (io only) → /api/io/file?path=<rel>&download=true (io-relative)
 
     Requires:
         - rel_path is a non-empty path string relative to the scope root
-        - scope is a non-empty scope name (built-in: "docs" or "io"; external:
-          any name registered in SCOPE_REGISTRY)
+        - scope is a non-empty scope name (built-in: "io"; project name otherwise:
+          any registered in SCOPE_REGISTRY plus the built-in "lupin")
         - kind is "file" or "directory"
         - ext is a lowercase extension including the dot (e.g., ".md"), or "" for directories
 
     Ensures:
         - returns a non-empty URL string
         - rel_path is URL-encoded via quote(safe="")
-        - non-`io` scopes (built-in `docs` AND external scopes) all route to
-          /api/docs/file?scope=<scope>; only `io` has the binary-content routing
-          variants
+        - /app/docs URLs include the project prefix as the first path segment
+        - /api/io/file and /app/audio URLs stay io-relative (no prefix)
     """
     encoded = quote( rel_path, safe="" )
 
-    if kind == "directory":
-        return f"/app/docs?path={encoded}&scope={scope}"
-
-    if scope == "io":
+    # io-only direct-binary routing (player/download/inline render). Paths
+    # are io-relative because the receiving endpoints expect that shape.
+    if scope == "io" and kind == "file":
         if ext in ( ".mp3", ".wav" ):
             return f"/app/audio?path={encoded}"
         if ext == ".pdf":
@@ -70,9 +77,10 @@ def _build_view_url( rel_path: str, scope: str, kind: str, ext: str ) -> str:
         if ext == ".pptx":
             return f"/api/io/file?path={encoded}&download=true"
 
-    # Default for text-renderable files (md/txt/json/yaml/yml AND source code)
-    # in any non-io scope (built-in docs + every external scope).
-    return f"/app/docs?path={encoded}&scope={scope}"
+    # Everything else routes through /app/docs with a project-prefixed path.
+    # Directories AND text-renderable files in any scope share the same form.
+    prefixed = quote( f"{scope}/{rel_path}", safe="" )
+    return f"/app/docs?path={prefixed}"
 
 
 def list_directory(

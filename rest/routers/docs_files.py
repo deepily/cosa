@@ -330,45 +330,38 @@ def _serve( full_path: str, rel_path: str, scope: str, parent_validator ) -> JSO
 @router.get(
     "/api/docs/health",
     summary     = "Docs files health check",
-    description = "Report which whitelisted prefixes/files are present on disk, plus the registered external scopes and their reachability."
+    description = "Report registered scopes (with manifest presence + on-disk reachability) plus the io/ directory status and the full MEDIA_TYPES extension list. Unauthenticated."
 )
 async def docs_files_health():
     """
     Health check for docs files endpoint.
 
     Ensures:
-        - returns dict with project_root, legacy whitelist contents, external-scope
-          registry (name → root, allowed_prefixes, exists flag), and the
+        - returns dict with project_root, io/ status, per-scope registry detail
+          (name → root, exists, allowed_prefixes, manifest flag), and the
           full MEDIA_TYPES extension list
         - intentionally unauthenticated — health endpoints are public probes
     """
     project_root = cu.get_project_root()
+    io_root      = os.path.join( project_root, "io" )
 
-    file_status = {
-        name: os.path.isfile( os.path.join( project_root, name ) )
-        for name in sorted( ALLOWED_FILES )
-    }
-    prefix_status = {
-        prefix: os.path.isdir( os.path.join( project_root, prefix.rstrip( "/" ) ) )
-        for prefix in ALLOWED_PREFIXES
-    }
-
-    # Reflect the registry shape — useful for `/api/docs/health` smoke checks.
     registry = _get_scope_registry()
-    external_scopes = {
+    scopes_status = {
         name: {
             "root"             : cfg.root,
             "exists"           : os.path.isdir( cfg.root ),
-            "allowed_prefixes" : list( cfg.allowed_prefixes ),
+            "allowed_prefixes" : list(
+                cfg.manifest.allowed_prefixes if cfg.manifest is not None else cfg.allowed_prefixes
+            ),
+            "manifest"         : cfg.manifest is not None,
         }
-        for name, cfg in registry.items()
+        for name, cfg in sorted( registry.items() )
     }
 
     return {
-        "status"           : "ok",
-        "project_root"     : project_root,
-        "allowed_files"    : file_status,
-        "allowed_prefixes" : prefix_status,
-        "external_scopes"  : external_scopes,
-        "media_types"      : list( MEDIA_TYPES.keys() ),
+        "status"       : "ok",
+        "project_root" : project_root,
+        "io"           : { "root": io_root, "exists": os.path.isdir( io_root ) },
+        "scopes"       : scopes_status,
+        "media_types"  : sorted( MEDIA_TYPES.keys() ),
     }
