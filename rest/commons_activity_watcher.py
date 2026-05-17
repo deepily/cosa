@@ -27,7 +27,7 @@ The base class's `_in_flight` dict remains an empty dict for the watcher's life.
 
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from cosa.rest.commons_topic_watcher import CommonsTopicWatcher
 from lupin_mcp.commons_store import CommonsStore
@@ -137,6 +137,23 @@ class CommonsActivityWatcher( CommonsTopicWatcher ):
         # Sort newest-first across all topics
         new_entries.sort( key=lambda e: e.get( "ts" ) or "", reverse=True )
 
+        # Collapse per-recipient + write-side fan-out before dispatch (2026-05-16 bug fix).
+        # The HTTP `broadcast-history` read path already dedupes via
+        # `_dedupe_broadcasts_by_id` and `_dedupe_broadcast_acks_by_recipient` in
+        # `routers/commons.py`. The WS push path (this watcher) historically
+        # bypassed both dedupes — symptom: a single system broadcast against N
+        # active sessions produced N "commons_activity" pushes → N rows in the
+        # Recent Activity panel. Mirror the HTTP-path dedupe here so the WS
+        # stream emits one canonical row per logical broadcast / per (broadcast,
+        # sender, status) ack.
+        # Cursor advancement uses the ORIGINAL (pre-dedupe) ts set so we don't
+        # rescan dropped duplicates on the next tick.
+        latest_ts_pre_dedupe = max(
+            ( e.get( "ts" ) for e in new_entries if e.get( "ts" ) is not None ),
+            default = self._last_seen_ts,
+        )
+        new_entries = self._dedupe_for_dispatch( new_entries )
+
         # Resolve bridge owner map ONCE per tick
         try:
             bridge_owner_map = self.bridge_owner_resolver_fn()
@@ -160,10 +177,99 @@ class CommonsActivityWatcher( CommonsTopicWatcher ):
                 # Best-effort — keep going
                 continue
 
-        if latest_ts is not None and latest_ts != self._last_seen_ts:
+        # Bug-fix 2026-05-16: cursor MUST advance to the max ts of the original
+        # (pre-dedupe) entry set, not just the dispatched subset. Otherwise the
+        # dropped-duplicate entries would re-surface on the next tick.
+        if latest_ts_pre_dedupe is not None and (
+            self._last_seen_ts is None or latest_ts_pre_dedupe > self._last_seen_ts
+        ):
+            self._last_seen_ts = latest_ts_pre_dedupe
+        elif latest_ts is not None and latest_ts != self._last_seen_ts:
             self._last_seen_ts = latest_ts
 
         return dispatched
+
+    # ─── Pre-dispatch dedupe (2026-05-16) ───────────────────────────────────
+
+    def _dedupe_for_dispatch(
+        self,
+        entries: List[ Dict[ str, Any ] ],
+    ) -> List[ Dict[ str, Any ] ]:
+        """
+        Collapse per-recipient broadcasts fan-out + write-side ack multiplicity
+        before WS dispatch. Mirrors the HTTP-path helpers in `routers/commons.py`
+        (`_dedupe_broadcasts_by_id` + `_dedupe_broadcast_acks_by_recipient`) but
+        operates on the watcher's decorated-entry shape (each dict carries
+        `_topic` from `tick`'s collection step).
+
+        Rules:
+        - `broadcasts` topic: collapse on `metadata.broadcast_id`. The first
+          occurrence (newest after the outer DESC sort) is kept; subsequent
+          per-recipient duplicates are dropped. The kept entry's `metadata`
+          is shallow-copied with `target_session_id` removed so the dispatched
+          row represents the broadcast as a whole, not any one recipient slice.
+        - `broadcast-acks` topic: collapse on `(broadcast_id, sender_session_id,
+          metadata.status)`. Acks that share the same triple (write-side
+          multiplicity bug shape — see Arnold's investigation in the
+          `_dedupe_broadcast_acks_by_recipient` docstring) are collapsed to
+          the first occurrence.
+        - Any other topic: pass through unchanged.
+        - Defensive passthrough on missing / non-string keys (a malformed entry
+          must not silently disappear).
+
+        Requires:
+            - `entries` is the watcher's `new_entries` list (each dict carries
+              `_topic` from the collection step in `tick`)
+
+        Ensures:
+            - Returns a new list (input is not mutated)
+            - Order is preserved relative to input (which is newest-first by
+              outer sort)
+            - For `broadcasts` rows kept, `metadata.target_session_id` is removed
+              from the dispatched copy
+        """
+        seen_broadcast_ids : Set[ str ]                       = set()
+        seen_ack_keys      : Set[ Tuple[ str, str, str ] ]    = set()
+        out                : List[ Dict[ str, Any ] ]         = [ ]
+
+        for entry in entries:
+            topic = entry.get( "_topic" )
+
+            if topic == "broadcasts":
+                md  = entry.get( "metadata" ) or { }
+                bid = md.get( "broadcast_id" )
+                if not isinstance( bid, str ):
+                    out.append( entry )
+                    continue
+                if bid in seen_broadcast_ids:
+                    continue
+                seen_broadcast_ids.add( bid )
+                # Shallow-copy + strip per-recipient field
+                new_md    = { k: v for k, v in md.items() if k != "target_session_id" }
+                new_entry = dict( entry )
+                new_entry[ "metadata" ] = new_md
+                out.append( new_entry )
+                continue
+
+            if topic == "broadcast-acks":
+                md  = entry.get( "metadata" ) or { }
+                bid = md.get( "broadcast_id" )
+                sid = entry.get( "sender_session_id" )
+                st  = md.get( "status" )
+                if not ( isinstance( bid, str ) and isinstance( sid, str ) and isinstance( st, str ) ):
+                    out.append( entry )
+                    continue
+                key = ( bid, sid, st )
+                if key in seen_ack_keys:
+                    continue
+                seen_ack_keys.add( key )
+                out.append( entry )
+                continue
+
+            # All other topics: passthrough
+            out.append( entry )
+
+        return out
 
     # ─── Per-entry dispatch ─────────────────────────────────────────────────
 
