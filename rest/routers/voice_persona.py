@@ -46,7 +46,8 @@ from lupin_cli.claude_code.hooks.lib.session_bridge import (
 )
 
 from ..voice_persona_helpers import (
-    load_persona_pool_from_config, allocate_persona_for_session
+    load_persona_pool_from_config, allocate_persona_for_session,
+    load_overflow_persona_from_config
 )
 
 
@@ -92,7 +93,11 @@ async def get_voice_persona_pool(
     bridge counts as free).
     """
     pool   = load_persona_pool_from_config( config_mgr )
-    active = find_active_voice_persona_sessions()
+    stale_seconds = config_mgr.get(
+        "cc session voice persona stale threshold seconds",
+        default=43200, return_type="int", silent=True
+    )
+    active = find_active_voice_persona_sessions( stale_threshold_seconds=stale_seconds )
 
     occupied_names = sorted( {
         p[ "name" ] for _path, _sid, p in active
@@ -350,6 +355,11 @@ async def voice_persona_sample(
 
     pool      = load_persona_pool_from_config( config_mgr )
     pool_ids  = { p[ "voice_id" ] for p in pool if p.get( "voice_id" ) }
+    # Sam is the overflow persona — accept his voice_id (system TTS default) too,
+    # so the persona-reference page can play a Sam sample alongside pool samples.
+    overflow_persona = load_overflow_persona_from_config( config_mgr )
+    if overflow_persona and overflow_persona.get( "voice_id" ):
+        pool_ids.add( overflow_persona[ "voice_id" ] )
     if body.voice_id not in pool_ids:
         raise HTTPException(
             status_code=400,

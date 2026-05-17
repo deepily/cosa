@@ -149,6 +149,52 @@ def load_persona_pool_from_config( config_mgr ) -> List[ PoolPersona ]:
     return pool
 
 
+def load_overflow_persona_from_config( config_mgr ) -> Optional[ PoolPersona ]:
+    """
+    Read Sam's metadata and return him as the pool-exhaustion overflow persona.
+
+    Sam is the system-wide TTS default (per `elevenlabs tts default voice id`)
+    AND the allocatable overflow persona: when every member of the main pool
+    is occupied, /allocate returns Sam with overflow=True instead of
+    hash-borrowing an in-use pool voice. Multiple Sams are permitted; multiples
+    of other personas are not.
+
+    Sam's voice_id is intentionally read from `elevenlabs tts default voice id`
+    (NOT from a `cc session voice persona sam voice id` key) so the system
+    default and the overflow persona stay locked to a single source of truth.
+
+    Requires:
+        - config_mgr is an initialized ConfigurationManager instance
+
+    Ensures:
+        - Returns a persona dict with keys: name, display_name, voice_id, icon,
+          color, profile, overflow=True
+        - Returns None when `elevenlabs tts default voice id` is missing or empty
+          (in which case the legacy hash-borrow fallback in pick_unallocated_persona
+          takes over)
+        - Never raises — missing icon/color/profile/display_name keys fall back
+          to documented defaults
+
+    Args:
+        config_mgr: ConfigurationManager (already constructed by caller)
+
+    Returns:
+        dict or None: Sam's persona, or None if Sam's voice_id is unconfigured
+    """
+    voice_id = config_mgr.get( "elevenlabs tts default voice id", default="", silent=True )
+    if not voice_id:
+        return None
+    return {
+        "name"         : "sam",
+        "display_name" : config_mgr.get( "cc session voice persona sam display name", default="Sam",                              silent=True ),
+        "voice_id"     : voice_id,
+        "icon"         : config_mgr.get( "cc session voice persona sam icon",         default="🎙️",                              silent=True ),
+        "color"        : config_mgr.get( "cc session voice persona sam color",        default="#00BCD4",                          silent=True ),
+        "profile"      : config_mgr.get( "cc session voice persona sam profile",      default="System default voice (overflow)", silent=True ),
+        "overflow"     : True
+    }
+
+
 def borrowed_persona_for_sid(
     pool             : List[ PoolPersona ],
     stable_session_id: str
@@ -202,28 +248,37 @@ def borrowed_persona_for_sid(
 def pick_unallocated_persona(
     pool             : List[ PoolPersona ],
     occupied_names   : Set[ str ],
-    stable_session_id: str
+    stable_session_id: str,
+    overflow_persona : Optional[ PoolPersona ] = None
 ) -> Optional[ PoolPersona ]:
     """
-    Uniform random draw from (pool − occupied), falling back to borrow on exhaustion.
+    Uniform random draw from (pool − occupied), falling back to Sam-overflow
+    (preferred) or hash-borrow (legacy) on exhaustion.
 
     Requires:
         - pool is a list (may be empty)
         - occupied_names is a set of name strings (case-sensitive match against pool entries)
         - stable_session_id is a non-empty string
+        - overflow_persona is a persona dict (with overflow=True) or None
 
     Ensures:
         - Returns a fresh dict with borrowed=False when (pool − occupied) is non-empty,
           chosen uniformly at random
-        - Returns a borrowed=True dict (via borrowed_persona_for_sid) when all
-          personas are occupied
+        - When the pool is fully occupied AND overflow_persona is non-None: returns
+          a copy of overflow_persona with borrowed=False (preserving overflow=True);
+          multiple sessions may legitimately receive Sam this way
+        - When the pool is fully occupied AND overflow_persona is None: falls back
+          to borrowed_persona_for_sid (legacy deterministic hash-borrow); kept as
+          defensive fallback for the case where Sam is unconfigured
         - Returns None only when pool itself is empty (misconfiguration)
         - Never raises
 
     Args:
-        pool: Full allocatable pool (Sam excluded — he's the system default)
+        pool: Full allocatable pool (Sam excluded — he's the overflow, not a peer)
         occupied_names: Names currently allocated to live sessions
-        stable_session_id: Used both as anti-collision seed and for borrow determinism
+        stable_session_id: Used both as anti-collision seed and for legacy borrow determinism
+        overflow_persona: Sam (or any other dict marked overflow=True) returned when
+            the main pool is exhausted; None falls through to the legacy borrow path
 
     Returns:
         dict or None: Allocated persona, or None if pool is empty
@@ -234,6 +289,11 @@ def pick_unallocated_persona(
     free = [ p for p in pool if p[ "name" ] not in occupied_names ]
 
     if not free:
+        if overflow_persona is not None:
+            # Spillover to Sam — copy so callers can mutate without aliasing,
+            # and set borrowed=False explicitly (overflow=True is preserved
+            # from the source dict)
+            return dict( overflow_persona, borrowed=False )
         return borrowed_persona_for_sid( pool, stable_session_id )
 
     chosen = random.choice( free )
@@ -288,10 +348,20 @@ def allocate_persona_for_session(
     if not pool:
         return None
 
-    active   = find_active_voice_persona_sessions()
+    overflow = load_overflow_persona_from_config( config_mgr )
+
+    # Read mtime TTL (in seconds) from config — falls back to 12h default if missing.
+    # Used by find_active_voice_persona_sessions to reject stale persona-bearing
+    # bridges even when the host-side prune at SessionStart didn't fire.
+    stale_seconds = config_mgr.get(
+        "cc session voice persona stale threshold seconds",
+        default=43200, return_type="int", silent=True
+    )
+
+    active   = find_active_voice_persona_sessions( stale_threshold_seconds=stale_seconds )
     occupied = { p[ "name" ] for _path, _sid, p in active if isinstance( p, dict ) and p.get( "name" ) }
 
-    persona = pick_unallocated_persona( pool, occupied, stable_session_id )
+    persona = pick_unallocated_persona( pool, occupied, stable_session_id, overflow_persona=overflow )
     if persona is None:
         return None
 
