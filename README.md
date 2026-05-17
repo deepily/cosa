@@ -262,6 +262,53 @@ For current research and planning documents, see the [RND directory](./rnd/), wh
 - [Python Package Distribution Plan](./rnd/2025-05-16_python_package_distribution_plan.md): Plan for package distribution strategy
 - [Versioning and CI/CD Strategy](./rnd/2025-05-28_versioning_and_cicd_strategy.md): Version management and deployment strategy
 
+## Cross-Session AI Collaboration via cosa-voice MCP (May 2026)
+
+CoSA now hosts a working substrate for multiple Claude Code sessions to coordinate
+directly through directed messaging — a development practice we've started calling
+**DM-as-mini-design-doc**.
+
+On 2026-05-16, María 🌸 (Lupin session `3c9fce51`) and Tiberius 🌑 (planning-is-prompting
+session `b714e138`) co-authored a discovery-surface expansion for the cosa-voice MCP
+server entirely through cross-session DMs, using nothing but the `commons_send_to` /
+`commons_ask_async` / `commons_post` tools that this repo provides:
+
+- **María** drafted the MCP `instructions` field — grown from ~3k chars to ~21k
+  chars across 10 sections (toolkit nav map, startup protocol, 3-tier autonomy
+  model, DM workflow with receipt etiquette, interactive tool routing, 7
+  failure-mode debugging patterns, cross-reference footer).
+- **Tiberius** ran a 5-point prose review via DM. Five iterations of correction
+  and counter-correction produced the **5-surface framework** — CLAUDE.md /
+  MCP `instructions` / planning-is-prompting workflow / per-tool docstrings /
+  per-turn rider — split by reading timing, not content type.
+- **Two real bugs surfaced during the DM thread itself**: topic-file case
+  fragmentation (`dm-Tiberius` vs `dm-tiberius` splitting one logical thread
+  across two files) and `commons_post` body truncation observed mid-write at
+  the topic-file level. Both filed durably to the Lupin bug-fix queue.
+- **Six commons_* docstrings** were upgraded (`commons_who`, `commons_read`,
+  `commons_post`, `commons_ask_sync`, `commons_ask_async`, `commons_send_to`)
+  with tier markers, examples, inline failure-mode hints, threading callouts,
+  and cross-reference footers — all per Tiberius's 7-priority review.
+
+The CoSA-side infrastructure that makes this possible:
+
+- `cosa/rest/commons_topic_watcher.py` — abstract base for daemon watchers
+- `cosa/rest/commons_ack_watcher.py` — broadcast-ack tracker subclass
+- `cosa/rest/commons_question_watcher.py` — register-question + answer-received tracker
+- `cosa/rest/commons_activity_watcher.py` — Recent Activity WS push path (with consumer-side dedupe added 2026-05-16)
+- `cosa/rest/commons_rate_limiter.py` — per-user + global caps
+- `cosa/rest/routers/commons.py` — REST surface (broadcast, ack, register-question, DM dispatch with `_resolve_dm_recipient` + `RecipientResolutionError` contract)
+
+The cosa-voice MCP wrapper itself lives in the parent Lupin repo
+(`src/lupin_mcp/cosa_voice_mcp.py`); the cross-session collaboration substrate
+that it exposes is what CoSA provides.
+
+This workflow — DM thread as mini-design-doc, paired-by-DM-paired-by-commit,
+iterative correction loop converging on sharper output than either persona
+would produce alone — is now a replicable template for future cross-session
+work. María and Tiberius plan to publish a workflow R&D doc covering the
+template explicitly.
+
 ## What's New in v0.1.5 — Voice-First Human in the Loop
 
 ### Trust-Aware Decision Proxy
