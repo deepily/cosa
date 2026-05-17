@@ -174,6 +174,43 @@ class EmbeddingProvider:
         return url if url else "http://localhost:7999"
 
     @staticmethod
+    def _resolve_model_server_url() -> Optional[ str ]:
+        """
+        Resolve the lupin-model-server URL at call time. Returns None when
+        BOTH env var AND INI key are unset → caller falls through to the
+        legacy FastAPI HTTP-proxy path.
+
+        Priority chain (mirrors SpeechToTextProvider._resolve_model_server_url):
+            1. `LUPIN_MODEL_SERVER_URL` env var (compose-injected at container creation)
+            2. `model server url` INI key (lupin-app.ini default)
+            3. None → caller routes via legacy FastAPI URL
+
+        Why both: `docker restart` doesn't re-read compose, so a fresh INI
+        flip without a `docker compose up -d --force-recreate` would leave
+        the env var unset in running containers. The INI fallback prevents
+        that scenario from causing self-recursion (compute → compute →
+        compute → timeout) on the FastAPI fallback URL.
+
+        See: src/rnd/v0.1.7/2026.05.16-model-server-carveout/01-design.md
+
+        Ensures:
+            - Returns the env value when set and non-empty
+            - Otherwise returns the INI value when set and non-empty
+            - Otherwise returns None (legacy FastAPI fallback)
+            - Never raises (ConfigurationManager errors caught + None returned)
+        """
+        url = os.environ.get( "LUPIN_MODEL_SERVER_URL", "" ).strip()
+        if url:
+            return url
+        try:
+            from cosa.config.configuration_manager import ConfigurationManager
+            cfg = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+            ini = cfg.get( "model server url", default="", silent=True ).strip()
+            return ini if ini else None
+        except Exception:
+            return None
+
+    @staticmethod
     def _http_api_key() -> Optional[str]:
         """
         Load the X-API-Key value used for the embeddings HTTP endpoints.
@@ -191,6 +228,34 @@ class EmbeddingProvider:
             return du.get_api_key( "notification-api-claude-code-dev" )
         except Exception:
             return None
+
+    @classmethod
+    def _resolve_http_target( cls ) -> tuple:
+        """
+        Pick the HTTP target for embedding fallback calls.
+
+        Priority:
+            1. lupin-model-server (when `LUPIN_MODEL_SERVER_URL` env is set)
+            2. FastAPI server (existing behavior, `LUPIN_APP_SERVER_URL`)
+
+        Both targets accept the SAME `ck_live_*` key from
+        `src/conf/keys/notification-api-claude-code-dev` (per María's
+        2026-05-16 brief — no parallel `ck_internal_*` namespace). So we
+        call `_http_api_key()` for both branches; only the URL + endpoint
+        prefix differ.
+
+        Returns:
+            tuple[str, Optional[str], str]: (base_url, api_key, endpoint_prefix)
+                - base_url: where to POST
+                - api_key: X-API-Key header value (or None → caller handles)
+                - endpoint_prefix: "/embeddings" for model-server,
+                                   "/api/embeddings" for the FastAPI path
+                  (model-server omits the `/api/` prefix per its leaner routing)
+        """
+        model_server_url = cls._resolve_model_server_url()
+        if model_server_url:
+            return ( model_server_url, cls._http_api_key(), "/embeddings" )
+        return ( cls._resolve_server_url(), cls._http_api_key(), "/api/embeddings" )
 
     def _generate_embedding_via_http( self, text: str, content_type: str ) -> List[float]:
         """
@@ -216,16 +281,22 @@ class EmbeddingProvider:
         """
         import requests
 
-        api_key = self._http_api_key()
+        # Phase 3.1 of the model-server carve-out: when LUPIN_MODEL_SERVER_URL
+        # is set, this resolves to (model-server URL, ck_internal_* key,
+        # "/embeddings"). Otherwise falls through to the existing FastAPI
+        # path with the notification key + "/api/embeddings" prefix.
+        # See: src/rnd/v0.1.7/2026.05.16-model-server-carveout/01-design.md
+        base_url, api_key, prefix = self._resolve_http_target()
         if not api_key:
             raise RuntimeError(
-                "EmbeddingProvider HTTP fallback: no API key found at "
-                "src/conf/keys/notification-api-claude-code-dev. Either "
-                "provision the key or call EmbeddingProvider.declare_in_process_engine_owner() "
-                "from the GPU-loading process."
+                "EmbeddingProvider HTTP fallback: no API key found. Expected one of: "
+                "src/conf/keys/notification-api-claude-code-dev "
+                "(used by both the FastAPI and lupin-model-server HTTP paths). "
+                "Either provision the matching key file or call "
+                "EmbeddingProvider.declare_in_process_engine_owner() from the GPU-loading process."
             )
 
-        url = f"{self._resolve_server_url()}/api/embeddings/generate"
+        url = f"{base_url}{prefix}/generate"
         try:
             response = requests.post(
                 url,
@@ -271,14 +342,16 @@ class EmbeddingProvider:
         """
         import requests
 
-        api_key = self._http_api_key()
+        # Phase 3.1 carve-out: same resolver as the single-text path above.
+        base_url, api_key, prefix = self._resolve_http_target()
         if not api_key:
             raise RuntimeError(
-                "EmbeddingProvider HTTP fallback: no API key found at "
-                "src/conf/keys/notification-api-claude-code-dev."
+                "EmbeddingProvider HTTP batch fallback: no API key found. Expected one of: "
+                "src/conf/keys/notification-api-claude-code-dev "
+                "(used by both the FastAPI and lupin-model-server HTTP paths)."
             )
 
-        url = f"{self._resolve_server_url()}/api/embeddings/batch"
+        url = f"{base_url}{prefix}/batch"
         try:
             response = requests.post(
                 url,
