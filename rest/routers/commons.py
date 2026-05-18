@@ -97,7 +97,12 @@ class BroadcastRequestBody( BaseModel ):
 # AC1 Pydantic-native validation per `feedback_pydantic_native_validation`.
 # Field constraints declared HERE; FastAPI returns 422 on validation failure.
 # Topic + question_id share the same charset/length contract (T1 compatibility).
-_TOPIC_OR_QID_PATTERN = r"^[A-Za-z0-9_-]+$"
+# Unicode-broadened 2026-05-17 per Q8 ratification (`feedback_unicode_persona_keys_all_the_way_down`):
+# topic names preserve exact unicode persona spelling (e.g., `dm-maría`). Python's `\w` with
+# `re.UNICODE` (default in Py3) matches letters/digits in any script + underscore; literal
+# `-` is also allowed. Path-dangerous chars (path separators, control, whitespace) excluded.
+# Paired with `src/lupin_mcp/cosa_voice_mcp.py:_derive_dm_topic` on the wrapper side.
+_TOPIC_OR_QID_PATTERN = r"^[\w-]+$"
 _QID_TOPIC_MIN        = 1
 _QID_TOPIC_MAX        = 64
 _TTL_MIN_SECONDS      = 1
