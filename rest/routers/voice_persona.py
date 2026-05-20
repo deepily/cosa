@@ -31,7 +31,7 @@ import asyncio
 from typing import Annotated, Optional
 
 import httpx
-from fastapi          import APIRouter, Body, Depends, HTTPException
+from fastapi          import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 from pydantic         import BaseModel
 
@@ -47,7 +47,7 @@ from lupin_cli.claude_code.hooks.lib.session_bridge import (
 
 from ..voice_persona_helpers import (
     load_persona_pool_from_config, allocate_persona_for_session,
-    load_overflow_persona_from_config
+    load_overflow_persona_from_config, allocate_requested_persona_for_session
 )
 
 
@@ -139,68 +139,209 @@ async def get_voice_persona_endpoint(
 @router.post(
     "/voice-persona/{session_id}/allocate",
     summary     = "Allocate a voice persona for a session",
-    description = "Idempotent: if a persona is already set on the bridge, returns it without re-allocating. Otherwise atomically picks the first uniform-random unallocated persona and writes it to the bridge."
+    description = "Idempotent: if a persona is already set on the bridge and no `requested_persona_name`/`preferred_persona_name` query param is supplied, returns it without re-allocating. When `requested_persona_name` is supplied: atomically allocates the named persona with strict 422/409 errors on miss. When `preferred_persona_name` is supplied: graceful-fallback semantics — on miss, allocates random and pushes a `voice_persona_conflict` notification (used by the per-repo env-var default path). Mutually exclusive with `requested_persona_name`."
 )
 async def allocate_voice_persona_endpoint(
-    session_id           : str,
-    authenticated_user_id: Annotated[ str, Depends( require_api_key_or_jwt ) ],
-    previous_persona_name: Optional[ str ] = None,
-    notification_queue   : NotificationFifoQueue = Depends( get_notification_queue ),
-    config_mgr           = Depends( get_config_manager )
+    session_id            : str,
+    authenticated_user_id : Annotated[ str, Depends( require_api_key_or_jwt ) ],
+    previous_persona_name : Optional[ str ] = None,
+    requested_persona_name: Annotated[ Optional[ str ], Query( min_length=1, max_length=64 ) ] = None,
+    preferred_persona_name: Annotated[ Optional[ str ], Query( min_length=1, max_length=64 ) ] = None,
+    notification_queue    : NotificationFifoQueue = Depends( get_notification_queue ),
+    config_mgr            = Depends( get_config_manager )
 ) -> JSONResponse:
     """
     Atomically allocate a persona for the given session.
 
-    Idempotency: if the bridge already has a non-null voice_persona, return
-    it as-is (no re-allocation, no broadcast). This is the SessionStart hook
-    contract — calling /allocate is safe to repeat across hook invocations.
+    Three operating modes, selected by `requested_persona_name`:
+
+    1. **No request** (legacy SessionStart hook contract). Idempotent: if
+       the bridge already has a non-null voice_persona, return it as-is.
+       Otherwise pick uniformly at random from the unallocated pool.
+
+    2. **Request matches existing** (idempotent same-name request). Return
+       existing as-is, `newly_allocated=False`, `swapped=False`.
+
+    3. **Request differs from existing OR no existing** (request-or-swap).
+       Atomically (a) verify the requested name is in the pool (else 422)
+       (b) verify it is not held by another session (else 409 with holding
+       persona name + available pool names in the response body) (c) write
+       the new persona to the bridge, releasing the prior allocation if
+       any. Broadcasts `voice_persona_assigned` + (on detected swap) a
+       "Voice re-assigned: X → Y" announcement.
 
     When `previous_persona_name` is supplied AND a new persona is actually
-    allocated (newly_allocated=True), an additional "Voice re-assigned: X → Y"
-    notification is pushed so the user hears the handoff spoken in the new
-    voice. Used by the SessionStart hook on /clear-with-overwrite to make
-    voice changes audible rather than silent.
+    allocated, the "Voice re-assigned" announcement uses that name. When a
+    swap is detected via the bridge's prior persona, that name is used
+    instead. Used by the SessionStart hook on /clear-with-overwrite and by
+    the /plan-session-start slash command to make voice changes audible.
+
+    Returns 409 Conflict body shape (per Rachel's R1 design):
+        { "detail": {
+            "message": "...", "requested": "...",
+            "holding_session_id": "...", "holding_persona_name": "...",
+            "available": [<pool names not in use>]
+        } }
+
+    Returns 422 Unprocessable Entity body shape (requested name not in pool):
+        { "detail": {
+            "message": "...", "requested": "...",
+            "available": [<pool names not in use>]
+        } }
     """
     if not find_session_path_by_id( session_id ):
         raise HTTPException( status_code=404, detail=f"No active session bridge found for session_id={session_id}" )
 
-    # Idempotency check — if already allocated, return existing persona
+    # Strict + soft preference are mutually exclusive — the strict path
+    # surfaces 422/409 to a user who typed `/plan-session-start María`,
+    # while the soft path silently falls back to random + a conflict notify
+    # so the SessionStart hook never blocks. Mixing them would conflate
+    # error semantics.
+    if requested_persona_name is not None and preferred_persona_name is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="`requested_persona_name` and `preferred_persona_name` are mutually exclusive — supply exactly one"
+        )
+
+    # Outer fast-path: no request + already allocated → legacy idempotency
+    # contract holds; return existing without acquiring the lock.
+    # Note: `preferred_persona_name` does NOT override an existing allocation
+    # (Path A — preserve persona across /clear for narrative continuity).
     existing = get_voice_persona( session_id )
-    if existing is not None:
+    if existing is not None and requested_persona_name is None:
         return JSONResponse( content={
             "session_id"          : session_id,
             "voice_persona"       : existing,
             "newly_allocated"     : False,
+            "swapped"             : False,
             "broadcast_delivered" : False
         } )
 
+    # Set early so the post-lock notification block can always reference it.
+    # Only the soft-preference branch ever populates it; the strict-request
+    # and plain-allocation paths leave it None.
+    preference_conflict: Optional[ dict ] = None
+
     async with _voice_persona_lock:
-        # Re-check inside the lock to avoid a race where two requests both
-        # passed the outer idempotency check.
+        # Re-read bridge under the lock — another request may have written
+        # between the outer check and acquisition.
         existing = get_voice_persona( session_id )
-        if existing is not None:
-            return JSONResponse( content={
-                "session_id"          : session_id,
-                "voice_persona"       : existing,
-                "newly_allocated"     : False,
-                "broadcast_delivered" : False
-            } )
 
-        persona = allocate_persona_for_session( config_mgr, session_id )
-        if persona is None:
-            raise HTTPException(
-                status_code=500,
-                detail="Voice persona pool is empty or misconfigured (check `cc session voice persona pool` in lupin-app.ini)"
-            )
+        if requested_persona_name is not None:
+            # Request-or-swap path
+            normalized_request = requested_persona_name.strip().lower()
 
-        ok = set_voice_persona( session_id, persona )
-        if not ok:
-            raise HTTPException( status_code=500, detail=f"Bridge write failed for session_id={session_id}" )
+            if existing is not None and existing.get( "name", "" ).lower() == normalized_request:
+                # Same-as-existing → idempotent return
+                return JSONResponse( content={
+                    "session_id"          : session_id,
+                    "voice_persona"       : existing,
+                    "newly_allocated"     : False,
+                    "swapped"             : False,
+                    "broadcast_delivered" : False
+                } )
 
-    # Route through the canonical notification subsystem with a custom type value
-    # rather than inventing a new top-level WS event. The notification arrives at
-    # the client as `notification_queue_update` carrying notification.type =
-    # "voice_persona_assigned"; the client dispatches inside handleNotificationUpdate.
+            result = allocate_requested_persona_for_session( config_mgr, session_id, requested_persona_name )
+
+            if result is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Voice persona pool is empty or misconfigured (check `cc session voice persona pool` in lupin-app.ini)"
+                )
+
+            if result[ "status" ] == "not_in_pool":
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "message"   : f"Requested persona '{requested_persona_name}' is not in the configured pool",
+                        "requested" : requested_persona_name,
+                        "available" : result[ "available" ]
+                    }
+                )
+
+            if result[ "status" ] == "occupied":
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message"              : f"Requested persona '{result[ 'holding_persona_name' ]}' is currently held by another session",
+                        "requested"            : requested_persona_name,
+                        "holding_session_id"   : result[ "holding_session_id" ],
+                        "holding_persona_name" : result[ "holding_persona_name" ],
+                        "available"            : result[ "available" ]
+                    }
+                )
+
+            persona   = result[ "persona" ]
+            swap_from = existing.get( "name" ) if existing else None
+
+            ok = set_voice_persona( session_id, persona )
+            if not ok:
+                raise HTTPException( status_code=500, detail=f"Bridge write failed for session_id={session_id}" )
+
+        else:
+            # No-request path. Existing might have appeared during the
+            # outer-check → lock-acquire window (race protection).
+            if existing is not None:
+                return JSONResponse( content={
+                    "session_id"          : session_id,
+                    "voice_persona"       : existing,
+                    "newly_allocated"     : False,
+                    "swapped"             : False,
+                    "broadcast_delivered" : False
+                } )
+
+            # Soft-preference branch (env-var default). On miss, fall back
+            # to random allocation and queue a voice_persona_conflict notify
+            # so the user knows their preference was honored or rejected.
+            # See: planning-is-prompting/src/rnd/2026.05.19-cosa-voice-preferred-persona-env-var.md
+            if preferred_persona_name is not None:
+                pref_result = allocate_requested_persona_for_session(
+                    config_mgr, session_id, preferred_persona_name
+                )
+                if pref_result is None:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Voice persona pool is empty or misconfigured (check `cc session voice persona pool` in lupin-app.ini)"
+                    )
+                if pref_result[ "status" ] == "ok":
+                    persona = pref_result[ "persona" ]
+                else:
+                    # Persona requested via env var is not in pool OR is held
+                    # by another session — record conflict details, then fall
+                    # through to random allocation below.
+                    preference_conflict = {
+                        "kind"      : pref_result[ "status" ],
+                        "requested" : preferred_persona_name,
+                        "available" : pref_result.get( "available", [] )
+                    }
+                    if pref_result[ "status" ] == "occupied":
+                        preference_conflict[ "holding_session_id" ]   = pref_result[ "holding_session_id" ]
+                        preference_conflict[ "holding_persona_name" ] = pref_result[ "holding_persona_name" ]
+                    persona = allocate_persona_for_session( config_mgr, session_id )
+                    if persona is None:
+                        raise HTTPException(
+                            status_code=500,
+                            detail="Voice persona pool is empty or misconfigured (check `cc session voice persona pool` in lupin-app.ini)"
+                        )
+            else:
+                persona = allocate_persona_for_session( config_mgr, session_id )
+                if persona is None:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Voice persona pool is empty or misconfigured (check `cc session voice persona pool` in lupin-app.ini)"
+                    )
+
+            ok = set_voice_persona( session_id, persona )
+            if not ok:
+                raise HTTPException( status_code=500, detail=f"Bridge write failed for session_id={session_id}" )
+
+            swap_from = None
+
+    # Route through the canonical notification subsystem with a custom type
+    # value rather than inventing a new top-level WS event. The notification
+    # arrives at the client as `notification_queue_update` carrying
+    # notification.type = "voice_persona_assigned"; the client dispatches
+    # inside handleNotificationUpdate.
     # See: src/rnd/v0.1.7/2026.04.29-ws-event-cleanup-to-custom-notification-types/01-design.md
     broadcast_delivered = False
     try:
@@ -216,16 +357,52 @@ async def allocate_voice_persona_endpoint(
         )
         broadcast_delivered = True
     except Exception as ws_err:
-        # Log but do not fail — bridge write succeeded; broadcast is best-effort
         print( f"[VOICE-PERSONA] ⚠️ Notification push failed for session {session_id}: {ws_err}" )
 
-    # When the SessionStart hook detected an unpreserved persona handoff, push
-    # a user-facing announcement so the voice change is audible — pre-empts
-    # the "wait, why does this sound different?" confusion. Best-effort.
-    if previous_persona_name:
+    # Soft-preference conflict notification (option α from the env-var
+    # default design). Fired only when the caller supplied
+    # `preferred_persona_name` AND the requested persona was either missing
+    # from the pool or held by another live session, AND we fell back to a
+    # random allocation. The user sees a high-priority TTS alert telling
+    # them which session is holding their preference (so they can release
+    # it manually) or that their env var contains an unknown name.
+    if preference_conflict is not None:
+        try:
+            if preference_conflict[ "kind" ] == "occupied":
+                holding_short = preference_conflict[ "holding_session_id" ][ :8 ]
+                conflict_msg = (
+                    f"Preferred persona '{preference_conflict[ 'requested' ]}' is held by "
+                    f"session {holding_short}. Allocated {persona[ 'display_name' ]} instead. "
+                    f"Kill that session and restart this one to claim {preference_conflict[ 'holding_persona_name' ]}."
+                )
+            else:  # "not_in_pool"
+                avail_preview = ", ".join( preference_conflict[ "available" ][ :6 ] ) if preference_conflict[ "available" ] else "(none free)"
+                conflict_msg = (
+                    f"Preferred persona '{preference_conflict[ 'requested' ]}' is not in the configured pool. "
+                    f"Allocated {persona[ 'display_name' ]} instead. Available: {avail_preview}."
+                )
+            notification_queue.push_notification(
+                message            = conflict_msg,
+                type               = "voice_persona_conflict",
+                priority           = "high",
+                user_id            = authenticated_user_id,
+                sender_id          = build_sender_id_for_cc( session_id ),
+                voice_persona      = persona,
+                suppress_ding      = False,
+                response_requested = False,
+                payload            = preference_conflict
+            )
+        except Exception as ws_err:
+            print( f"[VOICE-PERSONA] ⚠️ Preference conflict notification push failed for session {session_id}: {ws_err}" )
+
+    # "Voice re-assigned" audible handoff. Either source — the hook's
+    # previous_persona_name query param OR a detected bridge-side swap —
+    # triggers the announcement so the voice change is audible.
+    announce_previous = previous_persona_name or swap_from
+    if announce_previous and announce_previous != persona[ "name" ]:
         try:
             notification_queue.push_notification(
-                message            = f"Voice re-assigned: {previous_persona_name} → {persona[ 'display_name' ]}",
+                message            = f"Voice re-assigned: {announce_previous} → {persona[ 'display_name' ]}",
                 type               = "task",
                 priority           = "medium",
                 user_id            = authenticated_user_id,
@@ -241,7 +418,9 @@ async def allocate_voice_persona_endpoint(
         "session_id"          : session_id,
         "voice_persona"       : persona,
         "newly_allocated"     : True,
-        "broadcast_delivered" : broadcast_delivered
+        "swapped"             : swap_from is not None,
+        "broadcast_delivered" : broadcast_delivered,
+        "preference_conflict" : preference_conflict
     } )
 
 

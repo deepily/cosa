@@ -24,6 +24,7 @@ See: src/rnd/v0.1.7/2026.04.28-per-session-voice-personas/01-design.md
 """
 
 import hashlib
+import os
 import random
 from datetime  import datetime, timezone
 from typing    import List, Optional, Set, Dict, Any
@@ -151,46 +152,81 @@ def load_persona_pool_from_config( config_mgr ) -> List[ PoolPersona ]:
 
 def load_overflow_persona_from_config( config_mgr ) -> Optional[ PoolPersona ]:
     """
-    Read Sam's metadata and return him as the pool-exhaustion overflow persona.
+    Read the pool-exhaustion overflow persona from config.
 
-    Sam is the system-wide TTS default (per `elevenlabs tts default voice id`)
-    AND the allocatable overflow persona: when every member of the main pool
-    is occupied, /allocate returns Sam with overflow=True instead of
-    hash-borrowing an in-use pool voice. Multiple Sams are permitted; multiples
-    of other personas are not.
+    The overflow persona is allocated when every member of the main pool is
+    occupied, so a new session doesn't have to hash-borrow another live
+    session's voice. Multiple sessions may legitimately receive the overflow
+    persona (multi-overflow is permitted; multi-pool-member is not).
 
-    Sam's voice_id is intentionally read from `elevenlabs tts default voice id`
-    (NOT from a `cc session voice persona sam voice id` key) so the system
-    default and the overflow persona stay locked to a single source of truth.
+    Generalized 2026-05-19 from the prior Sam-hardcoded loader: reads a new
+    `cc session voice persona overflow name` INI key (default "sam" for
+    backward compat) and looks up that persona's pool-style INI keys. Any
+    persona with `cc session voice persona <name> {voice id, icon, color,
+    profile}` keys can act as the overflow — config-driven, no code change
+    required to rotate which persona occupies the overflow slot.
+
+    Backward compat: when overflow_name resolves to "sam" AND no explicit
+    `cc session voice persona sam voice id` key is present, falls back to
+    sourcing voice_id from `elevenlabs tts default voice id` (the legacy
+    non-explicit path that predated 2026-05-19 — Sam historically had no
+    pool-style voice_id key because his identity was conflated with the
+    system TTS default).
 
     Requires:
         - config_mgr is an initialized ConfigurationManager instance
 
     Ensures:
-        - Returns a persona dict with keys: name, display_name, voice_id, icon,
-          color, profile, overflow=True
-        - Returns None when `elevenlabs tts default voice id` is missing or empty
-          (in which case the legacy hash-borrow fallback in pick_unallocated_persona
-          takes over)
-        - Never raises — missing icon/color/profile/display_name keys fall back
-          to documented defaults
+        - Returns a persona dict with keys: name (lowercase form of the
+          configured overflow_name), display_name, voice_id, icon, color,
+          profile, overflow=True
+        - Returns None when the configured overflow persona has no resolvable
+          voice_id (in which case pick_unallocated_persona falls back to the
+          legacy hash-borrow path)
+        - Returns None when `cc session voice persona overflow name` is
+          explicitly set to empty/whitespace (disabling the overflow slot)
+        - Never raises — missing icon/color/profile/display_name keys fall
+          back to documented defaults
 
     Args:
         config_mgr: ConfigurationManager (already constructed by caller)
 
     Returns:
-        dict or None: Sam's persona, or None if Sam's voice_id is unconfigured
+        dict or None: Overflow persona dict, or None if unresolvable
+
+    See: src/rnd/v0.1.7/2026.05.16-voice-persona-stale-bridge-and-sam-overflow.md
+         (original Sam-as-overflow design) and the 2026-05-19 generalization.
     """
-    voice_id = config_mgr.get( "elevenlabs tts default voice id", default="", silent=True )
+    overflow_name = config_mgr.get( "cc session voice persona overflow name", default="sam", silent=True )
+    if not overflow_name or not overflow_name.strip():
+        return None
+    name_for_lookup = overflow_name.strip()
+    name_lower      = name_for_lookup.lower()
+
+    voice_id = config_mgr.get(
+        f"cc session voice persona {name_for_lookup} voice id",
+        default="", silent=True
+    )
+    if not voice_id and name_lower == "sam":
+        # Backward compat: Sam's voice_id historically read from the system
+        # TTS default rather than an explicit per-persona key. Preserved so
+        # legacy configs without `cc session voice persona sam voice id`
+        # continue to load Sam-as-overflow byte-clean.
+        voice_id = config_mgr.get( "elevenlabs tts default voice id", default="", silent=True )
     if not voice_id:
         return None
+
     return {
-        "name"         : "sam",
-        "display_name" : config_mgr.get( "cc session voice persona sam display name", default="Sam",                              silent=True ),
+        "name"         : name_lower,
+        "display_name" : config_mgr.get(
+            f"cc session voice persona {name_for_lookup} display name",
+            default=display_name_for( name_lower ),
+            silent=True
+        ),
         "voice_id"     : voice_id,
-        "icon"         : config_mgr.get( "cc session voice persona sam icon",         default="🎙️",                              silent=True ),
-        "color"        : config_mgr.get( "cc session voice persona sam color",        default="#00BCD4",                          silent=True ),
-        "profile"      : config_mgr.get( "cc session voice persona sam profile",      default="System default voice (overflow)", silent=True ),
+        "icon"         : config_mgr.get( f"cc session voice persona {name_for_lookup} icon",    default="🎙️",                              silent=True ),
+        "color"        : config_mgr.get( f"cc session voice persona {name_for_lookup} color",   default="#00BCD4",                          silent=True ),
+        "profile"      : config_mgr.get( f"cc session voice persona {name_for_lookup} profile", default="System default voice (overflow)", silent=True ),
         "overflow"     : True
     }
 
@@ -368,6 +404,239 @@ def allocate_persona_for_session(
     persona[ "assigned_at" ] = datetime.now( timezone.utc ).isoformat( timespec="seconds" )
 
     return persona
+
+
+# ── Requested-persona allocation primitives ──────────────────────────────────
+
+def _find_persona_in_pool( pool: List[ PoolPersona ], requested_name: str ) -> Optional[ PoolPersona ]:
+    """
+    Locate a pool entry by name, case-insensitive on both the pool key form
+    and the derived display_name.
+
+    Requires:
+        - pool is a list of pool persona dicts (may be empty)
+        - requested_name is a non-empty string
+
+    Ensures:
+        - Returns the matching pool entry if found (matching against either
+          the pool key form or display_name_for(name), case-insensitive,
+          leading/trailing whitespace tolerated)
+        - Returns None when no match found OR when requested_name is empty
+          or whitespace-only
+        - Never raises
+
+    Args:
+        pool: Allocatable persona pool
+        requested_name: Name to look up (case-insensitive; user-typed form)
+
+    Returns:
+        Matching pool dict or None
+    """
+    if not requested_name:
+        return None
+
+    needle = requested_name.strip().lower()
+    if not needle:
+        return None
+
+    for entry in pool:
+        if entry[ "name" ].lower() == needle:
+            return entry
+        if display_name_for( entry[ "name" ] ).lower() == needle:
+            return entry
+    return None
+
+
+def pick_requested_persona(
+    pool                   : List[ PoolPersona ],
+    occupied_to_session_id : Dict[ str, str ],
+    requested_name         : str
+) -> Dict[ str, Any ]:
+    """
+    Look up a requested persona by name and check availability against the
+    caller-supplied occupied map.
+
+    The caller (route handler) MUST exclude the requesting session's own
+    current persona name from `occupied_to_session_id` before calling this
+    helper. This keeps the helper pure (no session_bridge dependency) and
+    makes swap semantics — "I currently hold Arnold; give me María" —
+    work without false-positive occupied collisions.
+
+    Requires:
+        - pool is a list of pool persona dicts (may be empty)
+        - occupied_to_session_id maps pool name → holding session_id for all
+          currently occupied personas EXCEPT the requesting session's own
+        - requested_name is a non-empty string
+
+    Ensures:
+        - Returns a dict with `status` ∈ {"ok", "not_in_pool", "occupied"}:
+          * ok           → persona (fresh dict with borrowed=False), available
+          * not_in_pool  → persona=None, available
+          * occupied     → persona=None, holding_session_id, holding_persona_name, available
+        - `available` is a list of pool names NOT in occupied_to_session_id, sorted
+        - Never raises
+
+    Args:
+        pool: Allocatable pool (Sam excluded — he's the overflow, not a peer)
+        occupied_to_session_id: name → session_id map for occupied personas
+            (excluding the requesting session's own current allocation)
+        requested_name: Name to look up (case-insensitive)
+
+    Returns:
+        Result dict (see Ensures)
+    """
+    available = sorted( [ p[ "name" ] for p in pool if p[ "name" ] not in occupied_to_session_id ] )
+
+    match = _find_persona_in_pool( pool, requested_name )
+    if match is None:
+        return {
+            "status"    : "not_in_pool",
+            "persona"   : None,
+            "available" : available
+        }
+
+    if match[ "name" ] in occupied_to_session_id:
+        return {
+            "status"               : "occupied",
+            "persona"              : None,
+            "holding_session_id"   : occupied_to_session_id[ match[ "name" ] ],
+            "holding_persona_name" : match[ "name" ],
+            "available"            : available
+        }
+
+    return {
+        "status"    : "ok",
+        "persona"   : {
+            "name"         : match[ "name" ],
+            "display_name" : match.get( "display_name" ) or display_name_for( match[ "name" ] ),
+            "voice_id"     : match[ "voice_id" ],
+            "icon"         : match[ "icon" ],
+            "color"        : match[ "color" ],
+            "profile"      : match[ "profile" ],
+            "borrowed"     : False
+        },
+        "available" : available
+    }
+
+
+def allocate_requested_persona_for_session(
+    config_mgr,
+    stable_session_id: str,
+    requested_name   : str
+) -> Optional[ Dict[ str, Any ] ]:
+    """
+    End-to-end requested-persona allocation: read pool, scan occupied
+    (excluding the requesting session's own current allocation), pick
+    requested, stamp `assigned_at` on success.
+
+    The "exclude self" semantics is what makes a swap call work — when the
+    requesting session currently holds Arnold and asks for María, the scan
+    must not count Arnold as occupied (or the caller would falsely conclude
+    "all 6 in use").
+
+    Requires:
+        - config_mgr is an initialized ConfigurationManager
+        - stable_session_id is a non-empty string
+        - requested_name is a non-empty string
+
+    Ensures:
+        - Returns None when the pool itself is empty (misconfiguration);
+          callers treat this as 500, not 422 — empty pool is a server
+          configuration error, not a client input error
+        - Otherwise returns a result dict same shape as
+          pick_requested_persona, with `assigned_at` (UTC ISO-8601) stamped
+          on the persona dict when status is "ok"
+        - Excludes the requesting session's own allocation from the occupied
+          scan so a swap works correctly
+        - Never raises on bridge-scan failures
+
+    Args:
+        config_mgr: ConfigurationManager
+        stable_session_id: Session requesting the allocation
+        requested_name: Persona name being requested (case-insensitive)
+
+    Returns:
+        Result dict (see pick_requested_persona) or None if pool is empty
+    """
+    from lupin_cli.claude_code.hooks.lib.session_bridge import find_active_voice_persona_sessions
+
+    pool = load_persona_pool_from_config( config_mgr )
+    if not pool:
+        return None
+
+    stale_seconds = config_mgr.get(
+        "cc session voice persona stale threshold seconds",
+        default=43200, return_type="int", silent=True
+    )
+
+    active = find_active_voice_persona_sessions( stale_threshold_seconds=stale_seconds )
+
+    # Build name → session_id map of currently-occupied personas,
+    # excluding the requesting session's own allocation. The exclusion
+    # is what makes swap semantics work.
+    occupied_to_session_id: Dict[ str, str ] = {}
+    for _path, sid, persona in active:
+        if sid == stable_session_id:
+            continue
+        if not isinstance( persona, dict ):
+            continue
+        name = persona.get( "name" )
+        if name:
+            occupied_to_session_id[ name ] = sid
+
+    result = pick_requested_persona( pool, occupied_to_session_id, requested_name )
+
+    if result[ "status" ] == "ok":
+        result[ "persona" ][ "assigned_at" ] = datetime.now( timezone.utc ).isoformat( timespec="seconds" )
+
+    return result
+
+
+# ── Preferred-persona env-var resolution ─────────────────────────────────────
+
+def pick_preferred_persona_from_env( project: Optional[ str ] ) -> Optional[ str ]:
+    """
+    Read COSA_VOICE_PREFERRED_PERSONA__<PROJECT> from the environment.
+
+    Resolves a per-repo declarative default persona from the user's shell
+    environment. The env var name embeds the project so one universal lookup
+    pattern serves every repo — set
+    `COSA_VOICE_PREFERRED_PERSONA__LUPIN=Tiberius` in your shell rc to claim
+    Tiberius as the default persona for the Lupin repo.
+
+    Requires:
+        - project is either a non-empty string (e.g., "plan", "lupin",
+          "cosa-voice") or None/empty (the function tolerates both)
+
+    Ensures:
+        - Returns the persona-name string from the env var if set, verbatim
+          (does NOT validate against any pool — that's the caller's job;
+          _find_persona_in_pool handles case-insensitive + display-name match)
+        - Returns None when project is None, empty, or whitespace-only
+        - Returns None when the resolved env var is unset
+        - Returns None when the resolved env var is set but empty/whitespace
+        - Normalizes project name: strip + UPPER + hyphens→underscores
+        - Never raises
+
+    Examples:
+        project="plan"        → reads COSA_VOICE_PREFERRED_PERSONA__PLAN
+        project="cosa-voice"  → reads COSA_VOICE_PREFERRED_PERSONA__COSA_VOICE
+        project="LUPIN"       → reads COSA_VOICE_PREFERRED_PERSONA__LUPIN
+        project=None / ""     → returns None silently
+
+    See: planning-is-prompting/src/rnd/2026.05.19-cosa-voice-preferred-persona-env-var.md
+    """
+    if not project:
+        return None
+    normalized = project.strip().upper().replace( "-", "_" )
+    if not normalized:
+        return None
+    env_key = f"COSA_VOICE_PREFERRED_PERSONA__{normalized}"
+    value   = os.environ.get( env_key )
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped if stripped else None
 
 
 # ── Quick smoke test ─────────────────────────────────────────────────────────
