@@ -1,5 +1,35 @@
 # COSA Development History
 
+### 2026.05.20 PM - Session eecda1c9 (Mr. Radio 🦉) | CoSA-context lightweight session-end wrap — daily LoC delta dogfood + history + manifest only (no code body)
+
+**Context**: CoSA-context session-end ritual with NO code work to wrap. Persona: Mr. Radio 🦉 (`Aa6nEBJJMKJwJkCx8VU2`, `#FFA000` — authoritative warm male; third CoSA wrap on this branch after `99fbada3` 2026-05-13 PM + `af54bb12` 2026-05-17 PM). Branch: `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Two-commit wrap (B: session-end docs + daily LoC delta + summary doc, C: manifest hash backfill) — Commit A is omitted because no thematic code body landed in CoSA today. The deliverable IS the ritual artifacts. Commit basis identified by reading parent Lupin `history.md`, `TODO.md`, and `bug-fix-queue.md` per user voice direction at session start ("look at the history to-do and bug tracking list in the Lupin repo and use that as the basis for the commits ... You can push and make sure that you run the Git deltas for the day"). Push authorized.
+
+**Why no code body today**: All CoSA-touching work on 2026-05-20 happened parent-side in Lupin context. Tiberius 🌑 session `173c0b35` shipped two commits today (`e726b64` Session-end + `c9db97c` Checkpoint) wrapping the Phase 7a Run-4 post-game convergence, Rachel's persona-resuscitation bundle (preferred-persona env forwarding + Roscoe → Tiffany rename + LookML allocation diagnostic), and the heartbeat-poker design WIP. None of those touched files inside `src/cosa/`. CoSA's working tree at session start: clean (last CoSA commit was Roscoe 🤠 `a9af9d81`'s wrap from 2026-05-19 PM that crossed UTC midnight into 2026-05-20 — three commits `afe9ff1` + `74075cc` + `e433278`).
+
+**Daily LoC delta dogfood artifacts** (per user voice direction: "make sure that you run the Git deltas for the day"): four artifacts produced by `cosa.repo.git_loc_delta` across both repos:
+
+- `io/git-loc-delta/2026-05-20-loc-delta.csv` (CoSA today — 3 rows capturing Roscoe's UTC-midnight-crossing wrap commits: python 521/-73, markdown 262/-5, other 4/-0; net +709 across 7 files / 3 commits)
+- `io/git-loc-delta/cosa-wip-v0.1.7-2026.04.23-tracking-lupin-work-loc-delta.csv` (CoSA branch — REFRESHED to 42 rows; 20 days alive / 82 commits / +13,663 net since 2026-04-24 first commit)
+- `rnd/2026.05.20-session-eecda1c9-loc-summary.md` (NEW R&D doc mirroring Roscoe `a9af9d81` precedent; ~140 LOC): §1 today Lupin (+287 net / 2 commits / 13 files / 5 file types — Tiberius's heartbeat + persona-resuscitation), §2 today CoSA (+709 net / 3 commits / Roscoe wrap UTC-midnight crossover), §3 weekly summary 2026-05-14..2026-05-20 (Lupin +31,663 net / 63 commits; CoSA +5,845 net / 18 commits; combined +37,508 / 81), §4 branch-wide (Lupin 28 days / 244 commits / +160,203 net; CoSA 27 days / 82 commits / +13,663 net), §5 commit plan headline (2-commit bundle), §6 persona-attribution footnote
+- Lupin-side equivalent CSVs (`io/git-loc-delta/2026-05-20-loc-delta.csv` + `io/git-loc-delta/lupin-wip-...-loc-delta.csv`) saved to Lupin tree via `--save-output` (gitignored under Lupin's `.gitignore` per the `git_loc_delta --save-output` cross-repo path entry filed by Tiberius `b714e138` 2026-05-16 — not committed; for local reference only)
+
+**Cross-repo separation**: Per `feedback_lupin_only_never_cosa.md` + `feedback_session_scope_is_cwd.md`, this CoSA-context session ONLY touches files under `src/cosa/`. Parent Lupin work from Tiberius `173c0b35` (heartbeat-poker design WIP + Rachel's persona-resuscitation + Run-4 post-game TODO close + Lupin history.md update + `start-cc-with-tmux.sh` env var forwarding + Roscoe → Tiffany rename + LookML diagnostic prints in `register_session.py`) is owned by the parent Lupin context and ALREADY landed via commits `e726b64` + `c9db97c`. Lupin parent working tree at session start: clean.
+
+**Memory rules engaged**: `feedback_session_scope_is_cwd` (cwd `…/lupin/src/cosa` → CoSA is this session's scope), `feedback_never_commit_cosa` (overridden THIS SESSION ONLY by Rick's explicit voice "the commits that you're going to make" + "you can push" direction), `feedback_verify_repo_before_commit` (`git status` showed CoSA clean + `git branch --show-current` confirmed `wip-v0.1.7-2026.04.23-tracking-lupin-work` before staging-adjacent action), `feedback_lupin_only_never_cosa` (parent Lupin work already shipped by parent context; CoSA-side ritual is this commit only).
+
+#### Checkpoint | 2026.05.20 PM EDT | Session eecda1c9 wrap-session — push authorized post-Commit-C
+
+**Files** (this session, CoSA repo):
+- `history.md` (this entry)
+- `.claude-session.md` (Session eecda1c9 section appended + Commit B hash backfilled post-commit + status flipped to `committed`)
+- `io/git-loc-delta/2026-05-20-loc-delta.csv` (NEW — daily)
+- `io/git-loc-delta/cosa-wip-v0.1.7-2026.04.23-tracking-lupin-work-loc-delta.csv` (REFRESHED — branch)
+- `rnd/2026.05.20-session-eecda1c9-loc-summary.md` (NEW — LoC summary R&D doc)
+
+**Commit hashes**: `<B-hash>` (Commit B — session-end docs + LoC delta CSVs + summary doc), `<C-hash>` (Commit C — manifest hash backfill + status flip). Push to `origin` authorized by Rick's voice direction post-Commit-C ("you can push").
+
+---
+
 ### 2026.05.19 PM - Session a9af9d81 (Roscoe 🤠) | CoSA-side wrap of parent Tiberius `4e724860` voice-persona work: env-var preferred-persona allocator + pool expansion + Sam↔Arnold overflow swap (single interlocked thematic bundle)
 
 **Context**: CoSA-context session-end commit bundle wrapping a single interlocked body of CoSA-side work produced by parent Lupin session `4e724860` (Tiberius 🌑) across 2026-05-19 (Lupin commits `3bc7b9e` Preferred-persona env-var allocator 13:30 EDT + `f78e81c` Voice persona pool expansion + Sam↔Arnold role swap 14:25 EDT). Persona: Roscoe 🤠 (`DXX4Q5Bh1vqK8CciYVPf`, `#FFD600` — upbeat professional female; new pool member added 2026-05-19 by parent Tiberius's pool expansion). Branch: `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Three-commit wrap (A: voice_persona bundle, B: session-end docs + daily LoC delta + summary doc, C: manifest hash backfill) per `feedback_lupin_only_never_cosa.md` cross-repo separation and `feedback_never_commit_cosa.md` AI-prepares-user-commits separation OVERRIDDEN this session by Rick's explicit voice direction ("use them as the basis for the commits that you'll make"). Mirrors prior Session 60d767ef Rachel / af54bb12 Mr. Radio / 99fbada3 Mr. Radio wrap patterns. Commit basis identified by reading parent Lupin `history.md`, `TODO.md`, and `bug-fix-queue.md` per user voice direction at session start ("Read the contents of the history to-do and bug queue documents in the Lupine repo and use them as the basis for the commits ... You can push after you run your daily git loc delta analysis that starts at 1 AM this morning and ends now, just before midnight").
