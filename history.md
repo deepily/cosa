@@ -33,7 +33,7 @@
 - `io/git-loc-delta/cosa-wip-v0.1.7-2026.04.23-tracking-lupin-work-loc-delta.csv` (MOD — schema v2 regen) + `.meta.json` (NEW — sidecar)
 - `history.md` (this entry)
 
-**Commit hash**: `<hash>` (backfilled post-commit).
+**Commit hash**: `f6f8ea0` (12 files, +2,189/-142; pushed to `github.com:deepily/cosa.git`). Manifest status-flip + hash-backfill follow in a small second commit.
 
 ---
 
