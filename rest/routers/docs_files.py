@@ -24,7 +24,7 @@ import os
 from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
 import cosa.utils.util as cu
 from cosa.config.cache_registry import register_invalidator
@@ -69,6 +69,16 @@ MEDIA_TYPES = {
     ".ini"  : "text/plain; charset=utf-8",
     ".cfg"  : "text/plain; charset=utf-8",
     ".xml"  : "text/xml; charset=utf-8",
+
+    # NEW (2026-05-21) — image MIMEs, served via FileResponse (binary).
+    # The Lupin SPA dispatches on media_type.startswith("image/") to render
+    # via <img> tag instead of the text/markdown/code component.
+    ".png"  : "image/png",
+    ".jpg"  : "image/jpeg",
+    ".jpeg" : "image/jpeg",
+    ".gif"  : "image/gif",
+    ".svg"  : "image/svg+xml",
+    ".webp" : "image/webp",
 }
 
 
@@ -112,11 +122,11 @@ register_invalidator( "scope_registry", _invalidate_scope_registry )
 @router.get(
     "/api/docs/file",
     summary     = "Serve a project documentation file or directory listing via the unified scope registry",
-    description = "Polymorphic file/directory endpoint. The `path` query parameter MUST be `<project>/<rel>` — the first segment names a registered project (see /api/docs/scopes); the remainder is resolved under that project's root, subject to the project's `.docview.yml` whitelist (if present) plus the universal secrets blocklist floor. The legacy `?scope=` query parameter is IGNORED (retired by Q-R2). JWT auth required."
+    description = "Polymorphic file/directory endpoint. The `path` query parameter MUST be `<project>/<rel>` — the first segment names a registered project (see /api/docs/scopes); the remainder is resolved under that project's root, subject to the project's `.docview.yml` whitelist (if present) plus the universal secrets blocklist floor. The legacy `?scope=` query parameter is RETIRED — its presence triggers 400 with an educational pointer to the canonical form (policy flipped from silent-ignore to aggressive-400 on 2026-05-21). JWT auth required."
 )
 async def get_docs_file(
     path        : str  = Query( ..., description="Path of the form `<project>/<rel>`; URL-decoded automatically. First segment names the registered project." ),
-    scope       : str  = Query( None, description="DEPRECATED — ignored. Use `path=<project>/<rel>` form instead. Retired per Q-R2 of 2026-05-15 doc-viewer scope unification." ),
+    scope       : str  = Query( None, description="RETIRED — presence triggers 400 with educational error. Use `path=<project>/<rel>` form instead. Retired per Q-R2 of 2026-05-15 doc-viewer scope unification; aggressive-400 policy ratified 2026-05-21." ),
     current_user: dict = Depends( get_current_user ),
 ):
     """
@@ -150,10 +160,35 @@ async def get_docs_file(
     Raises:
         - HTTPException 401: invalid/missing auth (from get_current_user)
         - HTTPException 400: invalid/unsafe path, unknown project, unsupported extension,
-                             or secrets blocklist match
+                             secrets blocklist match, OR presence of the retired
+                             `?scope=` query parameter (aggressive-deprecation policy
+                             ratified 2026-05-21 — see R&D doc-viewer-scope-unification §AC4b.7)
         - HTTPException 404: file or directory not found
         - HTTPException 500: read failure
     """
+    # ---------------------------------------------------------------------
+    # Aggressive deprecation of legacy `?scope=` query parameter.
+    # Policy flipped from silent-ignore (Phase 4b AC4b.7 original) to 400
+    # with educational pointer on 2026-05-21 — silent-ignore made dead syntax
+    # invisible to emitters, defeating the migration purpose.
+    # ---------------------------------------------------------------------
+    if scope is not None:
+        try:
+            registered = sorted( _get_scope_registry().keys() )
+            project_list = ", ".join( registered )
+        except Exception:
+            project_list = "(see GET /api/docs/scopes)"
+        raise HTTPException(
+            status_code = 400,
+            detail      = (
+                "The `?scope=` query parameter is RETIRED. "
+                "Use path-prefix form: `?path=<project>/<file>`. "
+                f"Registered projects: {project_list}. "
+                "See planning-is-prompting workflow/doc-viewer-links.md and "
+                "Lupin CLAUDE.md § 'Doc Viewer Scope' for the canonical reference."
+            ),
+        )
+
     decoded_path = unquote( path ).lstrip( "/" )
 
     # Empty path early-fail (must come before split-at-first-slash).
@@ -169,7 +204,8 @@ async def get_docs_file(
         )
 
     # ---------------------------------------------------------------------
-    # Phase 4b — path-prefix routing. The `scope=` query param is IGNORED.
+    # Phase 4b — path-prefix routing. Legacy `?scope=` is 400'd above before
+    # we ever reach this point (aggressive-deprecation policy, 2026-05-21).
     # ---------------------------------------------------------------------
     if "/" not in decoded_path:
         raise HTTPException(
@@ -271,7 +307,7 @@ async def get_scopes( current_user: dict = Depends( get_current_user ) ):
     return JSONResponse( content={ "scopes": scopes_payload } )
 
 
-def _serve( full_path: str, rel_path: str, scope: str, parent_validator ) -> JSONResponse | PlainTextResponse:
+def _serve( full_path: str, rel_path: str, scope: str, parent_validator ) -> JSONResponse | PlainTextResponse | FileResponse:
     """
     Common file/directory dispatch — shared by legacy `docs` branch and registry branch.
 
@@ -285,7 +321,9 @@ def _serve( full_path: str, rel_path: str, scope: str, parent_validator ) -> JSO
     Ensures:
         - directory → JSONResponse with the standard listing shape; secrets blocklist
           filtering applied per-entry inside list_directory
-        - file → PlainTextResponse with the appropriate MEDIA_TYPES entry
+        - file (image/*) → FileResponse streaming binary bytes with the appropriate
+          image/* media_type (added 2026-05-21 for inline PNG/JPG/etc. rendering)
+        - file (text/*) → PlainTextResponse with the appropriate MEDIA_TYPES entry
         - 404 if path doesn't exist; 400 if extension not in MEDIA_TYPES; 500 on read failure
     """
     # Directory branch (polymorphic response) — must come before isfile check
@@ -316,6 +354,12 @@ def _serve( full_path: str, rel_path: str, scope: str, parent_validator ) -> JSO
 
     media_type = MEDIA_TYPES[ ext ]
 
+    # Binary branch (image/*): stream bytes via FileResponse — never decode as utf-8.
+    # SPA dispatches on media_type.startswith("image/") to render via <img> tag.
+    if media_type.startswith( "image/" ):
+        return FileResponse( path=full_path, media_type=media_type )
+
+    # Text branch: utf-8 read + PlainTextResponse (existing behavior preserved).
     try:
         with open( full_path, "r", encoding="utf-8" ) as f:
             content = f.read()
