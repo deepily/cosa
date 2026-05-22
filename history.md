@@ -33,7 +33,11 @@
 - `io/git-loc-delta/cosa-wip-v0.1.7-2026.04.23-tracking-lupin-work-loc-delta.csv` (MOD — schema v2 regen) + `.meta.json` (NEW — sidecar)
 - `history.md` (this entry)
 
-**Commit hash**: `f6f8ea0` (12 files, +2,189/-142; pushed to `github.com:deepily/cosa.git`). Manifest status-flip + hash-backfill follow in a small second commit.
+**Commits** (4 — all pushed to `github.com:deepily/cosa.git`):
+- `f6f8ea0` — git_loc_delta v1.1 + cross-repo aggregator CLI (12 files, +2,189/-142)
+- `3d82147` — manifest status-flip + hash backfill
+- `e582c30` — doc-viewer PNG-rendering joint patch (`docs_files.py` + `pages.py` — Tiberius 🌑's CoSA-side work; committed by this CoSA wrap because Lupin-context sessions cannot commit the CoSA submodule)
+- `baded1f` — git_loc_delta v1.1 dogfood artifacts (3 plot PNGs + design prototype)
 
 ---
 
