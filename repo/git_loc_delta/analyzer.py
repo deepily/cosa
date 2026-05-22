@@ -58,6 +58,7 @@ class GitLogLocDeltaAnalyzer:
         until:          Optional[str] = None,
         include_merges: bool          = False,
         author:         Optional[str] = None,
+        repo_name:      Optional[str] = None,
         timeout:        int           = 60,
         debug:          bool          = False,
         verbose:        bool          = False,
@@ -71,9 +72,14 @@ class GitLogLocDeltaAnalyzer:
             - When mode="branch", `base` is a valid ref (default "main"); `branch`
               defaults to the current HEAD if None
             - repo_path is a valid directory
+            - repo_name is the explicit repo identity (added 2026-05-21 schema v2);
+              None is allowed for backward compatibility but callers writing CSVs
+              should always pass it. CLI resolves the default in
+              `run_git_loc_delta._resolve_repo_name`
 
         Ensures:
             - All flags captured for analyze() to consume
+            - analyze() result dict carries `repo_name` (may be None if not set)
         """
         if mode not in ( "today", "branch", "explicit" ):
             raise ValueError( f"Invalid mode: {mode!r} (must be 'today', 'branch', or 'explicit')" )
@@ -86,6 +92,7 @@ class GitLogLocDeltaAnalyzer:
         self.until          = until
         self.include_merges = include_merges
         self.author         = author
+        self.repo_name      = repo_name
         self.timeout        = timeout
         self.debug          = debug
         self.verbose        = verbose
@@ -201,6 +208,7 @@ class GitLogLocDeltaAnalyzer:
             "branch":    resolved_branch,
             "rev_range": rev_range,
             "repo_path": self.repo_path,
+            "repo_name": self.repo_name,
             "summary":   agg.summary(),
             "daily":     agg.daily(),
             "by_type":   agg.by_type(),

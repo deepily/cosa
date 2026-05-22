@@ -14,15 +14,19 @@ Exit codes:
 """
 
 import argparse
+import os
+import subprocess
 import sys
-from typing import Optional
+from datetime import date as _date
+from typing   import Optional
 
 import cosa.utils.util as cu
 
 from cosa.repo.git_loc_delta.analyzer        import GitLogLocDeltaAnalyzer
-from cosa.repo.git_loc_delta.csv_writer      import write_csv
+from cosa.repo.git_loc_delta.csv_writer      import write_csv, write_sidecar
 from cosa.repo.git_loc_delta.exceptions      import DateRangeError, GitCommandError, GitLocDeltaError
 from cosa.repo.git_loc_delta.report_formatter import format_console, format_json
+from cosa.repo.git_loc_delta.plotter         import plot_summary
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -50,7 +54,9 @@ def create_parser() -> argparse.ArgumentParser:
             "  python -m cosa.repo.run_git_loc_delta\n"
             "  python -m cosa.repo.run_git_loc_delta --branch\n"
             "  python -m cosa.repo.run_git_loc_delta --branch --output csv\n"
-            "  python -m cosa.repo.run_git_loc_delta --since 2026-05-01 --until 2026-05-15\n"
+            "  python -m cosa.repo.run_git_loc_delta --branch --plot\n"
+            "  python -m cosa.repo.run_git_loc_delta --branch --output csv --plot\n"
+            "  python -m cosa.repo.run_git_loc_delta --since 2026-05-01 --until 2026-05-15 --plot\n"
         ),
     )
 
@@ -58,6 +64,17 @@ def create_parser() -> argparse.ArgumentParser:
         "--repo-path",
         default = ".",
         help    = "Repository to analyze (default: cwd)",
+    )
+
+    parser.add_argument(
+        "--repo-name",
+        metavar = "NAME",
+        default = None,
+        help    = (
+            "Explicit repo identity for the schema v2 `repo` CSV column + sidecar JSON. "
+            "Default: basename of the target repo's git-toplevel directory. "
+            "Use to disambiguate sub-repos (e.g. `cosa` inside `lupin`)."
+        ),
     )
 
     # Date range mode (mutually exclusive)
@@ -119,7 +136,32 @@ def create_parser() -> argparse.ArgumentParser:
             "in --branch mode → {project_root}/io/git-loc-delta/{repo}-{branch-slug}-loc-delta.csv "
             "(stable per-branch filename for daily-overwrite workflow); "
             "in --today / --since/--until mode → {project_root}/io/git-loc-delta/{YYYY-MM-DD}-loc-delta.csv "
-            "(date-stamped for archival)."
+            "(date-stamped for archival). A sidecar `.meta.json` is written alongside the CSV "
+            "with `csv_schema_version: 2` + run metadata (repo, branch, rev_range, since, until, generated_at)."
+        ),
+    )
+
+    # Plot output (additive — combines with any --output)
+    parser.add_argument(
+        "--plot",
+        action = "store_true",
+        help   = (
+            "Generate a PNG plot of the daily LoC delta over time. Meaningful "
+            "in --branch and --since/--until multi-day modes; --today emits a "
+            "warning and skips. Two-panel matplotlib: top aggregate "
+            "insertions/deletions bars + net line; bottom signed per-file-type "
+            "net lines. Output path is mode-aware (see --plot-output)."
+        ),
+    )
+    parser.add_argument(
+        "--plot-output",
+        metavar = "PATH",
+        help    = (
+            "Explicit plot output path. Default: "
+            "{target_repo_root}/io/git-delta-analysis/{repo}-{branch-slug}-plot.png "
+            "in --branch mode, or "
+            "{target_repo_root}/io/git-delta-analysis/{since}_to_{until}-plot.png "
+            "in --since/--until mode."
         ),
     )
 
@@ -142,59 +184,23 @@ def _resolve_mode( args ) -> str:
     return "today"
 
 
-def _default_csv_path( mode: str, repo_path: str, branch: Optional[str] ) -> str:
+def _resolve_target_root( repo_path: str ) -> str:
     """
-    Return the default CSV save path.
+    Resolve the target repo's filesystem root.
 
-    The default filename pattern is mode-aware AND the base directory is
-    target-aware. The CSV belongs to the repo being analyzed, NOT to the
-    caller's project — so when `--repo-path` resolves to a directory other
-    than the Lupin tree, the CSV lands under THAT directory's `io/` tree.
-
-    Target-root resolution uses `git rev-parse --show-toplevel` from the
-    supplied path so the CSV always lands at the repo's ROOT directory's
-    `io/` tree, regardless of which subdir the user invoked from. Fallback:
-    if the path is not a git repository, use `os.path.abspath(repo_path)`
-    directly.
-
-    - **branch mode** → `{target_repo_root}/io/git-loc-delta/{repo}-{branch-slug}-loc-delta.csv`
-      (stable per-branch filename; daily reruns overwrite in place until merge)
-    - **today / explicit mode** → `{target_repo_root}/io/git-loc-delta/{YYYY-MM-DD}-loc-delta.csv`
-      (date-stamped; daily reruns produce a dated history)
-
-    Bug-fix arc 2026-05-16:
-    1. **Filed by Tiberius 🌑 session `b714e138`**: the original implementation
-       used `cu.get_project_root()` as the base, which always resolves to
-       LUPIN_ROOT. Cross-repo invocations dumped CSVs into Lupin's `io/`
-       tree instead of the target repo's tree.
-    2. **First-pass fix regression caught at live-test**: using
-       `os.path.abspath(repo_path)` worked for cross-repo but broke the
-       in-tree case when the user invoked from a subdir (cwd=`lupin/src/`,
-       `--repo-path .` → CSV at `lupin/src/io/git-loc-delta/` instead of
-       `lupin/io/git-loc-delta/`).
-    3. **Final fix**: `git rev-parse --show-toplevel` resolves to the actual
-       repo root regardless of which subdir was supplied. Matches Tiberius's
-       workaround in `workflow/session-end.md` §6.2 (he uses the same git
-       command in his explicit `--save-output` plumbing).
+    Uses `git rev-parse --show-toplevel` so the resolved root always points
+    at the repo containing `repo_path`, regardless of which subdir the user
+    invoked from. Falls back to `os.path.abspath(repo_path)` if the path is
+    not a git repository (or if `git` is missing).
 
     Requires:
-        - mode is one of: "today", "explicit", "branch"
         - repo_path is a string pointing at a directory (relative or absolute)
-        - branch is the resolved branch name (only required for branch mode)
 
     Ensures:
-        - Returns an absolute path under `{git_toplevel(repo_path)}/io/git-loc-delta/`
-          when the path is inside a git repo, else `{abspath(repo_path)}/io/git-loc-delta/`
-        - Branch names containing `/` are slugified (`/` → `-`) so they
-          form valid filename segments
+        - Returns an absolute path
         - Never raises (subprocess failures fall back to abspath)
     """
-    import os
-    import subprocess
-    from datetime import date
-
     target_path = os.path.abspath( repo_path )
-    target_root = target_path
     try:
         result = subprocess.run(
             [ "git", "rev-parse", "--show-toplevel" ],
@@ -206,20 +212,148 @@ def _default_csv_path( mode: str, repo_path: str, branch: Optional[str] ) -> str
         if result.returncode == 0:
             resolved = result.stdout.strip()
             if resolved:
-                target_root = resolved
+                return resolved
     except Exception:
-        # `git` missing, path not a repo, etc. — fall back to abspath
         pass
+    return target_path
 
+
+def _resolve_repo_name( override: Optional[str], target_root: str ) -> str:
+    """
+    Resolve the schema-v2 `repo` identity for CSV + sidecar + plot title.
+
+    Ensures:
+        - If `override` is non-empty, returns it verbatim
+        - Else returns `basename(target_root)` if non-empty
+        - Else returns "repo" (defensive default — never empty)
+    """
+    if override: return override
+    base = os.path.basename( target_root )
+    return base or "repo"
+
+
+def _default_csv_path( mode: str, target_root: str, repo_name: str, branch: Optional[str] ) -> str:
+    """
+    Return the default CSV save path under `{target_root}/io/git-loc-delta/`.
+
+    - **branch mode** → `{target_root}/io/git-loc-delta/{repo_name}-{branch-slug}-loc-delta.csv`
+      (stable per-branch filename; daily reruns overwrite in place until merge)
+    - **today / explicit mode** → `{target_root}/io/git-loc-delta/{YYYY-MM-DD}-loc-delta.csv`
+      (date-stamped; daily reruns produce a dated history)
+
+    Requires:
+        - mode is one of: "today", "explicit", "branch"
+        - target_root is an absolute path (already resolved by _resolve_target_root)
+        - repo_name is a non-empty string (already resolved by _resolve_repo_name)
+        - branch is the resolved branch name (only required for branch mode)
+
+    Ensures:
+        - Returns an absolute path under `{target_root}/io/git-loc-delta/`
+        - Branch names containing `/` are slugified (`/` → `-`) for filename safety
+        - Never raises
+    """
     base_dir = os.path.join( target_root, "io", "git-loc-delta" )
 
     if mode == "branch" and branch:
-        repo_name   = os.path.basename( target_root ) or "repo"
         branch_slug = branch.replace( "/", "-" )
         return os.path.join( base_dir, f"{repo_name}-{branch_slug}-loc-delta.csv" )
 
-    today = date.today().isoformat()
+    today = _date.today().isoformat()
     return os.path.join( base_dir, f"{today}-loc-delta.csv" )
+
+
+def _default_plot_path( mode: str, target_root: str, repo_name: str, branch: Optional[str], since: Optional[str], until: Optional[str] ) -> str:
+    """
+    Return the default PNG plot path under `{target_root}/io/git-delta-analysis/`.
+
+    Sister directory to `git-loc-delta/` — keeps raw CSV data separate from
+    derived plot artifacts per Rick's directive.
+
+    - **branch mode** → `{target_root}/io/git-delta-analysis/{repo_name}-{branch-slug}-plot.png`
+    - **explicit (--since/--until)** → `{target_root}/io/git-delta-analysis/{since}_to_{until_or_today}-plot.png`
+
+    Requires:
+        - mode is "branch" or "explicit" (never called for "today")
+        - target_root is absolute
+        - repo_name is non-empty
+    """
+    base_dir = os.path.join( target_root, "io", "git-delta-analysis" )
+
+    if mode == "branch" and branch:
+        branch_slug = branch.replace( "/", "-" )
+        return os.path.join( base_dir, f"{repo_name}-{branch_slug}-plot.png" )
+
+    # explicit mode
+    since_str = since or "start"
+    until_str = until or _date.today().isoformat()
+    return os.path.join( base_dir, f"{since_str}_to_{until_str}-plot.png" )
+
+
+def _emit_plot( args, result: dict, mode: str, target_root: str, repo_name: str ) -> int:
+    """
+    Render the PNG plot from analyzer result. Called only when args.plot is set.
+
+    Ensures:
+        - Returns 0 on success, 1 on failure
+        - --today mode emits a stderr warning and returns 0 (non-fatal skip)
+        - Output path resolved via --plot-output override or _default_plot_path
+
+    Failure modes (returns 1):
+        - daily has < 2 dates after analysis (multi-day required for plotting)
+        - matplotlib rendering raises (defensive; should not normally happen)
+    """
+    if mode == "today":
+        print(
+            "Warning: --plot has no effect in --today mode (single-day data). "
+            "Use --branch or --since/--until for multi-day plots.",
+            file = sys.stderr,
+        )
+        return 0
+
+    daily = result.get( "daily", {} )
+    if len( daily ) < 2:
+        print(
+            f"Warning: --plot skipped — only {len(daily)} day(s) of data, "
+            "need at least 2 dates for a time-series plot.",
+            file = sys.stderr,
+        )
+        return 0
+
+    plot_path = args.plot_output or _default_plot_path(
+        mode        = mode,
+        target_root = target_root,
+        repo_name   = repo_name,
+        branch      = result[ "branch" ],
+        since       = result[ "since" ],
+        until       = result[ "until" ],
+    )
+
+    title_meta = {
+        "scope":  "branch",
+        "repo":   repo_name,
+        "branch": result[ "branch" ] or "(date-range)",
+        "since":  result[ "since" ] or sorted( daily.keys() )[ 0 ],
+        "until":  result[ "until" ] or sorted( daily.keys() )[ -1 ],
+    }
+
+    try:
+        plot_summary(
+            daily       = daily,
+            summary     = result[ "summary" ],
+            output_path = plot_path,
+            group_by    = "file_type",
+            title_meta  = title_meta,
+            debug       = args.debug,
+        )
+    except Exception as e:
+        print( f"Plot generation failed: {e}", file=sys.stderr )
+        if args.debug:
+            import traceback
+            traceback.print_exc()
+        return 1
+
+    print( f"Plot written to {plot_path}" )
+    return 0
 
 
 def main( argv: Optional[list] = None ) -> int:
@@ -227,7 +361,8 @@ def main( argv: Optional[list] = None ) -> int:
     CLI entry point. Returns an exit code.
 
     Ensures:
-        - Returns 0 on success, 1 on GitLocDeltaError, 2 on argparse error
+        - Returns 0 on success, 1 on GitLocDeltaError or plot failure,
+          2 on argparse error
         - In --debug mode, full tracebacks are printed for failures
     """
     parser = create_parser()
@@ -240,6 +375,10 @@ def main( argv: Optional[list] = None ) -> int:
         # __CURRENT__ sentinel means "use current branch" (--branch with no value)
         branch_arg = None if args.branch == "__CURRENT__" else args.branch
 
+    # Resolve repo identity ONCE up front — shared by analyzer + CSV + sidecar + plot
+    target_root = _resolve_target_root( args.repo_path )
+    repo_name   = _resolve_repo_name( args.repo_name, target_root )
+
     try:
         analyzer = GitLogLocDeltaAnalyzer(
             repo_path      = args.repo_path,
@@ -250,6 +389,7 @@ def main( argv: Optional[list] = None ) -> int:
             until          = args.until,
             include_merges = args.include_merges,
             author         = args.author,
+            repo_name      = repo_name,
             debug          = args.debug,
             verbose        = args.verbose,
         )
@@ -279,7 +419,7 @@ def main( argv: Optional[list] = None ) -> int:
             traceback.print_exc()
         return 1
 
-    # Emit per --output
+    # ── Output emission per --output choice
     if args.output == "console":
         text = format_console(
             daily     = result["daily"],
@@ -295,9 +435,8 @@ def main( argv: Optional[list] = None ) -> int:
             if args.verbose: print( f"Saved console output to {args.save_output}", file=sys.stderr )
         else:
             print( text )
-        return 0
 
-    if args.output == "json":
+    elif args.output == "json":
         js = format_json(
             daily     = result["daily"],
             summary   = result["summary"],
@@ -313,21 +452,45 @@ def main( argv: Optional[list] = None ) -> int:
             if args.verbose: print( f"Saved JSON output to {args.save_output}", file=sys.stderr )
         else:
             print( js )
-        return 0
 
-    if args.output == "csv":
+    elif args.output == "csv":
         csv_path = args.save_output or _default_csv_path(
-            mode      = mode,
-            repo_path = args.repo_path,
-            branch    = result["branch"],
+            mode        = mode,
+            target_root = target_root,
+            repo_name   = repo_name,
+            branch      = result["branch"],
         )
-        rows = write_csv( result["by_type"], path=csv_path, debug=args.debug )
+        rows = write_csv(
+            by_type = result["by_type"],
+            path    = csv_path,
+            repo    = repo_name,
+            branch  = result["branch"],
+            debug   = args.debug,
+        )
+        sidecar_path = write_sidecar(
+            csv_path  = csv_path,
+            repo      = repo_name,
+            branch    = result["branch"],
+            rev_range = result["rev_range"],
+            since     = result["since"],
+            until     = result["until"],
+            debug     = args.debug,
+        )
         print( f"Wrote {rows} rows to {csv_path}" )
-        return 0
+        if args.verbose: print( f"Wrote sidecar to {sidecar_path}", file=sys.stderr )
 
-    # Shouldn't reach — argparse validates --output choices
-    print( f"Unknown --output value: {args.output!r}", file=sys.stderr )
-    return 1
+    else:
+        # Shouldn't reach — argparse validates --output choices
+        print( f"Unknown --output value: {args.output!r}", file=sys.stderr )
+        return 1
+
+    # ── Optional plot generation (additive, independent of --output)
+    if args.plot:
+        plot_exit = _emit_plot( args, result, mode, target_root, repo_name )
+        if plot_exit != 0:
+            return plot_exit
+
+    return 0
 
 
 if __name__ == "__main__":

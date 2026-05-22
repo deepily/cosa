@@ -5,6 +5,14 @@ tool to [`branch_analyzer`](../branch_analyzer/): where `branch_analyzer`
 answers "what did this whole branch change," `git_loc_delta` answers
 "what changed when."
 
+**v1.1.0 (2026-05-21)** — Plot extension + schema v2:
+- New `--plot` flag generates a two-panel matplotlib PNG (aggregate +/-/net bars + line on top, signed per-file-type net lines on bottom)
+- CSV schema bumped to v2: now carries explicit `repo` + `branch` columns
+- Sidecar JSON `{csv_path}.meta.json` carries immutable run metadata (`csv_schema_version`, `repo`, `branch`, `rev_range`, `since`, `until`, `generated_at`)
+- New `--repo-name NAME` CLI override (defaults to `basename(git-toplevel)`)
+- New `--plot-output PATH` override
+- Plotter is library-shape (`group_by="file_type"` for per-branch, `group_by="repo"` for future global aggregator reuse)
+
 | | `branch_analyzer` | `git_loc_delta` (this tool) |
 |---|---|---|
 | **Question** | "What does this branch differ from main by?" | "What did I do on each day of this branch?" |
@@ -34,8 +42,14 @@ python -m cosa.repo.run_git_loc_delta --branch
 # CSV export for the current branch — overwrites in place each day
 python -m cosa.repo.run_git_loc_delta --branch --output csv
 
-# Run against the CoSA submodule
-python -m cosa.repo.run_git_loc_delta --repo-path src/cosa --branch
+# CSV + plot in one pass
+python -m cosa.repo.run_git_loc_delta --branch --output csv --plot
+
+# Plot only (uses existing analysis, no CSV)
+python -m cosa.repo.run_git_loc_delta --branch --plot
+
+# Run against the CoSA submodule with explicit repo identity
+python -m cosa.repo.run_git_loc_delta --repo-path src/cosa --repo-name cosa --branch --output csv --plot
 ```
 
 Output for `--branch` mode lands at:
@@ -183,6 +197,8 @@ mv io/git-loc-delta/lupin-<branch>-loc-delta.csv \
 python -m cosa.repo.run_git_loc_delta [OPTIONS]
 
   --repo-path PATH         Repo to analyze (default: cwd)
+  --repo-name NAME         Explicit repo identity for schema v2 `repo` column
+                           (default: basename of git-toplevel of --repo-path)
 
   Date range (mutually exclusive):
   --today                  (Default) Commits since today 00:00 local
@@ -202,6 +218,12 @@ python -m cosa.repo.run_git_loc_delta [OPTIONS]
   --save-output PATH       Write to file. For --output csv:
                            --branch mode default → io/git-loc-delta/{repo}-{branch-slug}-loc-delta.csv
                            today / explicit mode → io/git-loc-delta/{YYYY-MM-DD}-loc-delta.csv
+                           Sidecar `.meta.json` written alongside.
+
+  Plot (additive — combines with any --output):
+  --plot                   Generate PNG plot. Multi-day modes only.
+  --plot-output PATH       Override plot path.
+                           Default: io/git-delta-analysis/{repo}-{branch-slug}-plot.png
 
   -v, --verbose            Echo git commands + per-commit progress to stderr
   --debug                  Verbose + full tracebacks
@@ -262,22 +284,67 @@ Single nested dict for programmatic consumption:
 
 ### CSV (`--output csv`)
 
-Tidy-long, pivot-friendly, **fixed 6-column schema regardless of file-type
-cardinality**:
+Tidy-long, pivot-friendly, **schema v2 with 8 columns including explicit
+`repo` and `branch`** (2026-05-21):
 
 ```csv
-date,file_type,added,deleted,files_touched,commits
-2026-04-23,markdown,3109,352,20,5
-2026-04-23,other,3,3,5,2
-2026-04-24,python,1455,34,9,6
-2026-04-24,markdown,988,261,18,7
+date,repo,branch,file_type,added,deleted,files_touched,commits
+2026-04-23,lupin,wip-v0.1.7-spit-and-polish,markdown,3109,352,20,5
+2026-04-23,lupin,wip-v0.1.7-spit-and-polish,other,3,3,5,2
+2026-04-24,lupin,wip-v0.1.7-spit-and-polish,python,1455,34,9,6
+2026-04-24,lupin,wip-v0.1.7-spit-and-polish,markdown,988,261,18,7
 …
 ```
+
+**Why explicit `repo` + `branch`**: enables cross-repo aggregation via a
+single `pandas.concat([read_csv(p) for p in csvs])` + `groupby(date)` — no
+filename parsing or basename heuristics required. The schema bump from v1
+(no `repo`/`branch`) to v2 was driven by the cross-repo daily LoC rollup
+aggregator scoped for v1.1+ (see `src/rnd/2026.05.21-cross-repo-loc-delta-aggregator-cli.md`
+when authored).
 
 **Why long not wide**: new file types over time would add columns in a wide
 format, breaking downstream consumers. Long is stable, pivotable in pandas
 with `pivot_table(index="date", columns="file_type", values="added")`, and
 graphs cleanly in matplotlib/Excel.
+
+### Sidecar JSON
+
+Every CSV write produces a companion `.meta.json` file alongside it carrying
+immutable run metadata:
+
+```json
+{
+  "csv_schema_version": 2,
+  "repo": "cosa",
+  "branch": "wip-v0.1.7-2026.04.23-tracking-lupin-work",
+  "rev_range": "main..wip-v0.1.7-...",
+  "since": null,
+  "until": null,
+  "generated_at": "2026-05-21T21:11:38.770292Z"
+}
+```
+
+Sidecar lifetime mirrors the CSV's — regenerated on every CSV write. Aggregators
+can read it for schema-version detection and authoritative run identity (avoiding
+filename-derived heuristics).
+
+### Plot (`--plot`)
+
+Two-panel matplotlib PNG:
+
+- **Top panel**: aggregate per-day insertions (positive green bars), deletions
+  (negative red bars), net line (thick black with markers)
+- **Bottom panel**: signed net line per file type (one color per type, ordered
+  by total churn for legend prominence; tab10 → tab20 → HSV palette as
+  cardinality scales)
+
+Title carries metadata: `git_loc_delta — {repo} / {branch} · {since}..{until} · {net:+d} net, {commits} commits`.
+
+Output location: `{target_repo_root}/io/git-delta-analysis/{repo}-{branch-slug}-plot.png`
+(or `{since}_to_{until}-plot.png` for explicit-range mode).
+
+Skips with a warning in `--today` single-day mode (plots require ≥ 2 dates).
 
 ---
 
@@ -349,12 +416,18 @@ R&D plan doc when promoting:
   isn't a markdown table proper)
 - **`--classify-lines`** — code-vs-comment-vs-docstring split per day (requires
   fetching diff content per commit; expensive — opt-in flag)
-- **Cumulative chart generation** — matplotlib plot of cumulative LoC over the
-  branch's lifetime (currently you'd pipe the CSV into your own plotting)
+- **`--plot-cumulative`** — cumulative LoC line variant in addition to the
+  current per-day plot (currently `--plot` shows the per-day delta only)
 - **Author breakdown view** — aggregate by author when multiple people work on
   the branch (currently `--author EMAIL` filters but doesn't multi-author group)
 - **Archive command** — `--archive` flag that moves the per-branch CSV to
   `io/git-loc-delta/archive/{repo}-{branch}-merged-{YYYY-MM-DD}.csv` post-merge
+- **Global cross-repo aggregator** (`run_git_loc_delta_global`) — separate CLI
+  that reads per-repo CSVs and emits a cross-repo daily rollup. Will reuse this
+  package's `plot_summary` with `group_by="repo"`. Design lives in
+  `<planning-is-prompting>/src/rnd/2026.05.21-cross-repo-loc-delta-rollup.md`
+  (María 🌸) + companion `<cosa>/rnd/2026.05.21-cross-repo-loc-delta-aggregator-cli.md`
+  (Rachel 🕊️, pending).
 
 ---
 
@@ -369,6 +442,7 @@ R&D plan doc when promoting:
 
 ---
 
-**Author**: María 🌸 (session `3c9fce51`, 2026-05-16)
-**Plan**: `src/cosa/rnd/2026.05.16-daily-loc-delta-tool.md`
-**Status**: 🟢 SHIPPED — all 5 test tiers green; default filename mode-aware (branch-named for branch mode, date-stamped for archival modes)
+**Original author**: María 🌸 (session `3c9fce51`, 2026-05-16)
+**v1.1 plot + schema-v2 extension**: Rachel 🕊️ (session `e13fed4f`, 2026-05-21) — cross-session design with María via 5 commons DMs
+**Plan**: `src/cosa/rnd/2026.05.16-daily-loc-delta-tool.md` (Plot extension section added 2026-05-21)
+**Status**: 🟢 SHIPPED v1.1.0 — plot + schema v2 + sidecar JSON all green; library-shape plotter ready for global aggregator reuse

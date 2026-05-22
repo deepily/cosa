@@ -32,12 +32,13 @@ Author: María 🌸 (session 3c9fce51, 2026-05-16)
 Plan: cosa/rnd/2026.05.16-daily-loc-delta-tool.md
 """
 
-from .analyzer       import GitLogLocDeltaAnalyzer
+from .analyzer        import GitLogLocDeltaAnalyzer
 from .daily_aggregator import DailyAggregator
-from .exceptions     import GitLocDeltaError, DateRangeError, GitCommandError
-from .git_log_parser import GitLogParser
+from .exceptions       import GitLocDeltaError, DateRangeError, GitCommandError
+from .git_log_parser   import GitLogParser
+from .plotter          import plot_summary
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"   # 1.1.0 — schema v2 (repo/branch columns + sidecar JSON) + plotter
 __all__     = [
     "GitLogLocDeltaAnalyzer",
     "GitLogParser",
@@ -45,4 +46,5 @@ __all__     = [
     "GitLocDeltaError",
     "DateRangeError",
     "GitCommandError",
+    "plot_summary",
 ]

@@ -1,5 +1,42 @@
 # COSA Development History
 
+### 2026.05.21 - Session e13fed4f (Rachel 🕊️) | git_loc_delta v1.1 — per-branch `--plot` + schema v2 + cross-repo aggregator CLI
+
+**Context**: CoSA-context session with a substantive code body (unlike the recent docs-only wraps `eecda1c9` / `a9af9d81`). Persona: Rachel 🕊️ (`21m00Tcm4TlvDq8ikWAM`, `#CE93D8` — calm & clear female). Branch: `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Extends María 🌸's `git_loc_delta` package (originally session `3c9fce51`, 2026-05-16) with plotting + cross-repo aggregation. Designed across 9 commons DMs with María 🌸 (PIP session `d66169f2`) using the parallel-R&D-docs handshake; Rick ratified the schema-scope expansion ("EXPAND FULL") via `ask_multiple_choice`. Commit basis identified by reading parent Lupin `history.md`, `TODO.md`, and `bug-fix-queue.md` per user voice direction.
+
+**Accomplishments**:
+
+- **Per-branch tool v1.1** — `git_loc_delta` extended with a `--plot` flag producing a two-panel matplotlib PNG (top: aggregate insertions/deletions bars + net line; bottom: signed per-file-type net lines). New `plotter.py` is library-shape — `plot_summary(daily, summary, output_path, group_by, title_meta)` takes pre-aggregated dicts and a `group_by` parameter (`file_type` for per-branch, `repo` for the global variant) so the rendering layer is reused with zero duplication.
+- **CSV schema v2** — `csv_writer.py` extended with explicit `repo` + `branch` columns (was `date,file_type,added,deleted,files_touched,commits`; now prefixed with `repo,branch`). New `write_sidecar()` emits `{csv}.meta.json` carrying immutable run metadata (`csv_schema_version`, `repo`, `branch`, `rev_range`, `since`, `until`, `generated_at`). Maria's consumer-side asks; enables cross-repo `pd.concat` aggregation without filename parsing.
+- **Cross-repo aggregator CLI** — NEW `run_git_loc_delta_global.py` aggregates per-repo CSVs into a global daily roll-up (console / JSON / CSV / PNG via `plot_summary(group_by="repo")`). Schema-v1 backward-compat: legacy CSVs without `repo`/`branch` columns get identity injected from sidecar-or-filename. Today-default window (Maria's §7.4 ratification). Discovery is explicit `--repos PATH ...` (INI auto-discovery deferred indefinitely per Rick).
+- **CLI flags** — `run_git_loc_delta.py` gained `--plot`, `--plot-output`, `--repo-name`; refactored git-toplevel resolution into shared `_resolve_target_root` / `_resolve_repo_name` helpers.
+- **Docs** — `README.md` v1.1 callout + plot section + schema v2 docs; `rnd/2026.05.16-daily-loc-delta-tool.md` Plot extension section; NEW companion R&D doc `rnd/2026.05.21-cross-repo-loc-delta-aggregator-cli.md` cross-referencing María's PIP-side rollup design (PIP commit `9cdd781`).
+
+**Verification**: 25/25 smoke tests green — 12 aggregator (`run_git_loc_delta_global`), 6 plotter, 7 analyzer (existing test still passes — schema v2 bump did not regress). `py_compile` clean on all 5 modified + 2 new `.py` files. Live integration: CoSA branch (42 CSV rows + sidecar + plot), Lupin branch (147 rows + plot), 3-repo + 5-repo global roll-ups (today-default and 7-day windowed).
+
+**Cross-session collaboration**: María 🌸 (PIP `d66169f2`) authored the PIP-side workflow doc + `/plan-loc-delta-global` slash command + confirmation gate (PIP commits `9cdd781` + `e0ac3aa` + `f054d02`). Tiberius 🌑 (Lupin `bc15c374`) shipped a doc-viewer joint patch earlier this session enabling PNG rendering in the doc viewer.
+
+**Cross-repo separation**: Per `feedback_lupin_only_never_cosa.md` + `feedback_session_scope_is_cwd.md` + `feedback_never_commit_cosa.md` (overridden THIS SESSION ONLY by Rick's explicit voice "the commits that you're going to make" direction). This CoSA-context session commits ONLY files it authored under `src/cosa/`. `rest/routers/docs_files.py` + `rest/routers/pages.py` appear modified in `git status` but are **Tiberius's doc-viewer joint patch** — NOT in this session's manifest Touched Files; explicitly EXCLUDED from this commit. Tiberius's session owns those. The Lupin-parent `TODO.md` Tiberius-emoji entry (added under separate explicit Rick authorization) is a Lupin-context change, not committed here.
+
+#### Checkpoint | 2026.05.21 PM EDT | Session e13fed4f wrap
+
+**Files** (this session, CoSA repo — this commit):
+- `repo/git_loc_delta/plotter.py` (NEW)
+- `repo/git_loc_delta/csv_writer.py` (MOD — schema v2 + sidecar)
+- `repo/git_loc_delta/analyzer.py` (MOD — repo_name plumbing)
+- `repo/git_loc_delta/__init__.py` (MOD — v1.1.0 + plot_summary export)
+- `repo/git_loc_delta/README.md` (MOD — v1.1 docs)
+- `repo/run_git_loc_delta.py` (MOD — --plot/--plot-output/--repo-name)
+- `repo/run_git_loc_delta_global.py` (NEW — cross-repo aggregator)
+- `rnd/2026.05.16-daily-loc-delta-tool.md` (MOD — Plot extension section)
+- `rnd/2026.05.21-cross-repo-loc-delta-aggregator-cli.md` (NEW — companion R&D doc)
+- `io/git-loc-delta/cosa-wip-v0.1.7-2026.04.23-tracking-lupin-work-loc-delta.csv` (MOD — schema v2 regen) + `.meta.json` (NEW — sidecar)
+- `history.md` (this entry)
+
+**Commit hash**: `<hash>` (backfilled post-commit).
+
+---
+
 ### 2026.05.20 PM - Session eecda1c9 (Mr. Radio 🦉) | CoSA-context lightweight session-end wrap — daily LoC delta dogfood + history + manifest only (no code body)
 
 **Context**: CoSA-context session-end ritual with NO code work to wrap. Persona: Mr. Radio 🦉 (`Aa6nEBJJMKJwJkCx8VU2`, `#FFA000` — authoritative warm male; third CoSA wrap on this branch after `99fbada3` 2026-05-13 PM + `af54bb12` 2026-05-17 PM). Branch: `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Two-commit wrap (B: session-end docs + daily LoC delta + summary doc, C: manifest hash backfill) — Commit A is omitted because no thematic code body landed in CoSA today. The deliverable IS the ritual artifacts. Commit basis identified by reading parent Lupin `history.md`, `TODO.md`, and `bug-fix-queue.md` per user voice direction at session start ("look at the history to-do and bug tracking list in the Lupin repo and use that as the basis for the commits ... You can push and make sure that you run the Git deltas for the day"). Push authorized.
