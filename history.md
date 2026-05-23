@@ -39,6 +39,30 @@
 - `.claude-session.md` (Session 91dcaf1e section appended)
 - `history.md` (this entry)
 
+**Commits**:
+- `b4201d8` — heartbeat-poker CoSA-side body (8 files, +1,592/-9)
+- [pending hash] — daily LoC delta CSV refresh + manifest hash backfill + global-sweep section
+
+#### Global LoC delta sweep — 2026-05-22 → 2026-05-23
+
+Per Rick's voice direction at session start ("run the global GitHub-LOC-Deltas analysis for the day that is Friday May 22 until Saturday May 23 until 12:40 AM EST"). Aggregator: `cosa.repo.run_git_loc_delta_global` (Rachel's CLI from session `e13fed4f`).
+
+**Window**: 2026-05-22 → 2026-05-23 (date-granularity filter — captures Friday's work day plus all of Saturday May 23 commits; broader than the spoken 12:40 AM EDT cutoff because git_loc_delta operates at date granularity, not timestamp granularity).
+
+**Totals**: **+4,900 / -165 lines (net +4,735), 16 commits, 2 days across 3 active repos.**
+
+| Date       | Repo                  | Added | Deleted | Net    | Commits |
+|------------|-----------------------|-------|---------|--------|---------|
+| 2026-05-22 | lupin                 | 2,278 | 145     | +2,133 | 9       |
+| 2026-05-22 | cosa                  | 5     | 1       | +4     | 2       |
+| 2026-05-23 | cosa                  | 1,592 | 9       | +1,583 | 2       |
+| 2026-05-23 | planning-is-prompting | 975   | 2       | +973   | 1       |
+| 2026-05-23 | lupin                 | 50    | 8       | +42    | 2       |
+
+Artifacts (live in **Lupin** parent's `io/loc-delta-global/` per scope-separation):
+- `global-2026-05-22_to_2026-05-23-loc-delta.csv` (12 rows)
+- `global-2026-05-22_to_2026-05-23-plot.png` (two-panel matplotlib)
+
 ---
 
 ### 2026.05.21 - Session e13fed4f (Rachel 🕊️) | git_loc_delta v1.1 — per-branch `--plot` + schema v2 + cross-repo aggregator CLI
