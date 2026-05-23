@@ -1,5 +1,46 @@
 # COSA Development History
 
+### 2026.05.23 - Session 91dcaf1e (Krishna 🦚) | CoSA wrap of Rio ⚡'s heartbeat-poker body (parent Session 76351966)
+
+**Context**: CoSA-context wrap session committing the CoSA-side body of two work items authored by parent-Lupin Session `76351966` (Rio ⚡, 2026-05-22). Rio's Lupin-side commits already landed (`cd37c3f` heartbeat-poker abstraction + TTS limiter; `d58e844` factory-wiring gap-close), but the CoSA submodule body was left uncommitted because Lupin-context sessions physically cannot commit the CoSA submodule. This Krishna wrap closes the gap per the established CoSA-wrap pattern (cf. Rachel's `e582c30` for Tiberius's doc-viewer patch). Persona: Krishna 🦚 (`ogSj7jM4rppgY9TgZMqW`, `#1DE9B6` — reassuring warm male). Branch: `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Commit basis identified by reading parent Lupin `history.md`, `TODO.md`, and `bug-fix-queue.md` per Rick's voice direction at session start.
+
+**CoSA-side body committed** (8 files):
+
+1. **Heartbeat-poker abstraction** — Rio ⚡'s 10-task implementation run of the approved `src/rnd/v0.1.7/2026.05.20-generic-heartbeat-poker-abstraction-design.md` plan:
+   - `agents/heartbeat_poker_job.py` (NEW) — `HeartbeatPokerJob` `AgenticJobBase` subclass with three layered exits (clean-signal / dead-man's-switch / hard-cap)
+   - `agents/heartbeat_poker_commons_gateway.py` (NEW) — `LupinCommonsGateway` adapter + `from_environment()` constructor (IO-boundary)
+   - `tests/unit/agents/test_heartbeat_poker_job.py` (NEW) — 36 unit tests
+   - `tests/unit/agents/test_heartbeat_poker_commons_gateway.py` (NEW) — 14 gateway unit tests
+   - `tests/smoke/test_heartbeat_poker_smoke.py` (NEW) — 9 smoke tests
+
+2. **CJ Flow ingestion wiring (gap-close)** — Rio ⚡'s follow-on after surfacing the gap mid-run:
+   - `rest/agentic_job_factory.py` (MOD) — added `agent router go to heartbeat poker` branch with recipients/termination-kinds parsing and `_parse_optional_int` defaults
+   - `tests/unit/rest/test_agentic_job_factory_heartbeat.py` (NEW) — 11 factory-wiring unit tests
+
+3. **TTS limiter boundary-scan cleanup** — Rio ⚡'s same-session TTS fix:
+   - `rest/routers/system.py` (MOD) — removed vestigial `tts_preview_include_semicolons` config key (splainer-side removal already shipped Lupin-side in `cd37c3f`)
+
+**Verification**:
+- ✅ 78/78 heartbeat-poker tests pass (`pytest tests/unit/agents/test_heartbeat_poker_{job,commons_gateway}.py tests/unit/rest/test_agentic_job_factory_heartbeat.py tests/smoke/test_heartbeat_poker_smoke.py` — 0.88s)
+- ✅ py_compile clean on all 2 modified + 2 new source files
+- ✅ Both heartbeat modules hold gate-enforced 100% line+branch coverage per Rio's prior verification
+
+**Cross-repo separation**: Per `feedback_session_scope_is_cwd.md` + `feedback_cosa_wrap_commits_all_pending.md`, this CoSA-context wrap commits ALL pending CoSA-side body regardless of authoring Lupin session. Standing `feedback_never_commit_cosa.md` overridden THIS SESSION ONLY by Rick's explicit voice direction ("use them as the basis for the commits that you'll make after you start the end of session ritual").
+
+**Files** (this session, CoSA repo):
+- `agents/heartbeat_poker_job.py` (NEW)
+- `agents/heartbeat_poker_commons_gateway.py` (NEW)
+- `tests/unit/agents/test_heartbeat_poker_job.py` (NEW)
+- `tests/unit/agents/test_heartbeat_poker_commons_gateway.py` (NEW)
+- `tests/smoke/test_heartbeat_poker_smoke.py` (NEW)
+- `rest/agentic_job_factory.py` (MOD)
+- `tests/unit/rest/test_agentic_job_factory_heartbeat.py` (NEW)
+- `rest/routers/system.py` (MOD)
+- `.claude-session.md` (Session 91dcaf1e section appended)
+- `history.md` (this entry)
+
+---
+
 ### 2026.05.21 - Session e13fed4f (Rachel 🕊️) | git_loc_delta v1.1 — per-branch `--plot` + schema v2 + cross-repo aggregator CLI
 
 **Context**: CoSA-context session with a substantive code body (unlike the recent docs-only wraps `eecda1c9` / `a9af9d81`). Persona: Rachel 🕊️ (`21m00Tcm4TlvDq8ikWAM`, `#CE93D8` — calm & clear female). Branch: `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Extends María 🌸's `git_loc_delta` package (originally session `3c9fce51`, 2026-05-16) with plotting + cross-repo aggregation. Designed across 9 commons DMs with María 🌸 (PIP session `d66169f2`) using the parallel-R&D-docs handshake; Rick ratified the schema-scope expansion ("EXPAND FULL") via `ask_multiple_choice`. Commit basis identified by reading parent Lupin `history.md`, `TODO.md`, and `bug-fix-queue.md` per user voice direction.

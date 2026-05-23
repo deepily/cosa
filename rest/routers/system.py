@@ -668,10 +668,6 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
         "tts preview min chars",
         default=100, return_type="int"
     )
-    tts_preview_include_semicolons = config_mgr.get(
-        "tts preview include semicolons",
-        default=False, return_type="boolean"
-    )
 
     # Commons Traffic Visibility — broadcast-card Recent Activity feature flag (2026-05-14)
     # See src/rnd/v0.1.7/2026.05.14-commons-traffic-visibility-design.md (Q9 — default True)
@@ -712,14 +708,13 @@ async def get_client_config( user_id: str = Depends( get_current_user_id ) ):
         # "auto-fix on failure" checkbox in the test runner submission card
         "test_fix_expediter_auto_fix_enabled": bool( tfe_auto_fix_enabled ),
 
-        # TTS preview-and-pause feature flags (2026-05-13)
-        # When enabled, every TTS message gets split into sentences client-side
-        # and only the first <fraction> portion is synthesized. Saves TTS
+        # TTS verbosity-limiter feature flags (2026-05-13; boundary-scan 2026-05-22)
+        # When enabled, every TTS message is truncated client-side to roughly
+        # <fraction> of its length and only that slice is synthesized. Saves TTS
         # provider character costs because providers charge at request-time.
         "tts_preview_enabled"            : bool( tts_preview_enabled ),
         "tts_preview_fraction"           : float( tts_preview_fraction ),
         "tts_preview_min_chars"          : int( tts_preview_min_chars ),
-        "tts_preview_include_semicolons" : bool( tts_preview_include_semicolons ),
 
         # TTS interaction mode (chorus / solo) — drives mode-conditional icon
         # rendering for the per-session DND toggle on each sender card. Added
