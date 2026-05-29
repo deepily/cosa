@@ -231,6 +231,96 @@ def load_overflow_persona_from_config( config_mgr ) -> Optional[ PoolPersona ]:
     }
 
 
+def _lowest_free_extra_n( occupied_names: Set[ str ] ) -> int:
+    """
+    Smallest N ≥ 1 such that "extra N" is not in occupied_names.
+
+    Used by the Arnold-first→Extra-N overflow path: once the configured
+    overflow persona ("arnold") is itself occupied, additional concurrent
+    overflow sessions get a numbered "Extra N" identity. The number is derived
+    statelessly from the live occupancy set (which is freshly computed from
+    bridge files per allocation), so a dead Extra session frees its number for
+    re-use on the next allocation — gaps are reused rather than skipped.
+
+    Requires:
+        - occupied_names is a set of name strings (may be empty)
+
+    Ensures:
+        - Returns the smallest integer N ≥ 1 for which f"extra {N}" is absent
+          from occupied_names
+        - Returns 1 when no "extra K" names are occupied
+        - Reuses gaps: occupied={"extra 2"} → returns 1 (not 3)
+        - Never raises
+
+    Args:
+        occupied_names: Names currently allocated to live sessions (pool members,
+            "arnold", and any "extra K" already in use)
+
+    Returns:
+        int: Lowest free Extra index ≥ 1
+    """
+    n = 1
+    while f"extra {n}" in occupied_names:
+        n += 1
+    return n
+
+
+def _make_extra_persona(
+    base_overflow: PoolPersona,
+    n            : int,
+    extra_colors : Optional[ List[ str ] ] = None
+) -> PoolPersona:
+    """
+    Build a uniquified "Extra N" overflow persona from the base overflow persona.
+
+    Extras share the base overflow persona's voice_id and icon (so they all
+    speak in Arnold's voice and carry his 🪨 badge) but carry a distinct name,
+    display_name, and color so they are visually distinguishable in the chorus
+    UI. The number lives in the display_name ("Extra 1"); the icon is reused.
+
+    Honest limitation: Extras disambiguate the EYE, not the EAR — every Extra
+    speaks in the base overflow voice. Distinct voices require widening the
+    named pool with real ElevenLabs voices, which is tracked separately.
+
+    Requires:
+        - base_overflow is a persona dict with at least voice_id, icon, color
+        - n is an integer ≥ 1
+        - extra_colors is a list of CSS hex strings or None/empty
+
+    Ensures:
+        - Returns a fresh dict with keys: name ("extra {n}"), display_name
+          ("Extra {n}"), voice_id, icon, color, overflow=True, borrowed=False
+        - color is extra_colors[ (n-1) % len(extra_colors) ] when the palette is
+          non-empty, else falls back to base_overflow["color"]
+        - Never aliases base_overflow (returns an independent dict)
+        - Never raises on valid inputs
+
+    Args:
+        base_overflow: The configured overflow persona (Arnold) — voice/icon source
+        n: The Extra index (1-based)
+        extra_colors: Green-rule-compliant palette, cycled by (n-1) % len
+
+    Returns:
+        dict: The Extra-N persona
+    """
+    name = f"extra {n}"
+
+    if extra_colors:
+        color = extra_colors[ ( n - 1 ) % len( extra_colors ) ]
+    else:
+        color = base_overflow[ "color" ]
+
+    return {
+        "name"         : name,
+        "display_name" : display_name_for( name ),
+        "voice_id"     : base_overflow[ "voice_id" ],
+        "icon"         : base_overflow[ "icon" ],
+        "color"        : color,
+        "overflow"     : True,
+        "borrowed"     : False
+    }
+
+
 def borrowed_persona_for_sid(
     pool             : List[ PoolPersona ],
     stable_session_id: str
@@ -285,36 +375,53 @@ def pick_unallocated_persona(
     pool             : List[ PoolPersona ],
     occupied_names   : Set[ str ],
     stable_session_id: str,
-    overflow_persona : Optional[ PoolPersona ] = None
+    overflow_persona : Optional[ PoolPersona ] = None,
+    extra_colors     : Optional[ List[ str ] ] = None
 ) -> Optional[ PoolPersona ]:
     """
-    Uniform random draw from (pool − occupied), falling back to Sam-overflow
-    (preferred) or hash-borrow (legacy) on exhaustion.
+    Uniform random draw from (pool − occupied), falling back to Arnold-first→
+    Extra-N overflow (preferred) or hash-borrow (legacy) on exhaustion.
+
+    Overflow identity model (Option A, 2026-05-28): when the named pool is
+    exhausted, the FIRST overflow session gets the configured overflow persona
+    verbatim (Arnold). Once Arnold is itself occupied, additional concurrent
+    overflow sessions get numbered "Extra N" identities — distinct names +
+    distinct colors, all sharing Arnold's voice_id and icon. This fixes the
+    prior collision where 2+ overflow sessions received the identical Arnold
+    dict and were indistinguishable in the chorus UI.
 
     Requires:
         - pool is a list (may be empty)
         - occupied_names is a set of name strings (case-sensitive match against pool entries)
         - stable_session_id is a non-empty string
         - overflow_persona is a persona dict (with overflow=True) or None
+        - extra_colors is a list of CSS hex strings or None/empty
 
     Ensures:
         - Returns a fresh dict with borrowed=False when (pool − occupied) is non-empty,
           chosen uniformly at random
-        - When the pool is fully occupied AND overflow_persona is non-None: returns
-          a copy of overflow_persona with borrowed=False (preserving overflow=True);
-          multiple sessions may legitimately receive Sam this way
+        - When the pool is fully occupied AND overflow_persona is non-None:
+          * if overflow_persona's name is NOT occupied → returns a copy of
+            overflow_persona with borrowed=False (preserving overflow=True) — the
+            common single-overflow case, unchanged from prior behavior
+          * if overflow_persona's name IS occupied → returns an "Extra N" persona
+            (lowest free N), sharing the overflow voice_id/icon with a distinct
+            name/display_name/color (see _make_extra_persona)
         - When the pool is fully occupied AND overflow_persona is None: falls back
           to borrowed_persona_for_sid (legacy deterministic hash-borrow); kept as
-          defensive fallback for the case where Sam is unconfigured
+          defensive fallback for the case where the overflow is unconfigured
         - Returns None only when pool itself is empty (misconfiguration)
         - Never raises
 
     Args:
-        pool: Full allocatable pool (Sam excluded — he's the overflow, not a peer)
-        occupied_names: Names currently allocated to live sessions
+        pool: Full allocatable pool (overflow persona excluded — it's the overflow, not a peer)
+        occupied_names: Names currently allocated to live sessions (pool members,
+            the overflow name, and any "extra K" already in use)
         stable_session_id: Used both as anti-collision seed and for legacy borrow determinism
-        overflow_persona: Sam (or any other dict marked overflow=True) returned when
+        overflow_persona: Arnold (or any other dict marked overflow=True) returned when
             the main pool is exhausted; None falls through to the legacy borrow path
+        extra_colors: Green-rule-compliant palette for Extra-N personas, cycled by
+            (n-1) % len; None/empty → Extras inherit the overflow persona's color
 
     Returns:
         dict or None: Allocated persona, or None if pool is empty
@@ -326,10 +433,16 @@ def pick_unallocated_persona(
 
     if not free:
         if overflow_persona is not None:
-            # Spillover to Sam — copy so callers can mutate without aliasing,
-            # and set borrowed=False explicitly (overflow=True is preserved
-            # from the source dict)
-            return dict( overflow_persona, borrowed=False )
+            if overflow_persona[ "name" ] not in occupied_names:
+                # First overflow — hand out Arnold verbatim. Copy so callers can
+                # mutate without aliasing; set borrowed=False explicitly
+                # (overflow=True is preserved from the source dict).
+                return dict( overflow_persona, borrowed=False )
+            # Arnold is already taken — spill to a numbered Extra-N identity so
+            # concurrent overflows stay visually distinct (shared voice/icon,
+            # distinct name/color).
+            n = _lowest_free_extra_n( occupied_names )
+            return _make_extra_persona( overflow_persona, n, extra_colors )
         return borrowed_persona_for_sid( pool, stable_session_id )
 
     chosen = random.choice( free )
@@ -397,8 +510,18 @@ def allocate_persona_for_session(
     active   = find_active_voice_persona_sessions( stale_threshold_seconds=stale_seconds )
     occupied = { p[ "name" ] for _path, _sid, p in active if isinstance( p, dict ) and p.get( "name" ) }
 
-    persona = pick_unallocated_persona( pool, occupied, stable_session_id, overflow_persona=overflow )
-    if persona is None:
+    # Green-rule-compliant palette for Extra-N overflow identities (cycled by index).
+    # Empty/missing → Extras inherit the overflow persona's color.
+    extra_colors = [
+        c.strip()
+        for c in config_mgr.get( "cc session voice persona extra colors", default="", silent=True ).split( "," )
+        if c.strip()
+    ]
+
+    persona = pick_unallocated_persona(
+        pool, occupied, stable_session_id, overflow_persona=overflow, extra_colors=extra_colors
+    )
+    if persona is None:  # pragma: no cover  # defensive — pick only returns None for an empty pool, already guarded above
         return None
 
     persona[ "assigned_at" ] = datetime.now( timezone.utc ).isoformat( timespec="seconds" )
@@ -697,8 +820,51 @@ def quick_smoke_test():
     assert borrowed_persona_for_sid( [],   "sid" ) is None, "Empty pool → None"
     assert borrowed_persona_for_sid( pool, ""    ) is None, "Empty sid → None"
 
+    # Test 7: Arnold-first→Extra-N overflow (Option A, 2026-05-28)
+    arnold       = { "name": "arnold", "display_name": "Arnold", "voice_id": "v_arnold",
+                     "icon": "🪨", "color": "#FFD600", "profile": "gravelly male", "overflow": True }
+    extra_colors = [ "#4527A0", "#6A1B9A", "#9C27B0" ]
+    all_pool     = { "Nora", "Quentin", "Rachel" }
+
+    # 7a: pool full, Arnold free → Arnold verbatim
+    first = pick_unallocated_persona( pool, all_pool, "sid-a", overflow_persona=arnold, extra_colors=extra_colors )
+    assert first[ "name" ] == "arnold" and first[ "overflow" ] is True and first[ "borrowed" ] is False
+
+    # 7b: pool full + Arnold occupied → Extra 1 (shared voice/icon, palette color)
+    e1 = pick_unallocated_persona( pool, all_pool | { "arnold" }, "sid-b", overflow_persona=arnold, extra_colors=extra_colors )
+    assert e1[ "name" ] == "extra 1" and e1[ "display_name" ] == "Extra 1"
+    assert e1[ "voice_id" ] == "v_arnold" and e1[ "icon" ] == "🪨" and e1[ "color" ] == "#4527A0"
+    assert e1[ "overflow" ] is True and e1[ "borrowed" ] is False
+
+    # 7c: Arnold + extra 1 occupied → extra 2
+    e2 = pick_unallocated_persona( pool, all_pool | { "arnold", "extra 1" }, "sid-c", overflow_persona=arnold, extra_colors=extra_colors )
+    assert e2[ "name" ] == "extra 2" and e2[ "color" ] == "#6A1B9A"
+
+    # 7d: gap reuse — extra 1 free though extra 2 taken → extra 1
+    gap = pick_unallocated_persona( pool, all_pool | { "arnold", "extra 2" }, "sid-d", overflow_persona=arnold, extra_colors=extra_colors )
+    assert gap[ "name" ] == "extra 1"
+
+    # 7e: color cycling beyond palette length wraps via modulo (n=4 → index 0)
+    e4 = pick_unallocated_persona(
+        pool, all_pool | { "arnold", "extra 1", "extra 2", "extra 3" }, "sid-e",
+        overflow_persona=arnold, extra_colors=extra_colors
+    )
+    assert e4[ "name" ] == "extra 4" and e4[ "color" ] == "#4527A0"
+
+    # 7f: empty palette → Extra inherits the overflow persona's color
+    e_nopal = pick_unallocated_persona( pool, all_pool | { "arnold" }, "sid-f", overflow_persona=arnold, extra_colors=None )
+    assert e_nopal[ "name" ] == "extra 1" and e_nopal[ "color" ] == arnold[ "color" ]
+    print( "  ✓ Arnold-first→Extra-N overflow: Arnold verbatim, then numbered Extras (gap-reusing)" )
+
+    # Test 8: _lowest_free_extra_n unit checks
+    assert _lowest_free_extra_n( set() )                        == 1
+    assert _lowest_free_extra_n( { "extra 1" } )                == 2
+    assert _lowest_free_extra_n( { "extra 2" } )                == 1
+    assert _lowest_free_extra_n( { "extra 1", "extra 2" } )     == 3
+    print( "  ✓ _lowest_free_extra_n picks lowest unused index" )
+
     print( "\nAll voice persona helpers smoke tests: ✓ passed" )
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover  # CLI entry point; quick_smoke_test body is exercised by the unit suite
     quick_smoke_test()

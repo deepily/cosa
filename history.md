@@ -1,5 +1,36 @@
 # COSA Development History
 
+### 2026.05.28 - Session 95a47aab (Sam 🎙️) | CoSA wrap of Tiberius 🌑's Extra-N overflow allocator (parent Session 0da441e6)
+
+**Context**: CoSA-context wrap session committing the CoSA-side body of the **Extra-N overflow personas** feature authored by parent-Lupin Session `0da441e6` (Tiberius 🌑, 2026-05-28). Tiberius's Lupin-side commit already landed the parent halves (unit tests in `src/tests/unit/test_voice_persona_helpers.py`, design doc `src/rnd/v0.1.7/2026.05.28-extra-n-overflow-personas.md`, and via parallel commit `908bf21` the INI keys + splainer for the Extra-N color palette), but the CoSA submodule body — the allocator logic itself — was left uncommitted because Lupin-context sessions physically cannot commit the CoSA submodule. Tiberius's Lupin history entry explicitly flagged it: "Managed separately: CoSA submodule `src/cosa/rest/voice_persona_helpers.py` (Extra-N allocator)." This Sam wrap closes that gap per the established CoSA-wrap pattern (cf. Krishna's `b4201d8` for Rio's heartbeat-poker body). Persona: Sam 🎙️ (`G7ILShrCNLfmS0A37SXS`, `#5E35B1` — British male). Branch: `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Commit basis identified by reading parent Lupin `history.md`, `TODO.md`, and `bug-fix-queue.md` per Rick's voice direction at session start.
+
+**CoSA-side body committed** (1 file):
+
+- `rest/voice_persona_helpers.py` (MOD, +183/−17) — generalizes the single-Arnold pool-exhaustion overflow into numbered "Extra N" identities, fixing the latent 2+-overflow collision where concurrent overflow sessions all received the identical Arnold dict and were indistinguishable in the chorus UI. New pieces:
+  - `_lowest_free_extra_n( occupied_names )` — stateless lowest-free-index picker (N ≥ 1), gap-reusing so a dead Extra session frees its number for re-use on the next allocation.
+  - `_make_extra_persona( base_overflow, n, extra_colors )` — builds a uniquified "Extra N" persona that shares the base overflow voice_id + icon (all speak in Arnold's voice, carry his 🪨 badge) but carries a distinct name/display_name/color. Honest limitation documented in-source: Extras disambiguate the **eye**, not the **ear**.
+  - `pick_unallocated_persona(...)` — gained an `extra_colors` param + Arnold-first→Extra-N fallback branch: first overflow hands out Arnold verbatim (unchanged single-overflow case); once Arnold is occupied, additional overflows get the lowest-free Extra-N.
+  - `allocate_persona_for_session(...)` — reads the `cc session voice persona extra colors` INI key (cycled by `(n-1) % len`; empty → Extras inherit the overflow color) and threads it through.
+  - Smoke test extended: Tests 7a–7f (Arnold verbatim → Extra 1/2, gap-reuse, color cycling, empty-palette fallback) + Test 8 (`_lowest_free_extra_n` unit checks). Two `# pragma: no cover` markers added with same-line rationale (defensive empty-pool guard + CLI entry point).
+
+**Verification**:
+- ✅ `py_compile` clean
+- ✅ `python -m cosa.rest.voice_persona_helpers` — all smoke tests pass, including the 5 new Extra-N cases
+- ✅ No CoSA-side unit test references this file — coverage lives in the Lupin parent (`test_voice_persona_helpers.py`), already committed by Tiberius's session
+
+**Not addressed (deferred, tracked in Lupin TODO.md)**: the green-rule docstring trim (Lupin TODO "Retire-no-green-color-rule sweep" → CoSA item for lines ~301/~423/~513). This diff actually *re-introduces* "Green-rule-compliant palette" wording in the new docstrings; trimming it is a separate CoSA-context task per the standing sweep item, deliberately not folded in here.
+
+**Cross-repo separation**: Per `feedback_session_scope_is_cwd.md` + `feedback_cosa_wrap_commits_all_pending.md`, this CoSA-context wrap commits the pending CoSA-side body. Standing `feedback_never_commit_cosa.md` overridden THIS SESSION ONLY by Rick's explicit voice direction ("use them as the basis for the commits that you'll make after you start the end of session ritual"). The Lupin parent's `history.md` already documents this work (Tiberius's 2026.05.28 entry), so parent history is NOT updated from this session.
+
+**Files** (this session, CoSA repo):
+- `rest/voice_persona_helpers.py` (MOD)
+- `.claude-session.md` (Session 95a47aab section appended)
+- `history.md` (this entry)
+
+**Commit**: [pending approval]
+
+---
+
 ### 2026.05.23 - Session 91dcaf1e (Krishna 🦚) | CoSA wrap of Rio ⚡'s heartbeat-poker body (parent Session 76351966)
 
 **Context**: CoSA-context wrap session committing the CoSA-side body of two work items authored by parent-Lupin Session `76351966` (Rio ⚡, 2026-05-22). Rio's Lupin-side commits already landed (`cd37c3f` heartbeat-poker abstraction + TTS limiter; `d58e844` factory-wiring gap-close), but the CoSA submodule body was left uncommitted because Lupin-context sessions physically cannot commit the CoSA submodule. This Krishna wrap closes the gap per the established CoSA-wrap pattern (cf. Rachel's `e582c30` for Tiberius's doc-viewer patch). Persona: Krishna 🦚 (`ogSj7jM4rppgY9TgZMqW`, `#1DE9B6` — reassuring warm male). Branch: `wip-v0.1.7-2026.04.23-tracking-lupin-work`. Commit basis identified by reading parent Lupin `history.md`, `TODO.md`, and `bug-fix-queue.md` per Rick's voice direction at session start.
