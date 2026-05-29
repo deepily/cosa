@@ -27,7 +27,7 @@
 - `.claude-session.md` (Session 95a47aab section appended)
 - `history.md` (this entry)
 
-**Commit**: [pending approval]
+**Commit**: `f87666d` (3 files, +251/−17) + [pending hash] (this hash-backfill)
 
 ---
 
