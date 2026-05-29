@@ -25,6 +25,48 @@ from ..middleware.api_key_auth import require_api_key, require_api_key_or_jwt
 from ..db.database import get_db
 from ..db.repositories.notification_repository import NotificationRepository
 
+# Per-session voice persona lookup (see Phase 7 of voice persona R&D)
+# Bridge file is canonical state; lookup is best-effort and fail-soft.
+try:
+    from lupin_cli.claude_code.hooks.lib.session_bridge import get_voice_persona as _bridge_get_voice_persona
+except ImportError:
+    _bridge_get_voice_persona = None
+
+try:
+    from cosa.rest.voice_persona_helpers import display_name_for as _display_name_for
+except ImportError:
+    _display_name_for = None
+
+
+def _voice_persona_for_sender_id( resolved_sender_id ):
+    """
+    Resolve a sender_id (e.g., 'claude.code@lupin.deepily.ai#c7333045') to a
+    voice persona dict by reading the session bridge file. Returns None on
+    any failure (sender_id missing #suffix, bridge missing, persona not set,
+    or session_bridge module not importable).
+
+    The 8-char prefix after '#' is matched against bridge files via
+    find_session_path_by_id (which already understands the prefix-or-full
+    form), so we can pass it directly to get_voice_persona.
+
+    Defensively stamps `display_name` on the returned dict if the bridge
+    file predates the lowercase-key rename (legacy bridges have only `name`).
+    Pool names are stored lowercase no-punctuation per project key convention;
+    `display_name` is the proper-noun form for UI rendering.
+    """
+    if _bridge_get_voice_persona is None or not resolved_sender_id or "#" not in resolved_sender_id:
+        return None
+    sid_suffix = resolved_sender_id.split( "#", 1 )[ 1 ].strip()
+    if not sid_suffix:
+        return None
+    try:
+        persona = _bridge_get_voice_persona( sid_suffix )
+    except Exception:
+        return None
+    if persona and "display_name" not in persona and _display_name_for is not None:
+        persona = { **persona, "display_name": _display_name_for( persona.get( "name", "" ) ) }
+    return persona
+
 router = APIRouter(prefix="/api", tags=["notifications"])
 
 # Global variables that will be injected via dependencies (temporary)
@@ -310,7 +352,16 @@ async def notify_user(
     # authenticated_user_id contains the validated user ID
 
     # Validate notification type
-    valid_types = ["task", "progress", "alert", "custom", "user_initiated_message", "session_topic"]
+    # Custom state-update types ("voice_persona_assigned", "voice_persona_released",
+    # "speakerphone_changed") are server-internal events routed through this
+    # subsystem rather than as ad-hoc top-level WS events. See:
+    # src/rnd/v0.1.7/2026.04.29-ws-event-cleanup-to-custom-notification-types/01-design.md
+    valid_types = [
+        "task", "progress", "alert", "custom", "user_initiated_message", "session_topic",
+        "voice_persona_assigned", "voice_persona_released", "speakerphone_changed",
+        "commons_broadcast_ack", "commons_answer_received", "commons_activity",
+        "commons_question_received"
+    ]
     if type not in valid_types:
         raise HTTPException(
             status_code=400,
@@ -501,7 +552,86 @@ async def notify_user(
                 # Log but don't fail - FIFO queue is the primary delivery mechanism
                 print( f"[NOTIFY] ⚠️ Failed to persist to PostgreSQL (non-fatal): {db_error}" )
 
-            # 2. If user is offline, return immediately WITHOUT pushing to FIFO queue
+            # 2. If user is offline, attempt cross-user CC-listener fallback
+            #    BEFORE giving up. Delegates to the canonical helper
+            #    `WebSocketManager.emit_to_user_or_listener_sync` which
+            #    encapsulates the dispatch matrix (user-or-listener-or-both)
+            #    consistently across all 6 dispatch sites. See
+            #    `~/.claude/plans/dazzling-napping-frost.md` (2026-04-27).
+            #
+            #    Why this matters: CC notification listeners
+            #    (`cc-listener-{job_id}` sessions) authenticate as a SHARED
+            #    service-account user_id (`claude.code@lupin.deepily.ai`),
+            #    which is different from the email-resolved
+            #    `target_system_id`. So when a user sends a message from the
+            #    UI panel targeting another CC session like
+            #    `claude.code@lookml.deepily.ai`,
+            #    `is_user_connected(target_system_id)` returns False even
+            #    though a `cc-listener-{job_id}` session is right there in
+            #    `active_connections`. Bug filed 2026-04-27 by USER
+            #    (session b2ce9133).
+            #
+            #    user_id=None is intentional here: we already know the primary
+            #    target is offline (is_connected=False above), so re-checking
+            #    inside the helper is redundant. The helper just tries the
+            #    listener path.
+            if not is_connected and job_id:
+                dispatch_result = ws_manager.emit_to_user_or_listener_sync(
+                    user_id = None,
+                    job_id  = job_id,
+                    event   = "notification_queue_update",
+                    data    = {
+                        "notification": {
+                            "id"                : db_notification_id,
+                            "id_hash"           : db_notification_id,
+                            "type"              : type,
+                            "notification_type" : type,
+                            "message"           : message.strip(),
+                            "priority"          : priority,
+                            "job_id"            : job_id,
+                            "sender_id"         : resolved_sender_id,
+                            "title"             : title,
+                            "abstract"          : abstract,
+                            "timestamp"         : datetime.utcnow().isoformat(),
+                            "voice_persona"     : _voice_persona_for_sender_id( resolved_sender_id ),
+                        },
+                    },
+                )
+                if dispatch_result[ "listener_delivered" ]:
+                    # Best-effort state update — non-fatal if it fails
+                    if db_notification_id:
+                        try:
+                            with get_db() as session:
+                                repo = NotificationRepository( session )
+                                repo.update_state( uuid.UUID( db_notification_id ), "delivered" )
+                        except Exception as state_err:
+                            print( f"[NOTIFY] ⚠️ State update to 'delivered' failed (non-fatal): {state_err}" )
+
+                    listener_sid = f"cc-listener-{job_id}"
+                    print( f"[NOTIFY] ✓ Delivered via cc-listener {listener_sid} (cross-user fallback)" )
+                    response_dict = {
+                        "status"             : "delivered_via_listener",
+                        "message"            : f"Notification delivered to CC listener for job {job_id}",
+                        "target_user"        : target_user,
+                        "target_system_id"   : target_system_id,
+                        "connection_count"   : 1,
+                        "delivery_path"      : "cc-listener",
+                        "listener_session"   : listener_sid,
+                    }
+                    # Cache for idempotency
+                    if idempotency_key:
+                        with _idempotency_lock:
+                            _idempotency_cache[ idempotency_key ] = ( response_dict, time_mod.time() )
+                            while len( _idempotency_cache ) > _IDEMPOTENCY_MAX:
+                                _idempotency_cache.popitem( last=False )
+                    return response_dict
+                # else: helper either had no listener to deliver to OR the
+                # emit failed (logged inside the helper). Fall through to
+                # user_not_available — DB row remains for forensic recovery.
+
+            # If we reach here, the user is offline AND no usable cc-listener
+            # fallback existed. Return user_not_available — DB row remains for
+            # forensic recovery.
             if not is_connected:
                 print( f"[NOTIFY] User {target_user} ({target_system_id}) is not connected - notification not delivered" )
                 response_dict = {
@@ -520,6 +650,7 @@ async def notify_user(
                 return response_dict
 
             # 3. User is connected — push to FIFO queue for live WebSocket delivery
+            voice_persona_payload = _voice_persona_for_sender_id( resolved_sender_id )
             notification_item = notification_queue.push_notification(
                 message                 = message.strip(),
                 type                    = type,
@@ -534,7 +665,8 @@ async def notify_user(
                 queue_name              = queue_name,
                 progress_group_id       = progress_group_id,
                 display_qualifier_widget = display_qualifier_widget,
-                session_name             = session_name
+                session_name             = session_name,
+                voice_persona            = voice_persona_payload
             )
 
             print( f"[NOTIFY] ✓ Notification queued for {target_user} ({target_system_id}) - {connection_count} connection(s)" )
@@ -672,6 +804,7 @@ async def notify_user(
         # ---- End Prediction Engine Hook ----
 
         # Push notification to WebSocket for UI rendering (Phase 2.2 with full fields)
+        voice_persona_payload = _voice_persona_for_sender_id( resolved_sender_id )
         notification_item = notification_queue.push_notification(
             message                  = message.strip(),
             type                     = type,
@@ -692,7 +825,8 @@ async def notify_user(
             queue_name               = queue_name,  # Queue for provisional job card registration
             progress_group_id        = progress_group_id,  # In-place DOM update grouping
             prediction_hint          = prediction_hint,  # Prediction hint (override or engine-generated)
-            display_qualifier_widget = display_qualifier_widget  # Expanded comment widget
+            display_qualifier_widget = display_qualifier_widget,  # Expanded comment widget
+            voice_persona            = voice_persona_payload  # Per-session voice (None → server default)
         )
 
         # DEBUG: Log the notification_item after creation
@@ -726,12 +860,18 @@ async def notify_user(
                     repo = NotificationRepository( session )
                     repo.mark_expired( uuid.UUID( notification_id ) )
 
-                # Task 7: Broadcast notification_expired WebSocket event
+                # Task 7: Broadcast notification_expired WebSocket event.
+                # Phase C migration (2026-04-27): use the canonical dispatch
+                # helper so CC listeners on the same job_id also receive the
+                # expiry event (they couldn't before — emit_to_user only
+                # reached the email-resolved user_id, missing the listener
+                # that was registered under a shared service-account user_id).
                 try:
-                    await ws_manager.emit_to_user(
-                        target_system_id,
-                        "notification_expired",
-                        {
+                    ws_manager.emit_to_user_or_listener_sync(
+                        user_id = target_system_id,
+                        job_id  = job_id,
+                        event   = "notification_expired",
+                        data    = {
                             "notification_id"  : notification_id,
                             "default_used"     : response_default,
                             "timeout"          : True,
@@ -890,8 +1030,11 @@ async def submit_notification_response(
 
                 print(f"[NOTIFY] Accepting late response within grace period ({grace_period_seconds}s)")
 
-            # Capture recipient_id before session closes (for WebSocket broadcast)
-            recipient_id = str( notification.recipient_id )
+            # Capture recipient_id and job_id before session closes (for WebSocket broadcast).
+            # job_id is needed for the cross-user CC-listener fallback in the
+            # notification_responded broadcast below (Phase C migration 2026-04-27).
+            recipient_id    = str( notification.recipient_id )
+            notification_job_id = notification.job_id
 
             # Update database with response (pass dict, not JSON string)
             # Wrap in dict if response_value is a simple string like "yes" or "no"
@@ -939,12 +1082,18 @@ async def submit_notification_response(
         else:
             print(f"[NOTIFY] No SSE stream waiting for {notification_id} (may have already completed)")
 
-        # Task 7: Broadcast WebSocket event (notification_responded)
+        # Task 7: Broadcast WebSocket event (notification_responded).
+        # Phase C migration (2026-04-27): use the canonical dispatch helper
+        # so CC listeners on the same job_id also receive the response event
+        # (they couldn't before — emit_to_user only reached the email-resolved
+        # recipient_id, missing the listener registered under a shared
+        # service-account user_id).
         try:
-            await ws_manager.emit_to_user(
-                recipient_id,
-                "notification_responded",
-                {
+            ws_manager.emit_to_user_or_listener_sync(
+                user_id = recipient_id,
+                job_id  = notification_job_id,
+                event   = "notification_responded",
+                data    = {
                     "notification_id"  : notification_id,
                     "response_value"   : response_value,
                     "timestamp"        : datetime.utcnow().isoformat(),
@@ -1946,10 +2095,16 @@ async def get_visible_senders(
                     if a["last_activity"] >= cutoff
                 ]
 
-            # Convert datetime to ISO string for JSON serialization
+            # Convert datetime to ISO string for JSON serialization, and stamp
+            # the per-session voice persona on each sender so the UI can render
+            # the persona badge on first paint after a force-refresh — without
+            # this, senderPersonaMap is empty until the first live notification
+            # arrives, and the card renders without a badge.
+            # See: src/rnd/v0.1.7/2026.04.29-ws-event-cleanup-to-custom-notification-types/01-design.md §10 (Layer B)
             for activity in activities:
                 if activity["last_activity"]:
                     activity["last_activity"] = activity["last_activity"].isoformat()
+                activity["voice_persona"] = _voice_persona_for_sender_id( activity.get( "sender_id" ) )
 
             filter_label = " (excluding own jobs)" if exclude_own_jobs else ""
             print( f"[NOTIFY] Returning {len( activities )} visible senders for {user_email}{filter_label}" )

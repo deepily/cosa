@@ -104,6 +104,24 @@ async def submit_test_suite(
     Raises:
         HTTPException 400: Invalid request parameters
         HTTPException 500: Queue push failed
+
+    PREFLIGHT NOTE (2026-05-01 post-mortem, Phase 7 / Cluster C):
+    Bind-mount drift in the test container can produce HTTP 404s for
+    fixture files that exist on the host but not inside the running
+    container (e.g. the 2026-04-30 22:15-EDT failure of
+    test_presentation_render_only_smoke). The canonical safeguard is
+    `src/scripts/preflight-test-container.sh`, which CANNOT be invoked
+    from this endpoint because the FastAPI server runs INSIDE the test
+    container and the docker daemon is not reachable from there. Until
+    a server-side surrogate (e.g. a /api/preflight endpoint that checks
+    fixture presence + bind-mount paths from within the container)
+    lands, callers MUST run preflight on the host BEFORE submitting an
+    `all` or live-smoke schedule:
+
+        $LUPIN_ROOT/src/scripts/preflight-test-container.sh
+
+    Exit code 0 = safe to schedule; 1 = bind-mount drift detected.
+    Tracked as a follow-up bug in `bug-fix-queue.md`.
     """
     # Get user ID and email from token
     user_id    = current_user.get( "uid" )

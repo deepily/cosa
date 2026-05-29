@@ -29,6 +29,7 @@ import cosa.utils.util as du
 # from lib.clients import lupin_client as gc
 from cosa.rest.websocket_manager import WebSocketManager
 from cosa.memory.input_and_output_table import InputAndOutputTable
+from cosa.memory.speech_to_text_provider import SpeechToTextProvider
 from cosa.rest import multimodal_munger as mmm
 # from cosa.config.configuration_manager import ConfigurationManager
 from cosa.rest.auth import get_current_user_id
@@ -38,18 +39,14 @@ router = APIRouter(prefix="/api", tags=["speech"])
 
 def _run_whisper_with_retry( whisper_pipeline, path, debug=False, **kwargs ):
     """
+    DEPRECATED 2026-05-16 — retained for one release cycle for any external
+    callers. Use `cosa.memory.speech_to_text_provider.SpeechToTextProvider`
+    instead; its local-mode `transcribe()` carries identical OOM-retry
+    semantics + adds the model-server HTTP-proxy alternative.
+
+    See: src/rnd/v0.1.7/2026.05.16-model-server-carveout/01-design.md (Phase 3.3)
+
     Run Whisper inference with CUDA OOM retry.
-
-    Requires:
-        - whisper_pipeline is initialized
-        - path points to a valid audio file
-
-    Ensures:
-        - Returns transcription dict on success
-        - Retries once after clearing CUDA cache on OOM
-
-    Raises:
-        - torch.cuda.OutOfMemoryError on second failure
     """
     try:
         return whisper_pipeline( path, **kwargs )
@@ -60,10 +57,47 @@ def _run_whisper_with_retry( whisper_pipeline, path, debug=False, **kwargs ):
         return whisper_pipeline( path, **kwargs )
 
 
+def save_upload_to_temp( upload_file: UploadFile, content: bytes ) -> str:
+    """
+    Write an already-read `UploadFile` payload to a unique temp path.
+
+    Phase 3.5 of the model-server carve-out — extracts the file-write idiom
+    that was previously inline in `upload_and_transcribe_wav_file`. The MP3
+    endpoint reads base64 from request body to a fixed config path and does
+    NOT use this helper (different ingress shape).
+
+    Requires:
+        - upload_file is a non-None UploadFile (used for `.filename`)
+        - content has been awaited by the caller via `await upload_file.read()`
+
+    Ensures:
+        - Returns the absolute temp path on success
+        - The file is written before return
+        - Caller owns the cleanup (`os.remove(path)` in try/finally)
+
+    Args:
+        upload_file: The FastAPI UploadFile (for filename)
+        content:     Pre-awaited file bytes
+
+    Returns:
+        str: The temp file path (caller cleans up)
+    """
+    temp_file = f"/tmp/{uuid.uuid4()}-{upload_file.filename}"
+    with open( temp_file, "wb" ) as f:
+        f.write( content )
+    return temp_file
+
+
 # Global dependencies (temporary access via main module)
 def get_whisper_pipeline():
     """
     Dependency to get Whisper pipeline from main module.
+
+    Post-carve-out (2026-05-16) note: this dependency still exists because
+    the in-process local-mode path needs the pipeline handle. The
+    `SpeechToTextProvider` injected via `get_speech_provider()` accepts the
+    pipeline as a kwarg and dispatches to it when running in local mode;
+    in remote mode the pipeline arg is unused and may be None.
 
     Requires:
         - fastapi_app.main module is available
@@ -71,20 +105,37 @@ def get_whisper_pipeline():
 
     Ensures:
         - Returns the Whisper pipeline instance if loaded
-        - Raises HTTP 503 if pipeline is None (model failed to load at startup)
+        - Returns None when running in remote (model-server) mode — the
+          provider's dispatch will route the call via HTTP and ignore the
+          None pipeline. (No more 503 from this dep — the provider raises
+          a 503 only when BOTH local-load failed AND remote-mode is off.)
 
     Raises:
         - ImportError if main module not available
-        - HTTPException( 503 ) if whisper_pipeline is None
     """
     import fastapi_app.main as main_module
-    if main_module.whisper_pipeline is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Speech-to-text service unavailable. Whisper model failed to load at startup (likely no GPU available).",
-            headers={ "Retry-After": "60" }
-        )
-    return main_module.whisper_pipeline
+    return getattr( main_module, "whisper_pipeline", None )
+
+
+def get_speech_provider() -> SpeechToTextProvider:
+    """
+    Dependency returning the `SpeechToTextProvider` singleton.
+
+    Phase 3.3 hook for the model-server carve-out. The provider's
+    `transcribe()` method dispatches between in-process Whisper (local mode)
+    and HTTP proxy to lupin-model-server (remote mode). Until the Phase 3.6
+    lifespan switch lands AND the compute container is bounced with
+    `LUPIN_MODEL_SERVER_URL` injected, the provider defaults to local mode
+    and delegates to the existing `whisper_pipeline` handle — identical
+    behavior to the pre-carve-out call path.
+
+    See: src/rnd/v0.1.7/2026.05.16-model-server-carveout/01-design.md
+    """
+    import fastapi_app.main as main_module
+    return SpeechToTextProvider(
+        debug   = getattr( main_module, "app_debug",   False ),
+        verbose = getattr( main_module, "app_verbose", False )
+    )
 
 def get_websocket_manager():
     """
@@ -173,6 +224,7 @@ async def upload_and_transcribe_mp3_file(
     prompt_key: str = Query("generic"),
     prompt_verbose: str = Query("verbose"),
     whisper_pipeline = Depends(get_whisper_pipeline),
+    provider: SpeechToTextProvider = Depends(get_speech_provider),
     config_mgr = Depends(get_config_manager),
     todo_queue = Depends(get_todo_queue)
 ):
@@ -238,15 +290,17 @@ async def upload_and_transcribe_mp3_file(
         if app_debug: 
             print(" saved.")
         
-        # Transcribe using Whisper pipeline (with CUDA OOM retry)
-        raw_transcription = _run_whisper_with_retry( whisper_pipeline, path, debug=app_debug, chunk_length_s=30, stride_length_s=5 )
+        # Phase 3.3 of carve-out: SpeechToTextProvider dispatches between
+        # in-process Whisper (local mode, CUDA OOM retry intact) and HTTP
+        # proxy to lupin-model-server. In local mode the call path is
+        # identical to the pre-carve-out _run_whisper_with_retry behavior.
+        processed_text = provider.transcribe(
+            path,
+            whisper_pipeline = whisper_pipeline,
+            chunk_length_s   = 30,
+            stride_length_s  = 5
+        ).strip()
 
-        if app_debug:
-            print(f"Raw transcription: [{raw_transcription}]")
-
-        # Process transcription
-        processed_text = raw_transcription["text"].strip()
-        
         if app_debug:
             print(f"Processed text: [{processed_text}]")
         
@@ -497,7 +551,11 @@ async def get_tts_audio_elevenlabs(
         
         session_id = request_data.get("session_id")
         msg = request_data.get("text")
-        voice_id = request_data.get("voice_id", "21m00Tcm4TlvDq8ikWAM")  # Default Rachel voice
+        # voice_id absent → None sentinel (server-side fallback applies in stream_tts_elevenlabs).
+        # Do NOT default to Rachel's voice_id (21m00Tcm4TlvDq8ikWAM) here — it's now an
+        # allocatable per-session persona voice, and using it as a "missing" placeholder
+        # caused the server to override Rachel sessions back to Sam (bug fixed 2026-04-29).
+        voice_id = request_data.get("voice_id")
         model_id = request_data.get("model_id", "eleven_turbo_v2_5")
         stability = request_data.get("stability", 0.5)
         similarity_boost = request_data.get("similarity_boost", 0.8)
@@ -593,7 +651,8 @@ async def get_tts_audio_elevenlabs(
 async def upload_and_transcribe_wav_file(
     file: UploadFile = File(...),
     prefix: Optional[str] = Query(None),
-    whisper_pipeline = Depends(get_whisper_pipeline)
+    whisper_pipeline = Depends(get_whisper_pipeline),
+    provider: SpeechToTextProvider = Depends(get_speech_provider)
 ):
     """
     Upload and transcribe WAV audio file using Whisper model with temporary file handling.
@@ -632,21 +691,21 @@ async def upload_and_transcribe_wav_file(
         app_debug = main_module.app_debug
         app_verbose = main_module.app_verbose
         
-        # Save uploaded file to temp location
-        temp_file = f"/tmp/{uuid.uuid4()}-{file.filename}"
-        
-        if app_debug:
-            print(f"Saving uploaded WAV file to [{temp_file}]...")
-        
-        with open(temp_file, "wb") as f:
-            content = await file.read()
-            f.write(content)
-        
-        # Transcribe using Whisper pipeline (with CUDA OOM retry)
-        raw_transcription = _run_whisper_with_retry( whisper_pipeline, temp_file, debug=app_debug )
+        # Phase 3.5 of carve-out: dedup'd file-write via save_upload_to_temp.
+        content   = await file.read()
+        temp_file = save_upload_to_temp( file, content )
 
-        # Process transcription
-        processed_text = raw_transcription["text"].strip()
+        if app_debug:
+            print(f"Saved uploaded WAV file to [{temp_file}]")
+
+        # Phase 3.3 of carve-out: SpeechToTextProvider dispatch. Local mode
+        # preserves the historical _run_whisper_with_retry OOM retry semantics;
+        # remote mode (post-Phase-3.6 + compose-up) routes via HTTP to the
+        # model-server. Identical contract from the caller's POV.
+        processed_text = provider.transcribe(
+            temp_file,
+            whisper_pipeline = whisper_pipeline
+        ).strip()
         
         if app_debug:
             print(f"WAV transcription: [{processed_text}]")
@@ -785,10 +844,10 @@ async def stream_tts_hybrid(session_id: str, msg: str, ws_manager: WebSocketMana
                 pass  # Connection might be lost
 
 async def stream_tts_elevenlabs(
-    session_id: str, 
-    msg: str, 
+    session_id: str,
+    msg: str,
     ws_manager: WebSocketManager,
-    voice_id: str = "21m00Tcm4TlvDq8ikWAM",
+    voice_id: str = None,
     model_id: str = "eleven_turbo_v2_5",
     stability: float = 0.5,
     similarity_boost: float = 0.8,
@@ -850,12 +909,20 @@ async def stream_tts_elevenlabs(
             use_speaker_boost = config_mgr.get( f"{profile_prefix} use speaker boost", default=use_speaker_boost, return_type="boolean" )
             speed = config_mgr.get( f"{profile_prefix} speed", default=speed, return_type="float" )
         
-        # Fall back to default config values if still using original defaults and config_mgr available
+        # Fall back to configured default voice when caller didn't specify a voice_id.
+        # Using None as the "absent" sentinel — previously this special-cased
+        # voice_id == "21m00Tcm4TlvDq8ikWAM" which collided with the now-allocatable
+        # Rachel persona voice and caused her sessions to play as Sam (fixed 2026-04-29).
         if config_mgr:
-            if voice_id == "21m00Tcm4TlvDq8ikWAM":  # Check if still using default
-                voice_id = config_mgr.get( "elevenlabs tts default voice id", default=voice_id )
+            if voice_id is None:
+                voice_id = config_mgr.get( "elevenlabs tts default voice id", default="G7ILShrCNLfmS0A37SXS" )
             if model_id == "eleven_turbo_v2_5" and quality_profile == "balanced":  # Check if still default and no profile applied
                 model_id = config_mgr.get( "elevenlabs tts default model", default=model_id )
+
+        # Last-resort safety net: if voice_id is still None (no config_mgr or key missing),
+        # fall back to ElevenLabs Sam so the WS URL stays valid.
+        if voice_id is None:
+            voice_id = "G7ILShrCNLfmS0A37SXS"
         
         # Get ElevenLabs API key using COSA utility
         api_key = du.get_api_key("eleven11")

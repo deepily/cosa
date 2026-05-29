@@ -24,6 +24,7 @@ _static_dir = os.path.normpath( _static_dir )
 _ROUTE_TABLE = {
     "/app"                       : "html/landing.html",
     "/app/notifications"         : "html/notifications.html",
+    "/app/multiplexer"           : "html/multiplexer.html",
     "/app/auth/login"            : "html/auth/login.html",
     "/app/auth/register"         : "html/auth/register.html",
     "/app/auth/profile"          : "html/auth/profile.html",
@@ -50,12 +51,23 @@ def _serve_file( relative_path: str ):
 
     Ensures:
         - Returns FileResponse with text/html media type
+        - Sets `Cache-Control: no-cache` so browsers revalidate the SPA
+          shell on every load. Prevents the stale-HTML trap that bit the
+          doc-viewer on 2026-05-21 (Rachel's PNG plot rendered as bytecode
+          because the browser cached the pre-image-MIME-dispatch HTML).
+          `FileResponse` still emits `ETag` + `Last-Modified` headers, so
+          revalidation is a cheap conditional GET — server returns 304
+          Not Modified when content is unchanged.
 
     Raises:
         - 404 if file not found (FastAPI default behavior)
     """
     full_path = os.path.join( _static_dir, relative_path )
-    return FileResponse( full_path, media_type="text/html" )
+    return FileResponse(
+        full_path,
+        media_type = "text/html",
+        headers    = { "Cache-Control": "no-cache" },
+    )
 
 
 # Note: / is handled by system router (health check endpoint).
@@ -69,6 +81,10 @@ async def page_app():
 @router.get( "/app/notifications", include_in_schema=False )
 async def page_notifications():
     return _serve_file( _ROUTE_TABLE[ "/app/notifications" ] )
+
+@router.get( "/app/multiplexer", include_in_schema=False )
+async def page_multiplexer():
+    return _serve_file( _ROUTE_TABLE[ "/app/multiplexer" ] )
 
 @router.get( "/app/auth/login", include_in_schema=False )
 async def page_auth_login():

@@ -175,15 +175,16 @@ class PodcastGeneratorJob( AgenticJobBase ):
             self.state        = JobState.FAILED
             self.completed_at = cu.get_current_datetime_iso()
             self.error        = str( e )
+            self.answer_conversational = f"Podcast generation failed: {str( e )}"
 
             if self.debug:
                 print( f"[PodcastGeneratorJob] Failed: {e}" )
                 import traceback
                 traceback.print_exc()
 
-            # Return error message as conversational answer
-            self.answer_conversational = f"Podcast generation failed: {str( e )}"
-            return self.answer_conversational
+            # Re-raise so the agentic-pool Future captures the exception.
+            # Backlog item 5 (2026-04-29): canonical Future contract.
+            raise
 
     async def _execute( self ) -> str:
         """
@@ -277,9 +278,26 @@ class PodcastGeneratorJob( AgenticJobBase ):
             self.audio_path  = state.get( "final_audio_path" )
             self.script_path = state.get( "final_script_path" )
 
-            # Store artifacts
-            self.artifacts[ "audio_path" ]  = self.audio_path
-            self.artifacts[ "script_path" ] = self.script_path
+            # Build relative paths under io/ for URL generation + UI job-card metadata.
+            # Mirrors presentation_generator/job.py:301-341 — match the receiving
+            # logic in cosa/rest/routers/io_files.py:88-98 (handles abs / "io/" / "/" prefixes).
+            import urllib.parse
+            io_base = cu.get_project_root() + "/io/"
+
+            def _to_rel( p ):
+                if not p: return None
+                if p.startswith( io_base ): return p[ len( io_base ): ]
+                if p.startswith( "io/" ):   return p[ 3: ]
+                return p.lstrip( "/" )
+
+            audio_rel  = _to_rel( self.audio_path )
+            script_rel = _to_rel( self.script_path )
+
+            # Store relative paths in artifacts so the UI job-card builds correct URLs
+            # (matches presentation_generator convention at job.py:336-341).
+            self.artifacts[ "audio_path" ]  = audio_rel
+            self.artifacts[ "script_path" ] = script_rel
+            self.artifacts[ "report_path" ] = script_rel
             self.artifacts[ "podcast_id" ]  = agent.podcast_id
 
             # Build cost summary
@@ -310,14 +328,29 @@ class PodcastGeneratorJob( AgenticJobBase ):
             else:
                 tts_msg = "Podcast generation complete with no segments produced."
 
+            # Build clickable links. Listen routes to the in-app HTML5 audio player
+            # page (cosa/rest/routers/pages.py "/app/audio" → audio-player.html);
+            # Download streams the raw mp3 with attachment disposition.
+            script_link = (
+                f"[📝 View Script](/app/docs?path={urllib.parse.quote( script_rel )})"
+                if script_rel else None
+            )
+            audio_links = None
+            if audio_rel:
+                encoded     = urllib.parse.quote( audio_rel )
+                audio_links = (
+                    f"[🎧 Listen](/app/audio?path={encoded}) | "
+                    f"[⬇️ Download](/api/io/file?path={encoded}&download=true)"
+                )
+
             # Rich markdown abstract
             lines = [ "**Podcast Activity Report**", "" ]
             lines.append( f"**Segments**: {n_segments} (~{script_minutes:.1f} min)" )
             lines.append( f"**Languages**: {', '.join( languages )}" )
-            if self.script_path:
-                lines.append( f"**Script**: `{self.script_path}`" )
-            if self.audio_path:
-                lines.append( f"**Audio**: `{self.audio_path}`" )
+            if script_link:
+                lines.append( f"**Script**: {script_link}" )
+            if audio_links:
+                lines.append( f"**Audio**: {audio_links}" )
             if self.cost_summary:
                 total_cost = self.cost_summary.get( "total_cost_usd", 0.0 )
                 lines.append( f"**Cost**: ${total_cost:.4f}" )

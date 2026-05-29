@@ -197,14 +197,13 @@ class TestFixExpediterJob( AgenticJobBase ):
             self.state        = JobState.FAILED
             self.completed_at = cu.get_current_datetime_iso()
             self.error        = f"{e}\n\n{tb_str}"
+            self.answer_conversational = f"TFE failed: {str( e )}"
 
             # Unconditional stdout (not gated behind self.debug) so dockered
             # server logs always capture the traceback regardless of the
             # job's debug flag. Production submissions run with debug=False.
             print( f"[TestFixExpediterJob] Failed: {e}" )
             print( tb_str )
-
-            self.answer_conversational = f"TFE failed: {str( e )}"
 
             # Preserve the failure as a comprehensive final report so the user
             # has a surface to investigate what blew up. Stash the traceback in
@@ -216,7 +215,9 @@ class TestFixExpediterJob( AgenticJobBase ):
                 summary_line = self.answer_conversational,
             )
 
-            return self.answer_conversational
+            # Re-raise so the agentic-pool Future captures the exception.
+            # Backlog item 5 (2026-04-29): canonical Future contract.
+            raise
 
     async def _execute( self ) -> str:
         """
@@ -537,32 +538,22 @@ class TestFixExpediterJob( AgenticJobBase ):
                 sections.append( f"- **Validation rerun**: `{artifacts[ 'validation_run_job_id' ]}`" )
             sections.append( f"\n**Conversational answer**: {summary_line}\n" )
 
-            # Cluster detail (orchestrator may expose it)
-            try:
-                clusters = getattr( self.orchestrator, "clusters", None ) if hasattr( self, "orchestrator" ) else None
-            except Exception:
-                clusters = None
-            if clusters:
+            # Cluster detail
+            if self.orchestrator is not None and self.orchestrator.clusters:
                 sections.append( "\n## Clusters\n" )
-                for i, c in enumerate( clusters, 1 ):
-                    cid     = getattr( c, "cluster_id", getattr( c, "id", f"cluster-{i}" ) )
-                    count   = getattr( c, "failure_count", len( getattr( c, "failures", [] ) or [] ) )
-                    summary = getattr( c, "summary", "" ) or ""
-                    sections.append( f"### {i}. {cid} — {count} failure(s)" )
-                    if summary: sections.append( f"\n{summary}\n" )
+                for i, c in enumerate( self.orchestrator.clusters, 1 ):
+                    count = len( c.failure_indices )
+                    sections.append( f"### {i}. {c.cluster_id} — {count} failure(s)" )
+                    if c.shared_error_signature:
+                        sections.append( f"\n{c.shared_error_signature}\n" )
 
             # Proposals
-            try:
-                proposals = getattr( self.orchestrator, "proposed_fixes", None ) if hasattr( self, "orchestrator" ) else None
-            except Exception:
-                proposals = None
-            if proposals:
+            if self.orchestrator is not None and self.orchestrator.proposed_fixes:
                 sections.append( "\n## Proposed fixes\n" )
-                for i, p in enumerate( proposals, 1 ):
-                    title = getattr( p, "title", None ) or ( p.get( "title" ) if isinstance( p, dict ) else f"proposal-{i}" )
-                    desc  = getattr( p, "description", None ) or ( p.get( "description" ) if isinstance( p, dict ) else "" )
-                    sections.append( f"### {i}. {title}" )
-                    if desc: sections.append( f"\n{desc}\n" )
+                for i, p in enumerate( self.orchestrator.proposed_fixes, 1 ):
+                    sections.append( f"### {i}. {p.title}" )
+                    if p.description:
+                        sections.append( f"\n{p.description}\n" )
 
             # Stall checkpoint
             ckpt = artifacts.get( "checkpoint" )

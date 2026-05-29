@@ -43,8 +43,8 @@ from cosa.agents.test_fix_expediter.prompts.diagnosis import (
     build_diagnosis_prompt,
 )
 from cosa.agents.test_fix_expediter.prompts.proposal import (
-    PROPOSAL_SYSTEM_PROMPT,
     build_proposal_prompt,
+    build_proposal_system_prompt,
 )
 # Importing prompts.fix for its side-effect: registers TFE's coder/tester/
 # fix/verify/redelegate builders into shared FIX_PROMPT_BUILDERS["tfe"].
@@ -750,7 +750,12 @@ class TFEOrchestrator:
 
         Never raises — returns empty list on any error.
         """
-        prompt = build_proposal_prompt( cluster, diagnosis, self.remediation_context )
+        prompt = build_proposal_prompt(
+            cluster,
+            diagnosis,
+            self.remediation_context,
+            max_proposals = self.config.max_proposals_per_cluster,
+        )
         raw = await self._delegate_to_lead_proposal( prompt )
 
         if raw is None:
@@ -802,7 +807,9 @@ class TFEOrchestrator:
         """Build ClaudeAgentOptions for the TFE proposal Lead agent."""
         return ClaudeAgentOptions(
             model           = self.config.lead_model,
-            system_prompt   = PROPOSAL_SYSTEM_PROMPT,
+            system_prompt   = build_proposal_system_prompt(
+                max_proposals = self.config.max_proposals_per_cluster,
+            ),
             tools           = [ "Read", "Glob", "Grep" ],
             cwd             = cu.get_project_root(),
             permission_mode = "plan",
@@ -1072,8 +1079,9 @@ class TFEOrchestrator:
                 job_id   = self.job_id,
             )
         except VoiceGateTimeoutError:
-            # Don't auto-select — let the stall propagate up
-            raise
+            # WG-9 (2026-04-28): branch on the configured timeout policy.
+            # Default policy "stall" preserves prior behavior (raise → STALLED).
+            return self._apply_voice_gate_timeout_policy( proposals )
         except Exception as e:
             logger.warning( f"[TFE] Voice gate failed: {e} — auto-selecting all" )
             return list( proposals )
@@ -1087,6 +1095,99 @@ class TFEOrchestrator:
         }
         return [ label_to_proposal[ label ] for label in selected_labels
                  if label in label_to_proposal ]
+
+    def _apply_voice_gate_timeout_policy(
+        self,
+        proposals: list[ TFEProposedFix ],
+    ) -> list[ TFEProposedFix ]:
+        """
+        Resolve a voice-gate timeout per the configured policy.
+
+        Policies:
+            - "stall"    → re-raise VoiceGateTimeoutError (current behavior; STALLED job)
+            - "top_1"    → return single highest-confidence proposal
+            - "top_n"    → return top-N highest-confidence proposals (N from config)
+            - "none"     → return [] (exit cleanly with no_fixes_selected)
+            - "delegate" → RESERVED for UPE online-learning integration (NotImplementedError today)
+
+        Proposals are sorted by `confidence` desc; ties keep input order.
+        Unknown policy values fall back to "stall" with a warning.
+
+        See `src/rnd/v0.1.7/2026.04.28-test-suite-anomaly-remediation/05-voice-gate-policy-evolution.md`
+        for the target layered architecture (Layer 0 system default + Layer 1 per-agent override
+        + UPE delegate + abstention threshold + post-hoc feedback loop).
+        """
+        policy = ( self.config.voice_gate_timeout_policy or "stall" ).lower()
+
+        if policy == "stall":
+            logger.info( "[TFE] voice gate timeout — policy=stall — propagating StalledException" )
+            raise VoiceGateTimeoutError( "voice gate timed out and policy=stall" )
+
+        if policy == "none":
+            logger.warning( "[TFE] voice gate timeout — policy=none — selecting 0 proposals" )
+            return []
+
+        if policy == "delegate":
+            return self._delegate_to_predictor( proposals )
+
+        sorted_props = sorted(
+            proposals,
+            key=lambda p: ( -float( getattr( p, "confidence", 0.0 ) or 0.0 ),
+                            proposals.index( p ) ),
+        )
+
+        if policy == "top_1":
+            n = 1
+        elif policy == "top_n":
+            n = max( 1, int( self.config.voice_gate_auto_ratify_top_n ) )
+        else:
+            logger.warning(
+                f"[TFE] unknown voice_gate_timeout_policy={policy!r}; falling back to stall" )
+            raise VoiceGateTimeoutError( f"voice gate timed out; unknown policy={policy!r}" )
+
+        selected = sorted_props[ :n ]
+        logger.warning(
+            f"[TFE] voice gate timeout — policy={policy} — auto-selected "
+            f"{len( selected )}/{len( proposals )} proposal(s) by confidence" )
+        return selected
+
+    def _delegate_to_predictor(
+        self,
+        proposals: list[ TFEProposedFix ],
+    ) -> list[ TFEProposedFix ]:
+        """
+        RESERVED HOOK — Delegate the voice-gate timeout decision to the
+        Universal Prediction Engine (UPE) using its online-learned model
+        of operator priors.
+
+        Not implemented today. UPE's online-learning surface is ~2 dev
+        branches out (per 2026-04-28 design discussion). When UPE lands,
+        the policy `delegate` becomes a real option and the implementation
+        of this method materializes per the contract sketched in
+        `05-voice-gate-policy-evolution.md`:
+
+            - Build a delegate request: agent_type, gate_type, context
+              (proposals + cluster summary + diagnoses), operator_user_id,
+              min_confidence threshold, request_id (for feedback tracking).
+            - Call UPE; receive (answer, confidence, abstained, reasoning,
+              training_signal_id).
+            - If abstained or confidence < min_confidence → fall through to
+              the configured `voice gate fallback policy` (default "stall").
+            - Otherwise return the predicted subset of proposals AND persist
+              training_signal_id alongside the applied fix so post-hoc
+              operator approval/revert can flow back to UPE as a learning
+              signal.
+
+        Until that work lands, this method raises NotImplementedError so a
+        misconfigured `voice gate timeout policy = delegate` fails loudly
+        instead of silently falling through to `stall`.
+        """
+        raise NotImplementedError(
+            "voice_gate_timeout_policy='delegate' is reserved for the UPE online-learning "
+            "integration (~2 dev branches out). Use 'stall', 'top_1', 'top_n', or 'none' "
+            "for now. See src/rnd/v0.1.7/2026.04.28-test-suite-anomaly-remediation/"
+            "05-voice-gate-policy-evolution.md for the planned architecture."
+        )
 
     async def _per_cluster_voice_gate(
         self,

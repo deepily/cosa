@@ -5,7 +5,16 @@ import os
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 
-from auto_round import AutoRound
+# auto_round is a training-time dependency only (used inside Quantizer.quantize_model).
+# The dev/test container intentionally omits it; gate the import so importing this
+# module does not cascade-fail consumers that only need other Quantizer surfaces or
+# transitively import this file via cosa.training.peft_trainer.
+try:
+    from auto_round import AutoRound
+    AUTO_ROUND_AVAILABLE = True
+except ImportError:
+    AutoRound            = None
+    AUTO_ROUND_AVAILABLE = False
 
 import cosa.utils.util as du
 from cosa.utils.util_stopwatch import Stopwatch
@@ -60,10 +69,18 @@ class Quantizer:
             - Exception if an unsupported quantization method is provided
             - Various exceptions from the AutoRound process if quantization fails
         """
+        if not AUTO_ROUND_AVAILABLE:
+            raise RuntimeError(
+                "auto_round is not installed in this environment. "
+                "Quantizer.quantize_model() requires the optional 'auto_round' package, "
+                "which is intentionally omitted from the dev/test container. "
+                "Install it on a training-capable host (GPU) before quantizing."
+            )
+
         self.bits            = bits
         self.quantize_method = quantize_method
         self.symmetrical     = sym
-        
+
         if quantize_method == "autoround":
             # NOTE: enable_torch_compile must be disabled for 8-bit quantization due to a Triton
             # compilation bug in auto_round<=0.9.7. The upstream int.py has `2 ** (bits - 1)` in

@@ -2,22 +2,43 @@
 Per-cluster fix proposal prompt for TFE Phase 2.
 
 Given a TestDiagnosisResult for one failure cluster, asks the Lead agent
-(Opus, read-only SDK) to propose 1-3 alternative fixes. Each proposal is
-a TFEProposedFix with title, description, fix_type, confidence, risk,
+(Opus, read-only SDK) to propose up to N alternative fixes (N from
+TFEConfig.max_proposals_per_cluster, default 1). Each proposal is a
+TFEProposedFix with title, description, fix_type, confidence, risk,
 estimated effort, and concrete file changes.
 
 Design: src/rnd/v0.1.6/2026.04.10-test-fix-expediter/05-phase2-propose-plan.md
         src/rnd/v0.1.6/2026.04.10-test-fix-expediter/10-prompt-design.md#3
+        OOS-1B (2026-04-29): cap parameterized via INI key
 """
 
 from typing import Optional
 
 
-PROPOSAL_SYSTEM_PROMPT = """You are a senior software engineer proposing fixes for a clustered set of pytest failures.
+def build_proposal_system_prompt( max_proposals: int ) -> str:
+    """
+    Build the system prompt for a TFE proposal call.
+
+    Requires:
+        - max_proposals is a positive integer
+
+    Ensures:
+        - Returns a system-prompt string with the proposal cap interpolated
+          into the task description and ranking instruction
+        - Instructs the Lead to emit between 1 and `max_proposals` fixes per
+          cluster, ranked by confidence
+
+    Args:
+        max_proposals: Maximum fixes the Lead may emit per cluster
+
+    Returns:
+        str: Fully-formed system prompt
+    """
+    return f"""You are a senior software engineer proposing fixes for a clustered set of pytest failures.
 
 You have read-only access via Read, Grep, and Glob. You CANNOT edit files — your job is to propose fixes, not apply them. The Coder agent will apply whichever fix the user approves.
 
-Your task: given a cluster's diagnosis, propose 1 to 3 alternative fixes ranked by your confidence.
+Your task: given a cluster's diagnosis, propose 1 to {max_proposals} alternative fixes ranked by your confidence.
 
 ## Allowed fix_type values
 
@@ -42,7 +63,7 @@ Return ONLY a JSON array of TFEProposedFix objects. No prose, no markdown fences
 
 ```json
 [
-  {
+  {{
     "cluster_id": "C1",
     "title": "Short commit-message title (≤60 chars)",
     "description": "1-2 paragraph explanation of what to change and why it addresses the diagnosed root cause.",
@@ -51,9 +72,9 @@ Return ONLY a JSON array of TFEProposedFix objects. No prose, no markdown fences
     "risk_level": "low",
     "estimated_effort": "minutes",
     "changes": [
-      {"file": "src/cosa/auth/tokens.py", "action": "modify", "description": "Replace `return None` on line 42 with `return new_token`"}
+      {{"file": "src/cosa/auth/tokens.py", "action": "modify", "description": "Replace `return None` on line 42 with `return new_token`"}}
     ]
-  }
+  }}
 ]
 ```
 
@@ -68,6 +89,7 @@ def build_proposal_prompt(
     cluster,
     diagnosis,
     ctx,
+    max_proposals: int = 1,
 ) -> str:
     """
     Build the per-cluster proposal user prompt.
@@ -76,6 +98,7 @@ def build_proposal_prompt(
         - cluster is a FailureCluster
         - diagnosis is a TestDiagnosisResult for the same cluster
         - ctx is a TestRemediationContext
+        - max_proposals is a positive integer (cap on Lead's proposal count)
 
     Ensures:
         - Returns a prompt string including:
@@ -83,11 +106,13 @@ def build_proposal_prompt(
           * affected_components list from the diagnosis
           * per-failure short list (classname::name + short message)
           * original user run context
+          * proposal-cap instruction interpolating max_proposals
 
     Args:
         cluster: FailureCluster being proposed against
         diagnosis: TestDiagnosisResult from Phase 1
         ctx: TestRemediationContext
+        max_proposals: Cap on number of proposals the Lead may emit (default 1)
 
     Returns:
         str: Fully-formed user prompt
@@ -131,12 +156,12 @@ def build_proposal_prompt(
         lines.append( f"pytest args: {ctx.original_pytest_args}" )
     lines.append( "" )
 
-    # Instruction
+    # Instruction (proposal cap from TFEConfig.max_proposals_per_cluster)
     lines.append(
-        "Propose 1-3 alternative fixes for this cluster. Rank by confidence, "
-        "highest first. Return a JSON array matching the schema in the system "
-        "prompt. Remember: set cluster_id to \"" + cluster.cluster_id + "\" on "
-        "every proposed fix."
+        f"Propose 1 to {max_proposals} alternative fix(es) for this cluster. "
+        "Rank by confidence, highest first. Return a JSON array matching the "
+        "schema in the system prompt. Remember: set cluster_id to \""
+        + cluster.cluster_id + "\" on every proposed fix."
     )
 
     return "\n".join( lines )
@@ -184,7 +209,7 @@ def quick_smoke_test():
             test_symptoms=[ "assert 401 == 200" ],
         )
 
-        prompt = build_proposal_prompt( cluster, diagnosis, ctx )
+        prompt = build_proposal_prompt( cluster, diagnosis, ctx, max_proposals=1 )
         assert "Propose fixes for cluster C1" in prompt
         assert "Token refresh returns None" in prompt
         assert "code_bug" in prompt
@@ -193,14 +218,24 @@ def quick_smoke_test():
         assert "src.tests.unit.test_auth.TestLogin::test_ok" in prompt
         assert "test_types=['unit']" in prompt or "['unit']" in prompt
         assert "C1" in prompt
-        print( "✓ Prompt contains all required sections" )
+        assert "Propose 1 to 1 alternative" in prompt
+        print( "✓ Prompt contains all required sections + cap=1 instruction" )
 
-        # System prompt sanity
-        assert len( PROPOSAL_SYSTEM_PROMPT ) > 500
-        assert "code_patch" in PROPOSAL_SYSTEM_PROMPT
-        assert "Output contract" in PROPOSAL_SYSTEM_PROMPT
-        assert "Guardrails" in PROPOSAL_SYSTEM_PROMPT
-        print( "✓ System prompt contains fix_type enum + guardrails" )
+        # Cap parameterization sanity — same call with N=3 must reflect the cap
+        prompt_3 = build_proposal_prompt( cluster, diagnosis, ctx, max_proposals=3 )
+        assert "Propose 1 to 3 alternative" in prompt_3
+        print( "✓ User prompt threads max_proposals correctly" )
+
+        # System prompt sanity (now a function, not a constant)
+        sys_prompt_1 = build_proposal_system_prompt( max_proposals=1 )
+        sys_prompt_3 = build_proposal_system_prompt( max_proposals=3 )
+        assert len( sys_prompt_1 ) > 500
+        assert "code_patch" in sys_prompt_1
+        assert "Output contract" in sys_prompt_1
+        assert "Guardrails" in sys_prompt_1
+        assert "1 to 1 alternative" in sys_prompt_1
+        assert "1 to 3 alternative" in sys_prompt_3
+        print( "✓ System prompt builder honors cap + retains fix_type enum + guardrails" )
 
         print( "\n✓ TFE Proposal Prompt smoke test completed successfully" )
 

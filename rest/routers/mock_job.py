@@ -266,8 +266,15 @@ async def _handle_expeditor_test( voice_command, current_user, todo_queue, beare
             break
 
     if not matched_command:
-        # Try partial matching
-        if "podcast" in voice_command.lower() and "research" in voice_command.lower():
+        # Try partial matching — order specific (compound) → general (single token).
+        # presentation cases must come BEFORE the bare "research" elif, otherwise
+        # "research and present it" would match "agent router go to deep research"
+        # instead of "agent router go to research to presentation".
+        if "presentation" in voice_command.lower() and "research" in voice_command.lower():
+            matched_command = "agent router go to research to presentation"
+        elif "presentation" in voice_command.lower():
+            matched_command = "agent router go to presentation generator"
+        elif "podcast" in voice_command.lower() and "research" in voice_command.lower():
             matched_command = "agent router go to research to podcast"
         elif "podcast" in voice_command.lower():
             matched_command = "agent router go to podcast generator"

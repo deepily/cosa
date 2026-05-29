@@ -338,6 +338,11 @@ def get_cli_help( command_key ):
         return None
 
     cli_module = agent_entry[ "cli_module" ]
+    if cli_module is None:
+        # Agents without a CLI module (e.g. test_suite, invoked directly via API)
+        # have cli_module=None by design. Expeditor's caller handles None help_text.
+        _help_cache[ command_key ] = None
+        return None
 
     try:
         result = subprocess.run(
@@ -388,6 +393,10 @@ def get_user_visible_args( command_key ):
         return None
 
     cli_module = entry[ "cli_module" ]
+    if cli_module is None:
+        # Agents without a CLI module (e.g. test_suite) have cli_module=None by design.
+        _user_visible_cache[ command_key ] = None
+        return None
 
     try:
         result = subprocess.run(

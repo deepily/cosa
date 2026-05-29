@@ -9,7 +9,16 @@ import threading
 import requests
 import torch, os, multiprocessing
 from typing import Optional, Union, List, Dict, Tuple, Any, Iterable
-from peft import LoraConfig, prepare_model_for_kbit_training, PeftModel
+
+try:
+    from peft import LoraConfig, prepare_model_for_kbit_training, PeftModel
+    PEFT_AVAILABLE = True
+except ImportError:
+    PEFT_AVAILABLE = False
+    LoraConfig = None
+    prepare_model_for_kbit_training = None
+    PeftModel = None
+
 from torch.ao.quantization import quantize
 from torch.utils.benchmark import timer
 
@@ -20,8 +29,22 @@ from transformers import (
 )
 from datasets import Dataset
 from datasets.formatting.formatting import LazyBatch
-from trl import SFTTrainer, SFTConfig
-from auto_round import AutoRoundConfig
+
+try:
+    from trl import SFTTrainer, SFTConfig
+    TRL_AVAILABLE = True
+except ImportError:
+    TRL_AVAILABLE = False
+    SFTTrainer = None
+    SFTConfig = None
+
+try:
+    from auto_round import AutoRoundConfig
+    AUTO_ROUND_AVAILABLE = True
+except ImportError:
+    AUTO_ROUND_AVAILABLE = False
+    AutoRoundConfig = None
+
 from huggingface_hub import login
 
 # Import the model configuration loader

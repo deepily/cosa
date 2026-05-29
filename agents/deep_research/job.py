@@ -175,13 +175,17 @@ class DeepResearchJob( AgenticJobBase ):
             self.state        = JobState.FAILED
             self.completed_at = cu.get_current_datetime_iso()
             self.error        = f"{e}\n\n{tb_str}"
+            self.answer_conversational = f"Research failed: {str( e )}"
 
             print( f"[DeepResearchJob] Failed: {e}" )
             print( tb_str )
 
-            # Return error message as conversational answer
-            self.answer_conversational = f"Research failed: {str( e )}"
-            return self.answer_conversational
+            # Re-raise so the agentic-pool Future captures the exception
+            # (Future.exception() is the canonical signal). Pre-cleanup this
+            # method swallowed and returned the error string, forcing the
+            # pool callback's defensive FAILED-state branch to catch it.
+            # Backlog item 5 (2026-04-29): re-raise is the architectural fix.
+            raise
 
     async def _execute( self ) -> str:
         """
@@ -239,10 +243,20 @@ class DeepResearchJob( AgenticJobBase ):
         # Derive semantic_topic from session_name
         semantic_topic = session_name.replace( " ", "-" )
 
-        # Set sender_id, target_user, and session_name for notifications
-        cosa_interface.SENDER_ID    = cosa_interface._get_sender_id( suffix=self.base_id )
+        # Set sender_id, target_user, and session_name for notifications.
+        # Module globals are mutated for backward compatibility (CLI path reads
+        # them); ContextVars are set for per-task isolation in the agentic pool
+        # so concurrent DR jobs don't leak each other's sender_id.
+        # See: src/cosa/agents/utils/agent_notification_dispatcher.py contextvars
+        per_job_sender_id    = cosa_interface._get_sender_id( suffix=self.base_id )
+        cosa_interface.SENDER_ID    = per_job_sender_id
         cosa_interface.TARGET_USER  = self.user_email
         cosa_interface.SESSION_NAME = session_name
+        cosa_interface.set_dispatch_context(
+            sender_id    = per_job_sender_id,
+            target_user  = self.user_email,
+            session_name = session_name,
+        )
 
         # Set job_id for auto-injection into all downstream notify() calls
         voice_io.set_job_id( self.id_hash )
@@ -392,9 +406,16 @@ class DeepResearchJob( AgenticJobBase ):
         """
         import asyncio
 
-        # Set sender_id and target_user for notifications
-        cosa_interface.SENDER_ID   = cosa_interface._get_sender_id( suffix=self.base_id )
-        cosa_interface.TARGET_USER = self.user_email
+        # Set sender_id and target_user for notifications. Module globals
+        # mutated for CLI back-compat; ContextVars set for per-task isolation
+        # in the agentic pool (concurrent DR jobs no longer share sender_id).
+        per_job_sender_id           = cosa_interface._get_sender_id( suffix=self.base_id )
+        cosa_interface.SENDER_ID    = per_job_sender_id
+        cosa_interface.TARGET_USER  = self.user_email
+        cosa_interface.set_dispatch_context(
+            sender_id    = per_job_sender_id,
+            target_user  = self.user_email,
+        )
 
         if self.debug:
             print( f"[DeepResearchJob] DRY RUN MODE for: {self.query[ :50 ]}..." )

@@ -292,6 +292,32 @@ class RuntimeArgumentExpeditor:
             confirmed_args, agent_entry, user_email, session_id, user_id
         )
 
+    @staticmethod
+    def _resolve_display_name( agent_entry ):
+        """
+        Resolve a human-readable agent name from a registry entry.
+
+        Prefers explicit ``display_name``. Falls back to deriving from
+        ``cli_module`` (e.g. ``cosa.agents.podcast_generator.cli`` →
+        "podcast generator"). Returns "agent" if neither is set.
+
+        Bugfix 2026-04-30 (Session b195a160 — Cluster J of 2026.04.29 postmortem):
+        the prior single-expression
+        ``agent_entry.get("display_name", agent_entry["cli_module"].split(...))``
+        eagerly evaluated the default arm even when display_name was present,
+        crashing with "'NoneType' object has no attribute 'split'" for the
+        ``test_suite`` registry entry where ``cli_module=None`` by design
+        (test_suite is invoked directly via API, not via CLI). See
+        src/rnd/v0.1.7/2026.04.30-postmortem-2026.04.29-all-test-run.md §J.
+        """
+        display_name = agent_entry.get( "display_name" )
+        if display_name:
+            return display_name
+        cli_module = agent_entry.get( "cli_module" )
+        if cli_module:
+            return cli_module.split( "." )[ -1 ].replace( "_", " " )
+        return "agent"
+
     def _confirm_and_iterate( self, args_dict, agent_entry, command_key, user_email ):
         """
         Present argument summary and iterate until user approves, modifies, or cancels.
@@ -337,7 +363,7 @@ class RuntimeArgumentExpeditor:
                 if k in user_visible:
                     summary_lines.append( f"- **{k}**: {v}" )
 
-            agent_name = agent_entry.get( "display_name", agent_entry[ "cli_module" ].split( "." )[ -1 ].replace( "_", " " ) )
+            agent_name = self._resolve_display_name( agent_entry )
 
             # Runtime scheduling section (universal, not agent-specific)
             summary_lines.append( "" )
@@ -585,7 +611,7 @@ class RuntimeArgumentExpeditor:
         Returns:
             str: Markdown-formatted context summary
         """
-        display_name = agent_entry.get( "display_name", agent_entry[ "cli_module" ].split( "." )[ -1 ].replace( "_", " " ) )
+        display_name = self._resolve_display_name( agent_entry )
 
         lines = [
             f'**Your request**: "{original_question}"',

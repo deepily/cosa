@@ -48,6 +48,14 @@ class MockAgentSDKSession:
         - Realistic delays between phases
     """
 
+    # Per-test scaling knob — multiply all per-phase delays by this factor.
+    # Default 1.0 preserves real-time pacing for CLI / manual / smoke runs.
+    # Unit tests monkeypatch this to 0.0 to skip the legitimate ~3.4s of
+    # cumulative phase sleeps. Added 2026-04-30 (Session b195a160) for the
+    # TestDryRunRegression performance fix — see
+    # src/rnd/v0.1.7/2026.04.30-swe-team-orchestrator-test-perf-fix.md.
+    DELAY_MULTIPLIER = 1.0
+
     DRY_RUN_PHASES = [
         {
             "agent"   : "lead",
@@ -110,7 +118,9 @@ class MockAgentSDKSession:
         if self.debug: print( f"[MockSDK] Starting dry-run for: {self.task_description[ :80 ]}" )
 
         for phase in self.DRY_RUN_PHASES:
-            await asyncio.sleep( phase[ "delay" ] )
+            scaled_delay = phase[ "delay" ] * self.DELAY_MULTIPLIER
+            if scaled_delay > 0:
+                await asyncio.sleep( scaled_delay )
             self.messages_sent += 1
 
             msg = MockAgentMessage(

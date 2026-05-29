@@ -212,6 +212,11 @@ class DeepResearchToPresentationAgent:
             self.result.marp_path = pg_result.get( "marp_path" )
             self.result.pg_cost = pg_result.get( "cost", 0.0 )
             self.result.pg_artifacts = pg_result.get( "artifacts", {} )
+            # Surface slide_count as a top-level field for downstream consumers
+            # (R2P job.py copies it onto its own artifacts dict so live tests can
+            # assert on it). PG sets artifacts["slide_count"] in its _execute path
+            # (presentation_generator/job.py); we read through pg_artifacts here.
+            self.result.slide_count = self.result.pg_artifacts.get( "slide_count" )
             self.result.state = PipelineState.COMPLETED
 
             await self._notify(

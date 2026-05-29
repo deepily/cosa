@@ -307,15 +307,17 @@ class TestSuiteJob( AgenticJobBase ):
             self.state        = JobState.FAILED
             self.completed_at = cu.get_current_datetime_iso()
             self.error        = f"{type( e ).__name__}: {e}\n\n{tb_str}"
-
-            print( f"[TestSuiteJob] Failed: {e}" )
-            print( tb_str )
-
             self.answer_conversational = (
                 f"Test suite run failed: **{type( e ).__name__}**: {e}\n\n"
                 f"```\n{tb_str}\n```"
             )
-            return self.answer_conversational
+
+            print( f"[TestSuiteJob] Failed: {e}" )
+            print( tb_str )
+
+            # Re-raise so the agentic-pool Future captures the exception.
+            # Backlog item 5 (2026-04-29): canonical Future contract.
+            raise
 
     async def _execute( self ) -> str:
         """
@@ -703,6 +705,40 @@ class TestSuiteJob( AgenticJobBase ):
         if len( sanitized_args ) < len( self.pytest_args ):
             print( f"[TestSuiteJob] WARNING: Stripped --bg flag from pytest_args (harmful for subprocess-tracked runs)" )
 
+        # Append per-suite extra pytest args from INI (Phase 6 / Cluster B fix
+        # for 2026-04-30 post-mortem). The smoke suite needs --auto-proxy +
+        # --cost-cap-usd to satisfy the pre_run_hook of the two live_smoke
+        # tests (test_presentation_live_smoke, test_research_to_presentation_
+        # live_smoke); other suites are empty by default. The INI key shape is
+        # "test suite {suite_type} extra pytest args" — empty / missing is OK.
+        # `src/tests/smoke/conftest.py` registers --auto-proxy / --cost-cap-usd
+        # / --no-confirm / --group / --scenario-id so pytest accepts the flags
+        # without erroring; the actual flag values are consumed by each test's
+        # own argparse (see live_pipeline_base.py:619).
+        try:
+            from cosa.config.configuration_manager import ConfigurationManager
+            extra_args_cfg = ConfigurationManager(
+                env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS"
+            )
+            extra_args_raw = extra_args_cfg.get(
+                f"test suite {suite_type} extra pytest args",
+                default="",
+                return_type="string"
+            )
+            if extra_args_raw:
+                extra_args = [ a for a in extra_args_raw.split() if a.strip() ]
+                if extra_args:
+                    sanitized_args = sanitized_args + extra_args
+                    if self.debug:
+                        print( f"[TestSuiteJob] Appended per-suite extra args for "
+                               f"'{suite_type}': {extra_args}" )
+        except Exception as e:
+            # ConfigurationManager unavailable — log and continue with the
+            # caller-supplied args only. This is a best-effort augmentation;
+            # failure to read the INI must not block the suite.
+            print( f"[TestSuiteJob] WARNING: Could not load extra pytest args "
+                   f"for '{suite_type}' suite from INI: {e}" )
+
         # Inject --junit-xml for structured result parsing (no brittle regex).
         # Gated by SUITES_SUPPORTING_JUNIT_XML — non-pytest runners (e.g. the
         # websocket async orchestrator) will error at arg-parse if this flag
@@ -831,6 +867,16 @@ class TestSuiteJob( AgenticJobBase ):
             #     os.unlink( junit_xml_path )
             # except OSError:
             #     pass
+
+            # WG-7 (2026-04-28): For non-pytest suites (websocket today), the
+            # junit-xml path is None, so _parse_junit_xml returned zero counts.
+            # Fall back to parsing the runner's stdout summary so we don't
+            # mis-classify a 50/50 PASS as FAIL with metrics 0/0/0/0.
+            if junit_xml_path is None and parsed[ "passed" ] == 0 and parsed[ "failed" ] == 0:
+                fallback = self._parse_non_pytest_stdout( suite_type, stdout )
+                if fallback is not None:
+                    parsed.update( fallback )
+
             parsed[ "exit_code" ] = exit_code
             parsed[ "log_path" ]  = log_path
             parsed[ "duration" ]  = duration
@@ -1020,6 +1066,76 @@ class TestSuiteJob( AgenticJobBase ):
             print( f"[DEBUG _parse_junit_xml] EXCEPTION caught: {type( e ).__name__}: {e}" )
 
         return result
+
+    @staticmethod
+    def _parse_non_pytest_stdout( suite_type: str, stdout: str ) -> Optional[ Dict ]:
+        """
+        Parse the stdout of a non-pytest suite runner (e.g. the websocket smoke
+        runner) into pytest-compatible counts.
+
+        WG-7 (2026-04-28): the websocket suite's bash-driven runner emits its
+        own log format. _parse_junit_xml returns zero counts because there's
+        no junit-xml file. Without this fallback, the test_suite parser
+        classifies 50/50 PASS as a FAIL with metrics 0/0/0/0.
+
+        Recognized signals (websocket runner today):
+            - "ALL SMOKE TESTS PASSED!" → green
+            - "ALL SMOKE TESTS FAILED" / "tests failed" → red
+            - "Total Tests: N" / "Passed: X" / "Failed: Y" → counts
+
+        Requires:
+            - suite_type is a known suite name
+            - stdout is the captured stdout string (may be empty)
+
+        Ensures:
+            - Returns a dict with keys passed, failed, skipped, errors when the
+              format is recognized.
+            - Returns None when the format isn't recognized — caller keeps the
+              zero-count default and downstream classification stays unchanged.
+
+        Args:
+            suite_type: Suite name (e.g., "websocket")
+            stdout: Captured stdout from the runner
+
+        Returns:
+            dict | None: Parsed counts or None if format unrecognized.
+        """
+        if suite_type != "websocket":
+            return None
+        if not stdout:
+            return None
+
+        import re
+
+        total_match  = re.search( r"Total Tests:\s*(\d+)", stdout )
+        passed_match = re.search( r"\bPassed:\s*(\d+)",   stdout )
+        failed_match = re.search( r"\bFailed:\s*(\d+)",   stdout )
+
+        if not ( total_match or passed_match or failed_match ):
+            return None
+
+        total  = int( total_match.group( 1 ) )  if total_match  else 0
+        passed = int( passed_match.group( 1 ) ) if passed_match else 0
+        failed = int( failed_match.group( 1 ) ) if failed_match else 0
+
+        # Sanity: prefer Passed/Failed over Total subtraction; reconcile if both available.
+        if passed_match and failed_match and not total_match:
+            total = passed + failed
+        elif total_match and not ( passed_match or failed_match ):
+            # Only "Total Tests: N" — assume all-passed iff success marker present.
+            if "ALL SMOKE TESTS PASSED" in stdout:
+                passed = total
+                failed = 0
+            else:
+                # Couldn't disambiguate — fall back to None to preserve zero-counts.
+                return None
+
+        return {
+            "passed"  : passed,
+            "failed"  : failed,
+            "skipped" : 0,
+            "errors"  : 0,
+        }
 
 
 def quick_smoke_test():

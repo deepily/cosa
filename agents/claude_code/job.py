@@ -211,15 +211,16 @@ class ClaudeCodeJob( AgenticJobBase ):
             self.state        = JobState.FAILED
             self.completed_at = cu.get_current_datetime_iso()
             self.error        = str( e )
+            self.answer_conversational = f"Claude Code task failed: {str( e )}"
 
             if self.debug:
                 print( f"[ClaudeCodeJob] Failed: {e}" )
                 import traceback
                 traceback.print_exc()
 
-            # Return error message as conversational answer
-            self.answer_conversational = f"Claude Code task failed: {str( e )}"
-            return self.answer_conversational
+            # Re-raise so the agentic-pool Future captures the exception.
+            # Backlog item 5 (2026-04-29): canonical Future contract.
+            raise
 
     async def _execute( self ) -> str:
         """
@@ -286,12 +287,13 @@ class ClaudeCodeJob( AgenticJobBase ):
             }
 
             self.artifacts = {
-                "cost_usd"    : self.cost_usd,
-                "output_text" : self.output_text[ :500 ] if self.output_text else "",
-                "task_type"   : self.task_type,
-                "project"     : self.project,
-                "session_id"  : result.session_id,
-                "duration_ms" : result.duration_ms
+                "cost_usd"     : self.cost_usd,
+                "cost_summary" : self.cost_summary,
+                "output_text"  : self.output_text[ :500 ] if self.output_text else "",
+                "task_type"    : self.task_type,
+                "project"      : self.project,
+                "session_id"   : result.session_id,
+                "duration_ms"  : result.duration_ms
             }
 
             # Format completion message

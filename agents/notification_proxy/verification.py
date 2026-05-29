@@ -10,6 +10,8 @@ References:
     - src/conf/prompts/notification-proxy-answer-verifier.txt (prompt template)
 """
 
+import time
+
 import cosa.utils.util as cu
 from cosa.agents.llm_client_factory import LlmClientFactory
 from cosa.agents.notification_proxy.xml_models import VerificationResponse
@@ -136,26 +138,41 @@ class LlmAnswerVerifier:
         if self.debug and self.verbose:
             print( f"[AnswerVerifier] Prompt length: {len( prompt )} chars" )
 
-        # Send to LLM
-        try:
-            response_text = self._client.run( prompt )
-            if self.debug: print( f"[AnswerVerifier] Raw response: {response_text[ :200 ]}" )
+        # Send to LLM. Up to 2 retries on transient empty/malformed-XML failures —
+        # vLLM occasionally returns whitespace or truncated XML under load.
+        # 3 attempts with gentle backoff (0.5s, 1.0s) absorb transient hiccups
+        # without inflating cost. System-boundary retry policy, not defensive cargo.
+        # Bumped from 2-attempt to 3-attempt 2026-04-30 (Session b195a160) after
+        # FUZZY_BUDGET_2 failed both attempts on 2026-04-29 17:39 EDT all-test run.
+        last_error = None
+        max_attempts = 3
+        for attempt in range( 1, max_attempts + 1 ):
+            try:
+                response_text = self._client.run( prompt )
+                if self.debug: print( f"[AnswerVerifier] Raw response (attempt {attempt}): {response_text[ :200 ]}" )
 
-            parsed = VerificationResponse.from_xml( response_text )
+                parsed = VerificationResponse.from_xml( response_text )
 
-            if self.debug:
-                print( f"[AnswerVerifier] match={parsed.match}, confidence={parsed.confidence}, "
-                       f"reasoning={parsed.reasoning[ :80 ]}" )
+                if self.debug:
+                    print( f"[AnswerVerifier] match={parsed.match}, confidence={parsed.confidence}, "
+                           f"reasoning={parsed.reasoning[ :80 ]}" )
 
-            return parsed
+                return parsed
 
-        except Exception as e:
-            print( f"[AnswerVerifier] LLM error: {e}" )
-            return VerificationResponse(
-                match      = "false",
-                confidence = "0.0",
-                reasoning  = f"LLM error: {e}"
-            )
+            except Exception as e:
+                last_error = e
+                if attempt < max_attempts:
+                    backoff = 0.5 * attempt   # 0.5s, 1.0s — gentle, bounded
+                    print( f"[AnswerVerifier] LLM transient on attempt {attempt}, retrying in {backoff}s: {e}" )
+                    time.sleep( backoff )
+                    continue
+                print( f"[AnswerVerifier] LLM error after {max_attempts} attempts: {e}" )
+
+        return VerificationResponse(
+            match      = "false",
+            confidence = "0.0",
+            reasoning  = f"LLM error after {max_attempts} attempts: {last_error}"
+        )
 
     def verify_batch( self, pairs, context="" ):
         """

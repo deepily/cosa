@@ -56,6 +56,11 @@ class TestFixExpediterConfig:
     # === Fix limits ===
     max_fix_attempts              : int   = 2
 
+    # === Phase 2 proposal cap (OOS-1B, 2026-04-29) ===
+    # Maximum proposals the Lead may emit per failure cluster. Default 1
+    # favours voice-gate convergence; legacy behavior was "1 to 3" (set to 3).
+    max_proposals_per_cluster     : int   = 1
+
     # === Phase 3 Coder turn budget (Option A — auto-tiered, 2026-04-18) ===
     # Orchestrator picks tier per proposal (small/medium/large) based on
     # fix_type + affected-files count; max_turns for the Coder sdk_query is
@@ -80,6 +85,15 @@ class TestFixExpediterConfig:
 
     # === Voice gate UX ===
     voice_gate_mode               : str   = "aggregate"
+
+    # === Voice gate timeout fallback (WG-9, 2026-04-28) ===
+    # Policy applied when the voice gate times out (after-hours autonomous runs):
+    #   "stall"  — current behavior; raise StalledException, lose 23 proposals
+    #   "top_1"  — auto-select highest-confidence proposal, proceed
+    #   "top_n"  — auto-select top N proposals (N from voice_gate_auto_ratify_top_n)
+    #   "none"   — auto-select nothing; exit cleanly with no_fixes_selected
+    voice_gate_timeout_policy     : str   = "stall"
+    voice_gate_auto_ratify_top_n  : int   = 1
 
     # === COSA Integration ===
     feedback_timeout_seconds      : int   = 300
@@ -124,6 +138,7 @@ class TestFixExpediterConfig:
             "max_diagnosis_iterations"    : "test fix expediter max diagnosis iterations",
             "min_diagnosis_confidence"    : "test fix expediter min diagnosis confidence",
             "max_fix_attempts"            : "test fix expediter max fix attempts",
+            "max_proposals_per_cluster"   : "test fix expediter max proposals per cluster",
             "coder_budget_small_turns"    : "test fix expediter coder budget small turns",
             "coder_budget_medium_turns"   : "test fix expediter coder budget medium turns",
             "coder_budget_large_turns"    : "test fix expediter coder budget large turns",
@@ -133,6 +148,8 @@ class TestFixExpediterConfig:
             "rerun_scope"                 : "test fix expediter rerun scope",
             "continue_on_cluster_failure" : "test fix expediter continue on cluster failure",
             "voice_gate_mode"             : "test fix expediter voice gate mode",
+            "voice_gate_timeout_policy"   : "test fix expediter voice gate timeout policy",
+            "voice_gate_auto_ratify_top_n": "test fix expediter voice gate auto ratify top n",
             "feedback_timeout_seconds"    : "test fix expediter feedback timeout seconds",
             "narrate_progress"            : "test fix expediter narrate progress",
         }

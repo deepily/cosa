@@ -262,6 +262,109 @@ For current research and planning documents, see the [RND directory](./rnd/), wh
 - [Python Package Distribution Plan](./rnd/2025-05-16_python_package_distribution_plan.md): Plan for package distribution strategy
 - [Versioning and CI/CD Strategy](./rnd/2025-05-28_versioning_and_cicd_strategy.md): Version management and deployment strategy
 
+### Release Notes
+- [v0.1.7 PR Body — Tracking Branch](./rnd/2026.05.29-pr-body-v0.1.7-tracking.md): Compare URL + copy-paste PR body for the v0.1.7 → main merge
+
+## Cross-Session AI Collaboration via cosa-voice MCP (May 2026)
+
+CoSA now hosts a working substrate for multiple Claude Code sessions to coordinate
+directly through directed messaging — a development practice we've started calling
+**DM-as-mini-design-doc**.
+
+On 2026-05-16, María 🌸 (Lupin session `3c9fce51`) and Tiberius 🌑 (planning-is-prompting
+session `b714e138`) co-authored a discovery-surface expansion for the cosa-voice MCP
+server entirely through cross-session DMs, using nothing but the `commons_send_to` /
+`commons_ask_async` / `commons_post` tools that this repo provides:
+
+- **María** drafted the MCP `instructions` field — grown from ~3k chars to ~21k
+  chars across 10 sections (toolkit nav map, startup protocol, 3-tier autonomy
+  model, DM workflow with receipt etiquette, interactive tool routing, 7
+  failure-mode debugging patterns, cross-reference footer).
+- **Tiberius** ran a 5-point prose review via DM. Five iterations of correction
+  and counter-correction produced the **5-surface framework** — CLAUDE.md /
+  MCP `instructions` / planning-is-prompting workflow / per-tool docstrings /
+  per-turn rider — split by reading timing, not content type.
+- **Two real bugs surfaced during the DM thread itself**: topic-file case
+  fragmentation (`dm-Tiberius` vs `dm-tiberius` splitting one logical thread
+  across two files) and `commons_post` body truncation observed mid-write at
+  the topic-file level. Both filed durably to the Lupin bug-fix queue.
+- **Six commons_* docstrings** were upgraded (`commons_who`, `commons_read`,
+  `commons_post`, `commons_ask_sync`, `commons_ask_async`, `commons_send_to`)
+  with tier markers, examples, inline failure-mode hints, threading callouts,
+  and cross-reference footers — all per Tiberius's 7-priority review.
+
+The CoSA-side infrastructure that makes this possible:
+
+- `cosa/rest/commons_topic_watcher.py` — abstract base for daemon watchers
+- `cosa/rest/commons_ack_watcher.py` — broadcast-ack tracker subclass
+- `cosa/rest/commons_question_watcher.py` — register-question + answer-received tracker
+- `cosa/rest/commons_activity_watcher.py` — Recent Activity WS push path (with consumer-side dedupe added 2026-05-16)
+- `cosa/rest/commons_rate_limiter.py` — per-user + global caps
+- `cosa/rest/routers/commons.py` — REST surface (broadcast, ack, register-question, DM dispatch with `_resolve_dm_recipient` + `RecipientResolutionError` contract)
+
+The cosa-voice MCP wrapper itself lives in the parent Lupin repo
+(`src/lupin_mcp/cosa_voice_mcp.py`); the cross-session collaboration substrate
+that it exposes is what CoSA provides.
+
+This workflow — DM thread as mini-design-doc, paired-by-DM-paired-by-commit,
+iterative correction loop converging on sharper output than either persona
+would produce alone — is now a replicable template for future cross-session
+work. María and Tiberius plan to publish a workflow R&D doc covering the
+template explicitly.
+
+## What's New in v0.1.7 — Concurrent Jobs, Cross-Session Coordination & Multi-Repo Docs
+
+The v0.1.7 cycle (2026-04-24 → 2026-05-28) is the largest CoSA development cycle to date,
+organized around five feature pillars plus a broad hardening pass.
+
+### CJ Flow Async Multi-Lane
+- **Agentic pool** — `AgenticJobBase` jobs dispatch to a `ThreadPoolExecutor` (sized by the
+  `cj flow max concurrent agentic jobs` INI key); the consumer thread returns immediately and a
+  `Future.add_done_callback` drives the done/dead transition. Fast-lane `AgentBase` /
+  `SolutionSnapshot` work stays inline and is never blocked by the pool.
+- **Thread safety** — `FifoQueue` guards `queue_list` + `queue_dict` with a `threading.RLock`;
+  all 9 `pop()` sites migrated to `delete_by_id_hash()` (head-of-queue is no longer deterministic
+  under pool-callback concurrency).
+- **Ghost-job sweeper** — daemon thread dead-letters jobs whose `Future` completed but never
+  transitioned.
+- **`ApiResourceManager`** — singleton centralizing per-provider rate-limit waits + call recording.
+- **`GET /api/queue/pool-status`** — inflight/max workers, pending-in-pool, ApiResourceManager state.
+- **Error-path hardening** — dead-queue refactor, consumer heartbeat, `do_all` re-raise across 8 subclasses.
+
+### Inter-Session Commons (Phases 2–3)
+- Daemon watchers: `commons_topic_watcher` (abstract base), `commons_ack_watcher`,
+  `commons_question_watcher`, `commons_activity_watcher` (consumer-side dedupe).
+- `commons_rate_limiter` (per-user + global caps) and `routers/commons.py` (broadcast, ack,
+  register-question, DM dispatch with `_resolve_dm_recipient` + `RecipientResolutionError` 422 contract).
+- Broadcast munger preserving `@-mention` syntax; broadcast fan-out dedupe across HTTP + WS push paths.
+
+### Per-Session Voice Personas
+- Voice allocation router + helpers with notification stamping.
+- `/clear` preservation (re-assigns the prior persona on context clear); env-var allocator +
+  pool expansion; **Sam-as-overflow** allocator; stale-bridge prune with mtime TTL guard.
+- `/sample` endpoint for the dev-tools persona-reference page; `display_name` plumbing.
+
+### Speakerphone Solo/Chorus Refactor
+- Router rename `conversation_mode` → `speakerphone`; `get_tts_interaction_mode` helper;
+  mutex auto-displace + WS dispatch dedup; symmetric self-exit signal fix.
+
+### Doc-Viewer Multi-Repo Scope Unification
+- `_scope_registry` + `_dir_listing`; JWT-gate + ~30-pattern secrets/floor blocklist.
+- Path-prefix URL routing (`?path=<project>/<rel>`); legacy `ALLOWED_FILES` / `?scope=` retired.
+- Pydantic docview manifest authority; image/PNG rendering via `FileResponse`;
+  `/api/docs/file` + `/api/docs/health` with whitelist + traversal protection.
+
+### Tooling & Hardening
+- **Bounded-CC billing** — `ClaudeCodeJob` BOUNDED path surfaces `cost_summary`; CC card
+  normalization Phase 4 (canonical `/api/claude-code/submit`).
+- **Daily LoC Delta tool** — `git_loc_delta` package + CLI, per-branch `--plot`, cross-repo aggregator.
+- **Model-server carve-out** — `SpeechToTextProvider` + `EmbeddingProvider` URL resolver, process-aware routing.
+- **Multiplexer** — `/app/multiplexer` page route + `GET /api/multiplexer/config`.
+- **BFE/TFE test-suite remediation** — Phase 1–3 cluster fixes, INI proposal-cap, verifier retry.
+- **Misc**: bcrypt pinned to 4.3.0, cross-job `sender_id` ContextVar isolation, `ask_yes_no`
+  "Neither" affordance, WS reconnect circuit-breaker Phase 5 (close codes 4001/4002),
+  notification dispatch unification, history.md archive (2026-02-28 → 2026-04-24).
+
 ## What's New in v0.1.5 — Voice-First Human in the Loop
 
 ### Trust-Aware Decision Proxy

@@ -6,8 +6,14 @@ This module provides async wrappers for the cosa-voice notification tools,
 bridging the async orchestrator with the blocking notification API.
 
 Uses AgentNotificationDispatcher for shared async dispatch logic.
-Module-level SENDER_ID and SESSION_NAME remain mutable for runtime
-configuration by job.py and cli.py callers.
+
+Per-task isolation (OOS Phase 4 backlog #1, 2026-04-29):
+    Module-level SENDER_ID / SESSION_NAME / TARGET_USER are kept for the CLI
+    path and for backward compatibility, but agentic-pool jobs MUST use
+    `set_dispatch_context()` (defined below) to isolate per-task state via
+    ContextVars. The dispatcher reads ContextVar in priority over instance
+    state, so concurrent DR jobs in the agentic pool no longer leak each
+    other's sender_id through the shared module-global dispatcher instance.
 """
 
 import logging
@@ -31,7 +37,12 @@ from cosa.agents.utils.feedback_analysis import (
     is_approval, is_rejection, extract_feedback_intent,
     APPROVAL_SIGNALS, REJECTION_SIGNALS
 )
-from cosa.agents.utils.agent_notification_dispatcher import AgentNotificationDispatcher
+from cosa.agents.utils.agent_notification_dispatcher import (
+    AgentNotificationDispatcher,
+    ctx_sender_id,
+    ctx_target_user,
+    ctx_session_name,
+)
 
 logger = logging.getLogger( __name__ )
 
@@ -75,6 +86,70 @@ SESSION_NAME: Optional[ str ] = None
 
 # Target user email for notification routing (set by job.py at runtime)
 TARGET_USER: Optional[ str ] = None
+
+
+def set_dispatch_context(
+    sender_id    : Optional[ str ] = None,
+    target_user  : Optional[ str ] = None,
+    session_name : Optional[ str ] = None,
+) -> dict:
+    """
+    Set the per-task dispatch context for this asyncio task / thread.
+
+    Use this instead of mutating module-level SENDER_ID / TARGET_USER /
+    SESSION_NAME when running inside the agentic pool — concurrent DR jobs
+    share module globals (and the shared `_dispatcher` instance), so writing
+    to module globals leaks state across jobs. ContextVars isolate per-task.
+
+    Requires:
+        - At least one of sender_id, target_user, session_name is provided.
+          (None values are skipped — only set what's provided.)
+
+    Ensures:
+        - Each provided value is stored in its corresponding ContextVar.
+        - Returns a dict of {var_name: token} that callers can pass to
+          `reset_dispatch_context()` for explicit teardown.
+
+    Args:
+        sender_id    : Per-task sender_id override (None = leave ContextVar unchanged).
+        target_user  : Per-task target_user override.
+        session_name : Per-task session_name override.
+
+    Returns:
+        dict[str, contextvars.Token]: Tokens for resetting the ContextVars
+            via `reset_dispatch_context()`. Pool workers running a single
+            job typically don't need to reset (the asyncio.run() context
+            ends when the worker finishes), but explicit cleanup is good
+            hygiene.
+    """
+    tokens = { }
+    if sender_id is not None:
+        tokens[ "sender_id" ] = ctx_sender_id.set( sender_id )
+    if target_user is not None:
+        tokens[ "target_user" ] = ctx_target_user.set( target_user )
+    if session_name is not None:
+        tokens[ "session_name" ] = ctx_session_name.set( session_name )
+    return tokens
+
+
+def reset_dispatch_context( tokens: dict ) -> None:
+    """
+    Reset the per-task dispatch context to its prior state.
+
+    Args:
+        tokens: dict returned by `set_dispatch_context()`.
+
+    Ensures:
+        - Each ContextVar is reset to the value it held before the matching
+          set_dispatch_context() call.
+        - Missing keys in `tokens` are silently skipped.
+    """
+    if "sender_id" in tokens:
+        ctx_sender_id.reset( tokens[ "sender_id" ] )
+    if "target_user" in tokens:
+        ctx_target_user.reset( tokens[ "target_user" ] )
+    if "session_name" in tokens:
+        ctx_session_name.reset( tokens[ "session_name" ] )
 
 
 # =============================================================================

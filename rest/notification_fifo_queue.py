@@ -23,7 +23,9 @@ class NotificationItem:
                  progress_group_id: Optional[str] = None,
                  prediction_hint: Optional[dict] = None,
                  display_qualifier_widget: bool = False,
-                 session_name: Optional[str] = None ) -> None:
+                 session_name: Optional[str] = None,
+                 voice_persona: Optional[dict] = None,
+                 payload: Optional[dict] = None ) -> None:
         """
         Initialize a notification item.
 
@@ -91,6 +93,19 @@ class NotificationItem:
 
         # Human-readable session name for UI header display
         self.session_name = session_name
+
+        # Per-session voice persona (allocated at SessionStart by the
+        # voice_persona router). When non-null, the UI passes this voice_id
+        # to the TTS endpoint so each session speaks with its own voice.
+        # See: src/rnd/v0.1.7/2026.04.28-per-session-voice-personas/01-design.md
+        self.voice_persona = voice_persona
+
+        # Generic structured payload for custom-typed state-update notifications
+        # whose data shape doesn't fit existing typed fields. Carries event-specific
+        # dicts for types like "speakerphone_changed" without polluting the
+        # schema with one-off fields. None on standard notifications (skipped in to_dict).
+        # See: src/rnd/v0.1.7/2026.04.29-ws-event-cleanup-to-custom-notification-types/01-design.md §6.1
+        self.payload = payload
 
     def _get_local_timestamp( self ) -> str:
         """Get timezone-aware timestamp using configured timezone from ConfigurationManager"""
@@ -177,7 +192,11 @@ class NotificationItem:
             # Display qualifier widget expanded by default
             "display_qualifier_widget"   : self.display_qualifier_widget,
             # Human-readable session name for UI header display
-            "session_name"               : self.session_name
+            "session_name"               : self.session_name,
+            # Per-session voice persona (None when no persona allocated → server uses Sam default)
+            "voice_persona"              : self.voice_persona,
+            # Generic structured payload for custom-typed notifications (None on standard types)
+            "payload"                    : self.payload
         }
 
 
@@ -256,7 +275,9 @@ class NotificationFifoQueue( FifoQueue ):
                          progress_group_id: Optional[str] = None,
                          prediction_hint: Optional[dict] = None,
                  display_qualifier_widget: bool = False,
-                         session_name: Optional[str] = None ) -> NotificationItem:
+                         session_name: Optional[str] = None,
+                         voice_persona: Optional[dict] = None,
+                         payload: Optional[dict] = None ) -> NotificationItem:
         """
         Push a notification with priority handling and io_tbl logging.
 
@@ -299,7 +320,9 @@ class NotificationFifoQueue( FifoQueue ):
             progress_group_id        = progress_group_id,
             prediction_hint          = prediction_hint,
             display_qualifier_widget = display_qualifier_widget,
-            session_name             = session_name
+            session_name             = session_name,
+            voice_persona            = voice_persona,
+            payload                  = payload
         )
         
         # Priority handling - urgent/high go to front, but after other urgent/high
@@ -405,20 +428,37 @@ class NotificationFifoQueue( FifoQueue ):
         }
 
         if notification.user_id:
-            # Targeted notification - send only to specific user
-            self.websocket_mgr.emit_to_user_sync( notification.user_id, "notification_queue_update", event_data )
-            if self.debug: print( f"[NOTIFY-QUEUE] Emitted notification to user: {notification.user_id}" )
+            # Phase E migration (2026-04-27): targeted user + cc-listener
+            # cross-user delivery now goes through the canonical dispatch
+            # helper. CC listeners authenticate as a shared service-account
+            # user_id (different from notification.user_id), so the helper
+            # internally handles both the user emit and the listener emit.
+            self.websocket_mgr.emit_to_user_or_listener_sync(
+                user_id = notification.user_id,
+                job_id  = notification.job_id,
+                event   = "notification_queue_update",
+                data    = event_data,
+            )
+            if self.debug: print( f"[NOTIFY-QUEUE] Dispatched notification (user={notification.user_id}, job_id={notification.job_id})" )
         else:
-            # Broadcast notification - send to all connected clients
+            # Broadcast notification - send to all connected clients.
+            # Falls outside the helper's scope (helper is user-or-listener,
+            # not broadcast). Listener still gets it via the cc-listener
+            # session emit below if job_id is set.
             self.websocket_mgr.emit( "notification_queue_update", event_data )
             if self.debug: print( f"[NOTIFY-QUEUE] Broadcast notification to all users" )
 
-        # Cross-user delivery: CC listeners authenticate as a service account
-        # (different user_id), so emit_to_user_sync won't reach them. Target the
-        # listener session directly by its deterministic session ID.
-        if notification.job_id:
-            listener_sid = f"cc-listener-{notification.job_id}"
-            self.websocket_mgr.emit_to_session_sync( listener_sid, "notification_queue_update", event_data )
+            # Even on broadcast, route explicitly to cc-listener-{job_id}
+            # if applicable — the listener might not be matching on
+            # user_id-keyed broadcasts cleanly. Use the helper with
+            # user_id=None to get listener-only delivery.
+            if notification.job_id:
+                self.websocket_mgr.emit_to_user_or_listener_sync(
+                    user_id = None,
+                    job_id  = notification.job_id,
+                    event   = "notification_queue_update",
+                    data    = event_data,
+                )
 
     def _emit_queue_update( self ) -> None:
         """

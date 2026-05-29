@@ -739,7 +739,7 @@ class TestNotificationsRouter( unittest.TestCase ):
             result = get_local_timestamp()
             
             # Verify config lookup
-            mock_config_mgr.get.assert_called_once_with( "app_timezone", default="America/New_York" )
+            mock_config_mgr.get.assert_called_once_with( "app timezone", default="America/New_York" )
             
             # Verify timezone creation
             mock_zoneinfo.ZoneInfo.assert_called_once_with( "America/New_York" )

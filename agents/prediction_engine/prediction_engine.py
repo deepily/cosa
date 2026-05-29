@@ -1372,6 +1372,12 @@ def get_prediction_engine( config_mgr=None, debug=False ) -> PredictionEngine:
     return PredictionEngine( config_mgr=config_mgr, debug=debug )
 
 
+# Register PredictionEngine.reset as the invalidator for /api/init hot-reload.
+# Mirrors the existing reset semantics (drop singleton, next call rebuilds).
+from cosa.config.cache_registry import register_invalidator as _register_invalidator
+_register_invalidator( "prediction_engine", PredictionEngine.reset )
+
+
 def quick_smoke_test():
     """Quick smoke test for PredictionEngine."""
     import cosa.utils.util as du

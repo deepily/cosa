@@ -176,14 +176,16 @@ class PresentationGeneratorJob( AgenticJobBase ):
             self.state        = JobState.FAILED
             self.completed_at = cu.get_current_datetime_iso()
             self.error        = str( e )
+            self.answer_conversational = f"Presentation generation failed: {str( e )}"
 
             if self.debug:
                 print( f"[PresentationGeneratorJob] Failed: {e}" )
                 import traceback
                 traceback.print_exc()
 
-            self.answer_conversational = f"Presentation generation failed: {str( e )}"
-            return self.answer_conversational
+            # Re-raise so the agentic-pool Future captures the exception.
+            # Backlog item 5 (2026-04-29): canonical Future contract.
+            raise
 
     async def _execute( self ) -> str:
         """
@@ -285,6 +287,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
             self.artifacts[ "marp_path" ]        = self.marp_path
             self.artifacts[ "pptx_path" ]        = self.pptx_path
             self.artifacts[ "presentation_id" ]  = agent.presentation_id
+            self.artifacts[ "slide_count" ]      = presentation.total_slides
 
             # Build cost summary from API client
             cost_est = agent.api_client.cost_estimate if agent._api_client else None
@@ -416,6 +419,7 @@ class PresentationGeneratorJob( AgenticJobBase ):
             self.artifacts[ "yaml_path" ]        = self.yaml_path
             self.artifacts[ "marp_path" ]        = self.marp_path
             self.artifacts[ "presentation_id" ]  = f"dry-run-{self.id_hash}"
+            self.artifacts[ "slide_count" ]      = 0   # dry-run: no real presentation built
 
             # Mock cost summary
             self.cost_summary = {

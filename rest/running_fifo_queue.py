@@ -19,6 +19,7 @@ import time
 import threading
 import traceback
 import pprint
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Optional, Any
 
@@ -73,6 +74,49 @@ class RunningFifoQueue( FifoQueue ):
         self.threshold_confirmation  = 90.0  if config_mgr is None else config_mgr.get( "similarity threshold confirmation", default=90.0, return_type="float" )
         self.io_tbl                  = InputAndOutputTable()
         self.gist_normalizer         = GistNormalizer( debug=self.debug, verbose=self.verbose )
+
+        # Phase 2 (CJ Flow async multi-lane): agentic pool + future tracking
+        self._pool_max_workers       = 1 if config_mgr is None else config_mgr.get(
+            "cj flow max concurrent agentic jobs", default=1, return_type="int"
+        )
+        self._agentic_pool           = ThreadPoolExecutor(
+            max_workers        = self._pool_max_workers,
+            thread_name_prefix = "AgenticPool"
+        )
+        self._agentic_futures        = { }                   # { id_hash : Future }
+        # RLock (not Lock): when a Future completes before add_done_callback
+        # returns — possible for fast-running work — the callback fires
+        # synchronously on the SAME thread inside add_done_callback. That thread
+        # is already holding the lock from _submit_agentic_job; re-acquiring
+        # via _on_agentic_complete's `with self._agentic_futures_lock:` would
+        # deadlock under a plain Lock. RLock permits same-thread re-entry.
+        self._agentic_futures_lock   = threading.RLock()
+
+        # Phase 3 (CJ Flow async multi-lane): ghost-job sweeper daemon thread
+        # Periodically scans _agentic_futures for entries whose Future.done()
+        # is True but whose job is still in running_queue (transition never
+        # happened due to callback crash). Dead-letters them. Suspenders to
+        # Phase 2's defensive callback belt.
+        self._config_mgr                    = config_mgr
+        self._ghost_job_sweeper_stop_event  = threading.Event()
+        self._ghost_job_sweeper_thread      = threading.Thread(
+            target = self._ghost_job_sweep_loop,
+            daemon = True,
+            name   = "GhostJobSweeper",
+        )
+        self._ghost_job_sweeper_thread.start()
+
+        # WG-8 (2026-04-28): consumer-thread heartbeat.
+        # Updated by queue_consumer.consumer_worker at the top of each loop
+        # iteration so /api/queue/pool-status can report seconds_since_heartbeat
+        # for stall detection. None = consumer hasn't ticked yet.
+        self.last_consumer_heartbeat_at = None
+        if config_mgr is not None:
+            self._consumer_stall_threshold_seconds = config_mgr.get(
+                "cj flow consumer stall threshold seconds", default=120, return_type="int"
+            )
+        else:
+            self._consumer_stall_threshold_seconds = 120
     
     
     def enter_running_loop( self ) -> None:
@@ -144,8 +188,19 @@ class RunningFifoQueue( FifoQueue ):
             - None (exceptions handled internally)
         """
         try:
-            # Point to the head of the queue without popping it
-            running_job = self.head()
+            # Phase 2 fix: use the `job` parameter explicitly, not self.head().
+            # Pre-Phase-2 (serial agentic processing), _process_job ran agentic
+            # jobs inline and they were always removed from the running queue
+            # before the next job arrived — so self.head() coincidentally
+            # matched the passed `job`. Phase 2 submits agentic jobs to a pool
+            # and returns immediately, so the running queue can hold MULTIPLE
+            # in-flight jobs (one per pool worker + any phantoms). self.head()
+            # then returns the OLDEST running job, not the one the consumer
+            # just pushed — causing re-submission of already-in-flight jobs
+            # and orphaning of the intended new job. Passing `job` explicitly
+            # fixes both Bug 2A (phantom run-queue entry) and Bug 2B (duplicate
+            # done-queue pushes) surfaced by the 2026-04-24 Live API probe.
+            running_job = job
 
             if not running_job:
                 print( "[RUNNING] Warning: _process_job called but no job in running queue" )
@@ -164,8 +219,13 @@ class RunningFifoQueue( FifoQueue ):
             # Process based on job type
             # IMPORTANT: Check AgenticJobBase FIRST since it's a separate hierarchy from AgentBase
             if isinstance( running_job, AgenticJobBase ):
-                # Agentic jobs (Deep Research, Podcast, etc.) - long-running, non-cacheable
-                running_job = self._handle_agentic_job( running_job, truncated_question, run_timer )
+                # Phase 2: Submit to agentic pool; return immediately so consumer
+                # thread is free to pop the next todo job. Pool worker calls
+                # job.do_all(); Future callback _on_agentic_complete moves the
+                # job from running_queue → done/dead. Job is already in
+                # running_queue (consumer pushed it).
+                self._submit_agentic_job( running_job )
+                return
 
             elif isinstance( running_job, AgentBase ):
                 if isinstance( running_job, CrudForDataFramesAgent ):
@@ -212,45 +272,28 @@ class RunningFifoQueue( FifoQueue ):
             print( f"[RUNNING] Full stack trace:" )
             traceback.print_exc()
 
-            # Get job info BEFORE popping (head is still in queue)
-            failed_job = self.head()
+            # OOS-4 Part A hotfix (2026-04-28): use the `job` parameter explicitly,
+            # NOT self.head(). Phase 2 introduced the agentic pool — the running
+            # queue can hold multiple in-flight jobs (one per pool worker + any
+            # fast-lane job currently being processed). self.head() returns the
+            # OLDEST running job, which during a fast-lane crash is the agentic
+            # pool job (e.g. test_suite) running async, NOT the fast-lane job
+            # (e.g. Calculator) that just raised. Mis-attribution dead-letters
+            # the WRONG job. Fix mirrors the happy-path correction at line 203
+            # ('running_job = job') that landed for Bug 2A/2B but missed this
+            # exception branch. Repro: 2026-04-28 ts-1c41e064 killed at 17:53.
+            failed_job = job
             if failed_job:
-                job_id  = failed_job.id_hash
-                user_id = failed_job.user_id
-
-                # TTS notification for the error
-                self._notify( f"Job failed: {e}", job=failed_job, priority="urgent" )
-
-                # Build metadata matching _handle_error_case pattern
-                completed_at     = du.get_current_datetime_iso()
-                started_at       = failed_job.started_at
-                duration_seconds = None
-                if started_at:
-                    try:
-                        start            = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
-                        end              = datetime.fromisoformat( completed_at )
-                        duration_seconds = ( end - start ).total_seconds()
-                    except Exception:
-                        pass
-
-                metadata = {
-                    'error'           : str( e ),
-                    'question_text'   : failed_job.last_question_asked,
-                    'agent_type'      : failed_job.job_type,
-                    'timestamp'       : failed_job.created_date,
-                    'status'          : JobState.FAILED.value,
-                    'has_interactions' : bool( failed_job.session_id ),
-                    'is_cache_hit'    : False,
-                    'user_email'      : failed_job.user_email,
-                    'started_at'      : started_at,
-                    'completed_at'    : completed_at,
-                    'duration_seconds': duration_seconds
-                }
-                emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.FAILED, user_id, metadata )
-
-                # Now pop and move to dead queue
-                self.pop()
-                self.jobs_dead_queue.push( failed_job )
+                # OOS-4 Finding C (2026-04-29 Phase 4): route through the
+                # canonical `_transition_to_dead` primitive instead of the
+                # ~50-line inline duplicate that was here pre-refactor. The
+                # canonical primitive sets job.error, builds metadata, emits
+                # the WS state transition, deletes from running_queue, pushes
+                # to dead_queue, and runs the auto-fix watchdog — exactly
+                # what the inline copy did, minus the drift risk. The OOS-4
+                # Part B hotfix (failed_job.error = str(e)) is now subsumed
+                # by `_transition_to_dead`'s normalization at line 729-734.
+                self._transition_to_dead( failed_job, e )
     
     def _handle_error_case( self, response: dict, running_job: Any, truncated_question: str, error_message: str=None ) -> Any:
         """
@@ -263,32 +306,393 @@ class RunningFifoQueue( FifoQueue ):
             - error_message is an optional string with a specific error description
 
         Ensures:
-            - Moves job from running to dead queue
-            - Emits specific error_message if provided, otherwise generic fallback
-            - Updates socket connections
-            - Returns the job instance
+            - Logs the failure banner + captured stdout
+            - Delegates to the canonical `_transition_to_dead` primitive,
+              which handles: TTS notify, error persistence on the job,
+              metadata build, WS emit, queue delete + dead-queue push,
+              and auto-fix watchdog evaluation
+            - Returns the job instance (preserved for back-compat with
+              callers at lines _handle_base_agent error fallback and
+              _format_cached_result error fallback)
 
         Raises:
             - None (handles errors gracefully)
         """
         du.print_banner( f"Error running code for [{truncated_question}]", prepend_nl=True )
-        
+
         for line in response[ "output" ].split( "\n" ): print( line )
-        
-        self.pop()  # Auto-emits 'run_update'
 
-        # TTS Migration (Session 97): Use notification service instead of _emit_speech
+        # OOS-4 Finding C (2026-04-29 Phase 4): canonical dead-queue path.
+        # Pre-refactor this method had ~60 lines duplicating _transition_to_dead.
         notification_msg = error_message if error_message else "I'm sorry Dave, I'm afraid I can't do that. Please check your logs"
-        self._notify( notification_msg, job=running_job, priority="urgent" )
+        self._transition_to_dead( running_job, notification_msg )
 
-        running_job.error = notification_msg
+        return running_job
 
-        # Emit job state transition (run -> dead) with error metadata
-        job_id  = running_job.id_hash
-        user_id = running_job.user_id
+    # =============================================================================
+    # Phase 2 (CJ Flow async multi-lane): agentic pool + shared transition primitives
+    #
+    # The pool runs agentic jobs concurrently (up to _pool_max_workers); fast-lane
+    # jobs (AgentBase, SolutionSnapshot) continue to run inline on the consumer
+    # thread. The Future callback _on_agentic_complete is the only post-do_all()
+    # path for pool jobs. _transition_to_done / _transition_to_dead are the
+    # canonical completion primitives — callable from the pool callback (Phase 2)
+    # or later migrated into fast-lane paths (Phase 3 cleanup).
+    # =============================================================================
 
+    def _submit_agentic_job( self, job: AgenticJobBase ) -> None:
+        """
+        Submit an agentic job to the pool; track Future + register callback.
+
+        **Consumer integration note**: In Lupin's current architecture, the
+        consumer thread (`queue_consumer.py::consumer_worker`) already does
+        `emit_job_state_transition(QUEUED→RUNNING)` and `running_queue.push(job)`
+        BEFORE invoking `_process_job` → this method. So the job is already in
+        running_queue and the UI has already seen the transition by the time
+        we submit to the pool. We ONLY do the atomic submit+track+callback here.
+
+        Design-doc 3-step ordering (push → emit → submit+track) is preserved
+        system-wide across consumer + this method; don't duplicate.
+
+        Ordering invariant (atomic-under-lock, load-bearing):
+          submit() + _agentic_futures[id_hash] assignment + add_done_callback
+          ALL inside _agentic_futures_lock — closes the sub-microsecond race
+          where a fast-completing Future fires its callback before
+          _agentic_futures has the key.
+
+        Requires:
+            - job implements AgenticJobBase
+            - job is ALREADY in running_queue (consumer pushed it)
+
+        Ensures:
+            - job.id_hash is a key in _agentic_futures with the pool Future
+            - Future has _on_agentic_complete registered as done_callback
+        """
+        with self._agentic_futures_lock:
+            future = self._agentic_pool.submit( self._execute_agentic_in_pool, job )
+            self._agentic_futures[ job.id_hash ] = future
+            future.add_done_callback(
+                lambda f, j=job: self._on_agentic_complete( j, f )
+            )
+
+    def _execute_agentic_in_pool( self, job: AgenticJobBase ) -> Any:
+        """
+        Runs inside a pool worker thread. Blocks on job.do_all() and returns
+        whatever do_all() returns (fed to _on_agentic_complete via future.result()).
+
+        do_all() creates its own asyncio event loop via asyncio.run() internally;
+        safe here because each call is on a distinct pool thread with no
+        pre-existing loop.
+        """
+        return job.do_all()
+
+    def _on_agentic_complete( self, job: AgenticJobBase, future ) -> None:
+        """
+        Future callback — runs on a pool thread after do_all() returns or raises.
+        Moves job from running_queue to done_queue or dead_queue.
+
+        INVARIANT (load-bearing, see design doc 03 §Step 2.1): pop from
+        _agentic_futures BEFORE transitioning. The Phase-3 ghost-sweeper uses
+        "still in _agentic_futures AND Future.done()" as the signal that a
+        transition never happened; reversing these two ops opens a race window
+        where the sweeper dead-letters a job that was just moved to done_queue.
+
+        Defensive:
+          - Outer `except BaseException`: KeyboardInterrupt / SystemExit /
+            GeneratorExit survivors are LOGGED and left for the Phase-3 sweeper
+            rather than pushed through _transition_to_dead (which can itself
+            raise). Never re-raise — ThreadPoolExecutor treats callback
+            exceptions as fatal and can deadlock the pool.
+          - Inner `except Exception`: failures during dead-letter are logged;
+            job left in _agentic_futures for the sweeper as last resort.
+        """
+        try:
+            # INVARIANT: pop from futures dict BEFORE transitioning
+            with self._agentic_futures_lock:
+                self._agentic_futures.pop( job.id_hash, None )
+
+            exc = future.exception()
+            if exc is not None:
+                if isinstance( exc, Exception ):
+                    # Regular Exception → dead-letter path
+                    self._transition_to_dead( job, exc )
+                else:
+                    # BaseException-but-not-Exception survivor (KeyboardInterrupt,
+                    # SystemExit, GeneratorExit) — log-only; leave for Phase-3
+                    # ghost-sweeper. Attempting dead-letter is risky because
+                    # transition code may itself raise more BaseExceptions.
+                    du.print_banner(
+                        f"_on_agentic_complete: BaseException survivor for {job.id_hash}: {exc!r}",
+                        prepend_nl=True
+                    )
+                return
+
+            formatted_output = future.result()
+
+            # Stalled terminal (Bug 11 2026-04-15, ported to pool path 2026-04-26):
+            # voice gate timed out and orchestrator saved a checkpoint. Route to
+            # Done with status=stalled so the UI badge + Resume button activate.
+            # Without this branch, _transition_to_done overwrites status='completed'
+            # and drops the checkpoint blob, breaking checkpoint-resume entirely.
+            # Mirrors the legacy serial path's stall check at line ~898.
+            if job.state == JobState.STALLED:
+                self._transition_to_stalled( job, formatted_output )
+                return
+
+            # Failed terminal: agentic do_all() may catch its own exception, set
+            # state=FAILED, and RETURN the error string rather than re-raise.
+            # In that case future.exception() is None but the job is genuinely
+            # failed and belongs in the dead queue. Without this branch the job
+            # gets pushed to done_queue with status=failed (and BFE auto-fix
+            # never fires because _evaluate_for_auto_fix runs only from the dead
+            # path). Symmetric to the STALLED branch above.
+            if job.state == JobState.FAILED:
+                cause = job.error or formatted_output or "Job reported FAILED with no error message"
+                self._transition_to_dead( job, cause )
+                return
+
+            self._transition_to_done( job, formatted_output )
+
+        except BaseException as e:
+            # Outer BaseException catch: keep the executor alive even if
+            # KeyboardInterrupt / SystemExit leaks out of the body above.
+            du.print_banner(
+                f"_on_agentic_complete FAILED for job {job.id_hash}: {e!r}",
+                prepend_nl=True
+            )
+            if isinstance( e, Exception ):
+                try:
+                    self._transition_to_dead( job, e )
+                except Exception as inner:
+                    du.print_banner(
+                        f"Dead-letter ALSO failed for {job.id_hash}: {inner!r}",
+                        prepend_nl=True
+                    )
+                    # Last-resort: leave for Phase-3 ghost-sweeper.
+            # BaseException-but-not-Exception survivors: log only, no dead-letter.
+            # Never re-raise from a Future callback.
+
+    def _transition_to_done( self, job: Any, formatted_output: Any = None ) -> None:
+        """
+        Canonical success transition. Thread-safe (callable from consumer OR
+        pool-callback threads). Reads derived values (answer_conversational,
+        artifacts, etc.) directly from job.* set by do_all() as side-effects;
+        formatted_output is the return value used for I/O logging only.
+
+        Extracted from the agentic-success block historically at
+        running_fifo_queue.py lines 409-480. Phase 2 scope: shared with the
+        pool callback only. Phase 3 cleanup can migrate fast-lane paths
+        (_handle_base_agent success, _format_cached_result, etc.) to call
+        this helper too.
+
+        Order:
+          TTS → build metadata → emit RUNNING → COMPLETED → delete from
+          running_queue → push to done_queue → TFE watchdog evaluate →
+          I/O table insert.
+        """
+        # TTS Migration (Session 97): notify via notification service
+        self._notify( job.answer_conversational, job=job )
+
+        job_id       = job.id_hash
+        user_id      = job.user_id
         completed_at = du.get_current_datetime_iso()
-        started_at   = running_job.started_at
+        started_at   = job.started_at
+
+        duration_seconds = None
+        if started_at and completed_at:
+            try:
+                start = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
+                end   = datetime.fromisoformat( completed_at )
+                duration_seconds = ( end - start ).total_seconds()
+            except Exception:
+                pass
+
+        # artifacts-based fields are agentic-specific; fast-lane jobs have empty
+        # artifacts or no artifacts attribute — use getattr for boundary safety
+        artifacts = getattr( job, "artifacts", None ) or { }
+        metadata  = {
+            "response_text"             : job.answer_conversational,
+            "abstract"                  : artifacts.get( "abstract" ),
+            "report_link"               : artifacts.get( "report_path" ),
+            "remediation_snapshot_path" : artifacts.get( "remediation_snapshot_path" ),
+            "yaml_path"                 : artifacts.get( "yaml_path" ),
+            "pptx_path"                 : artifacts.get( "pptx_path" ),
+            "cost_summary"              : artifacts.get( "cost_summary" ),
+            "error"                     : None,
+            "question_text"             : job.last_question_asked,
+            "agent_type"                : job.job_type,
+            "timestamp"                 : job.created_date,
+            "status"                    : JobState.COMPLETED.value,
+            "has_interactions"          : bool( job.session_id ),
+            "is_cache_hit"              : job.is_cache_hit,
+            "user_email"                : job.user_email,
+            "started_at"                : started_at,
+            "completed_at"              : completed_at,
+            "duration_seconds"          : duration_seconds,
+        }
+        emit_job_state_transition(
+            self.websocket_mgr, job_id, JobState.RUNNING, JobState.COMPLETED, user_id, metadata
+        )
+
+        # Queue transition (Phase 1 RLock protects both queues under concurrency)
+        self.delete_by_id_hash( job.id_hash )
+        self.jobs_done_queue.push( job )
+
+        # TFE auto-dispatch (non-fatal if watchdog isn't initialized)
+        try:
+            from cosa.rest.test_suite_completion_watchdog import get_watchdog
+            _tfe_watchdog = get_watchdog()
+            if _tfe_watchdog is not None:
+                _tfe_watchdog.evaluate( job )
+        except Exception as _tfe_e:
+            if self.debug: print( f"[AGENTIC-POOL] TFE watchdog evaluate skipped: {_tfe_e}" )
+
+        # I/O table (non-fatal if unavailable)
+        try:
+            self.io_tbl.insert_io_row(
+                input_type   = job.routing_command,
+                input        = job.last_question_asked,
+                output_raw   = str( artifacts ) if artifacts else str( formatted_output ),
+                output_final = job.answer_conversational,
+            )
+        except Exception as io_e:
+            if self.debug: print( f"[AGENTIC-POOL] I/O table write skipped: {io_e}" )
+
+    def _transition_to_stalled( self, job: Any, formatted_output: Any = None ) -> None:
+        """
+        Stalled-terminal transition for agentic jobs that hit a voice-gate
+        timeout and saved a checkpoint. Routes the job to Done with
+        status='stalled' so the UI badge + Resume button activate; persistence
+        dispatch in queue_util.emit_job_state_transition routes
+        `to_state == JobState.STALLED` to persist_job_stalled_from_metadata,
+        which writes status='stalled' to job_history and preserves the
+        checkpoint blob in metadata_json for later resume.
+
+        Mirrors _transition_to_done's structure, but emits JobState.STALLED
+        with `checkpoint` + `plan_path` in the metadata blob, instead of
+        JobState.COMPLETED with no checkpoint.
+
+        Bug 11 (2026-04-15) added the equivalent stall handling in the legacy
+        serial path (_handle_agentic_job, ~line 898). Phase 2's pool refactor
+        moved agentic dispatch to _on_agentic_complete but did not port the
+        stall check, leaving status='completed' as the unconditional outcome
+        for ALL agentic jobs going through the pool — including TFE and BFE
+        voice-gate stalls. This helper closes that gap.
+
+        Order:
+          TTS (informational, not urgent) → build metadata WITH checkpoint →
+          emit RUNNING → STALLED → delete from running_queue → push to
+          done_queue → I/O table insert. Does NOT invoke the dead-queue /
+          auto-repair watchdog — the checkpoint IS the repair path; BFE would
+          just swallow it on its own DB lookup.
+        """
+        # TTS — informational tone (not urgent — this is a normal stall, not a crash)
+        self._notify( job.answer_conversational, job=job )
+
+        job_id       = job.id_hash
+        user_id      = job.user_id
+        completed_at = du.get_current_datetime_iso()
+        started_at   = job.started_at
+
+        duration_seconds = None
+        if started_at and completed_at:
+            try:
+                start = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
+                end   = datetime.fromisoformat( completed_at )
+                duration_seconds = ( end - start ).total_seconds()
+            except Exception:
+                pass
+
+        artifacts = getattr( job, "artifacts", None ) or { }
+        metadata  = {
+            "response_text"             : job.answer_conversational,
+            "abstract"                  : artifacts.get( "abstract" ),
+            "report_link"               : artifacts.get( "report_path" ),
+            "remediation_snapshot_path" : artifacts.get( "remediation_snapshot_path" ),
+            "yaml_path"                 : artifacts.get( "yaml_path" ),
+            "pptx_path"                 : artifacts.get( "pptx_path" ),
+            "cost_summary"              : artifacts.get( "cost_summary" ),
+            # Stall-specific fields (the missing piece pre-fix):
+            "checkpoint"                : artifacts.get( "checkpoint" ),
+            "plan_path"                 : artifacts.get( "plan_path" ),
+            "error"                     : None,
+            "question_text"             : job.last_question_asked,
+            "agent_type"                : job.job_type,
+            "timestamp"                 : job.created_date,
+            "status"                    : JobState.STALLED.value,
+            "has_interactions"          : bool( job.session_id ),
+            "is_cache_hit"              : False,
+            "user_email"                : job.user_email,
+            "started_at"                : started_at,
+            "completed_at"              : completed_at,
+            "duration_seconds"          : duration_seconds,
+        }
+        emit_job_state_transition(
+            self.websocket_mgr, job_id, JobState.RUNNING, JobState.STALLED, user_id, metadata
+        )
+
+        # Queue transition — same pattern as _transition_to_done but explicitly
+        # NOT firing the TFE auto-dispatch watchdog (stalled jobs are awaiting
+        # human review, not failed jobs needing repair).
+        self.delete_by_id_hash( job.id_hash )
+        self.jobs_done_queue.push( job )
+
+        # I/O table (non-fatal if unavailable)
+        try:
+            self.io_tbl.insert_io_row(
+                input_type   = job.routing_command,
+                input        = job.last_question_asked,
+                output_raw   = str( artifacts ) if artifacts else str( formatted_output ),
+                output_final = job.answer_conversational,
+            )
+        except Exception as io_e:
+            if self.debug: print( f"[AGENTIC-POOL] I/O table write skipped (stalled): {io_e}" )
+
+    def _transition_to_dead( self, job: Any, cause: Any ) -> None:
+        """
+        Canonical failure transition. Thread-safe. `cause` may be an Exception
+        instance OR a string (status-check-failure paths set running_job.error
+        as a string). The body normalises both.
+
+        Extracted from agentic failure paths at running_fifo_queue.py lines
+        482-532 (status-check fail) + 534-592 (exception). Phase 2 scope:
+        shared with the pool callback only; fast-lane paths (_handle_error_case
+        et al.) may migrate in Phase 3 cleanup.
+        """
+        # Normalise cause
+        if isinstance( cause, str ):
+            error_msg   = cause
+            stack_trace = cause
+        else:
+            error_msg   = str( cause )
+            try:
+                stack_trace = "".join( traceback.format_exception( type( cause ), cause, cause.__traceback__ ) )
+            except Exception:
+                stack_trace = error_msg
+
+        # Ensure job.error reflects the failure (some paths set this already; some don't)
+        try:
+            if not job.error:
+                job.error = error_msg
+            job.state = JobState.FAILED
+        except Exception:
+            pass  # Missing attributes on exotic job types — boundary tolerance
+
+        du.print_banner( f"AgenticJob failed: {error_msg}", prepend_nl=True )
+
+        # TTS notify — urgent priority
+        job_type_label = getattr( job, "JOB_TYPE", job.job_type )
+        self._notify(
+            f"The {job_type_label} job encountered an error: {error_msg[ :100 ]}",
+            job=job,
+            priority="urgent"
+        )
+
+        job_id       = job.id_hash
+        user_id      = job.user_id
+        completed_at = du.get_current_datetime_iso()
+        started_at   = job.started_at
+
         duration_seconds = None
         if started_at:
             try:
@@ -299,23 +703,251 @@ class RunningFifoQueue( FifoQueue ):
                 pass
 
         metadata = {
-            'error'           : notification_msg,
-            'question_text'   : running_job.last_question_asked,
-            'agent_type'      : running_job.job_type,
-            'timestamp'       : running_job.created_date,
-            'status'          : JobState.FAILED.value,
-            'has_interactions': bool( running_job.session_id ),
-            'is_cache_hit'    : False,
-            'user_email'      : running_job.user_email,
-            'started_at'      : started_at,
-            'completed_at'    : completed_at,
-            'duration_seconds': duration_seconds
+            "error"            : error_msg,
+            "stack_trace"      : stack_trace,
+            "question_text"    : job.last_question_asked,
+            "agent_type"       : job.job_type,
+            "timestamp"        : job.created_date,
+            "status"           : JobState.FAILED.value,
+            "has_interactions" : bool( job.session_id ),
+            "is_cache_hit"     : False,
+            "user_email"       : job.user_email,
+            "started_at"       : started_at,
+            "completed_at"     : completed_at,
+            "duration_seconds" : duration_seconds,
         }
-        emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.FAILED, user_id, metadata )
+        emit_job_state_transition(
+            self.websocket_mgr, job_id, JobState.RUNNING, JobState.FAILED, user_id, metadata
+        )
 
-        self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
+        self.delete_by_id_hash( job.id_hash )
+        self.jobs_dead_queue.push( job )
 
-        return running_job
+        # Phase 6A: automated repair evaluation
+        try:
+            self._evaluate_for_auto_fix( job )
+        except Exception as e:
+            if self.debug: print( f"[AGENTIC-POOL] auto-fix eval skipped: {e}" )
+
+    def _process_fast_lane( self, job: Any ) -> Any:
+        """
+        Inline processing for non-agentic jobs (AgentBase, SolutionSnapshot).
+        Preserves today's cache-check + CRUD sub-branch + snapshot dispatch.
+
+        Runs on the consumer thread — not the pool. Fast-lane is UNBLOCKED by
+        the pool: while agentic jobs execute concurrently in pool workers, the
+        consumer thread continues popping todo queue and running fast-lane jobs
+        synchronously.
+        """
+        truncated_question = du.truncate_string( job.last_question_asked, max_len=64 )
+        run_timer          = sw.Stopwatch( "Starting job run timer..." )
+
+        if isinstance( job, AgentBase ):
+            if isinstance( job, CrudForDataFramesAgent ):
+                # CRUD agents: skip cache — data is mutable, snapshots go stale
+                if self.debug: print( "[CACHE] Skipping cache for CRUD agent (mutable data)" )
+                return self._handle_base_agent( job, truncated_question, run_timer )
+
+            # Check cache BEFORE agent execution
+            question        = job.last_question_asked
+            if self.debug: print( f"[CACHE] Checking cache for question: {question}" )
+            cached_snapshots = self.snapshot_mgr.get_snapshots_by_question( question )
+
+            if cached_snapshots and len( cached_snapshots ) > 0:
+                score, cached_snapshot = cached_snapshots[ 0 ]
+                if score >= 100.0:
+                    if self.debug: print( f"[CACHE] EXACT HIT: score {score:.1f}% from {cached_snapshot.run_date}" )
+                    return self._format_cached_result( cached_snapshot, job, truncated_question, run_timer )
+                elif score >= self.threshold_confirmation:
+                    if self.debug: print( f"[CACHE] THRESHOLD ACCEPT: score {score:.1f}% >= {self.threshold_confirmation}% from {cached_snapshot.run_date}" )
+                    return self._format_cached_result( cached_snapshot, job, truncated_question, run_timer )
+                else:
+                    print( f"[CACHE] THRESHOLD REJECT: score {score:.1f}% < {self.threshold_confirmation}% floor — routing to agent" )
+                    return self._handle_base_agent( job, truncated_question, run_timer )
+            else:
+                if self.debug: print( "[CACHE] MISS: Running agent for new question" )
+                return self._handle_base_agent( job, truncated_question, run_timer )
+
+        # SolutionSnapshot fast-lane
+        return self._handle_solution_snapshot( job, truncated_question, run_timer )
+
+    def get_pool_status( self ) -> dict:
+        """
+        Return a snapshot of the agentic-pool state for /api/queue/pool-status.
+
+        Requires:
+            - Pool initialized in __init__
+
+        Ensures:
+            - Returns dict with keys: inflight_agentic_jobs, max_agentic_workers, pending_in_pool
+            - inflight = submitted-but-not-done (running + pending)
+            - pending  = queued inside pool's internal queue, not yet picked up by a worker
+            - UI "running" count = inflight - pending
+            - Phase 3: enriched with api_resource_manager per-provider state
+              when the singleton is initialised; omitted with a marker if not
+        """
+        with self._agentic_futures_lock:
+            inflight = sum( 1 for f in self._agentic_futures.values() if not f.done() )
+            pending  = sum(
+                1 for f in self._agentic_futures.values()
+                if not f.running() and not f.done()
+            )
+
+        payload = {
+            "inflight_agentic_jobs" : inflight,
+            "max_agentic_workers"   : self._pool_max_workers,
+            "pending_in_pool"       : pending,
+        }
+
+        # WG-8 (2026-04-28): consumer-thread heartbeat for stall detection.
+        # `last_consumer_heartbeat_at` is set by the consumer worker at the
+        # top of each loop iteration. None = consumer has never ticked
+        # (server just started or consumer never launched). seconds_since
+        # is computed against datetime.now() so callers can compare against
+        # `consumer_stall_threshold_seconds` to detect a frozen consumer.
+        from datetime import datetime as _dt
+        hb_at = self.last_consumer_heartbeat_at
+        if hb_at is not None:
+            seconds_since = ( _dt.now() - hb_at ).total_seconds()
+        else:
+            seconds_since = None
+        payload[ "last_consumer_heartbeat_at" ]    = hb_at.isoformat() if hb_at else None
+        payload[ "seconds_since_heartbeat" ]       = seconds_since
+        payload[ "consumer_stall_threshold_secs" ] = self._consumer_stall_threshold_seconds
+        payload[ "consumer_stalled" ] = (
+            seconds_since is not None and seconds_since > self._consumer_stall_threshold_seconds
+        )
+
+        # Phase 3: enrich with ApiResourceManager state (per-provider contention)
+        try:
+            from cosa.utils.api_resource_manager import get_arm
+            payload[ "api_resource_manager" ] = get_arm().get_status()
+        except RuntimeError:
+            # ARM not initialised (init_arm() never called) — include a marker so
+            # observability tooling sees the absence rather than a missing key.
+            payload[ "api_resource_manager" ] = { "state": "uninitialised" }
+        except Exception as e:
+            payload[ "api_resource_manager" ] = { "state": "error", "detail": str( e )[ :200 ] }
+
+        return payload
+
+    def _ghost_job_sweep( self ) -> None:
+        """
+        Scan _agentic_futures for entries whose Future is done but whose job
+        is still in running_queue. Dead-letter them (suspenders to Phase 2's
+        defensive callback belt).
+
+        INVARIANT DEPENDENCY (from 03-phase-2-*.md Step 2.1): relies on
+        _on_agentic_complete popping from _agentic_futures BEFORE transitioning.
+        The sweeper's "still in _agentic_futures AND Future.done()" check is
+        the signal that a transition never happened. If the callback is ever
+        re-ordered to pop-after-transition, the sweeper would dead-letter
+        jobs that just moved to done_queue.
+
+        Second safeguard — get_by_id_hash None-check: the sweeper iterates a
+        SNAPSHOT of _agentic_futures (not held lock). If a completion
+        callback fires during iteration and transitions the job to done,
+        get_by_id_hash returns None → skip. No double-transition.
+        """
+        with self._agentic_futures_lock:
+            futures_snapshot = dict( self._agentic_futures )
+
+        for id_hash, future in futures_snapshot.items():
+            if not future.done():
+                continue
+
+            job = self.get_by_id_hash( id_hash ) if id_hash in self.queue_dict else None
+            if job is None:
+                # Already transitioned by someone; clean up our tracker
+                with self._agentic_futures_lock:
+                    self._agentic_futures.pop( id_hash, None )
+                continue
+
+            cause = future.exception() or RuntimeError(
+                f"Ghost job {id_hash} detected — Future done but transition never happened"
+            )
+            try:
+                self._transition_to_dead( job, cause )
+            except Exception as e:
+                du.print_banner(
+                    f"Ghost-job sweeper failed to dead-letter {id_hash}: {e}",
+                    prepend_nl=True
+                )
+
+            with self._agentic_futures_lock:
+                self._agentic_futures.pop( id_hash, None )
+
+    def _ghost_job_sweep_loop( self ) -> None:
+        """
+        Main loop for the GhostJobSweeper daemon thread. Runs until
+        _ghost_job_sweeper_stop_event is set (at shutdown).
+
+        Uses Event.wait(timeout) instead of time.sleep so shutdown can
+        interrupt the nap immediately without waiting up to interval_seconds.
+        """
+        interval_seconds = 30 if self._config_mgr is None else self._config_mgr.get(
+            "cj flow ghost job sweep interval seconds", default=30, return_type="int"
+        )
+        while not self._ghost_job_sweeper_stop_event.is_set():
+            try:
+                self._ghost_job_sweep()
+            except Exception as e:
+                du.print_banner(
+                    f"Ghost-job sweeper loop caught exception (continuing): {e!r}",
+                    prepend_nl=True
+                )
+            self._ghost_job_sweeper_stop_event.wait( timeout=interval_seconds )
+
+    def shutdown_pool( self, wait: bool = True, timeout: float = 30.0 ) -> None:
+        """
+        Stop the pool from accepting new work. If wait=True, block up to
+        `timeout` seconds for in-flight jobs to finish. Survivors after timeout
+        are dead-lettered so we don't leave phantom `running` rows on restart.
+
+        Ordering note (per design doc 03 §Step 2.2): shutdown_pool must run
+        BEFORE the consumer thread exits AND BEFORE the HTTP socket closes,
+        so in-flight pool workers can still emit WebSocket state transitions
+        as they finish.
+
+        Phase 3: Stop the ghost-job sweeper FIRST (before pool drain) so it
+        doesn't race against drain dead-lettering.
+        """
+        # Phase 3: stop sweeper before pool drain
+        self._ghost_job_sweeper_stop_event.set()
+        self._ghost_job_sweeper_thread.join( timeout=5.0 )
+        if self._ghost_job_sweeper_thread.is_alive():
+            print( "[AGENTIC-POOL] Warning: ghost-job sweeper did not exit within 5s" )
+
+        self._agentic_pool.shutdown( wait=False, cancel_futures=False )
+        print( "[AGENTIC-POOL] shutdown_pool accepted no-new-work flag" )
+
+        if not wait:
+            return
+
+        deadline = time.time() + timeout
+
+        with self._agentic_futures_lock:
+            inflight = list( self._agentic_futures.items() )
+
+        for id_hash, future in inflight:
+            remaining = max( 0.0, deadline - time.time() )
+            try:
+                future.result( timeout=remaining )
+            except TimeoutError:
+                try:
+                    job = self.get_by_id_hash( id_hash )
+                    if job is not None:
+                        self._transition_to_dead( job, TimeoutError( "shutdown_pool timeout" ) )
+                except Exception as te:
+                    print( f"[AGENTIC-POOL] shutdown dead-letter failed for {id_hash}: {te!r}" )
+            except Exception:
+                pass  # Already handled by _on_agentic_complete
+
+        print( "[AGENTIC-POOL] shutdown_pool returning" )
+
+    # =============================================================================
+    # End Phase 2 pool + transition primitives
+    # =============================================================================
 
     def _handle_agentic_job( self, running_job: AgenticJobBase, truncated_question: str, job_timer: sw.Stopwatch ) -> Any:
         """
@@ -391,7 +1023,8 @@ class RunningFifoQueue( FifoQueue ):
                 }
                 emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.STALLED, user_id, metadata )
 
-                self.pop()  # Auto-emits 'run_update'
+                # Phase 2: id_hash-based delete
+                self.delete_by_id_hash( running_job.id_hash )
                 self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
 
                 try:
@@ -452,7 +1085,8 @@ class RunningFifoQueue( FifoQueue ):
                 emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.COMPLETED, user_id, metadata )
 
                 # Move through queue system
-                self.pop()  # Auto-emits 'run_update'
+                # Phase 2: id_hash-based delete
+                self.delete_by_id_hash( running_job.id_hash )
                 self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
 
                 # TFE auto-dispatch hook (Session 1cfcdf73, step 13 of TFE plan).
@@ -480,56 +1114,16 @@ class RunningFifoQueue( FifoQueue ):
                     if self.debug: print( f"[AGENTIC] I/O table write skipped: {io_e}" )
 
             else:
-                # Job reported failure via status
-                error_msg = running_job.error or "Unknown error"
-                du.print_banner( f"AgenticJob failed: {error_msg}", prepend_nl=True )
-
-                # TTS Migration (Session 97): Use notification service instead of _emit_speech
-                self._notify(
-                    f"The {running_job.JOB_TYPE} job encountered an error: {error_msg[ :100 ]}",
-                    job=running_job,
-                    priority="urgent"
-                )
-
-                # Emit job state transition (run -> dead) with error metadata
-                job_id  = running_job.id_hash
-                user_id = running_job.user_id
-
-                # Calculate timestamps for error case
-                completed_at = du.get_current_datetime_iso()
-                started_at   = running_job.started_at
-                duration_seconds = None
-                if started_at:
-                    try:
-                        start = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
-                        end   = datetime.fromisoformat( completed_at )
-                        duration_seconds = ( end - start ).total_seconds()
-                    except Exception:
-                        pass
-
-                metadata = {
-                    'error'           : error_msg,
-                    'stack_trace'     : running_job.error,  # Job-reported error (no Python traceback)
-                    # Phase 6.2: Card-rendering fields for client-side card creation
-                    'question_text'   : running_job.last_question_asked,
-                    'agent_type'      : running_job.job_type,
-                    'timestamp'       : running_job.created_date,
-                    # Session 107: Fix field parity between WebSocket and server-fetched cards
-                    'status'          : JobState.FAILED.value,
-                    'has_interactions': bool( running_job.session_id ),
-                    'is_cache_hit'    : False,
-                    'user_email'      : running_job.user_email,
-                    'started_at'      : started_at,
-                    'completed_at'    : completed_at,
-                    'duration_seconds': duration_seconds
-                }
-                emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.FAILED, user_id, metadata )
-
-                self.pop()  # Auto-emits 'run_update'
-                self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
-
-                # Phase 6A: Evaluate for automated repair
-                self._evaluate_for_auto_fix( running_job )
+                # OOS-4 Finding C (2026-04-29 Phase 4): canonical dead-queue
+                # path replacing ~50 lines of inline duplicate. _transition_to_dead
+                # accepts a string OR exception cause and handles all the same
+                # work (notify, error persistence, metadata, WS emit, queue
+                # mutations, auto-fix watchdog).
+                # Note: this entire `_handle_agentic_job` method is dead code
+                # post-Phase 2 (the agentic pool callback `_on_agentic_complete`
+                # replaced it). Kept refactored anyway so any reactivation
+                # picks up the canonical path.
+                self._transition_to_dead( running_job, running_job.error or "Unknown error" )
 
         except Exception as e:
             # Unexpected exception during execution
@@ -543,53 +1137,8 @@ class RunningFifoQueue( FifoQueue ):
             running_job.state = JobState.FAILED
             running_job.error  = str( e )
 
-            # TTS Migration (Session 97): Use notification service instead of _emit_speech
-            self._notify(
-                f"The {running_job.JOB_TYPE} job crashed unexpectedly. Please check the logs.",
-                job=running_job,
-                priority="urgent"
-            )
-
-            # Emit job state transition (run -> dead) with error metadata
-            # Emit job state transition (run -> dead) with error metadata
-            job_id  = running_job.id_hash
-            user_id = running_job.user_id
-
-            # Calculate timestamps for crash case
-            completed_at = du.get_current_datetime_iso()
-            started_at   = running_job.started_at
-            duration_seconds = None
-            if started_at:
-                try:
-                    start = datetime.fromisoformat( started_at ) if isinstance( started_at, str ) else started_at
-                    end   = datetime.fromisoformat( completed_at )
-                    duration_seconds = ( end - start ).total_seconds()
-                except Exception:
-                    pass
-
-            metadata = {
-                'error'           : str( e ),
-                'stack_trace'     : traceback.format_exc(),
-                # Phase 6.2: Card-rendering fields for client-side card creation
-                'question_text'   : running_job.last_question_asked,
-                'agent_type'      : running_job.job_type,
-                'timestamp'       : running_job.created_date,
-                # Session 107: Fix field parity between WebSocket and server-fetched cards
-                'status'          : JobState.FAILED.value,
-                'has_interactions': bool( running_job.session_id ),
-                'is_cache_hit'    : False,
-                'user_email'      : running_job.user_email,
-                'started_at'      : started_at,
-                'completed_at'    : completed_at,
-                'duration_seconds': duration_seconds
-            }
-            emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.FAILED, user_id, metadata )
-
-            self.pop()  # Auto-emits 'run_update'
-            self.jobs_dead_queue.push( running_job )  # Auto-emits 'dead_update'
-
-            # Phase 6A: Evaluate for automated repair
-            self._evaluate_for_auto_fix( running_job )
+            # OOS-4 Finding C: canonical dead-queue path (see comment above).
+            self._transition_to_dead( running_job, e )
 
         return running_job
 
@@ -744,7 +1293,8 @@ class RunningFifoQueue( FifoQueue ):
             }
             emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.COMPLETED, user_id, metadata )
 
-            self.pop()  # Auto-emits 'run_update'
+            # Phase 2: id_hash-based delete
+            self.delete_by_id_hash( running_job.id_hash )
             self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
 
             # Write the job to the database for posterity's sake
@@ -826,7 +1376,8 @@ class RunningFifoQueue( FifoQueue ):
         }
         emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.COMPLETED, user_id, metadata )
 
-        self.pop()  # Auto-emits 'run_update'
+        # Phase 2: id_hash-based delete
+        self.delete_by_id_hash( running_job.id_hash )
         self.jobs_done_queue.push( running_job )  # Auto-emits 'done_update'
 
         # If we've arrived at this point, then we've successfully run the job
@@ -1041,7 +1592,8 @@ class RunningFifoQueue( FifoQueue ):
         emit_job_state_transition( self.websocket_mgr, job_id, JobState.RUNNING, JobState.COMPLETED, user_id, metadata )
 
         # Move job through the queue system properly
-        self.pop()  # Remove from running queue, auto-emits 'run_update'
+        # Phase 2: id_hash-based delete (done_queue_entry.id_hash was set to original_job.id_hash above)
+        self.delete_by_id_hash( original_job.id_hash )
         self.jobs_done_queue.push( done_queue_entry )  # Add COPY to done queue, auto-emits 'done_update'
 
         run_timer.print( "CACHE HIT - result retrieved in ", use_millis=True )

@@ -164,15 +164,16 @@ class DeepResearchToPresentationJob( AgenticJobBase ):
             self.state        = JobState.FAILED
             self.completed_at = cu.get_current_datetime_iso()
             self.error        = str( e )
+            self.answer_conversational = f"Research→Presentation pipeline failed: {str( e )}"
 
             if self.debug:
                 print( f"[DeepResearchToPresentationJob] Failed: {e}" )
                 import traceback
                 traceback.print_exc()
 
-            # Return error message as conversational answer
-            self.answer_conversational = f"Research→Presentation pipeline failed: {str( e )}"
-            return self.answer_conversational
+            # Re-raise so the agentic-pool Future captures the exception.
+            # Backlog item 5 (2026-04-29): canonical Future contract.
+            raise
 
     async def _execute( self ) -> str:
         """
@@ -252,6 +253,7 @@ class DeepResearchToPresentationJob( AgenticJobBase ):
             self.artifacts[ "research_abstract" ] = result.research_abstract
             self.artifacts[ "yaml_path" ]         = result.yaml_path
             self.artifacts[ "marp_path" ]         = result.marp_path
+            self.artifacts[ "slide_count" ]       = result.slide_count
 
             # Build cost summary
             self.cost_summary = {
@@ -341,6 +343,7 @@ class DeepResearchToPresentationJob( AgenticJobBase ):
         self.artifacts[ "research_abstract" ] = "Mock abstract from dry-run mode."
         self.artifacts[ "yaml_path" ]         = self.yaml_path
         self.artifacts[ "marp_path" ]         = self.marp_path
+        self.artifacts[ "slide_count" ]       = 0   # dry-run: no real presentation built
 
         # Mock cost summary
         self.cost_summary = {

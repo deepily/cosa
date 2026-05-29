@@ -23,6 +23,30 @@ from cosa.rest.websocket_manager import WebSocketManager
 
 router = APIRouter(tags=["websocket"])
 
+# =============================================================================
+# Application close codes (RFC 6455 §7.4.2 — application range 4000-4999).
+# Reserved by Phase 5 of the WS reconnect circuit-breaker milestone:
+# `src/rnd/v0.1.7/2026.05.02-ws-reconnect-circuit-breaker/06-phase-5-server-side-hardening.md`.
+#
+#   4001  Auth failed (invalid/expired token, malformed auth_request, missing
+#         token field, etc.). Client treats as PERMANENT — does NOT retry.
+#         Browser-side `ws-channel.js` PERMANENT_CLOSE_CODES set; `notifications.js`
+#         attempts a token refresh first, then shows the auth-permanent banner
+#         only if refresh also fails.
+#
+#   4002  Auth failed: session conflict (single-session-per-user policy
+#         displaced this connection). Client shows "Another session has taken
+#         over." banner; does NOT retry.
+#
+#   4003  Auth failed: subscription denied (RBAC reject of one or more
+#         subscribed_events). Reserved for future RBAC enforcement; not
+#         currently emitted by any branch (audio subscriptions are filtered
+#         silently today).
+# =============================================================================
+CLOSE_CODE_AUTH_INVALID_TOKEN     = 4001
+CLOSE_CODE_AUTH_SESSION_CONFLICT  = 4002
+CLOSE_CODE_AUTH_SUBSCRIPTION_DENIED = 4003
+
 # Global dependencies (temporary access via main module)
 def get_websocket_manager():
     """
@@ -343,7 +367,7 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
                 "type": "auth_error",
                 "message": "Authentication message must be valid JSON"
             })
-            await websocket.close()
+            await websocket.close(code=CLOSE_CODE_AUTH_INVALID_TOKEN, reason="invalid_auth_request_json")
             return
         except WebSocketDisconnect as wd:
             print( f"[WS-QUEUE-AUTH] Client disconnected during auth for session [{session_id}]: code={wd.code}" )
@@ -355,7 +379,7 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
                     "type": "auth_error",
                     "message": f"Failed to parse authentication message: {str(parse_error)}"
                 })
-                await websocket.close()
+                await websocket.close(code=CLOSE_CODE_AUTH_INVALID_TOKEN, reason="invalid_auth_request")
             except Exception:
                 pass  # Socket already closed
             return
@@ -367,7 +391,7 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
                 "type": "auth_error",
                 "message": "Authentication message must be a JSON object"
             })
-            await websocket.close()
+            await websocket.close(code=CLOSE_CODE_AUTH_INVALID_TOKEN, reason="invalid_auth_request_shape")
             return
 
         # SECURITY: Check required fields
@@ -377,7 +401,7 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
                 "type": "auth_error",
                 "message": "First message must be auth_request"
             })
-            await websocket.close()
+            await websocket.close(code=CLOSE_CODE_AUTH_INVALID_TOKEN, reason="auth_protocol_violation")
             return
 
         if "token" not in auth_message:
@@ -386,7 +410,7 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
                 "type": "auth_error",
                 "message": "Authentication message must include token field"
             })
-            await websocket.close()
+            await websocket.close(code=CLOSE_CODE_AUTH_INVALID_TOKEN, reason="missing_token")
             return
 
         # SECURITY: Validate token format before attempting verification
@@ -397,7 +421,7 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
                 "type": "auth_error",
                 "message": "Token must be a string"
             })
-            await websocket.close()
+            await websocket.close(code=CLOSE_CODE_AUTH_INVALID_TOKEN, reason="invalid_token_type")
             return
 
         if not token.strip():
@@ -406,7 +430,7 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
                 "type": "auth_error",
                 "message": "Token cannot be empty"
             })
-            await websocket.close()
+            await websocket.close(code=CLOSE_CODE_AUTH_INVALID_TOKEN, reason="empty_token")
             return
 
         # Strip Bearer prefix if present (WebSocket clients may include it)
@@ -453,7 +477,7 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
                 "type"    : "auth_error",
                 "message" : "Token expired"
             })
-            await websocket.close()
+            await websocket.close(code=CLOSE_CODE_AUTH_INVALID_TOKEN, reason="token_expired")
             return
         except Exception as e:
             print( f"[WS-QUEUE-AUTH] ❌ Token verification failed for session [{session_id}]: {type( e ).__name__}: {e}" )
@@ -463,19 +487,19 @@ async def websocket_queue_endpoint(websocket: WebSocket, session_id: str):
                 "type"    : "auth_error",
                 "message" : str( e )
             })
-            await websocket.close()
+            await websocket.close(code=CLOSE_CODE_AUTH_INVALID_TOKEN, reason="invalid_token")
             return
 
     except TokenExpiredException:
         print( f"[WS-QUEUE] Token expired for session [{session_id}] — client should refresh" )
-        await websocket.close()
+        await websocket.close(code=CLOSE_CODE_AUTH_INVALID_TOKEN, reason="token_expired")
         return
     except Exception as e:
         print( f"[WS-QUEUE] ❌ Auth error for session [{session_id}]: {type( e ).__name__}: {e}" )
         import traceback
         traceback.print_exc()
         try:
-            await websocket.close()
+            await websocket.close(code=CLOSE_CODE_AUTH_INVALID_TOKEN, reason="auth_error")
         except Exception:
             pass  # Socket already closed
         return

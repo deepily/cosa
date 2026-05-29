@@ -4,13 +4,28 @@ Embedding provider routing layer with performance metrics.
 Routes embedding generation to the configured engine:
 - "openai" -> existing EmbeddingManager (768 dims via MRL truncation)
 - "local"  -> CodeEmbeddingEngine or ProseEmbeddingEngine (768 dims)
+- "local" + non-FastAPI process -> HTTP route to /api/embeddings/{generate,batch}
 
 Callers specify content_type="prose" or content_type="code" to route
 to the appropriate engine when provider is "local".
+
+Process-aware routing (added 2026-04-28):
+    Inside the FastAPI process — which loaded the GPU engine singletons at
+    startup — `generate_embedding()` calls those singletons directly. In any
+    OTHER process (scripts, tests, CC subagents, MCP), the same call routes
+    via HTTP to the FastAPI server's /api/embeddings/{generate,batch}
+    endpoints. The server URL is resolved at call time from the
+    LUPIN_APP_SERVER_URL environment variable so a test running on the
+    :8000 test server hits :8000 (not the :7999 dev server).
+
+    The toggle is the class-level flag `_is_in_process_engine_owner`,
+    flipped True by FastAPI's main.py at startup after engines are loaded.
+    Default False everywhere else means no caller accidentally grabs GPU.
 """
 
+import os
 from threading import Lock
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import cosa.utils.util as du
 import cosa.utils.util_stopwatch as sw
@@ -26,11 +41,41 @@ class EmbeddingProvider:
 
     Config-driven toggling via 'embedding provider' key:
       - "openai" -> existing EmbeddingManager (1536 dims)
-      - "local"  -> CodeEmbeddingEngine or ProseEmbeddingEngine (768 dims)
+      - "local"  -> CodeEmbeddingEngine or ProseEmbeddingEngine (768 dims) when
+        running inside the FastAPI process; HTTP route otherwise.
     """
 
     _instance = None
     _lock     = Lock()
+
+    # Class-level flag controlling local-engine routing. Default False so any
+    # process that imports this module routes via HTTP and does NOT lazy-load
+    # GPU models. Flipped True only by FastAPI main.py after the in-process
+    # engines have been eagerly loaded — ensures the GPU is owned by exactly
+    # one process and every other caller HTTP-fetches embeddings from it.
+    _is_in_process_engine_owner = False
+
+    @classmethod
+    def declare_in_process_engine_owner( cls ):
+        """
+        Mark this Python process as the owner of the in-process GPU engine
+        singletons. Called by `src/fastapi_app/main.py` AFTER `get_code_engine()`
+        and `get_prose_engine()` have completed their eager warmup.
+
+        Effect: subsequent `generate_embedding()` / `generate_embeddings_batch()`
+        calls in this process route directly to the in-process engine
+        singletons. In every other process the flag stays False and routing
+        falls back to HTTP via /api/embeddings/{generate,batch}.
+
+        Idempotent — safe to call multiple times.
+
+        Ensures:
+            - Class-level flag is True after this call returns
+            - All EmbeddingProvider instances in this process see the change
+              (singleton + class-level flag means there's at most one instance
+              and it picks up the new value at next routing decision)
+        """
+        cls._is_in_process_engine_owner = True
 
     def __new__( cls, debug=False, verbose=False ):
         """
@@ -109,9 +154,240 @@ class EmbeddingProvider:
             self._prose_engine = get_prose_engine( debug=self.debug, verbose=self.verbose )
         return self._prose_engine
 
+    @staticmethod
+    def _resolve_server_url() -> str:
+        """
+        Resolve the FastAPI server URL at call time (NOT at module load).
+
+        Read fresh from `LUPIN_APP_SERVER_URL` per-call so a test running
+        on the :8000 test server can set the env var and have HTTP routing
+        target :8000 dynamically — without restarting the Python process.
+        Default is `http://localhost:7999` (host targeting dev server,
+        and inside-container targeting the container's own bound port).
+
+        Ensures:
+            - Returns the env value when set and non-empty (stripped)
+            - Returns "http://localhost:7999" otherwise
+            - Never raises
+        """
+        url = os.environ.get( "LUPIN_APP_SERVER_URL", "" ).strip()
+        return url if url else "http://localhost:7999"
+
+    @staticmethod
+    def _resolve_model_server_url() -> Optional[ str ]:
+        """
+        Resolve the lupin-model-server URL at call time. Returns None when
+        BOTH env var AND INI key are unset → caller falls through to the
+        legacy FastAPI HTTP-proxy path.
+
+        Priority chain (mirrors SpeechToTextProvider._resolve_model_server_url):
+            1. `LUPIN_MODEL_SERVER_URL` env var (compose-injected at container creation)
+            2. `model server url` INI key (lupin-app.ini default)
+            3. None → caller routes via legacy FastAPI URL
+
+        Why both: `docker restart` doesn't re-read compose, so a fresh INI
+        flip without a `docker compose up -d --force-recreate` would leave
+        the env var unset in running containers. The INI fallback prevents
+        that scenario from causing self-recursion (compute → compute →
+        compute → timeout) on the FastAPI fallback URL.
+
+        See: src/rnd/v0.1.7/2026.05.16-model-server-carveout/01-design.md
+
+        Ensures:
+            - Returns the env value when set and non-empty
+            - Otherwise returns the INI value when set and non-empty
+            - Otherwise returns None (legacy FastAPI fallback)
+            - Never raises (ConfigurationManager errors caught + None returned)
+        """
+        url = os.environ.get( "LUPIN_MODEL_SERVER_URL", "" ).strip()
+        if url:
+            return url
+        try:
+            from cosa.config.configuration_manager import ConfigurationManager
+            cfg = ConfigurationManager( env_var_name="LUPIN_CONFIG_MGR_CLI_ARGS" )
+            ini = cfg.get( "model server url", default="", silent=True ).strip()
+            return ini if ini else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _http_api_key() -> Optional[str]:
+        """
+        Load the X-API-Key value used for the embeddings HTTP endpoints.
+
+        Mirrors the pattern in `prediction_engine._generate_embedding_via_http`
+        — reads `src/conf/keys/notification-api-claude-code-dev` via the
+        canonical `du.get_api_key()` helper (imported as `du` in this module).
+
+        Ensures:
+            - Returns the API key string if the file is present and readable
+            - Returns None if the file is missing or empty
+            - Never raises
+        """
+        try:
+            return du.get_api_key( "notification-api-claude-code-dev" )
+        except Exception:
+            return None
+
+    @classmethod
+    def _resolve_http_target( cls ) -> tuple:
+        """
+        Pick the HTTP target for embedding fallback calls.
+
+        Priority:
+            1. lupin-model-server (when `LUPIN_MODEL_SERVER_URL` env is set)
+            2. FastAPI server (existing behavior, `LUPIN_APP_SERVER_URL`)
+
+        Both targets accept the SAME `ck_live_*` key from
+        `src/conf/keys/notification-api-claude-code-dev` (per María's
+        2026-05-16 brief — no parallel `ck_internal_*` namespace). So we
+        call `_http_api_key()` for both branches; only the URL + endpoint
+        prefix differ.
+
+        Returns:
+            tuple[str, Optional[str], str]: (base_url, api_key, endpoint_prefix)
+                - base_url: where to POST
+                - api_key: X-API-Key header value (or None → caller handles)
+                - endpoint_prefix: "/embeddings" for model-server,
+                                   "/api/embeddings" for the FastAPI path
+                  (model-server omits the `/api/` prefix per its leaner routing)
+        """
+        model_server_url = cls._resolve_model_server_url()
+        if model_server_url:
+            return ( model_server_url, cls._http_api_key(), "/embeddings" )
+        return ( cls._resolve_server_url(), cls._http_api_key(), "/api/embeddings" )
+
+    def _generate_embedding_via_http( self, text: str, content_type: str ) -> List[float]:
+        """
+        Single-text embedding via HTTP fallback to /api/embeddings/generate.
+
+        Used when this process is NOT the in-process engine owner — typically
+        a test, script, or CC subagent. Routes through the FastAPI server's
+        already-loaded GPU singleton instead of grabbing GPU here.
+
+        Requires:
+            - text is a non-empty string
+            - content_type is "prose" or "code"
+            - LUPIN_APP_SERVER_URL is reachable (default http://localhost:7999)
+            - API key file at src/conf/keys/notification-api-claude-code-dev
+
+        Ensures:
+            - Returns list[float] embedding vector on success
+            - Raises RuntimeError with a clear message on any failure
+              (no API key, connection refused, non-200, malformed response)
+
+        Raises:
+            RuntimeError: when HTTP routing cannot complete the request
+        """
+        import requests
+
+        # Phase 3.1 of the model-server carve-out: when LUPIN_MODEL_SERVER_URL
+        # is set, this resolves to (model-server URL, ck_internal_* key,
+        # "/embeddings"). Otherwise falls through to the existing FastAPI
+        # path with the notification key + "/api/embeddings" prefix.
+        # See: src/rnd/v0.1.7/2026.05.16-model-server-carveout/01-design.md
+        base_url, api_key, prefix = self._resolve_http_target()
+        if not api_key:
+            raise RuntimeError(
+                "EmbeddingProvider HTTP fallback: no API key found. Expected one of: "
+                "src/conf/keys/notification-api-claude-code-dev "
+                "(used by both the FastAPI and lupin-model-server HTTP paths). "
+                "Either provision the matching key file or call "
+                "EmbeddingProvider.declare_in_process_engine_owner() from the GPU-loading process."
+            )
+
+        url = f"{base_url}{prefix}/generate"
+        try:
+            response = requests.post(
+                url,
+                json    = { "text": text, "content_type": content_type },
+                headers = { "X-API-Key": api_key },
+                timeout = 10
+            )
+        except requests.RequestException as e:
+            raise RuntimeError(
+                f"EmbeddingProvider HTTP fallback unreachable at {url}: {type( e ).__name__}: {e}"
+            )
+
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"EmbeddingProvider HTTP fallback returned {response.status_code} from {url}: "
+                f"{response.text[:200]}"
+            )
+
+        try:
+            return response.json()[ "embedding" ]
+        except ( KeyError, ValueError ) as e:
+            raise RuntimeError(
+                f"EmbeddingProvider HTTP fallback: malformed response from {url}: {e}"
+            )
+
+    def _generate_embeddings_batch_via_http( self, texts: List[str], content_type: str ) -> List[List[float]]:
+        """
+        Batch embedding via HTTP fallback to /api/embeddings/batch.
+
+        Same routing/auth contract as the single-text helper above, but uses
+        the batch endpoint for throughput parity with in-process engine batch.
+
+        Requires:
+            - texts is a non-empty list of strings
+            - content_type is "prose" or "code"
+
+        Ensures:
+            - Returns list of embedding vectors, in input order
+            - Raises RuntimeError with a clear message on any failure
+
+        Raises:
+            RuntimeError: when HTTP routing cannot complete the request
+        """
+        import requests
+
+        # Phase 3.1 carve-out: same resolver as the single-text path above.
+        base_url, api_key, prefix = self._resolve_http_target()
+        if not api_key:
+            raise RuntimeError(
+                "EmbeddingProvider HTTP batch fallback: no API key found. Expected one of: "
+                "src/conf/keys/notification-api-claude-code-dev "
+                "(used by both the FastAPI and lupin-model-server HTTP paths)."
+            )
+
+        url = f"{base_url}{prefix}/batch"
+        try:
+            response = requests.post(
+                url,
+                json    = { "texts": texts, "content_type": content_type },
+                headers = { "X-API-Key": api_key },
+                timeout = 30
+            )
+        except requests.RequestException as e:
+            raise RuntimeError(
+                f"EmbeddingProvider HTTP batch fallback unreachable at {url}: {type( e ).__name__}: {e}"
+            )
+
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"EmbeddingProvider HTTP batch fallback returned {response.status_code} from {url}: "
+                f"{response.text[:200]}"
+            )
+
+        try:
+            return response.json()[ "embeddings" ]
+        except ( KeyError, ValueError ) as e:
+            raise RuntimeError(
+                f"EmbeddingProvider HTTP batch fallback: malformed response from {url}: {e}"
+            )
+
     def generate_embedding( self, text, content_type="prose", normalize_for_cache=True ):
         """
-        Route to the appropriate engine based on config and content_type.
+        Route to the appropriate engine based on config, content_type, and
+        whether this process owns the in-process engine singletons.
+
+        Routing decision:
+            - provider="openai" → OpenAI HTTP client (unchanged regardless of flag)
+            - provider="local" + this process owns engines → in-process engine
+            - provider="local" + this process does NOT own engines → HTTP route
+              to /api/embeddings/generate on the FastAPI server (URL resolved
+              dynamically from LUPIN_APP_SERVER_URL)
 
         Requires:
             - text is a non-empty string
@@ -122,6 +398,7 @@ class EmbeddingProvider:
             - Returns list[float] embedding vector
             - Dimensions depend on provider (1536 for openai, 768 for local)
             - Records timing metrics for benchmarking
+            - In non-owner contexts, no GPU model is loaded in this process
 
         Args:
             text: Input text to embed
@@ -132,7 +409,9 @@ class EmbeddingProvider:
             list[float] - embedding vector
 
         Raises:
-            - None (errors handled by underlying engines)
+            RuntimeError: when HTTP routing cannot complete (no API key,
+                connection refused, non-200 response). Clear failure beats
+                silently grabbing GPU.
         """
         timer = sw.Stopwatch( silent=True )
 
@@ -141,11 +420,16 @@ class EmbeddingProvider:
                 print( "WARNING: OpenAI provider does not support code-specific embeddings. "
                        "Using text-embedding-3-small for code content." )
             embedding = self._get_openai_engine().generate_embedding( text, normalize_for_cache=normalize_for_cache )
-        elif content_type == "code":
-            embedding = self._get_code_engine().encode_code( [ text ] )[ 0 ]
+        elif self._is_in_process_engine_owner:
+            # In-process owner: use the loaded engine singletons directly.
+            if content_type == "code":
+                embedding = self._get_code_engine().encode_code( [ text ] )[ 0 ]
+            else:
+                # prose - use encode_query for single-text embedding (query context)
+                embedding = self._get_prose_engine().encode_query( [ text ] )[ 0 ]
         else:
-            # prose - use encode_query for single-text embedding (query context)
-            embedding = self._get_prose_engine().encode_query( [ text ] )[ 0 ]
+            # Non-owner: HTTP route. No GPU touch in this process.
+            embedding = self._generate_embedding_via_http( text, content_type )
 
         delta_ms = timer.get_delta_ms()
         self._record_metric( content_type, self._provider, delta_ms, len( embedding ) if embedding else 0 )
@@ -157,7 +441,9 @@ class EmbeddingProvider:
 
     def generate_embeddings_batch( self, texts, content_type="prose" ):
         """
-        Generate embeddings for a batch of texts.
+        Generate embeddings for a batch of texts. Same process-aware routing
+        as generate_embedding() — non-owner processes round-trip via HTTP
+        to /api/embeddings/batch.
 
         Requires:
             - texts is a list of non-empty strings
@@ -166,6 +452,7 @@ class EmbeddingProvider:
         Ensures:
             - Returns list of embedding vectors
             - More efficient than calling generate_embedding() in a loop for local engines
+            - In non-owner contexts, no GPU model is loaded in this process
 
         Args:
             texts: List of input texts to embed
@@ -173,6 +460,9 @@ class EmbeddingProvider:
 
         Returns:
             list[list[float]] - list of embedding vectors
+
+        Raises:
+            RuntimeError: when HTTP routing cannot complete in non-owner context
         """
         timer = sw.Stopwatch( silent=True )
 
@@ -182,10 +472,13 @@ class EmbeddingProvider:
                        "Using text-embedding-3-small for code content." )
             # OpenAI engine doesn't support batch - loop
             embeddings = [ self._get_openai_engine().generate_embedding( t ) for t in texts ]
-        elif content_type == "code":
-            embeddings = self._get_code_engine().encode_code( texts )
+        elif self._is_in_process_engine_owner:
+            if content_type == "code":
+                embeddings = self._get_code_engine().encode_code( texts )
+            else:
+                embeddings = self._get_prose_engine().encode_query( texts )
         else:
-            embeddings = self._get_prose_engine().encode_query( texts )
+            embeddings = self._generate_embeddings_batch_via_http( texts, content_type )
 
         delta_ms = timer.get_delta_ms()
         self._record_metric( content_type, self._provider, delta_ms, len( embeddings[ 0 ] ) if embeddings and embeddings[ 0 ] else 0 )
